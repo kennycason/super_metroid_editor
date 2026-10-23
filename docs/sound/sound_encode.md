@@ -46,13 +46,13 @@ Implemented:
 - SPC occupancy checks: export protects unedited sibling tracks, base/common transfer ranges, instrument table data, sample directory data, and BRR sample ranges.
 - Free-range allocation: export places edited sequences in a protected-free SPC RAM range and patches the selected play index to the relocated conductor.
 - Editor budget meter: the piano roll progress bar shows the per-track compact edit budget, not the larger relocation pool. It starts at the vanilla compact sequence size, adding notes consumes budget, and deleting notes frees budget. The message also reports the current phase-1 flattened export size versus relocation space, because that is what ROM export writes today for note edits until phase 2 compact/subroutine-preserving export exists.
-- Tail-trim export: if the flattened edited sequence is over budget, export keeps the earliest part of the edited track and drops later notes/commands until the sequence fits.
+- Export preflight: the fitting helper can estimate a shortened arrangement, but ROM export rejects a fit that would discard notes or commands. Explicit import fitting remains a staged user action.
 - Preview parity: piano-roll playback and waveform playback try the same relocated native N-SPC patch path as ROM export before falling back to software/delta overlay. This keeps newly-added notes from sounding correct in the app but different in the exported ROM.
 - Safe failure: if the trimmed edited sequence still cannot fit, export fails instead of writing a ROM that can black-screen.
 
 Current limitation:
 
-- The encoder flattens expanded N-SPC subroutines. Some tracks, especially Title Screen playIndex `5`, become much larger than vanilla. Tail-trim export is a practical stopgap, but the next implementation step is subroutine-preserving or compact encoding so we can keep full songs while still fitting SPC RAM.
+- The encoder flattens expanded N-SPC subroutines. Some tracks, especially Title Screen playIndex `5`, become much larger than vanilla. Subroutine-preserving or compact encoding is needed to keep full songs while still fitting SPC RAM.
 
 ## Safety Rules
 
@@ -60,14 +60,14 @@ Current limitation:
 - Never write sequence bytes over protected transfer ranges such as the instrument table, sample directory, or BRR sample data.
 - Never let two relocated edited sequences overlap.
 - Never let a relocated sequence overlap original sequence data for an unedited sibling track.
-- If the edited sequence is too large, trim tail notes/commands to fit the available budget.
+- If the edited sequence is too large, reject export before publishing a partial song. Shortening an arrangement requires an explicit user edit or staged import fit.
 - If allocation still fails, fail export with a clear message instead of producing a ROM.
 
 ## Tests To Maintain
 
 - Re-encoding does not reuse unsafe low SPC RAM pointers such as `0x18F0`.
 - A relocatable title-track note edit exports and remains parseable from the exported ROM.
-- Multiple edited tracks in the same song set export by tail-trimming later sequence content when flattened sequences do not fit.
+- Multiple edited tracks in the same song set must fit without silently trimming later content.
 - Budget trimming keeps early notes and commands and drops only tail content.
 - Relocated exports never reuse unsafe low original block-table pointers such as `0x18F0`.
 - App previews prefer relocated native patch rendering so waveform/sound-editor playback matches exported ROM behavior.
@@ -80,3 +80,36 @@ Current limitation:
 - Compact original sequence allocations for a song set when there is no simple free tail.
 - Show ROM-export eligibility in the UI before export.
 - Add an allocation/debug view showing sequence ranges, instrument table, and free SPC RAM.
+
+## Instrument UX checkpoint — 2026-10-23
+
+Working branch: `sound/instrument-browser-preview`.
+
+First chunk:
+
+- Replace the note's numeric instrument field with a compact card and explicit instrument browser.
+- Search descriptions, sample IDs, and user names; filter to instruments used in the track.
+- Audition the selected pitch or reference C4 through the native engine, without changing notes, undo history, or stored waveforms. Preserve the attack and use fixed monitor gain.
+- Save display names per song set/instrument slot as project metadata, separate from music patches.
+- Keep raw shared settings under Advanced. Interpret tuning correctly while preserving existing serialized and exported bytes.
+- Emit explicit E0 instrument selection for melodic notes. CA..DF are percussion notes and cannot substitute for an instrument-select command.
+- Pad participating channels with rests to the arrangement end. A short note on a previously unused voice must not terminate the entire synchronized song block.
+
+Continue in this order:
+
+1. Preserve imported BRR/sample assets independently of edited sequences. Today, changing imported notes/instruments can invalidate and drop the native payload on save. Audition can use the open import's source RAM, but this chunk does not fix persistence of subsequent edits.
+2. Move shared instrument overrides to song-bank ownership, reconcile existing per-track overrides, and show affected sibling tracks. Add safe duplication only after proving a slot is unused by music and effects.
+3. Add compact native envelope controls/graph, gain modes, and musical tuning offsets. SNES key-off release is fixed; avoid presenting a conventional synth ADSR or inactive gain controls. Keep raw values under Advanced.
+4. Repair general sequence fidelity: long notes/ties, percussion parsing/base state, overlapping MIDI voices, and GM-to-bank instrument mapping. Improve preview/export eligibility reporting and distinguish approximate whole-song fallback audio.
+5. Stage sample replacement and audition the encoded result; key replacements by bank/resource identity, support loops, and add safe relocation. Then build a separate named sound-effect browser and native effect audition.
+
+Offline verification (dependencies/native library are already built in this checkout):
+
+```sh
+SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --offline \
+  :desktopApp:jvmTest --tests '*InstrumentAuditionTest' --tests '*InstrumentSelectorTest' \
+  --tests '*PianoRollPreviewLogicTest' --tests '*MusicEditExportTest' \
+  :shared:jvmTest --tests '*NspcRendererTest' --tests '*SmEditProjectMusicTest' --tests '*NspcSequenceTest'
+```
+
+Set `SMEDIT_CAPTURE_INSTRUMENT_UI=true` to capture browser layouts for all font sizes under `desktopApp/build/test-output/`. The `InstrumentAuditionTest` fixture uses the real SPC engine with a synthetic loop to compare native tuning, note attacks, gain changes, and arrangement/audition behavior. Missing ROM fixtures must be reported as skipped, not treated as audio verification.

@@ -8,6 +8,20 @@ class NspcSequenceTest {
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
+    fun `a short added voice waits for the arrangement instead of ending the synchronized block`() {
+        val song = NspcSequence.Song(tempo = 36)
+        song.channels[0].notes += NspcSequence.Note(0, 48, 0x94, instrument = 30)
+        song.channels[0].notes += NspcSequence.Note(96, 48, 0x98, instrument = 30)
+        song.channels[7].notes += NspcSequence.Note(0, 12, 0x9C, instrument = 30)
+        val ram = ByteArray(65536)
+        NspcSequence.encode(song, 5).forEach { (at, data) -> data.copyInto(ram, at) }
+        val parsed = NspcSequence.parse(ram, 5)
+        assertEquals(listOf(0, 96), parsed.channels[0].notes.map { it.tick })
+        assertEquals(144, parsed.totalTicks)
+        assertEquals(30, parsed.channels[7].notes.single().instrument)
+    }
+
+    @Test
     fun `parse Title Screen song has notes across multiple channels`() {
         val parser = loadTestRom() ?: return
         val baseRam = SpcData.buildInitialSpcRam(parser)

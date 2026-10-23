@@ -78,7 +78,6 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -239,6 +238,15 @@ fun PianoRollEditor(
     song: Song,
     activeChannel: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry> = emptyList(),
+    instrumentNames: Map<Int, String> = emptyMap(),
+    instrumentBankLabel: String = "Current sound bank",
+    nativeInstrumentPreviewAvailable: Boolean = false,
+    previewInstrument: Int? = null,
+    instrumentPreviewBusy: Boolean = false,
+    instrumentPreviewMessage: String = "",
+    onPreviewInstrument: (Int, Note) -> Unit = { _, _ -> },
+    onStopInstrumentPreview: () -> Unit = {},
+    onRenameInstrument: (Int, String) -> Unit = { _, _ -> },
     canUndo: Boolean = false,
     canRedo: Boolean = false,
     exportBudgetBytes: Int = 0,
@@ -1261,6 +1269,15 @@ fun PianoRollEditor(
                     channel = selectedChannel,
                     totalTicks = totalTicks,
                     instrumentInfos = instrumentInfos,
+                    instrumentNames = instrumentNames,
+                    instrumentBankLabel = instrumentBankLabel,
+                    nativeInstrumentPreviewAvailable = nativeInstrumentPreviewAvailable,
+                    previewInstrument = previewInstrument,
+                    instrumentPreviewBusy = instrumentPreviewBusy,
+                    instrumentPreviewMessage = instrumentPreviewMessage,
+                    onPreviewInstrument = onPreviewInstrument,
+                    onStopInstrumentPreview = onStopInstrumentPreview,
+                    onRenameInstrument = onRenameInstrument,
                     usedInstrumentIds = song.channels.flatMap { it.notes.map { note -> note.instrument } }.toSet().sorted(),
                     onInstrumentChanged = onInstrumentChanged,
                     onClose = { showNoteProperties = false },
@@ -1401,6 +1418,15 @@ private fun NotePropertiesPanel(
     channel: Int,
     totalTicks: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry>,
+    instrumentNames: Map<Int, String>,
+    instrumentBankLabel: String,
+    nativeInstrumentPreviewAvailable: Boolean,
+    previewInstrument: Int?,
+    instrumentPreviewBusy: Boolean,
+    instrumentPreviewMessage: String,
+    onPreviewInstrument: (Int, Note) -> Unit,
+    onStopInstrumentPreview: () -> Unit,
+    onRenameInstrument: (Int, String) -> Unit,
     usedInstrumentIds: List<Int>,
     onInstrumentChanged: (NspcRenderer.InstrumentEntry) -> Unit,
     onClose: () -> Unit,
@@ -1409,10 +1435,8 @@ private fun NotePropertiesPanel(
     onChanged: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val maxInstrument = if (instrumentInfos.isNotEmpty()) instrumentInfos.lastIndex else 255
-
     Surface(
-        modifier = modifier.clearAndSetSemantics { },
+        modifier = modifier,
         color = Color(0xFF151525),
         shape = RoundedCornerShape(6.dp),
         border = BorderStroke(1.dp, Color(0xFF3A3A4A))
@@ -1486,18 +1510,6 @@ private fun NotePropertiesPanel(
                         onChanged()
                     }
                 }
-                NoteNumberProperty("Inst", note.instrument, 3, maxInstrument) {
-                    val old = note.instrument
-                    val next = it.coerceIn(0, maxInstrument)
-                    if (next != old) {
-                        onBeforeChange("Set note instrument")
-                        note.instrument = next
-                        val oldInst = old.toString(16).uppercase().padStart(2, '0')
-                        val newInst = note.instrument.toString(16).uppercase().padStart(2, '0')
-                        logPianoEdit("SetInstrument", channel, note, "0x$oldInst->0x$newInst")
-                        onChanged()
-                    }
-                }
 
                 Spacer(Modifier.width(8.dp))
 
@@ -1517,19 +1529,33 @@ private fun NotePropertiesPanel(
                 }
             }
 
-            InstrumentInsightPanel(
-                note = note,
-                channel = channel,
-                instrumentInfos = instrumentInfos,
-                usedInstrumentIds = usedInstrumentIds,
-                onInstrumentChanged = onInstrumentChanged,
-                onInstrumentSelected = { inst ->
+            NoteInstrumentSelector(
+                note = note, instruments = instrumentInfos, names = instrumentNames,
+                usedIds = usedInstrumentIds.toSet(), bankLabel = instrumentBankLabel,
+                nativePreviewAvailable = nativeInstrumentPreviewAvailable,
+                previewInstrument = previewInstrument, previewBusy = instrumentPreviewBusy,
+                previewMessage = instrumentPreviewMessage,
+                onPreview = { index, reference ->
+                    onPreviewInstrument(index, note.copy(noteValue = if (reference) NspcSequence.nameToNote("C4") else note.noteValue))
+                },
+                onStopPreview = onStopInstrumentPreview,
+                onRename = onRenameInstrument,
+                onChoose = { inst ->
                     val old = note.instrument
                     if (inst != old) {
                         onBeforeChange("Set note instrument")
                         note.instrument = inst
-                        logPianoEdit("SetInstrument", channel, note, "${hex(old)}->${hex(note.instrument)} via=used-chip")
+                        logPianoEdit("SetInstrument", channel, note, "${hex(old)}->${hex(note.instrument)} via=browser")
                         onChanged()
+                    }
+                },
+                advancedContent = {
+                    InstrumentInsightPanel(note, channel, instrumentInfos, usedInstrumentIds, onInstrumentChanged) { inst ->
+                        if (inst != note.instrument) {
+                            onBeforeChange("Set note instrument")
+                            note.instrument = inst
+                            onChanged()
+                        }
                     }
                 }
             )
@@ -1573,7 +1599,7 @@ private fun InstrumentInsightPanel(
 
             if (info != null) {
                 Text(
-                    "Shared entry: SRCN selects a BRR sample; ADSR/GAIN/pitch adjust shape playback for every note using this Inst.",
+                    "Shared instrument · changes affect this sound bank",
                     fontSize = 8.sp,
                     color = Color(0xFF78889A),
                     lineHeight = 11.sp
@@ -1583,8 +1609,8 @@ private fun InstrumentInsightPanel(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    InstrumentNumberProperty("SRCN", info.srcn, 2, 39, "0..39") {
-                        onInstrumentChanged(info.copy(srcn = it))
+                    InstrumentNumberProperty("Sample", info.srcn, 3, 0xFF, "0..39 · 128..159 noise") {
+                        if (it in 0..39 || it in 0x80..0x9F) onInstrumentChanged(info.copy(srcn = it))
                     }
                     InstrumentNumberProperty("ADSR1", info.adsr1, 3, 255, hex(info.adsr1)) {
                         onInstrumentChanged(info.copy(adsr1 = it))
@@ -1595,8 +1621,8 @@ private fun InstrumentInsightPanel(
                     InstrumentNumberProperty("GAIN", info.gain, 3, 255, hex(info.gain)) {
                         onInstrumentChanged(info.copy(gain = it))
                     }
-                    InstrumentNumberProperty("Tune", info.pitchAdj, 5, 0xFFFF, "${"%.3f".format(instrumentPitchMultiplier(info))}x") {
-                        onInstrumentChanged(info.copy(pitchAdj = it))
+                    InstrumentNumberProperty("Tune", info.nativePitch, 5, 0xFFFF, "${"%.3f".format(info.tuningMultiplier)}x") {
+                        onInstrumentChanged(info.copy(pitchAdj = ((it and 0xFF) shl 8) or ((it ushr 8) and 0xFF)))
                     }
                     Text(
                         instrumentSummary(info),
@@ -1654,11 +1680,8 @@ private fun instrumentSummary(info: NspcRenderer.InstrumentEntry): String {
     val sustainRate = info.adsr2 and 0x1F
     return "table=${hex(info.tableAddr, 4)} entry=${hex(info.index)} sample=${hexOrUnknown(info.sampleStartAddr)} " +
         "loopPtr=${hexOrUnknown(info.sampleLoopAddr)} BRR=$brrBytes, $loop\n" +
-        "mode=$adsrMode A=$attack D=$decay SL=$sustainLevel SR=$sustainRate tune=${"%.3f".format(instrumentPitchMultiplier(info))}x"
+        "mode=$adsrMode A=$attack D=$decay SL=$sustainLevel SR=$sustainRate tune=${"%.3f".format(info.tuningMultiplier)}x"
 }
-
-private fun instrumentPitchMultiplier(info: NspcRenderer.InstrumentEntry): Double =
-    if (info.pitchAdj == 0) 1.0 else info.pitchAdj.toDouble() / 0x1000
 
 @Composable
 private fun NoteNumberProperty(

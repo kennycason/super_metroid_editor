@@ -508,7 +508,7 @@ object NspcSequence {
             }
 
             channelAddrs[ch] = dataAddr
-            val channelData = encodeChannel(channel, song.tempo, ch == 0)
+            val channelData = encodeChannel(channel, song.tempo, ch == 0, sequenceEndTick(song))
             EditorLog.info("[NSPC-ENCODE]   Ch $ch: ${song.channels[ch].notes.size} notes, " +
                 "${song.channels[ch].commands.size} cmds -> ${channelData.size} bytes at 0x${dataAddr.toString(16)}")
             if (dataAddr + channelData.size > maxDataAddr) {
@@ -569,14 +569,14 @@ object NspcSequence {
         for (ch in 0 until 8) {
             val channel = song.channels[ch]
             if (isChannelActive(channel)) {
-                size += encodeChannel(channel, song.tempo, ch == 0).size
+                size += encodeChannel(channel, song.tempo, ch == 0, sequenceEndTick(song)).size
             }
         }
         return size
     }
 
     /** Encode a single channel's notes and commands to N-SPC binary. */
-    private fun encodeChannel(channel: Channel, tempo: Int, isFirstChannel: Boolean): ByteArray {
+    private fun encodeChannel(channel: Channel, tempo: Int, isFirstChannel: Boolean, endTick: Int): ByteArray {
         val out = mutableListOf<Int>()
 
         // Emit tempo on first channel
@@ -631,12 +631,11 @@ object NspcSequence {
 
                 // Emit instrument change if needed
                 if (note.instrument != lastInstrument) {
-                    if (note.instrument in 0x17..0x33) {
-                        out.add(0xCA + note.instrument - 0x17)
-                    } else {
-                        out.add(0xE0)
-                        out.add(note.instrument)
-                    }
+                    // CA..DF are complete percussion notes, not instrument-select
+                    // commands. Using one here adds an unintended note and can
+                    // select a different slot depending on the percussion base.
+                    out.add(0xE0)
+                    out.add(note.instrument)
                     lastInstrument = note.instrument
                 }
 
@@ -656,6 +655,10 @@ object NspcSequence {
                 noteIdx++
             }
         }
+
+        // A participating channel's end marker ends the entire synchronized
+        // block. A short added voice must wait for the rest of the arrangement.
+        if (currentTick < endTick) emitRests(out, endTick - currentTick, lastDuration)
 
         // End marker
         out.add(CMD_END)
@@ -681,6 +684,10 @@ object NspcSequence {
 
     private fun isFlowControlCommand(command: Int): Boolean =
         command == 0xEF
+
+    private fun sequenceEndTick(song: Song): Int = song.channels.maxOf { channel ->
+        maxOf(channel.totalTicks, channel.commands.maxOfOrNull { it.tick } ?: 0)
+    }
 
     private fun isChannelActive(channel: Channel): Boolean =
         channel.notes.isNotEmpty() || channel.commands.any { !isFlowControlCommand(it.command) }

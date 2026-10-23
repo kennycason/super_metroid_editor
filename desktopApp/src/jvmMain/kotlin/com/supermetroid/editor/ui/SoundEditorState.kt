@@ -12,6 +12,7 @@ import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.awt.FileDialog
 import java.awt.Frame
@@ -54,6 +55,15 @@ internal object PianoRollPlaybackTiming {
 
 class SoundEditorState {
     private val player = SoundPlayer()
+    private val instrumentPlayer = SoundPlayer()
+    private var instrumentPreviewVersion = 0
+    var instrumentPreviewIndex by mutableStateOf<Int?>(null)
+        private set
+    var isInstrumentPreviewLoading by mutableStateOf(false)
+        private set
+    var instrumentPreviewMessage by mutableStateOf("")
+        private set
+    val nativeInstrumentPreviewAvailable: Boolean get() = NativeSpcEmulator.isAvailable()
 
     var selectedTrackId by mutableStateOf(-1)
         private set
@@ -941,6 +951,7 @@ class SoundEditorState {
 
     /** Start piano roll playback with tick tracking. */
     fun startPianoRollPlayback(wav: ShortArray) {
+        stopInstrumentPreview()
         val song = editingSong ?: return
         val preview = normalizePreviewPcm(wav, extraGain = EDIT_TRACK_PREVIEW_GAIN)
         pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
@@ -1064,10 +1075,12 @@ class SoundEditorState {
     ) {
         val idx = updated.index
         if (idx !in pianoRollInstruments.indices) return
+        stopInstrumentPreview()
 
         val old = pianoRollInstruments[idx]
         val normalized = updated.copy(
-            srcn = updated.srcn.coerceIn(0, 39),
+            // Preserve the engine's noise source flag when editing other settings.
+            srcn = if (updated.srcn >= 0x80) updated.srcn.coerceAtMost(255) else updated.srcn.coerceIn(0, 39),
             adsr1 = updated.adsr1.coerceIn(0, 255),
             adsr2 = updated.adsr2.coerceIn(0, 255),
             gain = updated.gain.coerceIn(0, 255),
@@ -1394,6 +1407,62 @@ class SoundEditorState {
         )
     }
 
+    /** Native single-note audition; its private RAM and player never replace the song or waveform. */
+    suspend fun previewInstrument(romParser: RomParser, index: Int, note: NspcSequence.Note) {
+        val track = selectedTrack ?: return
+        val instrument = pianoRollInstruments.firstOrNull { it.index == index } ?: return
+        if (!nativeInstrumentPreviewAvailable) return
+        stopPlayback()
+        playAllEnabled = false
+        val version = ++instrumentPreviewVersion
+        val previewNote = note.copy(instrument = index)
+        val tempo = editingSong?.tempo ?: InstrumentAudition.TEMPO
+        val instruments = pianoRollInstruments.toList()
+        // Keep the currently-open import's samples for audition even if its editable sequence changed.
+        val payloadBlocks = pianoRollNativePayloadCandidate?.let(MusicEditConversion::toTransferBlocks).orEmpty()
+        instrumentPreviewIndex = index
+        isInstrumentPreviewLoading = true
+        instrumentPreviewMessage = "Rendering native preview…"
+        try {
+            val pcm = withContext(Dispatchers.Default) {
+                val ram = buildSpcRamForTrack(romParser, track.songSet)
+                SpcData.applyTransferBlocks(ram, payloadBlocks)
+                PianoRollPreviewLogic.writeInstrumentEntries(ram, instruments)
+                InstrumentAudition.render(InstrumentAudition.build(ram, instrument, previewNote, tempo))
+            }
+            if (version != instrumentPreviewVersion) return
+            instrumentPreviewMessage = "Native preview · ${previewNote.name}"
+            instrumentPlayer.onComplete = {
+                if (version == instrumentPreviewVersion) instrumentPreviewIndex = null
+            }
+            // Fixed monitor gain: envelope and gain changes must stay audible when comparing sounds.
+            instrumentPlayer.play(pcm, NativeSpcEmulator.SAMPLE_RATE)
+            if (!instrumentPlayer.isActive()) {
+                instrumentPreviewIndex = null
+                instrumentPreviewMessage = "Audio output unavailable"
+            }
+        } catch (cancelled: CancellationException) {
+            if (version == instrumentPreviewVersion) stopInstrumentPreview()
+            throw cancelled
+        } catch (error: Exception) {
+            if (version == instrumentPreviewVersion) {
+                instrumentPreviewIndex = null
+                instrumentPreviewMessage = "Could not preview this instrument"
+            }
+            soundEditorLog.warn(error) { "[SPC-INSTRUMENT] Native audition failed for $index" }
+        } finally {
+            if (version == instrumentPreviewVersion) isInstrumentPreviewLoading = false
+        }
+    }
+
+    fun stopInstrumentPreview() {
+        instrumentPreviewVersion++
+        instrumentPlayer.stop()
+        instrumentPreviewIndex = null
+        isInstrumentPreviewLoading = false
+        instrumentPreviewMessage = ""
+    }
+
     private fun relocatedSequencePatchForTrack(
         romParser: RomParser,
         songBlocks: List<SpcData.TransferBlock>,
@@ -1462,6 +1531,7 @@ class SoundEditorState {
     )
 
     fun selectTrack(track: SpcData.TrackInfo) {
+        stopInstrumentPreview()
         val shouldAutoPlay = isPlaying || player.isActive() || autoPlayEnabled
         player.stop()
         isPlaying = false
@@ -1489,6 +1559,7 @@ class SoundEditorState {
     }
 
     suspend fun selectSample(sample: DecodedSample) {
+        stopInstrumentPreview()
         val extended = withContext(Dispatchers.Default) {
             extendWithLoop(sample.pcmData, sample.loopStart, sampleRate, 4.0)
         }
@@ -2019,6 +2090,7 @@ class SoundEditorState {
 
 
     fun playSample(sample: DecodedSample, loop: Boolean = false) {
+        stopInstrumentPreview()
         if (sample.pcmData.isEmpty()) { statusMessage = "Empty sample"; return }
         val extended = extendWithLoop(sample.pcmData, sample.loopStart, sampleRate, 4.0)
         val pcm = normalizePreviewPcm(extended)
@@ -2029,6 +2101,7 @@ class SoundEditorState {
     }
 
     fun playWaveform(pcm: ShortArray) {
+        stopInstrumentPreview()
         if (pcm.isEmpty()) { statusMessage = "Empty waveform"; return }
         player.onComplete = { isPlaying = false; playbackPosition = 0f }
         player.play(pcm, sampleRate)
@@ -2037,6 +2110,7 @@ class SoundEditorState {
     }
 
     fun playTrackPreview(startFraction: Float = 0f) {
+        stopInstrumentPreview()
         val waveform = currentWaveform
         if (waveform == null || waveform.isEmpty()) {
             statusMessage = "No waveform loaded"
@@ -2056,6 +2130,7 @@ class SoundEditorState {
     }
 
     fun stopPlayback() {
+        stopInstrumentPreview()
         player.stop()
         isPlaying = false
         playbackPosition = 0f

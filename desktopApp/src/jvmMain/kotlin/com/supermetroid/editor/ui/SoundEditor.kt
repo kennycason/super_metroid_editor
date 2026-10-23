@@ -508,6 +508,19 @@ fun SoundEditorCanvas(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
                 instrumentInfos = state.pianoRollInstruments,
+                instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
+                instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
+                nativeInstrumentPreviewAvailable = state.nativeInstrumentPreviewAvailable,
+                previewInstrument = state.instrumentPreviewIndex,
+                instrumentPreviewBusy = state.isInstrumentPreviewLoading,
+                instrumentPreviewMessage = state.instrumentPreviewMessage,
+                onPreviewInstrument = { index, note ->
+                    if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note) }
+                },
+                onStopInstrumentPreview = state::stopInstrumentPreview,
+                onRenameInstrument = { index, name ->
+                    editorState.renameMusicInstrument(state.currentSongSet, index, name)
+                },
                 canUndo = state.pianoRollUndoDepth > 0,
                 canRedo = state.pianoRollRedoDepth > 0,
                 exportBudgetBytes = state.pianoRollExportBudgetBytes,

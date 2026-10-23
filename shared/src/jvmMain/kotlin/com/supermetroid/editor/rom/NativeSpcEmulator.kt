@@ -173,8 +173,11 @@ class NativeSpcEmulator : AutoCloseable {
     fun loadFromRam(
         baseRam: ByteArray,
         songBlocks: List<SpcData.TransferBlock>,
-        playIndex: Int
+        playIndex: Int,
+        /** Whole-song previews historically skip one second; isolated notes must retain their attack. */
+        playbackWarmupSeconds: Int = 1
     ) {
+        require(playbackWarmupSeconds in 0..1)
         val library = lib ?: throw IllegalStateException("libspc not available")
         close()
 
@@ -204,8 +207,9 @@ class NativeSpcEmulator : AutoCloseable {
         // Send play command: track ID to port 0
         library.spc_write_port(spcPtr, 0, 0, playIndex)
 
-        // Warmup: let the command take effect (1 second)
-        library.spc_skip(spcPtr, SAMPLE_RATE * 2)
+        if (playbackWarmupSeconds > 0) {
+            library.spc_skip(spcPtr, SAMPLE_RATE * 2 * playbackWarmupSeconds)
+        }
 
         // Create output filter
         val filterPtr = library.spc_filter_new()

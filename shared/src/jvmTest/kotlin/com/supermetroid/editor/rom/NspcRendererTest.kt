@@ -42,6 +42,8 @@ class NspcRendererTest {
         assertEquals(0xE4, entry.adsr2)
         assertEquals(0x7F, entry.gain)
         assertEquals(0x1234, entry.pitchAdj)
+        assertEquals(0x3412, entry.nativePitch)
+        assertEquals(0x3412 / 256.0, entry.tuningMultiplier)
         assertEquals(sampleStart, entry.sampleStartAddr)
         assertEquals(sampleLoop, entry.sampleLoopAddr)
         assertEquals(18, entry.brrByteLength)
@@ -69,7 +71,7 @@ class NspcRendererTest {
     fun `renderToWav can preserve raw overlay amplitude without normalization`() {
         val ram = ByteArray(65536)
         val samplePcm = ShortArray(32) { i -> if (i % 2 == 0) 4000 else -4000 }
-        installTestInstrument(ram, samplePcm = samplePcm, pitchAdj = 0x1000)
+        installTestInstrument(ram, samplePcm = samplePcm, pitchAdj = 0x0001)
 
         val events = listOf(
             NspcRenderer.NoteEvent(
@@ -91,15 +93,16 @@ class NspcRendererTest {
     }
 
     @Test
-    fun `instrument pitch word is a multiplier not an additive offset`() {
+    fun `native big endian 8-8 instrument tuning doubles the sample playback rate`() {
         val unitRam = ByteArray(65536)
         val tunedRam = ByteArray(65536)
         val samplePcm = ShortArray(512) { i ->
             val phase = i % 64
             ((if (phase < 32) phase else 64 - phase) * 180).toShort()
         }
-        installTestInstrument(unitRam, samplePcm = samplePcm, pitchAdj = 0x1000)
-        installTestInstrument(tunedRam, samplePcm = samplePcm, pitchAdj = 0x2003)
+        // Stored bytes 01 00 = 1.0, 02 00 = 2.0. pitchAdj preserves their legacy little-endian view.
+        installTestInstrument(unitRam, samplePcm = samplePcm, pitchAdj = 0x0001)
+        installTestInstrument(tunedRam, samplePcm = samplePcm, pitchAdj = 0x0002)
 
         val event = listOf(
             NspcRenderer.NoteEvent(
@@ -118,8 +121,16 @@ class NspcRendererTest {
         assertTrue(lastAudibleIndex(unit) > lastAudibleIndex(tuned))
         assertTrue(
             lastAudibleIndex(tuned) > lastAudibleIndex(unit) / 4,
-            "0x2003 should be near 2x tuning, not an additive/clamped 16x jump"
+            "Doubling native tuning should halve the sample's playback time"
         )
+    }
+
+    @Test
+    fun `vanilla Lower Norfair tuning is interpreted without changing stored bytes`() {
+        val entry = NspcRenderer.InstrumentEntry(30, 0xFF, 0xF2, 0xB8, pitchAdj = 0xB004)
+        assertEquals(0x04B0, entry.nativePitch)
+        assertEquals(4.6875, entry.tuningMultiplier)
+        assertEquals(0xB004, entry.pitchAdj)
     }
 
     private fun installTestInstrument(

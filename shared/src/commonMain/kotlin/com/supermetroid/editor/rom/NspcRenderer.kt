@@ -12,7 +12,7 @@ import kotlin.math.roundToInt
  *
  * Key SPC RAM addresses (from Kejardon's SM SPC RAM map):
  *   $581E+: Song start addresses (conductor entry points per play index)
- *   $6C00+: Instrument table (6 bytes each: SRCN, ADSR1, ADSR2, Gain, pitchAdj lo/hi)
+ *   $6C00+: Instrument table (6 bytes each: SRCN, ADSR1, ADSR2, Gain, tuning high/low)
  *   $6D00+: Sample directory (4 bytes each: startAddr, loopAddr)
  *   $1E66+: Pitch table (13 entries for one octave of semitones)
  */
@@ -46,6 +46,7 @@ object NspcRenderer {
         val adsr1: Int,
         val adsr2: Int,
         val gain: Int,
+        /** Raw little-endian view of the two stored bytes; retained for project/bundle compatibility. */
         val pitchAdj: Int,
         val index: Int = -1,
         val tableAddr: Int = 0,
@@ -53,7 +54,11 @@ object NspcRenderer {
         val sampleLoopAddr: Int = -1,
         val brrByteLength: Int = -1,
         val brrLoops: Boolean = false
-    )
+    ) {
+        /** The SPC engine reads the instrument's tuning bytes high byte first (8.8 fixed point). */
+        val nativePitch: Int get() = ((pitchAdj and 0xFF) shl 8) or ((pitchAdj ushr 8) and 0xFF)
+        val tuningMultiplier: Double get() = nativePitch / 256.0
+    }
 
     private fun readWord(ram: ByteArray, addr: Int): Int {
         if (addr < 0 || addr + 1 >= ram.size) return 0
@@ -439,18 +444,11 @@ object NspcRenderer {
             val octave = noteIdx / 12
             val semitone = noteIdx % 12
             val basePitch = pitchTable[semitone]
-            val shift = octave - 3
-            val pitch = if (shift >= 0) basePitch shl shift else basePitch shr (-shift)
-            val pitchRatio = pitch.toDouble() / 0x1000
-
-            // SM stores instrument tuning as a fixed-point multiplier. 0x1000 is
-            // unity; common values like 0x2003 are roughly 2x, not an additive offset.
-            val instrumentPitchMultiplier = if (instr.pitchAdj != 0) {
-                instr.pitchAdj.toDouble() / 0x1000
-            } else {
-                1.0
-            }
-            val finalRatio = (pitchRatio * instrumentPitchMultiplier).coerceIn(0.01, 16.0)
+            // Match the engine: octave-6 pitch table, then the big-endian 8.8
+            // instrument multiplier. The DSP accepts the low 14 pitch bits.
+            val pitch = (basePitch * 2) shr (6 - octave)
+            val dspPitch = ((pitch * instr.nativePitch) ushr 8) and 0x3FFF
+            val finalRatio = dspPitch / 4096.0
 
             // Determine the duration in samples
             val durSamples = (event.tickDuration * samplesPerTick).coerceAtLeast(1)

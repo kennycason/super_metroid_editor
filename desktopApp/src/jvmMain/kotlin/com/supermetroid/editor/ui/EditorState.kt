@@ -2714,6 +2714,28 @@ class EditorState(
     fun getMusicEdit(songSet: Int, playIndex: Int): MusicTrackEdit? =
         project.musicEdits[musicEditKey(songSet, playIndex)]
 
+    var musicInstrumentNameVersion by mutableStateOf(0)
+        private set
+
+    fun musicInstrumentNames(songSet: Int): Map<Int, String> {
+        // Read the version so Compose observes metadata updates without re-rendering song audio.
+        musicInstrumentNameVersion
+        return (0 until 42).mapNotNull { index ->
+            project.musicInstrumentNames[MusicTrackEdit.key(songSet, index)]?.let { index to it }
+        }.toMap()
+    }
+
+    fun renameMusicInstrument(songSet: Int, index: Int, name: String) {
+        require(songSet >= 0 && songSet % 3 == 0 && index in 0 until 42)
+        val key = MusicTrackEdit.key(songSet, index)
+        val normalized = name.trim().take(64).takeIf { it.isNotEmpty() }
+        if (project.musicInstrumentNames[key] == normalized) return
+        if (normalized == null) project.musicInstrumentNames.remove(key)
+        else project.musicInstrumentNames[key] = normalized
+        musicInstrumentNameVersion++
+        dirty = true
+    }
+
     fun setMusicEdit(key: String, edit: MusicTrackEdit) {
         project.musicEdits[key] = edit
         dirty = true
