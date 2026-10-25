@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.verticalScroll
@@ -53,7 +55,11 @@ import com.supermetroid.editor.rom.NspcSequence
 
 /** Describes what we know from the current bank, without inventing a timbre from an instrument ID. */
 internal object InstrumentDescriptions {
+    fun empty(entry: InstrumentEntry): Boolean =
+        entry.srcn == 0 && entry.adsr1 == 0 && entry.adsr2 == 0 && entry.gain == 0 && entry.pitchAdj == 0
+
     fun title(entry: InstrumentEntry, names: Map<Int, String>): String = names[entry.index] ?: when {
+        empty(entry) -> "Empty slot"
         entry.srcn >= 0x80 -> "Noise"
         entry.sampleStartAddr < 0 || entry.brrByteLength < 9 -> "Unavailable sample"
         entry.brrLoops -> "Looped sound"
@@ -72,7 +78,7 @@ internal object InstrumentDescriptions {
     }
 
     fun playable(entry: InstrumentEntry): Boolean =
-        entry.srcn >= 0x80 || (entry.sampleStartAddr >= 0 && entry.brrByteLength >= 9)
+        !empty(entry) && (entry.srcn >= 0x80 || (entry.sampleStartAddr >= 0 && entry.brrByteLength >= 9))
 
     fun matches(entry: InstrumentEntry, names: Map<Int, String>, query: String): Boolean {
         val id = entry.index.toString(16).uppercase().padStart(2, '0')
@@ -103,6 +109,7 @@ internal fun NoteInstrumentSelector(
     sharedInstrumentEdited: Boolean = false,
     onResetSharedInstrument: () -> Unit = {},
     instrumentEditingEnabled: Boolean = true,
+    sourceLabel: String = "ROM bank",
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
@@ -112,6 +119,7 @@ internal fun NoteInstrumentSelector(
     var name by remember(bankLabel, note.instrument, names) { mutableStateOf(names[note.instrument].orEmpty()) }
 
     Surface(
+        modifier = Modifier.testTag("note-sound-selector"),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(8.dp),
@@ -123,26 +131,26 @@ internal fun NoteInstrumentSelector(
                 Column(Modifier.weight(1f)) {
                     Text(info?.let { InstrumentDescriptions.title(it, names) } ?: "Unknown instrument",
                         fontSize = fs.heading, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(info?.let { "${InstrumentDescriptions.detail(it)} · #${it.index}" } ?: "#${note.instrument}",
+                    Text(info?.let(InstrumentDescriptions::detail) ?: "Unknown sound",
                         fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text("Instrument", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Sound #${note.instrument}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(onClick = { onPreview(note.instrument, false) },
+                OutlinedButton(shape = SoundControlShape, onClick = { onPreview(note.instrument, false) },
                     enabled = nativePreviewAvailable && info?.let(InstrumentDescriptions::playable) == true,
                     modifier = Modifier.testTag("instrument-preview-current")) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp))
-                    Text("Preview ${note.name}", fontSize = fs.body)
+                    Text("Play ${note.name}", fontSize = fs.body)
                 }
-                Button(onClick = { choosing = !choosing }, enabled = instruments.isNotEmpty(),
+                Button(shape = SoundControlShape, onClick = { choosing = !choosing }, enabled = instruments.isNotEmpty(),
                     modifier = Modifier.testTag("instrument-choose")) {
-                    Text(if (choosing) "Close browser" else "Choose…", fontSize = fs.body)
+                    Text(if (choosing) "Close sounds" else "Choose sound", fontSize = fs.body)
                 }
-                OutlinedButton(onClick = { renaming = !renaming }, enabled = info != null) {
-                    Text("Name…", fontSize = fs.body)
+                OutlinedButton(shape = SoundControlShape, onClick = { renaming = !renaming }, enabled = info != null) {
+                    Text("Rename", fontSize = fs.body)
                 }
-                OutlinedButton(onClick = { advanced = !advanced }, enabled = instrumentEditingEnabled, modifier = Modifier.testTag("instrument-advanced")) {
+                OutlinedButton(shape = SoundControlShape, onClick = { advanced = !advanced }, enabled = instrumentEditingEnabled, modifier = Modifier.testTag("instrument-advanced")) {
                     Text(if (advanced) "Hide advanced" else "Advanced", fontSize = fs.body)
                 }
             }
@@ -151,22 +159,32 @@ internal fun NoteInstrumentSelector(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(name, { name = it.take(64) }, label = { Text("Instrument name") }, singleLine = true,
                         modifier = Modifier.weight(1f).testTag("instrument-name"))
-                    Button(onClick = { onRename(note.instrument, name); renaming = false }) { Text("Save", fontSize = fs.body) }
+                    Button(shape = SoundControlShape, onClick = { onRename(note.instrument, name); renaming = false }) { Text("Save", fontSize = fs.body) }
                 }
             }
-            if (previewInstrument != null || previewMessage.isNotEmpty() || !nativePreviewAvailable) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (previewBusy) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Text(if (!nativePreviewAvailable) "Native preview unavailable" else previewMessage,
-                        fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    if (previewInstrument != null) OutlinedButton(onClick = onStopPreview,
-                        modifier = Modifier.testTag("instrument-preview-stop")) { Text("Stop", fontSize = fs.body) }
+            // A permanent status slot and Stop button keep a bottom-anchored inspector
+            // stationary through preparing/playing/completed/error transitions.
+            Row(Modifier.fillMaxWidth().height(36.dp).testTag("instrument-preview-status"),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                    if (previewBusy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                }
+                Text(when {
+                    !nativePreviewAvailable -> "Native preview unavailable"
+                    previewMessage.isNotEmpty() -> previewMessage
+                    else -> "Ready to preview"
+                }, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                OutlinedButton(shape = SoundControlShape, onClick = onStopPreview, enabled = previewInstrument != null,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.width(64.dp).height(32.dp).testTag("instrument-preview-stop")) {
+                    Text("Stop", fontSize = fs.body)
                 }
             }
             if (choosing) {
                 InstrumentPicker(instruments, names, usedIds, note.instrument, bankLabel, note.name,
                     nativePreviewAvailable, previewInstrument, previewBusy, onPreview,
-                    onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false })
+                    onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false }, sourceLabel = sourceLabel)
             }
             if (advanced && instrumentEditingEnabled) advancedContent()
         }
@@ -182,7 +200,7 @@ internal fun SharedInstrumentScope(tracks: List<String>, edited: Boolean, onRese
         Text("Choose: this note · Edit: shared bank", fontSize = fs.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
         Box {
-            TextButton(onClick = { expanded = true }, modifier = Modifier.testTag("instrument-bank-scope")) {
+            TextButton(shape = SoundControlShape, onClick = { expanded = true }, modifier = Modifier.testTag("instrument-bank-scope")) {
                 Text("${tracks.size} ${if (tracks.size == 1) "track" else "tracks"} ▾", fontSize = fs.detail)
             }
             DropdownMenu(expanded, { expanded = false }, modifier = Modifier.testTag("instrument-bank-tracks")) {
@@ -194,7 +212,7 @@ internal fun SharedInstrumentScope(tracks: List<String>, edited: Boolean, onRese
                 }
             }
         }
-        if (edited) TextButton(onClick = onReset, enabled = enabled, modifier = Modifier.testTag("instrument-bank-reset")) {
+        if (edited) TextButton(shape = SoundControlShape, onClick = onReset, enabled = enabled, modifier = Modifier.testTag("instrument-bank-reset")) {
             Text("Reset sound", fontSize = fs.detail)
         }
         if (commonSlot) Text("Common sound · edits can block ROM export", fontSize = fs.detail,
@@ -217,28 +235,35 @@ internal fun InstrumentPicker(
     onPreview: (Int, Boolean) -> Unit,
     onApply: (Int) -> Unit,
     onCancel: () -> Unit,
+    sourceLabel: String = "ROM bank",
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     var query by remember { mutableStateOf("") }
     var usedOnly by remember { mutableStateOf(false) }
     var referencePitch by remember { mutableStateOf(false) }
     var candidate by remember(currentId) { mutableStateOf(currentId) }
-    val visible = instruments.filter { (!usedOnly || it.index in usedIds) && InstrumentDescriptions.matches(it, names, query) }
+    val available = instruments.filter(InstrumentDescriptions::playable)
+    val visible = available.filter { (!usedOnly || it.index in usedIds) && InstrumentDescriptions.matches(it, names, query) }
+        .sortedWith(compareByDescending<InstrumentEntry> { it.index == currentId }.thenByDescending { it.index in usedIds }.thenBy { it.index })
     val listState = rememberScrollState()
     Column(Modifier.fillMaxWidth().testTag("instrument-browser"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(bankLabel, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("${visible.size} of ${available.size} sounds · ${available.count { it.index in usedIds }} used · $sourceLabel",
+            fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("instrument-bank-count"))
         OutlinedTextField(query, { query = it }, singleLine = true,
             placeholder = { Text("Search names, samples, or IDs", fontSize = fs.body) },
             modifier = Modifier.fillMaxWidth().testTag("instrument-search"))
+        Text("Preview pitch", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(usedOnly, { usedOnly = !usedOnly }, label = { Text("Used in track", fontSize = fs.detail) },
                 modifier = Modifier.testTag("instrument-used-filter"))
-            FilterChip(!referencePitch, { referencePitch = false }, label = { Text(noteName, fontSize = fs.detail) })
-            FilterChip(referencePitch, { referencePitch = true }, label = { Text("C4 reference", fontSize = fs.detail) },
+            FilterChip(!referencePitch, { referencePitch = false }, label = { Text("This note ($noteName)", fontSize = fs.detail) },
+                modifier = Modifier.testTag("instrument-note-pitch"))
+            FilterChip(referencePitch, { referencePitch = true }, label = { Text("Middle C (C4)", fontSize = fs.detail) },
                 modifier = Modifier.testTag("instrument-reference-pitch"))
         }
-        Box(Modifier.fillMaxWidth().height(176.dp)) {
+        Box(Modifier.fillMaxWidth().height(200.dp)) {
             if (visible.isEmpty()) Text("No matching instruments", fontSize = fs.body, modifier = Modifier.align(Alignment.Center))
             Column(modifier = Modifier.fillMaxWidth().padding(end = 12.dp).verticalScroll(listState)) {
                 for (entry in visible) key(entry.index) {
@@ -256,9 +281,9 @@ internal fun InstrumentPicker(
                             Text("#${entry.index}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             IconButton(onClick = { onPreview(entry.index, referencePitch) },
                                 enabled = nativePreviewAvailable && InstrumentDescriptions.playable(entry),
-                                modifier = Modifier.testTag("instrument-preview-${entry.index}")) {
-                                if (previewBusy && previewInstrument == entry.index) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                else Icon(Icons.Default.PlayArrow, "Preview ${InstrumentDescriptions.title(entry, names)}")
+                                modifier = Modifier.size(32.dp).testTag("instrument-preview-${entry.index}")) {
+                                if (previewBusy && previewInstrument == entry.index) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Default.PlayArrow, "Preview ${InstrumentDescriptions.title(entry, names)}", Modifier.size(18.dp))
                             }
                         }
                     }
@@ -267,9 +292,9 @@ internal fun InstrumentPicker(
             VerticalScrollbar(rememberScrollbarAdapter(listState), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { onApply(candidate) }, enabled = visible.any { it.index == candidate && InstrumentDescriptions.playable(it) },
-                modifier = Modifier.testTag("instrument-apply")) { Text("Use instrument", fontSize = fs.body) }
-            OutlinedButton(onClick = onCancel, modifier = Modifier.testTag("instrument-cancel")) { Text("Cancel", fontSize = fs.body) }
+            Button(shape = SoundControlShape, onClick = { onApply(candidate) }, enabled = visible.any { it.index == candidate && InstrumentDescriptions.playable(it) },
+                modifier = Modifier.testTag("instrument-apply")) { Text("Use sound", fontSize = fs.body) }
+            OutlinedButton(shape = SoundControlShape, onClick = onCancel, modifier = Modifier.testTag("instrument-cancel")) { Text("Cancel", fontSize = fs.body) }
             Text("This note only", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

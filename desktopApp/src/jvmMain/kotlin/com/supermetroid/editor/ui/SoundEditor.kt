@@ -515,6 +515,9 @@ fun SoundEditorCanvas(
                 instrumentInfos = state.pianoRollInstruments,
                 instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
                 instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
+                instrumentSourceLabel = if (editorState.project.musicEdits.values.any {
+                    it.songSet == state.currentSongSet && it.nativePayload != null
+                }) "ROM + import" else "ROM bank",
                 sharedInstrumentTracks = state.instrumentBankTracks,
                 sharedInstrumentEdits = editorState.musicEditVersion.let {
                     editorState.project.musicInstrumentBanks[MusicInstrumentBanks.key(state.currentSongSet)]?.instruments?.keys.orEmpty()
@@ -668,7 +671,7 @@ private fun PendingTrackImportPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
+                Button(shape = SoundControlShape,
                     onClick = onApply,
                     enabled = pending.canApply,
                     contentPadding = PaddingValues(horizontal = 10.dp),
@@ -677,7 +680,7 @@ private fun PendingTrackImportPanel(
                     Text("Apply", fontSize = 10.sp)
                 }
                 pending.fittedImport?.let {
-                    Button(
+                    Button(shape = SoundControlShape,
                         onClick = onApplyFitted,
                         contentPadding = PaddingValues(horizontal = 10.dp),
                         modifier = Modifier.height(28.dp)
@@ -688,7 +691,7 @@ private fun PendingTrackImportPanel(
                         )
                     }
                 }
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = onCancel,
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier.height(28.dp)
@@ -726,7 +729,7 @@ private fun SoundEditorActiveContent(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Button(
+            Button(shape = SoundControlShape,
                 onClick = {
                     scope.launch {
                         if (sample != null) state.playSample(sample, loop = state.loopEnabled)
@@ -766,7 +769,7 @@ private fun SoundEditorActiveContent(
                 }
             }
 
-            OutlinedButton(
+            OutlinedButton(shape = SoundControlShape,
                 onClick = { state.stopPlayback(); state.playAllEnabled = false },
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier.height(28.dp)
@@ -797,7 +800,7 @@ private fun SoundEditorActiveContent(
 
             // Edit Track — visible when a track is selected
             if (track != null && romParser != null) {
-                Button(
+                Button(shape = SoundControlShape,
                     onClick = { state.openPianoRoll(romParser, editorState) },
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier.height(28.dp)
@@ -808,7 +811,7 @@ private fun SoundEditorActiveContent(
                 }
             }
 
-            OutlinedButton(
+            OutlinedButton(shape = SoundControlShape,
                 onClick = { scope.launch { state.exportCurrentWav() } },
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier.height(28.dp),
@@ -820,7 +823,7 @@ private fun SoundEditorActiveContent(
             }
 
             if (track != null && romParser != null) {
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = { state.exportSelectedTrackMidi(romParser, editorState) },
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier.height(28.dp),
@@ -831,7 +834,7 @@ private fun SoundEditorActiveContent(
                     Text("Export MIDI", fontSize = 10.sp)
                 }
 
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = { state.exportSelectedTrackNative(romParser, editorState) },
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier.height(28.dp),
@@ -845,7 +848,7 @@ private fun SoundEditorActiveContent(
 
             // Replace WAV — visible when a sample is selected
             if (sample != null && romParser != null) {
-                Button(
+                Button(shape = SoundControlShape,
                     onClick = {
                         state.replaceSampleInRom(romParser, editorState, sample.dirEntry.index)
                     },
@@ -862,7 +865,7 @@ private fun SoundEditorActiveContent(
 
                 // Reset — only if this sample has been replaced
                 if (state.isSampleReplaced(editorState, sample.dirEntry.index)) {
-                    OutlinedButton(
+                    OutlinedButton(shape = SoundControlShape,
                         onClick = {
                             state.resetSampleReplacement(editorState, sample.dirEntry.index)
                         },

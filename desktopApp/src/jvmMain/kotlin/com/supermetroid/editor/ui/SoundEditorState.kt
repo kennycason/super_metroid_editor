@@ -55,9 +55,8 @@ internal object PianoRollPlaybackTiming {
     }
 }
 
-class SoundEditorState {
+class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()) {
     private val player = SoundPlayer()
-    private val instrumentPlayer = SoundPlayer()
     private var instrumentPreviewVersion = 0
     var instrumentPreviewIndex by mutableStateOf<Int?>(null)
         private set
@@ -1562,7 +1561,7 @@ class SoundEditorState {
         }
         instrumentPreviewIndex = index
         isInstrumentPreviewLoading = true
-        instrumentPreviewMessage = "Rendering native preview…"
+        instrumentPreviewMessage = "Preparing preview…"
         try {
             val pcm = withContext(Dispatchers.Default) {
                 val ram = if (bankProject != null) MusicBankResolver.sourceRam(romParser, bankProject, track.songSet) else payload?.let {
@@ -1573,15 +1572,24 @@ class SoundEditorState {
                 InstrumentAudition.render(InstrumentAudition.build(ram, instrument, previewNote, tempo))
             }
             if (version != instrumentPreviewVersion) return
-            instrumentPreviewMessage = "Native preview · ${previewNote.name}"
+            instrumentPreviewMessage = "Playing · ${previewNote.name}"
             instrumentPlayer.onComplete = {
-                if (version == instrumentPreviewVersion) instrumentPreviewIndex = null
+                if (version == instrumentPreviewVersion) {
+                    instrumentPreviewIndex = null
+                    instrumentPreviewMessage = "Preview finished · ${previewNote.name}"
+                }
             }
             // Fixed monitor gain: envelope and gain changes must stay audible when comparing sounds.
-            instrumentPlayer.play(pcm, NativeSpcEmulator.SAMPLE_RATE)
-            if (!instrumentPlayer.isActive()) {
-                instrumentPreviewIndex = null
-                instrumentPreviewMessage = "Audio output unavailable"
+            when (instrumentPlayer.play(pcm, NativeSpcEmulator.SAMPLE_RATE)) {
+                SoundPlayer.PlaybackStart.STARTED -> Unit
+                SoundPlayer.PlaybackStart.EMPTY -> {
+                    instrumentPreviewIndex = null
+                    instrumentPreviewMessage = "No audio samples to play"
+                }
+                SoundPlayer.PlaybackStart.OUTPUT_UNAVAILABLE -> {
+                    instrumentPreviewIndex = null
+                    instrumentPreviewMessage = "Could not open audio output"
+                }
             }
         } catch (cancelled: CancellationException) {
             if (version == instrumentPreviewVersion) stopInstrumentPreview()

@@ -131,6 +131,16 @@ Fourth chunk — bank-transition safety (2026-10-24):
 - Sound has a compact, debounced background status with opt-in grouped details and human-readable bank names. Mutable sound containers are detached before background validation. Checking/blocked/passed states are distinct, and the passed state discloses derived resets and the limits of the check. The common-sound card warns that edits may block ROM export.
 - Regression fixtures previously put native sequences at `$7000`, which overlaps common BRR, and overwrote common slot/SRCN 0. ROM-eligible persistence fixtures now use a sequence at `$6500`, instrument/SRCN 24, DIR `$6D60`, and a custom loop at `$6000`. Dedicated unsafe fixtures retain coverage of common/engine corruption rather than treating isolated playback as export safety.
 
+Fifth chunk — preview feedback and inspector polish (2026-10-25):
+
+- Fix the misleading “Audio output unavailable” path: opening/starting a Java Sound clip now returns an explicit accepted/empty/output-failed result. An asynchronously updated `isRunning` flag is not an output-open failure. Real device exceptions still report failure and close any partially opened clip. The native preview state reports preparing, playing, and completion without changing the arrangement/history.
+- Reserve a permanent 36 dp status row, a spinner slot, and a 32 dp Stop button. The browser's row play icon and loading indicator have equal bounds. Exact geometry tests cover idle/preparing/playing/completed/error states so the bottom-anchored overlay does not jump during previews.
+- Use shared 6 dp corners for sound-editor buttons, matching the main navigation. Replace “Name…”/“Choose…” with **Rename**/**Choose sound** and use **Use sound** for note-local application.
+- Show filtered/available/used counts and **ROM bank**/**ROM + import** source labels. The picker draws from the resolved current music bank, including sibling native sources, not a General MIDI library or the separate sound-effect list. Hide zero-filled table padding and unavailable samples; put the current and used sounds first. The few visible rows are a scrollable viewport, not the whole bank. Do not invent timbre names: generic one-shot/loop/noise descriptors and user-provided names remain in use.
+- Label browser preview pitches **This note (F1)** and **Middle C (C4)**. These are musical pitches, not instrument IDs. Keep the note's musical pitch visible, right-align Delete/Close, and move raw timing/velocity/gate fields into **Note details**. Pitch input accepts musical note names, not N-SPC bytes; full labels and one short Gate hint replace Tick/Len/Vel/Q abbreviations. Preserve existing clamping, undo labels, and mutation boundaries.
+- Tie note detail/Advanced fonts to the editor setting, use theme colors for both light/dark modes, and allow the full inspector to scroll on shorter windows. Advanced labels **Sample ID** as a BRR recording or noise source and briefly defines sound = sample + envelope + tuning. Sample IDs and envelope bytes are intentionally still technical here: curated identities, a named sample picker, and compact native envelope/gain/tuning controls remain future work.
+- No save-format migration, project-file cleanup, fallback sound library, or expanded ROM-export permissions were added. The bank-ownership and transition-safety rules above remain unchanged.
+
 Continue in this order:
 
 1. Add compact native envelope controls/graph, gain modes, and musical tuning offsets using the shared owner, scope UI, and export preflight. Keep common-sound export restrictions explicit. SNES key-off release is fixed; avoid presenting a conventional synth ADSR or inactive gain controls. Keep raw values under Advanced. Safe duplication still requires proving a slot is unused by music and effects.
@@ -143,6 +153,7 @@ Offline verification (dependencies/native library are already built in this chec
 ```sh
 SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --offline \
   :desktopApp:jvmTest --tests '*InstrumentAuditionTest' --tests '*InstrumentSelectorTest' \
+  --tests '*SoundPlayerTest' --tests '*NotePropertiesPanelTest' \
   --tests '*MusicInstrumentBankTest' --tests '*MusicBankTransitionsTest' --tests '*MusicBankSafetyStatusTest' \
   --tests '*ImportedMusicPersistenceTest' --tests '*MusicEditConversionTest' \
   --tests '*MusicTransferChainBudgetTest' --tests '*MusicTrackInterchangeTest' \
@@ -152,7 +163,7 @@ SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --off
   --tests '*SpcDataTest' --tests '*NativeSpcEmulatorTest' --console=plain
 ```
 
-Set `SMEDIT_CAPTURE_INSTRUMENT_UI=true` to capture browser layouts for all font sizes under `desktopApp/build/test-output/`. The `InstrumentAuditionTest` fixture uses the real SPC engine with a synthetic loop to compare native tuning, note attacks, gain changes, and arrangement/audition behavior. Missing ROM fixtures must be reported as skipped, not treated as audio verification.
+Set `SMEDIT_CAPTURE_INSTRUMENT_UI=true` to capture browser layouts and note inspectors for all font sizes under `desktopApp/build/test-output/`. Note-inspector captures include both themes and a short-window case. The `InstrumentAuditionTest` fixture uses the real SPC engine with a synthetic loop to compare native tuning, note attacks, gain changes, and arrangement/audition behavior. Missing ROM fixtures must be reported as skipped, not treated as audio verification.
 
 `ImportedMusicPersistenceTest` covers a custom loop in lower sequence RAM, real project save/reopen, matching preview/ROM RAM, raw N-SPC round trips, instrument-only sequence preservation, native mute/attack behavior, sparse instrument tables, undo/redo across imports, and safe allocation failure.
 
@@ -160,10 +171,14 @@ Set `SMEDIT_CAPTURE_INSTRUMENT_UI=true` to capture browser layouts for all font 
 
 `MusicBankTransitionsTest` covers common leakage, incoming sample dependencies from untouched banks, common DIR/BRR/engine changes, safe custom resources, concrete exported resets for all destination banks, reentry between differently authored banks, detached analysis, and allocation failure without ROM mutation. `MusicBankSafetyStatusTest` covers compact opt-in details at every font size, checking/blocked/passed states, reset disclosure, and explicit limits of the check. Captures are `music-bank-safety-{FONT}.png` under `desktopApp/build/test-output/`.
 
+`SoundPlayerTest` uses an injected asynchronous Java Sound fixture (no actual audio device) to verify accepted starts, explicit failures, empty audio, and stale completion isolation. `InstrumentAuditionTest` also renders a real native note into that deferred output to check end-to-end preview messages without mutating the song. `NotePropertiesPanelTest` checks right-aligned actions, font/theme support, musical pitch validation, undo/mutation behavior, exact preview-state geometry, and scrolling at 480 px height. `InstrumentSelectorTest` additionally checks source/count/filter labels, current/used ordering, exclusion of empty/unavailable entries, clearer pitch choices, and exact status-transition bounds at every font size. These tests do not claim a live trace of the user's hardware output.
+
 The original shared-ownership checkpoint passed 143 sound-focused tests offline, with 3 optional real-world IT fixtures skipped. The subsequent forward-only cleanup removes the legacy-only tests along with their implementation; current verification is recorded below.
 
 Forward-only cleanup validation on 2026-10-24: 142 sound-focused tests passed offline; 3 optional real-world IT fixtures were skipped. The tests exercise native import/preview/export consistency, required sequence baselines, bank-only persistence, note-only undo/redo without bank records, shared reset/save/reopen, and UI layout at all font sizes. No saved project files needed sound-data removal.
 
 Bank-transition checkpoint validation on 2026-10-24: 154 sound-focused tests passed offline; 3 optional real-world IT fixtures were skipped. UI status captures were generated for all font sizes and the largest inspected. Transition assertions use serialized exported ROM chains applied to retained RAM, including actual vanilla bank coverage and a spacious in-memory ROM fixture for multi-bank reentry. A separate vanilla-ROM fixture verifies allocation failure is atomic. No CPU loader hook, save-format migration, project-data cleanup, or automatic ROM expansion was added.
+
+Preview/inspector polish validation on 2026-10-25: 165 sound-focused tests passed offline; 3 optional real-world IT fixtures were skipped. Browser and note-inspector captures were generated for every editor font size, with both inspector themes and a 480 px window-height fixture. The largest browser, light/dark inspectors, and scrolled short-window inspector were visually inspected. Delayed output startup is a deterministic injected-Clip regression, not a live hardware trace. The user's running editor and project files were left untouched.
 
 Wider validation: the complete shared JVM suite ran 904 tests (900 passed, 2 skipped, 2 failed). Both failures are existing `EnemySpriteRenderTest` assertions expecting Elevator tile data to be non-null (lines 50 and 71). Reproduced the same two failures with the same verified vanilla ROM on unchanged commit `e7f69af` in a temporary detached checkout; no enemy/rendering changes were made for this sound checkpoint.

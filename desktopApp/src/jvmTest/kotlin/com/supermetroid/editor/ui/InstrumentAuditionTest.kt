@@ -17,6 +17,32 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class InstrumentAuditionTest {
+    @Test fun `native preview reports playing until the accepted output actually completes`() = runBlocking {
+        assumeTrue(NativeSpcEmulator.isAvailable(), "Native SPC library unavailable")
+        val parser = TestRomHelper.requireRomParser()
+        val device = DeferredSoundClip()
+        val state = SoundEditorState(SoundPlayer { device.clip })
+        val editor = EditorState()
+        state.selectTrack(SpcData.KNOWN_TRACKS.first { it.songSet == 0x18 && it.playIndex == 5 })
+        state.openPianoRoll(parser, editor)
+        assertTrue(state.pianoRollInstruments.count(InstrumentDescriptions::playable) > 3,
+            "The loaded ROM bank has more sounds than the few rows visible at once")
+        val song = PianoRollPreviewLogic.deepCopySong(state.editingSong!!)
+        val note = song.channels.first { it.notes.isNotEmpty() }.notes.first()
+        state.previewInstrument(parser, note.instrument, note)
+        assertTrue(device.started)
+        assertFalse(device.running)
+        assertEquals(note.instrument, state.instrumentPreviewIndex)
+        assertEquals("Playing · ${note.name}", state.instrumentPreviewMessage)
+        device.complete()
+        assertEquals(null, state.instrumentPreviewIndex)
+        assertEquals("Preview finished · ${note.name}", state.instrumentPreviewMessage)
+        assertEquals(song, state.editingSong)
+        assertEquals(0, state.pianoRollUndoDepth)
+        assertTrue(editor.project.musicEdits.isEmpty())
+        state.stopInstrumentPreview()
+    }
+
     private fun instrument(index: Int = 30) = NspcRenderer.InstrumentEntry(
         srcn = 0, adsr1 = 0, adsr2 = 0, gain = 0x60, pitchAdj = 0x0001,
         index = index, tableAddr = 0x6C00 + index * 6, sampleStartAddr = 0x9000, brrByteLength = 144, brrLoops = true

@@ -12,22 +12,24 @@ import javax.sound.sampled.LineEvent
 
 private val soundPlayerLog = KotlinLogging.logger {}
 
-class SoundPlayer {
+class SoundPlayer(private val createClip: () -> Clip = { AudioSystem.getClip() }) {
+    enum class PlaybackStart { STARTED, EMPTY, OUTPUT_UNAVAILABLE }
     private var clip: Clip? = null
     private var totalFrames: Long = 0
     private var currentSampleRate: Int = 32000
     var onComplete: (() -> Unit)? = null
 
-    fun play(pcmSamples: ShortArray, sampleRate: Int = 32000, loop: Boolean = false, startFrame: Long = 0) {
+    fun play(pcmSamples: ShortArray, sampleRate: Int = 32000, loop: Boolean = false, startFrame: Long = 0): PlaybackStart {
         stop()
-        if (pcmSamples.isEmpty()) return
+        if (pcmSamples.isEmpty()) return PlaybackStart.EMPTY
 
         currentSampleRate = sampleRate
         val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
         val byteData = pcmToBytes(pcmSamples)
 
-        try {
-            val newClip = AudioSystem.getClip()
+        var openedClip: Clip? = null
+        return try {
+            val newClip = createClip().also { openedClip = it }
             newClip.open(format, byteData, 0, byteData.size)
             totalFrames = newClip.frameLength.toLong()
             if (startFrame > 0) {
@@ -45,8 +47,15 @@ class SoundPlayer {
             }
             clip = newClip
             if (loop) newClip.loop(Clip.LOOP_CONTINUOUSLY) else newClip.start()
+            // Java Sound can start asynchronously. isRunning immediately after start()
+            // is not evidence that opening the audio output failed.
+            PlaybackStart.STARTED
         } catch (e: Exception) {
+            clip = null
+            totalFrames = 0
+            runCatching { openedClip?.close() }
             soundPlayerLog.error(e) { "Audio playback error: ${e.message}" }
+            PlaybackStart.OUTPUT_UNAVAILABLE
         }
     }
 

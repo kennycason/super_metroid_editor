@@ -63,7 +63,7 @@ internal fun MusicBankSafetyStatus(report: MusicBankTransitions.Report?, problem
     var expanded by remember { mutableStateOf(false) }
     val color = if (blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
     Box {
-        OutlinedButton(onClick = { expanded = true }, enabled = !checking,
+        OutlinedButton(shape = SoundControlShape, onClick = { expanded = true }, enabled = !checking,
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             modifier = Modifier.testTag("music-bank-check")) {
             Text(when {
@@ -116,7 +116,7 @@ internal fun MusicBankSafetyStatus(report: MusicBankTransitions.Report?, problem
                 Text("Resource check only · not a ROM-space or effect-usage guarantee", fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = { expanded = false }, modifier = Modifier.testTag("music-bank-check-close")) {
+            TextButton(shape = SoundControlShape, onClick = { expanded = false }, modifier = Modifier.testTag("music-bank-check-close")) {
                 Text("Close", fontSize = fs.body)
             }
         }
