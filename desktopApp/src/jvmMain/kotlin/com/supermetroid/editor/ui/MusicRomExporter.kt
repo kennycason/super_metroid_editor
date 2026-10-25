@@ -1,9 +1,6 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.SmEditProject
-import com.supermetroid.editor.rom.NspcRenderer
-import com.supermetroid.editor.rom.NspcSequence
-import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
@@ -17,210 +14,23 @@ internal class MusicRomExporter(
         romData: ByteArray,
         freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     ): Int {
-        if (project.musicEdits.isEmpty()) return 0
-
+        val songSets = (project.musicEdits.values.map { it.songSet } +
+            project.musicInstrumentBanks.keys.map { it.toInt(16) }).distinct().sorted()
+        // Validate every bank before writing any transfer chains into the export copy.
+        val banks = songSets.associateWith { MusicBankResolver.resolve(RomParser(romData), project, it) }
         var patched = 0
-        val editsBySongSet = project.musicEdits.toSortedMap().entries.groupBy { it.value.songSet }.toSortedMap()
-        for ((songSet, edits) in editsBySongSet) {
-            val exportParser = RomParser(romData)
-            val baseBlocks = SpcData.parseTransferBlocks(romData, exportParser.snesToPc(0xCF8000))
-            val baseRam = SpcData.buildInitialSpcRam(exportParser)
-            val songBlocks = SpcData.findSongSetTransferData(exportParser, songSet)
-            val originalSpcRam = baseRam.copyOf()
-            SpcData.applyTransferBlocks(originalSpcRam, songBlocks)
-            val accumulatedWrites = SpcWriteAccumulator(songSet)
-            val knownPlayIndexes = SpcData.KNOWN_TRACKS
-                .filter { it.songSet == songSet }
-                .mapTo(mutableSetOf()) { it.playIndex }
-            edits.mapTo(knownPlayIndexes) { it.value.playIndex }
-            val editedPlayIndexes = edits.mapTo(mutableSetOf()) { it.value.playIndex }
-            val protectedPlayIndexes = knownPlayIndexes - editedPlayIndexes
-            val occupiedSequenceRanges = MusicSequenceBudget.buildProtectedSpcOccupancy(
-                baseBlocks = baseBlocks,
-                songBlocks = songBlocks,
-                spcRam = originalSpcRam,
-                protectedPlayIndexes = protectedPlayIndexes
-            ).toMutableList()
-
-            for ((key, edit) in edits) {
-                val nativePayload = edit.nativePayload
-                if (nativePayload != null) {
-                    val resolved = ImportedMusicResolver.resolve(exportParser, edit, occupiedSequenceRanges, protectedPlayIndexes)
-                    val nativeWrites = resolved.writes
-                    require(nativeWrites.isNotEmpty()) { "native music payload $key produced no SPC writes" }
-                    val owner = "native music payload '$key' (${edit.trackName})"
-                    mergeSpcWrites(accumulatedWrites, owner, nativeWrites, rejectAnyOverlap = true)
-                    accumulatedWrites.hasNativePayload = true
-                    resolved.allocation?.let { occupiedSequenceRanges += it }
-                    occupiedSequenceRanges += nativeWrites.map { (at, data) -> MusicSequenceBudget.SpcRange(at, at + data.size) }
-                    val totalBytes = nativeWrites.values.sumOf { it.size }
-                    patched++
-                    onLog(
-                        "[EXPORT] Native music payload '$key' ${edit.trackName}: " +
-                            "${nativeWrites.size} SPC write records, $totalBytes payload bytes, " +
-                            "sourcePlayIndex=${nativePayload.sourcePlayIndex}"
-                    )
-                    continue
-                }
-
-                val originalSong = NspcSequence.parse(originalSpcRam, edit.playIndex)
-                val editedSong = MusicEditConversion.toSong(edit)
-                val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
-                    ?: editedSong.isModified
-
-                val relocatedSequence = if (hasNoteDelta) {
-                    MusicSequenceBudget.encodeRelocated(
-                        song = editedSong,
-                        playIndex = edit.playIndex,
-                        spcRam = originalSpcRam,
-                        occupiedRanges = occupiedSequenceRanges,
-                        key = key
-                    ).also { patch ->
-                        if (patch.fit.trimmed) {
-                            error(
-                                "Music edit '$key' (${edit.trackName}) exceeds its safe SPC sequence budget: " +
-                                    "export would discard ${patch.fit.removedNotes} note(s) and " +
-                                    "${patch.fit.removedCommands} command(s) after tick ${patch.fit.cutoffTick}. " +
-                                    "Shorten the arrangement before exporting."
-                            )
-                        }
-                    }
-                } else {
-                    null
-                }
-                val relocationRange = relocatedSequence?.allocation
-                val sequenceWrites = relocatedSequence?.writes ?: emptyMap()
-                validateMusicSequenceWrites(
-                    key = key,
-                    playIndex = edit.playIndex,
-                    writes = sequenceWrites,
-                    allocatedRange = relocationRange
-                )
-                if (relocationRange != null) {
-                    occupiedSequenceRanges += relocationRange
-                }
-
-                val originalInstruments = NspcRenderer.readInstrumentTable(originalSpcRam)
-                val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
-                val instrumentWrites = if (editedInstruments.isNotEmpty()) {
-                    PianoRollPreviewLogic.instrumentPatchWrites(editedInstruments, originalInstruments)
-                } else {
-                    emptyMap()
-                }
-
-                if (sequenceWrites.isEmpty() && instrumentWrites.isEmpty()) {
-                    onLog("[EXPORT] Music edit $key has no note/instrument delta; skipping")
-                    continue
-                }
-
-                val owner = "music edit '$key' (${edit.trackName})"
-                mergeSpcWrites(accumulatedWrites, owner, sequenceWrites, rejectAnyOverlap = true)
-                mergeSpcWrites(accumulatedWrites, owner, instrumentWrites, rejectAnyOverlap = false)
-                val spcWrites = sequenceWrites + instrumentWrites
-                val totalBytes = spcWrites.values.sumOf { it.size }
-
-                patched++
-                onLog(
-                    "[EXPORT] Music edit '$key' ${edit.trackName}: ${spcWrites.size} SPC write records, " +
-                        "$totalBytes payload bytes, noteDelta=$hasNoteDelta, instrumentWrites=${instrumentWrites.size}"
-                )
+        for ((songSet, bank) in banks) {
+            val shared = MusicInstrumentBanks.inspect(RomParser(romData), project, songSet)
+            if (shared.instruments.keys.any { it < 24 }) {
+                onLog("[EXPORT] Warning: common instrument slots (0–23) in bank ${MusicInstrumentBanks.key(songSet)} are not reset by vanilla bank loads; edits can carry into later banks.")
             }
-
-            if (accumulatedWrites.isNotEmpty()) {
-                val chainBytes = writeRelocatedSongSetTransferChain(
-                    romData,
-                    songSet,
-                    accumulatedWrites.toWriteMap(),
-                    accumulatedWrites.hasNativePayload,
-                    freeSpaceAllocator,
-                )
-                onLog(
-                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
-                        "${edits.size} music edit(s) into $chainBytes-byte transfer chain"
-                )
-            }
+            if (bank.writes.isEmpty()) continue
+            val chainBytes = writeRelocatedSongSetTransferChain(
+                romData, songSet, bank.writes, bank.hasNativePayload, freeSpaceAllocator)
+            patched += bank.patchedTracks
+            onLog("[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: ${bank.patchedTracks} music/bank edit(s), $chainBytes-byte transfer chain")
         }
         return patched
-    }
-
-    private data class SpcWriteAccumulator(
-        val songSet: Int,
-        val bytesByAddr: java.util.TreeMap<Int, Int> = java.util.TreeMap(),
-        val ownersByAddr: MutableMap<Int, String> = mutableMapOf(),
-        var hasNativePayload: Boolean = false
-    ) {
-        fun isNotEmpty(): Boolean = bytesByAddr.isNotEmpty()
-
-        fun toWriteMap(): Map<Int, ByteArray> = SpcData.packSpcBytesToWrites(bytesByAddr)
-    }
-
-    private fun validateMusicSequenceWrites(
-        key: String,
-        playIndex: Int,
-        writes: Map<Int, ByteArray>,
-        allocatedRange: MusicSequenceBudget.SpcRange?
-    ) {
-        val songTableEntry = MusicSequenceBudget.SONG_TABLE_BASE + playIndex * 2
-        for ((addr, data) in writes) {
-            val dest = addr and 0xFFFF
-            val endExclusive = dest + data.size
-            require(data.isNotEmpty()) { "music edit $key produced an empty sequence write at 0x${dest.toString(16)}" }
-            if (dest == songTableEntry && data.size == 2) continue
-            require(dest >= MusicSequenceBudget.SONG_TABLE_BASE && endExclusive <= MusicSequenceBudget.SEQUENCE_EXPORT_MAX) {
-                "music edit $key produced unsafe sequence SPC write " +
-                    "0x${dest.toString(16).padStart(4, '0')}.." +
-                    "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
-            }
-            if (allocatedRange != null) {
-                require(dest >= allocatedRange.start && endExclusive <= allocatedRange.endExclusive) {
-                    "music edit $key re-encode escaped relocated allocation " +
-                        "0x${allocatedRange.start.toString(16).padStart(4, '0')}.." +
-                        "0x${(allocatedRange.endExclusive - 1).toString(16).padStart(4, '0')} with write " +
-                        "0x${dest.toString(16).padStart(4, '0')}.." +
-                        "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
-                }
-            }
-        }
-    }
-
-    private fun mergeSpcWrites(
-        accumulator: SpcWriteAccumulator,
-        owner: String,
-        writes: Map<Int, ByteArray>,
-        rejectAnyOverlap: Boolean
-    ) {
-        val songSetLabel = "0x${accumulator.songSet.toString(16).padStart(2, '0')}"
-        for ((addr, data) in writes) {
-            val dest = addr and 0xFFFF
-            require(data.isNotEmpty()) { "$owner produced an empty SPC write at 0x${dest.toString(16)}" }
-            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
-                "$owner produced out-of-bounds SPC write " +
-                    "0x${dest.toString(16).padStart(4, '0')}.." +
-                    "0x${(dest + data.size - 1).toString(16).padStart(4, '0')}"
-            }
-            for (i in data.indices) {
-                val spcAddr = dest + i
-                val value = data[i].toInt() and 0xFF
-                val existing = accumulator.bytesByAddr[spcAddr]
-                val previousOwner = accumulator.ownersByAddr[spcAddr]
-                if (existing != null && previousOwner != owner) {
-                    require(!rejectAnyOverlap) {
-                        "music edits for songSet $songSetLabel overlap at SPC " +
-                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
-                    }
-                    require(existing == value) {
-                        "music edits for songSet $songSetLabel write different values at SPC " +
-                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
-                    }
-                } else if (existing != null && existing != value) {
-                    require(false) {
-                        "$owner produced conflicting SPC bytes at 0x${spcAddr.toString(16).padStart(4, '0')}"
-                    }
-                }
-                accumulator.bytesByAddr[spcAddr] = value
-                accumulator.ownersByAddr[spcAddr] = owner
-            }
-        }
     }
 
     private fun writeRelocatedSongSetTransferChain(

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -96,6 +99,10 @@ internal fun NoteInstrumentSelector(
     onRename: (Int, String) -> Unit,
     onChoose: (Int) -> Unit,
     advancedContent: @Composable () -> Unit,
+    sharedTracks: List<String> = emptyList(),
+    sharedInstrumentEdited: Boolean = false,
+    onResetSharedInstrument: () -> Unit = {},
+    instrumentEditingEnabled: Boolean = true,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
@@ -106,6 +113,7 @@ internal fun NoteInstrumentSelector(
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
@@ -134,10 +142,11 @@ internal fun NoteInstrumentSelector(
                 OutlinedButton(onClick = { renaming = !renaming }, enabled = info != null) {
                     Text("Name…", fontSize = fs.body)
                 }
-                OutlinedButton(onClick = { advanced = !advanced }, modifier = Modifier.testTag("instrument-advanced")) {
+                OutlinedButton(onClick = { advanced = !advanced }, enabled = instrumentEditingEnabled, modifier = Modifier.testTag("instrument-advanced")) {
                     Text(if (advanced) "Hide advanced" else "Advanced", fontSize = fs.body)
                 }
             }
+            if (sharedTracks.isNotEmpty()) SharedInstrumentScope(sharedTracks, sharedInstrumentEdited, onResetSharedInstrument, instrumentEditingEnabled, note.instrument < 24)
             if (renaming) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(name, { name = it.take(64) }, label = { Text("Instrument name") }, singleLine = true,
@@ -159,7 +168,58 @@ internal fun NoteInstrumentSelector(
                     nativePreviewAvailable, previewInstrument, previewBusy, onPreview,
                     onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false })
             }
-            if (advanced) advancedContent()
+            if (advanced && instrumentEditingEnabled) advancedContent()
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SharedInstrumentScope(tracks: List<String>, edited: Boolean, onReset: () -> Unit, enabled: Boolean = true, commonSlot: Boolean = false) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var expanded by remember(tracks) { mutableStateOf(false) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Choose: this note · Edit: shared bank", fontSize = fs.detail,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
+        Box {
+            TextButton(onClick = { expanded = true }, modifier = Modifier.testTag("instrument-bank-scope")) {
+                Text("${tracks.size} ${if (tracks.size == 1) "track" else "tracks"} ▾", fontSize = fs.detail)
+            }
+            DropdownMenu(expanded, { expanded = false }, modifier = Modifier.testTag("instrument-bank-tracks")) {
+                Column(Modifier.padding(horizontal = 12.dp).heightIn(max = 160.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Bank loaded by", fontSize = fs.detail, fontWeight = FontWeight.Medium)
+                    tracks.forEach { Text(it, fontSize = fs.body) }
+                    Text("Effects may share these sounds", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (edited) TextButton(onClick = onReset, enabled = enabled, modifier = Modifier.testTag("instrument-bank-reset")) {
+            Text("Reset sound", fontSize = fs.detail)
+        }
+        if (commonSlot) Text("Common slot · may carry across banks", fontSize = fs.detail,
+            color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.testTag("instrument-common-warning").padding(top = 12.dp))
+    }
+}
+
+@Composable
+internal fun InstrumentBankConflictPanel(conflicts: List<MusicInstrumentBanks.Conflict>, onChoose: (Int, MusicInstrumentBanks.Choice) -> Unit) {
+    val conflict = conflicts.firstOrNull() ?: return
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))) {
+        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Shared instrument #${conflict.index} · choose one version", fontSize = fs.body, fontWeight = FontWeight.Medium)
+            Text("${conflicts.size} ${if (conflicts.size == 1) "conflict" else "conflicts"} · preview and export paused", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            for (choice in conflict.choices) {
+                OutlinedButton(onClick = { onChoose(conflict.index, choice) }, modifier = Modifier.testTag("instrument-bank-choice-${choice.trackKey}")) {
+                    Column {
+                        Text("Use ${choice.trackName.ifBlank { choice.trackKey }}", fontSize = fs.body)
+                        Text("Sample ${choice.instrument.srcn} · Gain ${choice.instrument.gain} · ADSR ${choice.instrument.adsr1.toString(16).uppercase()}/${choice.instrument.adsr2.toString(16).uppercase()} · Tune ${"%.3f".format(MusicInstrumentBanks.native(choice.instrument).tuningMultiplier)}×", fontSize = fs.detail)
+                    }
+                }
+            }
         }
     }
 }

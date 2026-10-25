@@ -7,6 +7,7 @@ import androidx.compose.ui.ComposeScene
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -21,6 +22,8 @@ import kotlinx.coroutines.yield
 import org.jetbrains.skia.Surface
 import org.junit.jupiter.api.Test
 import java.io.File
+import java.awt.Canvas
+import java.awt.event.KeyEvent as AwtKeyEvent
 import kotlin.coroutines.coroutineContext
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -138,7 +141,8 @@ class InstrumentSelectorTest {
                             androidx.compose.foundation.layout.Column(Modifier.onSizeChanged { measuredHeight = it.height }) {
                                 NoteInstrumentSelector(NspcSequence.Note(0, 48, 0x98), instruments, names, setOf(1),
                                     "Lower Norfair sound bank", true, null, false, "", { _, _ -> }, {}, { _, _ -> }, {},
-                                    advancedContent = { androidx.compose.material3.Text("Raw DSP settings") })
+                                    advancedContent = { androidx.compose.material3.Text("Raw DSP settings") },
+                                    sharedTracks = listOf("Title Screen", "Title Screen (After Button)"), sharedInstrumentEdited = true)
                             }
                         }
                     }
@@ -151,6 +155,14 @@ class InstrumentSelectorTest {
                 } }
                 render()
                 assertFalse(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Raw DSP settings" } })
+                assertTrue(hasTag(scene, "instrument-common-warning"))
+                click(scene, "instrument-bank-scope"); render()
+                assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Title Screen (After Button)" } })
+                for (type in listOf(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.KEY_RELEASED)) {
+                    scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), type, 0L, 0, AwtKeyEvent.VK_ESCAPE, AwtKeyEvent.CHAR_UNDEFINED)))
+                }
+                render(); render()
+                assertFalse(hasTag(scene, "instrument-bank-tracks"), "Escape must dismiss the scope popup")
                 click(scene, "instrument-choose"); render()
                 val apply = tagged(scene, "instrument-apply")
                 assertTrue(apply.boundsInRoot.bottom <= 740, "$font must keep browser actions in view")
@@ -162,5 +174,34 @@ class InstrumentSelectorTest {
                 assertTrue(measuredHeight > 0)
             } finally { scene.close(); surface.close() }
         }
+    }
+
+    @Test fun `legacy conflict panel requires an explicit version choice`() = runBlocking {
+        val scene = ComposeScene(coroutineContext = coroutineContext)
+        val surface = Surface.makeRasterN32Premul(680, 310)
+        val chosen = mutableListOf<Pair<Int, MusicInstrumentBanks.Choice>>()
+        val choices = listOf(
+            MusicInstrumentBanks.Choice("03:05", "Title Screen", MusicInstrumentBanks.entry(instruments[0].copy(gain = 31))),
+            MusicInstrumentBanks.Choice("03:06", "Title Screen (After Button)", MusicInstrumentBanks.entry(instruments[0].copy(gain = 63)))
+        )
+        try {
+            scene.constraints = Constraints.fixed(680, 310)
+            scene.setContent { MaterialTheme(colorScheme = EditorTheme.DARK.colorScheme) {
+                androidx.compose.foundation.layout.Column {
+                    InstrumentBankConflictPanel(listOf(MusicInstrumentBanks.Conflict(0, choices))) { index, choice -> chosen += index to choice }
+                }
+            } }
+            var time = System.nanoTime()
+            repeat(8) { Snapshot.sendApplyNotifications(); yield(); time += 16_666_667; scene.render(surface.canvas, time); delay(1) }
+            assertTrue(chosen.isEmpty())
+            assertTrue(hasTag(scene, "instrument-bank-choice-03:05"))
+            assertTrue(hasTag(scene, "instrument-bank-choice-03:06"))
+            if (System.getenv("SMEDIT_CAPTURE_INSTRUMENT_UI") == "true") {
+                val file = File("build/test-output/instrument-bank-conflict.png").apply { parentFile.mkdirs() }
+                surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
+            }
+            click(scene, "instrument-bank-choice-03:06")
+            assertEquals(listOf(0 to choices[1]), chosen)
+        } finally { scene.close(); surface.close() }
     }
 }

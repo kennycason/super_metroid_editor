@@ -873,6 +873,12 @@ data class MusicInstrumentEdit(
     val pitchAdj: Int,
 )
 
+/** One authoritative set of shared overrides; an empty record still supersedes legacy track snapshots. */
+@Serializable
+data class MusicInstrumentBankEdit(
+    val instruments: MutableMap<Int, MusicInstrumentEdit> = mutableMapOf(),
+)
+
 @Serializable
 data class MusicTransferBlockEdit(
     val destAddr: Int,
@@ -1012,6 +1018,8 @@ data class SmEditProject(
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
+    /** Shared instrument overrides, keyed by hexadecimal song set. Track instrument lists are snapshots only. */
+    val musicInstrumentBanks: MutableMap<String, MusicInstrumentBankEdit> = mutableMapOf(),
     /** Display-only instrument names, keyed by song set and instrument slot. Never changes ROM bytes. */
     val musicInstrumentNames: MutableMap<String, String> = mutableMapOf(),
     val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),

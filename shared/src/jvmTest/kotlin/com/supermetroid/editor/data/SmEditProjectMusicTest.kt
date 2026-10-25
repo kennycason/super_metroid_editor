@@ -67,6 +67,7 @@ class SmEditProjectMusicTest {
         )
 
         assertTrue(decoded.musicEdits.isEmpty())
+        assertTrue(decoded.musicInstrumentBanks.isEmpty())
         assertTrue(decoded.musicInstrumentNames.isEmpty())
     }
 
@@ -78,6 +79,20 @@ class SmEditProjectMusicTest {
         val decoded = json.decodeFromString(SmEditProject.serializer(), json.encodeToString(SmEditProject.serializer(), project))
         assertEquals(project.musicInstrumentNames, decoded.musicInstrumentNames)
         assertTrue(decoded.musicEdits.isEmpty(), "Naming a sound must not create audio patches")
+        assertTrue(decoded.musicInstrumentBanks.isEmpty())
+    }
+
+    @Test
+    fun `authoritative bank settings and empty reconciliation markers survive project round trip`() {
+        val project = SmEditProject(romPath = "/tmp/sm.smc")
+        project.musicInstrumentBanks["03"] = MusicInstrumentBankEdit(mutableMapOf(
+            28 to MusicInstrumentEdit(28, 0x6CA8, 24, 0x8F, 0xE0, 63, 0x0001)))
+        project.musicInstrumentBanks["0F"] = MusicInstrumentBankEdit()
+        val decoded = json.decodeFromString(SmEditProject.serializer(), json.encodeToString(SmEditProject.serializer(), project))
+        assertEquals(project.musicInstrumentBanks, decoded.musicInstrumentBanks)
+        assertTrue(decoded.musicInstrumentBanks.containsKey("0F"))
+        assertTrue(decoded.musicInstrumentBanks.getValue("0F").instruments.isEmpty())
+        assertTrue(decoded.musicEdits.isEmpty())
     }
 
     @Test

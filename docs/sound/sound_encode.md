@@ -105,10 +105,27 @@ Second chunk — imported sound persistence:
 - Use the actual merged original/import transfer chain for ROM budget preflight, matching the exporter. Reject malformed payloads, allocation failures, and over-budget exports without discarding samples or shortening the song.
 - Read older native-payload projects without a baseline as pristine imports; initialize a baseline when opening them for editing. Compatible SPC snapshot import remains sequence-only and does not capture its sample bank.
 
+Third chunk — shared instrument ownership (2026-10-24):
+
+- `musicInstrumentBanks` owns manual overrides once per song set/instrument slot. Per-track instrument arrays remain compatibility/interchange snapshots, not competing owners. An empty bank record is intentional: it prevents stale legacy snapshots resurrecting an override after reset.
+- Reconcile legacy overrides against stock instrument data, or a retained import's instrument baseline. Coalesce identical values and independent slots. Unambiguous legacy deltas migrate on opening the bank; merely browsing an untouched bank does not create edits.
+- Explicit editable N-SPC bundle imports still apply their supplied settings to the shared owner; they are not mistaken for stale saved snapshots. Native import reports disclose that existing shared overrides stay active. Conflicting/overlapping banks require resolution before another import.
+- Different legacy values for the same slot require an explicit choice. The compact conflict panel names each source track and shows sample/gain/envelope/tuning values. Multiple choices commit together; resolution supports undo/redo. Preview/export do not pick a winner automatically.
+- A compact scope row distinguishes note-local choice from shared-bank editing. The track dropdown lists known arrangements that load the bank, not a claimed per-slot usage analysis. Effects may also use those resources. `BANK` badges distinguish affected siblings from explicit arrangement edits.
+- Shared sound reset has its own undo step. Reset Track removes that track's arrangement/import but preserves shared manual overrides. Resetting an import can therefore change source samples for its sibling tracks; it is not a sample-isolation operation.
+- `MusicBankResolver` resolves all saved arrangements, native sources, and shared instrument overrides together for piano-roll/waveform preview, snapshots, raw export, and ROM export. Overrides apply once after source resources. Instrument-only changes do not flatten either arrangement. Imports share samples with sibling previews too.
+- Reject overlapping native sources rather than choosing a source implicitly. Reserve source/sample regions before allocating any edited sequence. Validate every bank before writing relocated ROM chains. Sample decoding invalidates with the audio-edit version.
+
+Important engine boundary discovered during this chunk:
+
+- Vanilla song-set transfer chains reload instruments from `$6C90` (slot 24); common slots 0–23 at `$6C00..6C8F` are initialized with the base SPC upload and are not reset on ordinary bank changes. CPU `HandleMusicQueue` uploads only the selected bank. Thus a bank-staged common-slot edit can carry into later banks in the running game, despite fresh-RAM previews for those banks starting from their own baseline.
+- The UI flags common slots, and ROM export logs this limitation. This checkpoint does **not** implement runtime isolation of common slots, automatic instrument duplication, sound-effect usage analysis, or sample-resource lifetime isolation across bank changes. Do not advertise bank-local project ownership as runtime isolation.
+- Primary local references: `SM-SPC/vanilla/music.asm` (`loadNewMusicData`, `loadNewMusicTrack`, instrument address calculation), `SM-SPC/vanilla/ram.asm`, and `sm/src/sm_80.c` (`Vector_RESET_Async`, `HandleMusicQueue`). Actual vanilla transfer-chain inspection confirms every song set's instrument block begins at `$6C90`.
+
 Continue in this order:
 
-1. Move shared instrument overrides to song-bank ownership, reconcile existing per-track overrides, and show affected sibling tracks. Add safe duplication only after proving a slot is unused by music and effects. Imports still share bank resources; retaining them is not per-track sample isolation.
-2. Add compact native envelope controls/graph, gain modes, and musical tuning offsets. SNES key-off release is fixed; avoid presenting a conventional synth ADSR or inactive gain controls. Keep raw values under Advanced.
+1. Design safe common-slot restoration/ownership across runtime bank transitions before exposing unrestricted common-slot synth controls. Include sound-effect dependencies and imported DIR/BRR resource lifetimes. Avoid blindly copying every music chain: vanilla music occupies roughly 434 KB while available trailing ROM free space is smaller; relocation/reclamation or a carefully validated loader hook needs separate work.
+2. Add compact native envelope controls/graph, gain modes, and musical tuning offsets using the shared owner and scope UI. SNES key-off release is fixed; avoid presenting a conventional synth ADSR or inactive gain controls. Keep raw values under Advanced. Safe duplication requires proving a slot is unused by music and effects.
 3. Repair general sequence fidelity: long notes/ties, percussion parsing/base state, overlapping MIDI voices, and GM-to-bank instrument mapping. Improve preview/export eligibility reporting and distinguish approximate whole-song fallback audio.
 4. Stage sample replacement and audition the encoded result; key replacements by bank/resource identity, support loops, and add safe relocation. Then build a separate named sound-effect browser and native effect audition.
 
@@ -117,6 +134,7 @@ Offline verification (dependencies/native library are already built in this chec
 ```sh
 SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --offline \
   :desktopApp:jvmTest --tests '*InstrumentAuditionTest' --tests '*InstrumentSelectorTest' \
+  --tests '*MusicInstrumentBankTest' \
   --tests '*ImportedMusicPersistenceTest' --tests '*MusicEditConversionTest' \
   --tests '*MusicTransferChainBudgetTest' --tests '*MusicTrackInterchangeTest' \
   --tests '*ImpulseTrackerImportTest' --tests '*PianoRollEditLogicTest' \
@@ -128,3 +146,9 @@ SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --off
 Set `SMEDIT_CAPTURE_INSTRUMENT_UI=true` to capture browser layouts for all font sizes under `desktopApp/build/test-output/`. The `InstrumentAuditionTest` fixture uses the real SPC engine with a synthetic loop to compare native tuning, note attacks, gain changes, and arrangement/audition behavior. Missing ROM fixtures must be reported as skipped, not treated as audio verification.
 
 `ImportedMusicPersistenceTest` covers a custom loop in lower sequence RAM, real project save/reopen, matching preview/ROM RAM, raw N-SPC round trips, instrument-only sequence preservation, legacy projects, native mute/attack behavior, sparse instrument tables, undo/redo across imports, and safe allocation failure.
+
+`MusicInstrumentBankTest` covers shared-only edits, sibling consistency, no sequence flattening, preview/ROM RAM parity, legacy merge/conflicts, atomic resolution and undo/redo, empty reconciliation markers, real save/reopen, reset scope, project bank separation, and overlapping native source rejection. `InstrumentSelectorTest` checks shared scope, Escape dismissal, common-slot warning, explicit legacy choice, and layout at every font size; capture artifacts include `instrument-bank-conflict.png`.
+
+Checkpoint validation on 2026-10-24: 143 sound-focused tests passed offline; 3 optional real-world IT fixtures were skipped. Captured and inspected the shared-scope browser at every font size and the legacy conflict panel.
+
+Wider validation: the complete shared JVM suite ran 904 tests (900 passed, 2 skipped, 2 failed). Both failures are existing `EnemySpriteRenderTest` assertions expecting Elevator tile data to be non-null (lines 50 and 71). Reproduced the same two failures with the same verified vanilla ROM on unchanged commit `e7f69af` in a temporary detached checkout; no enemy/rendering changes were made for this sound checkpoint.

@@ -36,6 +36,7 @@ internal object ImportedMusicResolver {
         occupiedRanges: List<MusicSequenceBudget.SpcRange> = emptyList(),
         protectedPlayIndexes: Set<Int> = SpcData.KNOWN_TRACKS.filter { it.songSet == edit.songSet && it.playIndex != edit.playIndex }
             .mapTo(mutableSetOf()) { it.playIndex },
+        applyInstrumentOverrides: Boolean = true,
     ): Resolved {
         val payload = requireNotNull(edit.nativePayload) { "No retained native import" }
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
@@ -44,7 +45,7 @@ internal object ImportedMusicResolver {
         val sourceWrites = MusicTransferChainBudget.compactedNativePayloadWrites(payload, edit.playIndex)
         val sourceBlocks = sourceWrites.map { (at, data) -> SpcData.TransferBlock(at, data) }
         val ram = original.copyOf().also { apply(it, sourceWrites) }
-        val instrumentWrites = instrumentWrites(ram, MusicEditConversion.toInstrumentEntries(edit), payload)
+        val instrumentWrites = if (applyInstrumentOverrides) instrumentWrites(ram, MusicEditConversion.toInstrumentEntries(edit), payload) else emptyMap()
         apply(ram, instrumentWrites)
 
         val song = MusicEditConversion.toSong(edit)

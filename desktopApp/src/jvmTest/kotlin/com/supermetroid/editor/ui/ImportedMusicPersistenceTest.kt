@@ -209,4 +209,19 @@ class ImportedMusicPersistenceTest {
         assertTrue(waveform.isNotEmpty())
         assertTrue(waveform.all { it.toInt() == 0 }, "A short silent waveform must not fall through to stock-track playback")
     }
+
+    @Test fun `sibling tracks use retained native samples and shared overrides from the same bank`() {
+        val f = fixture()
+        f.sound.recordPianoRollEdit("Shared gain")
+        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[0].copy(gain = 0x20), f.parser, f.editor)
+        val sibling = SpcData.KNOWN_TRACKS.first { it.songSet == track.songSet && it.playIndex == 5 }
+        val other = SoundEditorState().apply { selectTrack(sibling); openPianoRoll(f.parser, f.editor) }
+        assertEquals(0x6000, other.pianoRollInstruments[0].sampleStartAddr)
+        assertEquals(0x20, other.pianoRollInstruments[0].gain)
+        val ram = other.buildPianoRollSpcSnapshotRam(f.parser, other.editingSong!!)
+        assertSample(ram)
+        assertEquals(0x20, ram[0x6C03].toInt() and 255)
+        assertEquals(f.song.channels[0].notes.single().noteValue, NspcSequence.parse(ram, track.playIndex).channels[0].notes.single().noteValue)
+        assertNotNull(other.pianoRollNativeExportBlocks(f.parser, other.editingSong!!), "A sibling's raw export must carry the shared custom sample bank")
+    }
 }

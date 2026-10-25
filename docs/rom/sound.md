@@ -201,6 +201,10 @@ estimate, budget overages, and format-specific warnings. **Apply** replaces the 
 song and creates an undo point; **Cancel** leaves the open track unchanged. Reset always
 returns the open track to original ROM data and clears any pending import.
 Undo/redo restores both the editable song and its associated imported source bank.
+Manual instrument overrides live once per song set, in `musicInstrumentBanks`; compatible
+per-track instrument lists are snapshots only after reconciliation. Older conflicting
+overrides require an explicit source-track choice before bank playback/export. Reset Track
+keeps shared manual overrides; **Reset sound** resets one shared slot with undo support.
 
 ## SMEDIT Implementation Map
 
@@ -210,7 +214,8 @@ Undo/redo restores both the editable song and its associated imported source ban
 | Sound state | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditorState.kt` | Selected track/sample state, native SPC previews, WAV import/export, sample replacement patch creation, piano-roll playback state |
 | Piano roll UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/PianoRollEditor.kt` | Virtualized track visualization/editing, 1x-8x zoom, seek bar, note insertion/removal/move/resize, right-click note properties, playback cursor |
 | Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |
-| Retained native imports | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/ImportedMusicResolver.kt` | Shared resolution of source samples, changed instruments, and safely relocated edited sequences for preview and native exports |
+| Retained native imports | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/ImportedMusicResolver.kt` | Low-level retained-source/baseline decoding and safe sequence relocation; project-wide composition belongs to the bank resolver |
+| Shared bank resolution | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicBankResolver.kt`, `MusicInstrumentBanks.kt` | Combine bank sources and arrangements, apply one shared override per slot, and reconcile legacy per-track deltas without choosing conflicting values implicitly |
 | Audio playback | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundPlayer.kt` | JVM `Clip` playback for mono 16-bit PCM and WAV export helpers |
 | ROM/SPC transfer data | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcData.kt` | Song set pointer table, transfer block parsing, ARAM snapshots, sample directory parsing, BRR decode/encode, in-place sample replacement writes |
 | N-SPC sequence model | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcSequence.kt` | Editable song model, piano-roll parser, simplified encoder back to N-SPC writes |
@@ -252,6 +257,8 @@ Current piano-roll editing behavior:
 - The note property panel is a bottom overlay, so right-clicking a note does not push the piano roll down.
 - The note inspector shows an instrument card with native note audition, a searchable instrument browser, a used-in-track filter, and bank-scoped user names. Descriptions come from sample/envelope metadata; they do not guess timbres from numeric IDs. Browsing and audition do not edit the arrangement; **Use instrument** changes only the selected note and uses the existing undo history.
 - **Advanced** contains the instrument-table inspector: table address, `SRCN`, sample start/loop pointers, BRR length/loop flag, ADSR1/ADSR2/GAIN bytes, and tuning. Its settings are shared across the sound bank, including sibling tracks.
+- The compact scope row separates note-local sound choice from bank-wide sound editing. Its dropdown lists known tracks loading that bank; it is not proof that every track/effect uses the selected slot. `BANK` badges indicate shared changes without an explicit arrangement edit.
+- Common instrument slots 0–23 are not reloaded by vanilla music-bank transfers (which begin at slot 24 / `$6C90`). Their edits can carry into later banks at runtime. The card warns about common slots and export logs the limitation; project bank ownership does not provide runtime isolation. Engine-level restoration and effect dependency analysis remain future work.
 - Instrument tuning in engine RAM is big-endian 8.8 fixed point. `InstrumentEntry.pitchAdj` deliberately retains its legacy little-endian byte view for saved-project and N-SPC-bundle compatibility; `nativePitch` and `tuningMultiplier` expose the engine interpretation. Reading old projects and naming/previewing instruments does not rewrite tuning bytes. The fallback renderer now uses the native pitch-table scaling and multiplier; its envelope remains approximate.
 - Instrument audition uses a separate RAM snapshot and native player at fixed monitor gain. It preserves note attacks instead of discarding the first second, disables echo for an isolated comparison, and limits held notes to two seconds plus release. Starting another preview, stopping, or switching tracks cancels pending audition playback. No software fallback is presented as native audition.
 - Instrument-table fields are shared playback configuration, not per-note data. `SRCN`, ADSR1, ADSR2, GAIN, and pitch-adjust are editable preview fields patched into SPC RAM at `$6C00 + index*6`. Supported `.it` imports can now carry generated sample-directory and BRR blocks as a preserved native payload; ordinary manual sample start/loop pointer editing remains read-only.
@@ -260,7 +267,7 @@ Current piano-roll editing behavior:
 - Waveform preview and piano-roll preview use RMS-aware preview normalization before JVM playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
 - `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to parsed notes. New notes inherit nearby note instrument, velocity, quantize, and duration so user-added notes render with valid Super Metroid instrument state.
 - Modified native SPC preview uses protected-range allocation and fail-fast sequence encoding. If an edited sequence cannot fit, an approximate renderer can retain the imported sample bank without writing across protected assets. Quiet or muted native import output is valid and does not trigger an audible fallback.
-- Additive note edits use a hybrid fallback when native re-encode overflows: native original track playback plus software-rendered added notes. Edits that remove or change original notes still require full software fallback because the native original audio cannot subtract or move existing notes.
+- Shared-bank project previews fall back to approximate sample-based rendering if native encoding/rendering is unavailable, retaining the bank's imported samples and shared overrides. They do not substitute a vanilla track. Older projectless preview helpers retain their hybrid delta-overlay path.
 
 ## Parser/Renderer Caveats
 
@@ -270,7 +277,7 @@ Current piano-roll editing behavior:
 - `NspcRenderer` and native SPC playback are still better cross-checks for command-side
   behavior such as channel volume, subroutines, sample decode, and envelope playback.
 - `NspcRenderer.readInstrumentTable` exposes instrument-table metadata for the UI.
-- Edit Track preview can patch changed instrument-table bytes into SPC RAM. Raw N-SPC and supported IT source blocks are retained independently of later edits. Preview/export use the same resolver; note edits relocate the sequence around protected assets, while instrument-only edits preserve original sequence bytes. Older projects without an import baseline are read as pristine imports. This does not isolate shared bank resources between sibling tracks.
+- Edit Track preview can patch changed instrument-table bytes into SPC RAM. Raw N-SPC and supported IT source blocks are retained independently of later edits. `MusicBankResolver` combines all arrangements/sources in the current bank for preview and native exports, applying shared overrides once. Note edits relocate the sequence around protected assets; instrument-only edits preserve original sequence bytes. Older projects without an import baseline are read as pristine imports. Overlapping native sources fail explicitly. Siblings share the imported sample bank; cross-bank common-slot/sample isolation is not implemented.
 - `NspcSequence.encode` writes simplified one-block channel data. Native import and
   ROM export paths supply a protected-free allocation and reject silent truncation.
 

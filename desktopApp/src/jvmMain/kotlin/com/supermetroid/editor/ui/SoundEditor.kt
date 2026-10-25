@@ -294,7 +294,7 @@ private fun TrackListContent(
                                     modifier = Modifier.weight(1f, fill = false))
                                 if (isEdited) {
                                     Spacer(Modifier.width(4.dp))
-                                    EditedMusicBadge()
+                                    EditedMusicBadge(if (editorState.getMusicEdit(track.songSet, track.playIndex) == null) "BANK" else "EDITED")
                                 }
                             }
                             Text("${track.area}  0x${track.songSet.toString(16).uppercase().padStart(2, '0')}:${track.playIndex.toString(16).uppercase().padStart(2, '0')}",
@@ -308,7 +308,7 @@ private fun TrackListContent(
 }
 
 @Composable
-private fun EditedMusicBadge() {
+private fun EditedMusicBadge(label: String = "EDITED") {
     val fs = LocalEditorTheme.current.fontSize.value
     Surface(
         color = Color(0xFFFFB84D),
@@ -316,7 +316,7 @@ private fun EditedMusicBadge() {
         shape = RoundedCornerShape(4.dp)
     ) {
         Text(
-            "EDITED",
+            label,
             fontSize = fs.detail,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
@@ -445,7 +445,7 @@ fun SoundEditorCanvas(
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (musicEditVersion.let { editorState.hasMusicEdit(track.songSet, track.playIndex) }) {
                     Spacer(Modifier.width(4.dp))
-                    EditedMusicBadge()
+                    EditedMusicBadge(if (editorState.getMusicEdit(track.songSet, track.playIndex) == null) "BANK" else "EDITED")
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(track.area, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -504,12 +504,22 @@ fun SoundEditorCanvas(
                 )
             }
 
+            InstrumentBankConflictPanel(state.instrumentBankConflicts, state::resolveInstrumentBankConflict)
+            state.instrumentBankProblem?.let { problem ->
+                Text(problem, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
             PianoRollEditor(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
                 instrumentInfos = state.pianoRollInstruments,
                 instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
                 instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
+                sharedInstrumentTracks = state.instrumentBankTracks,
+                sharedInstrumentEdits = editorState.musicEditVersion.let {
+                    editorState.project.musicInstrumentBanks[MusicInstrumentBanks.key(state.currentSongSet)]?.instruments?.keys.orEmpty()
+                },
+                onResetSharedInstrument = state::resetSharedInstrument,
+                instrumentEditingEnabled = state.instrumentBankConflicts.isEmpty() && state.instrumentBankProblem == null,
                 nativeInstrumentPreviewAvailable = state.nativeInstrumentPreviewAvailable,
                 previewInstrument = state.instrumentPreviewIndex,
                 instrumentPreviewBusy = state.isInstrumentPreviewLoading,

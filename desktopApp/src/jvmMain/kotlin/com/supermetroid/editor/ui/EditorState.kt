@@ -2709,7 +2709,19 @@ class EditorState(
     fun musicEditKey(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
 
     fun hasMusicEdit(songSet: Int, playIndex: Int): Boolean =
-        project.musicEdits.containsKey(musicEditKey(songSet, playIndex))
+        project.musicEdits.containsKey(musicEditKey(songSet, playIndex)) ||
+            project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.instruments?.isNotEmpty() == true ||
+            project.musicEdits.values.any { it.songSet == songSet && it.nativePayload != null }
+
+    fun setMusicInstrumentBank(songSet: Int, bank: com.supermetroid.editor.data.MusicInstrumentBankEdit?) {
+        require(songSet >= 0 && songSet % 3 == 0)
+        val key = MusicInstrumentBanks.key(songSet)
+        if (project.musicInstrumentBanks[key] == bank) return
+        if (bank == null) project.musicInstrumentBanks.remove(key)
+        else project.musicInstrumentBanks[key] = requireNotNull(MusicInstrumentBanks.copy(bank))
+        dirty = true
+        musicEditVersion++
+    }
 
     fun getMusicEdit(songSet: Int, playIndex: Int): MusicTrackEdit? =
         project.musicEdits[musicEditKey(songSet, playIndex)]

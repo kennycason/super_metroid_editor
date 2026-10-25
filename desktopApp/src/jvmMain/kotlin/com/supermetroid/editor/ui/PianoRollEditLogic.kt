@@ -5,6 +5,7 @@ import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence.Note
 import com.supermetroid.editor.rom.NspcSequence.Song
 import com.supermetroid.editor.data.MusicNativePayloadEdit
+import com.supermetroid.editor.data.MusicInstrumentBankEdit
 import java.util.Collections
 import java.util.IdentityHashMap
 
@@ -27,7 +28,8 @@ internal object PianoRollEditLogic {
         val song: Song,
         val instruments: List<NspcRenderer.InstrumentEntry>,
         val label: String,
-        val nativePayload: MusicNativePayloadEdit? = null
+        val nativePayload: MusicNativePayloadEdit? = null,
+        val instrumentBank: MusicInstrumentBankEdit? = null,
     )
 
     class EditHistory(private val maxDepth: Int = 100) {
@@ -42,23 +44,23 @@ internal object PianoRollEditLogic {
             redoStack.clear()
         }
 
-        fun record(song: Song, instruments: List<NspcRenderer.InstrumentEntry>, label: String, nativePayload: MusicNativePayloadEdit? = null) {
-            undoStack += snapshotOf(song, instruments, label, nativePayload)
+        fun record(song: Song, instruments: List<NspcRenderer.InstrumentEntry>, label: String, nativePayload: MusicNativePayloadEdit? = null, instrumentBank: MusicInstrumentBankEdit? = null) {
+            undoStack += snapshotOf(song, instruments, label, nativePayload, instrumentBank)
             while (undoStack.size > maxDepth) undoStack.removeAt(0)
             redoStack.clear()
         }
 
-        fun undo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>, nativePayload: MusicNativePayloadEdit? = null): EditSnapshot? {
+        fun undo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>, nativePayload: MusicNativePayloadEdit? = null, instrumentBank: MusicInstrumentBankEdit? = null): EditSnapshot? {
             if (undoStack.isEmpty()) return null
             val snapshot = undoStack.removeAt(undoStack.lastIndex)
-            redoStack += snapshotOf(currentSong, currentInstruments, "Redo ${snapshot.label}", nativePayload)
+            redoStack += snapshotOf(currentSong, currentInstruments, "Redo ${snapshot.label}", nativePayload, instrumentBank)
             return snapshot
         }
 
-        fun redo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>, nativePayload: MusicNativePayloadEdit? = null): EditSnapshot? {
+        fun redo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>, nativePayload: MusicNativePayloadEdit? = null, instrumentBank: MusicInstrumentBankEdit? = null): EditSnapshot? {
             if (redoStack.isEmpty()) return null
             val snapshot = redoStack.removeAt(redoStack.lastIndex)
-            undoStack += snapshotOf(currentSong, currentInstruments, "Undo ${snapshot.label}", nativePayload)
+            undoStack += snapshotOf(currentSong, currentInstruments, "Undo ${snapshot.label}", nativePayload, instrumentBank)
             return snapshot
         }
 
@@ -66,13 +68,15 @@ internal object PianoRollEditLogic {
             song: Song,
             instruments: List<NspcRenderer.InstrumentEntry>,
             label: String,
-            nativePayload: MusicNativePayloadEdit?
+            nativePayload: MusicNativePayloadEdit?,
+            instrumentBank: MusicInstrumentBankEdit?
         ): EditSnapshot =
             EditSnapshot(
                 song = PianoRollPreviewLogic.deepCopySong(song),
                 instruments = instruments.map { it.copy() },
                 label = label,
-                nativePayload = MusicEditConversion.copyNativePayload(nativePayload)
+                nativePayload = MusicEditConversion.copyNativePayload(nativePayload),
+                instrumentBank = MusicInstrumentBanks.copy(instrumentBank)
             )
     }
 
