@@ -67,6 +67,7 @@ class NotePropertiesPanelTest {
                         Box(Modifier.fillMaxSize()) {
                             NotePropertiesPanel(note = fixture.note.value, channel = 3, totalTicks = 960,
                                 instrumentInfos = instruments, instrumentNames = emptyMap(),
+                                instrumentSourcePitches = instruments.associate { it.index to it.nativePitch },
                                 instrumentBankLabel = "Lower Norfair sound bank", instrumentSourceLabel = "ROM bank",
                                 sharedInstrumentTracks = listOf("Lower Norfair"), sharedInstrumentEdits = emptySet(),
                                 onResetSharedInstrument = {}, instrumentEditingEnabled = true,
@@ -156,7 +157,7 @@ class NotePropertiesPanelTest {
     @Test fun `expanded inspector remains scrollable in a short window at the largest font size`() = runBlocking {
         withPanel(FontSize.LARGER, height = 480) { scene, render, _ ->
             click(scene, "note-details-toggle"); render()
-            click(scene, "instrument-choose"); render()
+            click(scene, "instrument-edit-sound"); render()
             click(scene, "instrument-advanced"); render()
             val content = tagged(scene, "note-properties-content")
             val range = content.config[SemanticsProperties.VerticalScrollAxisRange]
@@ -164,7 +165,7 @@ class NotePropertiesPanelTest {
             assertTrue(content.config[SemanticsActions.ScrollBy].action!!.invoke(0f, 2000f))
             render()
             val panel = tagged(scene, "note-properties").boundsInRoot
-            val apply = tagged(scene, "instrument-apply").boundsInRoot
+            val apply = tagged(scene, "instrument-advanced").boundsInRoot
             assertTrue(apply.height > 0)
             assertTrue(apply.top >= panel.top && apply.bottom <= panel.bottom)
         }

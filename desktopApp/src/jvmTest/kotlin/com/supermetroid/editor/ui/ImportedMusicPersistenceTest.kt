@@ -51,6 +51,37 @@ class ImportedMusicPersistenceTest {
         assertContentEquals(byteArrayOf(0, 0x60, 0, 0x60), ram.copyOfRange(0x6D60, 0x6D64))
     }
 
+    @Test fun `tuning uses imported source bytes including sibling banks and refreshes on import undo redo and reset`() {
+        val f = fixture()
+        assertEquals(256, f.sound.pianoRollSourceInstruments[24].nativePitch)
+        val before = f.sound.pianoRollInstruments[24]
+        f.sound.recordPianoRollEdit("Transpose imported sound")
+        f.sound.updatePianoRollInstrument(NativeInstrumentSound.tuning(before, 256, 1200.0), f.parser, f.editor)
+        assertEquals(256, f.sound.pianoRollSourceInstruments[24].nativePitch)
+        assertEquals(512, f.sound.pianoRollInstruments[24].nativePitch)
+        val sibling = SoundEditorState().apply {
+            selectTrack(SpcData.KNOWN_TRACKS.first { it.songSet == 3 && it.playIndex == 5 }); openPianoRoll(f.parser, f.editor)
+        }
+        assertEquals(256, sibling.pianoRollSourceInstruments[24].nativePitch)
+        assertEquals(512, sibling.pianoRollInstruments[24].nativePitch)
+        val changedBlocks = MusicEditConversion.toTransferBlocks(f.payload).map { block ->
+            if (block.destAddr == 0x6C90) block.copy(data = block.data.copyOf().also { it[4] = 2 }) else block
+        }
+        val changedPayload = MusicEditConversion.toProjectNativePayload(
+            MusicTrackInterchange.NativePayload(changedBlocks, 5, "retuned.nspc", "Raw N-SPC"), f.song)
+        f.sound.applyImportedPianoRollSong(f.song, f.instruments, changedPayload, f.editor, "new tuning source")
+        assertEquals(512, f.sound.pianoRollSourceInstruments[24].nativePitch)
+        assertTrue(f.sound.undoPianoRollEdit(f.editor))
+        assertEquals(256, f.sound.pianoRollSourceInstruments[24].nativePitch)
+        assertTrue(f.sound.redoPianoRollEdit(f.editor))
+        assertEquals(512, f.sound.pianoRollSourceInstruments[24].nativePitch)
+        f.sound.resetPianoRoll(f.parser, f.editor)
+        val stock = NspcRenderer.readInstrumentTable(SpcData.buildInitialSpcRam(f.parser).also {
+            SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(f.parser, 3))
+        })[24]
+        assertEquals(stock.nativePitch, f.sound.pianoRollSourceInstruments[24].nativePitch)
+    }
+
     @Test fun `native import keeps pristine source bytes until the editable sequence changes`() {
         val f = fixture()
         val initial = saved(f)

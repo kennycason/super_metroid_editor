@@ -110,11 +110,13 @@ internal fun NoteInstrumentSelector(
     onResetSharedInstrument: () -> Unit = {},
     instrumentEditingEnabled: Boolean = true,
     sourceLabel: String = "ROM bank",
+    soundContent: @Composable () -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
     var choosing by remember(bankLabel, note.instrument) { mutableStateOf(false) }
     var advanced by remember(bankLabel) { mutableStateOf(false) }
+    var editing by remember(bankLabel) { mutableStateOf(false) }
     var renaming by remember(bankLabel, note.instrument) { mutableStateOf(false) }
     var name by remember(bankLabel, note.instrument, names) { mutableStateOf(names[note.instrument].orEmpty()) }
 
@@ -143,15 +145,16 @@ internal fun NoteInstrumentSelector(
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp))
                     Text("Play ${note.name}", fontSize = fs.body)
                 }
-                Button(shape = SoundControlShape, onClick = { choosing = !choosing }, enabled = instruments.isNotEmpty(),
+                Button(shape = SoundControlShape, onClick = { choosing = !choosing; if (choosing) editing = false }, enabled = instruments.isNotEmpty(),
                     modifier = Modifier.testTag("instrument-choose")) {
                     Text(if (choosing) "Close sounds" else "Choose sound", fontSize = fs.body)
                 }
                 OutlinedButton(shape = SoundControlShape, onClick = { renaming = !renaming }, enabled = info != null) {
                     Text("Rename", fontSize = fs.body)
                 }
-                OutlinedButton(shape = SoundControlShape, onClick = { advanced = !advanced }, enabled = instrumentEditingEnabled, modifier = Modifier.testTag("instrument-advanced")) {
-                    Text(if (advanced) "Hide advanced" else "Advanced", fontSize = fs.body)
+                OutlinedButton(shape = SoundControlShape, onClick = { editing = !editing; if (editing) choosing = false },
+                    enabled = instrumentEditingEnabled && info != null, modifier = Modifier.testTag("instrument-edit-sound")) {
+                    Text(if (editing) "Close editor" else "Edit sound", fontSize = fs.body)
                 }
             }
             if (sharedTracks.isNotEmpty()) SharedInstrumentScope(sharedTracks, sharedInstrumentEdited, onResetSharedInstrument, instrumentEditingEnabled, note.instrument < 24)
@@ -186,7 +189,13 @@ internal fun NoteInstrumentSelector(
                     nativePreviewAvailable, previewInstrument, previewBusy, onPreview,
                     onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false }, sourceLabel = sourceLabel)
             }
-            if (advanced && instrumentEditingEnabled) advancedContent()
+            if (editing && instrumentEditingEnabled) {
+                soundContent()
+                TextButton(shape = SoundControlShape, onClick = { advanced = !advanced }, modifier = Modifier.testTag("instrument-advanced")) {
+                    Text(if (advanced) "Hide advanced" else "Advanced", fontSize = fs.body)
+                }
+                if (advanced) advancedContent()
+            }
         }
     }
 }

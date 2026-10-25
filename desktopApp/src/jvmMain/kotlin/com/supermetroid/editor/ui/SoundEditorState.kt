@@ -111,6 +111,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         private set
     var pianoRollInstruments by mutableStateOf<List<NspcRenderer.InstrumentEntry>>(emptyList())
         private set
+    var pianoRollSourceInstruments by mutableStateOf<List<NspcRenderer.InstrumentEntry>>(emptyList())
+        private set
     private var originalPianoRollInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
     private var originalPianoRollSong: NspcSequence.Song? = null
     private val pianoRollHistory = PianoRollEditLogic.EditHistory()
@@ -261,6 +263,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         pianoRollPlaybackTick = 0
         removePianoRollProjectEdit(editorState)
         clearNativeSource()
+        refreshOpenBankInstruments()
         statusMessage = "Reset to original"
     }
 
@@ -1073,7 +1076,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         restorePianoRollSnapshot(snapshot)
         syncPianoRollHistoryDepths()
         syncPianoRollProjectEdit(editorState)
-        romParserRef?.let { refreshInstrumentBank(it, editorState ?: editorStateRef) }
+        romParserRef?.let { refreshInstrumentBank(it, editorState ?: editorStateRef); refreshOpenBankInstruments() }
         soundEditorLog.info { "[SPC-PIANO-UNDO] Undo '${snapshot.label}' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
         return true
     }
@@ -1085,7 +1088,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         restorePianoRollSnapshot(snapshot)
         syncPianoRollHistoryDepths()
         syncPianoRollProjectEdit(editorState)
-        romParserRef?.let { refreshInstrumentBank(it, editorState ?: editorStateRef) }
+        romParserRef?.let { refreshInstrumentBank(it, editorState ?: editorStateRef); refreshOpenBankInstruments() }
         soundEditorLog.info { "[SPC-PIANO-UNDO] Redo '${snapshot.label}' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
         return true
     }
@@ -1176,6 +1179,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     ) {
         pianoRollNativeSource = MusicEditConversion.copyNativePayload(payload)
         pianoRollInstruments = romParserRef?.let { rebuildInstrumentMetadata(it, instruments) } ?: instruments
+        pianoRollSourceInstruments = emptyList() // Musical tuning requires a resolved source, never a guessed reference.
         refreshOpenBankInstruments()
     }
 
@@ -1230,7 +1234,10 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         if (instrumentBankProblem != null) return
         val project = projectForBank() ?: return
         try {
-            pianoRollInstruments = NspcRenderer.readInstrumentTable(MusicBankResolver.sourceRam(parser, project, track.songSet))
+            val source = MusicBankResolver.sourceRam(parser, project, track.songSet, includeOverrides = false)
+            pianoRollSourceInstruments = NspcRenderer.readInstrumentTable(source)
+            MusicInstrumentBanks.writes(MusicInstrumentBanks.instruments(project, track.songSet)).forEach { (at, data) -> data.copyInto(source, at) }
+            pianoRollInstruments = NspcRenderer.readInstrumentTable(source)
         } catch (error: Exception) {
             instrumentBankProblem = error.message ?: "Cannot load shared sound bank"
         }

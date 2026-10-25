@@ -513,6 +513,7 @@ fun SoundEditorCanvas(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
                 instrumentInfos = state.pianoRollInstruments,
+                instrumentSourcePitches = state.pianoRollSourceInstruments.associate { it.index to it.nativePitch },
                 instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
                 instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
                 instrumentSourceLabel = if (editorState.project.musicEdits.values.any {

@@ -241,6 +241,7 @@ fun PianoRollEditor(
     song: Song,
     activeChannel: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry> = emptyList(),
+    instrumentSourcePitches: Map<Int, Int> = emptyMap(),
     instrumentNames: Map<Int, String> = emptyMap(),
     instrumentBankLabel: String = "Current sound bank",
     instrumentSourceLabel: String = "ROM bank",
@@ -1277,6 +1278,7 @@ fun PianoRollEditor(
                     channel = selectedChannel,
                     totalTicks = totalTicks,
                     instrumentInfos = instrumentInfos,
+                    instrumentSourcePitches = instrumentSourcePitches,
                     instrumentNames = instrumentNames,
                     instrumentBankLabel = instrumentBankLabel,
                     instrumentSourceLabel = instrumentSourceLabel,
@@ -1432,6 +1434,7 @@ internal fun NotePropertiesPanel(
     channel: Int,
     totalTicks: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry>,
+    instrumentSourcePitches: Map<Int, Int> = emptyMap(),
     instrumentNames: Map<Int, String>,
     instrumentBankLabel: String,
     instrumentSourceLabel: String,
@@ -1579,6 +1582,11 @@ internal fun NotePropertiesPanel(
                         note.instrument = inst
                         logPianoEdit("SetInstrument", channel, note, "${hex(old)}->${hex(note.instrument)} via=browser")
                         onChanged()
+                    }
+                },
+                soundContent = {
+                    instrumentInfos.firstOrNull { it.index == note.instrument }?.let { entry ->
+                        NativeInstrumentPanel(entry, instrumentSourcePitches[note.instrument], onInstrumentChanged)
                     }
                 },
                 advancedContent = {

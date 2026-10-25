@@ -32,6 +32,40 @@ class MusicInstrumentBankTest {
         }.toMutableMap()))
     }
 
+    @Test fun `native envelope and musical tuning edits keep their source reference through undo save reopen and export`() {
+        val f = fixture()
+        val sound = open(f)
+        val source = sound.pianoRollSourceInstruments.first { it.index >= 24 && it.nativePitch in 2..32767 && InstrumentDescriptions.playable(it) }
+        val slot = source.index
+        val shaped = NativeInstrumentSound.tuning(
+            NativeInstrumentSound.fade(NativeInstrumentSound.sustain(NativeInstrumentSound.attack(source, 4), 3), 15), source.nativePitch, 1200.0)
+        sound.recordPianoRollEdit("Shape sound")
+        sound.updatePianoRollInstrument(shaped, f.parser, f.editor)
+        assertEquals(1, sound.pianoRollUndoDepth)
+        assertEquals(source, sound.pianoRollSourceInstruments[slot])
+        assertEquals(shaped.nativePitch, sound.pianoRollInstruments[slot].nativePitch)
+        assertEquals(1200.0, NativeInstrumentSound.tuningCents(sound.pianoRollInstruments[slot], source.nativePitch))
+        assertTrue(f.editor.project.musicEdits.isEmpty())
+        val file = File(directory, "shaped.smedit")
+        assertTrue(ProjectFileService.saveProject(f.editor.project, file.path, null, false, {}))
+        val editor = EditorState().apply { testMode = true; initForProject(file, ProjectFileService.loadProject(file)) }
+        val reopened = SoundEditorState().apply { selectTrack(sibling); openPianoRoll(f.parser, editor) }
+        assertEquals(source, reopened.pianoRollSourceInstruments[slot])
+        assertContentEquals(PianoRollPreviewLogic.instrumentBytes(shaped), PianoRollPreviewLogic.instrumentBytes(reopened.pianoRollInstruments[slot]))
+        val preview = reopened.buildPianoRollSpcSnapshotRam(f.parser, reopened.editingSong!!)
+        val rom = f.parser.copyRomData()
+        assertEquals(1, MusicRomExporter(editor.project, {}).applyMusicEditsToRom(rom))
+        val parser = RomParser(rom)
+        val exported = SpcData.buildInitialSpcRam(parser).also { SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, 3)) }
+        assertContentEquals(preview, exported)
+        assertTrue(sound.undoPianoRollEdit(f.editor))
+        assertEquals(source, sound.pianoRollSourceInstruments[slot])
+        assertEquals(source, sound.pianoRollInstruments[slot])
+        assertTrue(sound.redoPianoRollEdit(f.editor))
+        assertEquals(source, sound.pianoRollSourceInstruments[slot])
+        assertEquals(shaped.nativePitch, sound.pianoRollInstruments[slot].nativePitch)
+    }
+
     @Test fun `instrument-only edits are bank-owned shared on reopen and exported once without flattening tracks`() {
         val f = fixture()
         val sound = open(f)

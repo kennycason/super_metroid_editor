@@ -49,6 +49,41 @@ class InstrumentAuditionTest {
     )
     private fun note(duration: Int = 48) = NspcSequence.Note(0, duration, NspcSequence.nameToNote("C4"), instrument = 30)
 
+    @Test fun `native sound controls change audible attack sustain gain and musical tuning without replacing samples`() {
+        assumeTrue(NativeSpcEmulator.isAvailable(), "Native SPC library unavailable")
+        val parser = TestRomHelper.requireRomParser()
+        val ram = SpcData.buildInitialSpcRam(parser)
+        val brr = byteArrayOf(0xB3.toByte(), 0x03, 0x57, 0x77, 0x53, 0x0D, 0xB9.toByte(), 0x99.toByte(), 0xBD.toByte())
+        brr.copyInto(ram, 0x9000)
+        byteArrayOf(0, 0x90.toByte(), 0, 0x90.toByte()).copyInto(ram, 0x6D00)
+        val original = ram.copyOf()
+        val native = NativeInstrumentSound
+        val fast = native.fade(native.sustain(native.attack(native.envelope(instrument(), true), 15), 7), 0)
+        fun render(entry: NspcRenderer.InstrumentEntry) = InstrumentAudition.render(InstrumentAudition.build(ram, entry, note(120)))
+        val held = render(fast)
+        val slow = render(native.attack(fast, 0))
+        fun energy(audio: ShortArray, from: Int, to: Int) = audio.sliceArray(from until to).sumOf { abs(it.toInt()).toLong() }
+        assertTrue(energy(held, 1000, 4000) > energy(slow, 1000, 4000) * 4,
+            "Native attack settings must remain audible, without preview normalization")
+        val fading = render(native.fade(fast, 31))
+        assertTrue(energy(held, 10000, 16000) > 100000)
+        assertTrue(energy(fading, 10000, 16000) < energy(held, 10000, 16000) / 100,
+            "Sustain fade happens while the note is held, not as an adjustable release")
+        val fixed = native.gainValue(native.gainMode(native.envelope(fast, false), NativeInstrumentSound.GainMode.FIXED), 64)
+        val fixedAudio = render(fixed)
+        val quieter = render(native.gainValue(fixed, 16))
+        assertTrue(energy(fixedAudio, 1000, 5000) > energy(quieter, 1000, 5000) * 3)
+        val falling = render(native.gainValue(native.gainMode(fixed, NativeInstrumentSound.GainMode.FALL), 31))
+        assertTrue(falling.all { it.toInt() == 0 }, "Falling gain really starts silent on key-on")
+        val octave = render(native.tuning(fast, fast.nativePitch, 1200.0))
+        fun crossings(audio: ShortArray) = (2000 until 5000).count { audio[it - 1] < 0 && audio[it] >= 0 }
+        assertTrue(crossings(held) > 10)
+        assertTrue(abs(crossings(octave) - crossings(held) * 2) <= 3,
+            "+12 semitones must double native playback pitch: base=${crossings(held)}, octave=${crossings(octave)}")
+        assertTrue(held.takeLast(8000).all { abs(it.toInt()) < 5 })
+        assertContentEquals(original, ram)
+    }
+
     @Test fun `audition keeps source RAM samples and note untouched and selects melodic instruments explicitly`() {
         val source = ByteArray(65536) { 0x55 }
         val original = source.copyOf()
