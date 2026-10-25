@@ -205,6 +205,12 @@ Manual instrument overrides live once per song set, in `musicInstrumentBanks`.
 Saved tracks contain arrangements and optional native sources, not instrument snapshots.
 There is no legacy sound migration or conflict-choice UI. Reset Track
 keeps shared manual overrides; **Reset sound** resets one shared slot with undo support.
+The compact bank-load status runs a background shared-resource preflight. Its expandable
+details identify affected sounds and banks. Export derives reset uploads for bank-local
+instrument entries that a later bank does not normally reload. Unrestored common sounds,
+shared sample pointers/BRR, and engine bytes block ROM export; isolated audition and
+SPC/N-SPC export remain available. The check is not a full command/effect-usage or ROM-space
+guarantee. All music chains and reset uploads must fit before any music ROM bytes are written.
 
 ## SMEDIT Implementation Map
 
@@ -216,6 +222,7 @@ keeps shared manual overrides; **Reset sound** resets one shared slot with undo 
 | Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |
 | Retained native imports | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/ImportedMusicResolver.kt` | Low-level retained-source/baseline decoding and safe sequence relocation; project-wide composition belongs to the bank resolver |
 | Shared bank resolution | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicBankResolver.kt`, `MusicInstrumentBanks.kt` | Combine bank sources and arrangements, validate shared settings, and apply one bank-owned override per slot |
+| Bank-transition safety | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicBankTransitions.kt`, `MusicBankSafetyStatus.kt` | Check incoming/outgoing resource lifetimes, derive bank-local instrument resets, and show compact export-blocking details |
 | Audio playback | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundPlayer.kt` | JVM `Clip` playback for mono 16-bit PCM and WAV export helpers |
 | ROM/SPC transfer data | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcData.kt` | Song set pointer table, transfer block parsing, ARAM snapshots, sample directory parsing, BRR decode/encode, in-place sample replacement writes |
 | N-SPC sequence model | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcSequence.kt` | Editable song model, piano-roll parser, simplified encoder back to N-SPC writes |
@@ -258,7 +265,7 @@ Current piano-roll editing behavior:
 - The note inspector shows an instrument card with native note audition, a searchable instrument browser, a used-in-track filter, and bank-scoped user names. Descriptions come from sample/envelope metadata; they do not guess timbres from numeric IDs. Browsing and audition do not edit the arrangement; **Use instrument** changes only the selected note and uses the existing undo history.
 - **Advanced** contains the instrument-table inspector: table address, `SRCN`, sample start/loop pointers, BRR length/loop flag, ADSR1/ADSR2/GAIN bytes, and tuning. Its settings are shared across the sound bank, including sibling tracks.
 - The compact scope row separates note-local sound choice from bank-wide sound editing. Its dropdown lists known tracks loading that bank; it is not proof that every track/effect uses the selected slot. `BANK` badges indicate shared changes without an explicit arrangement edit.
-- Common instrument slots 0–23 are not reloaded by vanilla music-bank transfers (which begin at slot 24 / `$6C90`). Their edits can carry into later banks at runtime. The card warns about common slots and export logs the limitation; project bank ownership does not provide runtime isolation. Engine-level restoration and effect dependency analysis remain future work.
+- Common instrument slots 0–23 are not reloaded by vanilla music-bank transfers (which begin at slot 24 / `$6C90`). Their edits can carry into later banks at runtime. Export now blocks unrestored common-resource changes. Rain and voice banks also load fewer bank-local instrument entries; export adds explicit resets for affected slots 24–41 instead of assuming every bank reloads them. The derived resets do not become project edits or change another bank's authored settings. Common-resource restoration and effect dependency analysis remain future work.
 - Instrument tuning in engine RAM is big-endian 8.8 fixed point. `InstrumentEntry.pitchAdj` packs the two raw bytes little-endian; `nativePitch` and `tuningMultiplier` expose the engine interpretation. The approximate renderer uses the native pitch-table scaling and multiplier; its envelope remains approximate.
 - Instrument audition uses a separate RAM snapshot and native player at fixed monitor gain. It preserves note attacks instead of discarding the first second, disables echo for an isolated comparison, and limits held notes to two seconds plus release. Starting another preview, stopping, or switching tracks cancels pending audition playback. No software fallback is presented as native audition.
 - Instrument-table fields are shared playback configuration, not per-note data. `SRCN`, ADSR1, ADSR2, GAIN, and pitch-adjust are editable preview fields patched into SPC RAM at `$6C00 + index*6`. Supported `.it` imports can now carry generated sample-directory and BRR blocks as a preserved native payload; ordinary manual sample start/loop pointer editing remains read-only.

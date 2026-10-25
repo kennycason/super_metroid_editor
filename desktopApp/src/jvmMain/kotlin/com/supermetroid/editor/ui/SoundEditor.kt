@@ -484,6 +484,8 @@ fun SoundEditorCanvas(
 
         Spacer(Modifier.height(4.dp))
 
+        if (romParser != null) MusicBankExportCheck(romParser, editorState.project, musicEditVersion)
+
         // Piano roll mode vs waveform mode
         if (state.isPianoRollOpen && state.editingSong != null) {
             // Tick update loop for playback cursor

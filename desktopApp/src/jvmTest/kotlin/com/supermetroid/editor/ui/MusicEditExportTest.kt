@@ -179,7 +179,7 @@ class MusicEditExportTest {
         val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
         assumeTrue(originalInstruments.isNotEmpty(), "No instruments found")
 
-        val changed = originalInstruments.first().copy(gain = originalInstruments.first().gain xor 0x01)
+        val changed = originalInstruments[28].copy(gain = originalInstruments[28].gain xor 0x01)
 
         val state = EditorState()
         state.testMode = true
@@ -200,7 +200,7 @@ class MusicEditExportTest {
         val exportedRam = SpcData.buildInitialSpcRam(exportedParser).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exportedParser, songSet))
         }
-        val exportedInstrument = NspcRenderer.readInstrumentTable(exportedRam).first()
+        val exportedInstrument = NspcRenderer.readInstrumentTable(exportedRam)[28]
         assertEquals(changed.gain, exportedInstrument.gain)
     }
 
@@ -289,8 +289,8 @@ class MusicEditExportTest {
             playIndex = sourcePlayIndex,
             spcRam = ByteArray(0x10000),
             failOnOverflow = true,
-            conductorAddrOverride = 0x7000,
-            sequenceEndAddr = 0x7400
+            conductorAddrOverride = 0x6500,
+            sequenceEndAddr = 0x6900
         )
         val payload = MusicEditConversion.toProjectNativePayload(
             MusicTrackInterchange.NativePayload(

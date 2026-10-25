@@ -29,12 +29,12 @@ class ImportedMusicPersistenceTest {
         val editor = EditorState().apply { testMode = true; initForRom(romFile.absolutePath) }
         val sound = SoundEditorState().apply { selectTrack(track); openPianoRoll(parser, editor) }
         val song = NspcSequence.Song(tempo = 36)
-        song.channels[0].notes += NspcSequence.Note(0, 48, 0xA4, instrument = 0)
-        val instrument = NspcRenderer.InstrumentEntry(0, 0, 0, 0x60, 0x0001, 0, 0x6C00)
-        val writes = NspcSequence.encode(song, 5, conductorAddrOverride = 0x7000, sequenceEndAddr = 0x7400)
+        song.channels[0].notes += NspcSequence.Note(0, 48, 0xA4, instrument = 24)
+        val instrument = NspcRenderer.InstrumentEntry(24, 0, 0, 0x60, 0x0001, 24, 0x6C90)
+        val writes = NspcSequence.encode(song, 5, conductorAddrOverride = 0x6500, sequenceEndAddr = 0x6900)
         val blocks = writes.map { (at, data) -> SpcData.TransferBlock(at, data) } + listOf(
-            SpcData.TransferBlock(0x6C00, PianoRollPreviewLogic.instrumentBytes(instrument)),
-            SpcData.TransferBlock(0x6D00, byteArrayOf(0, 0x60, 0, 0x60)),
+            SpcData.TransferBlock(0x6C90, PianoRollPreviewLogic.instrumentBytes(instrument)),
+            SpcData.TransferBlock(0x6D60, byteArrayOf(0, 0x60, 0, 0x60)),
             SpcData.TransferBlock(0x6000, sample)
         )
         val payload = MusicEditConversion.toProjectNativePayload(MusicTrackInterchange.NativePayload(blocks, 5, "custom.nspc", "Raw N-SPC"), song)
@@ -48,7 +48,7 @@ class ImportedMusicPersistenceTest {
 
     private fun assertSample(ram: ByteArray) {
         assertContentEquals(sample, ram.copyOfRange(0x6000, 0x6000 + sample.size))
-        assertContentEquals(byteArrayOf(0, 0x60, 0, 0x60), ram.copyOfRange(0x6D00, 0x6D04))
+        assertContentEquals(byteArrayOf(0, 0x60, 0, 0x60), ram.copyOfRange(0x6D60, 0x6D64))
     }
 
     @Test fun `native import keeps pristine source bytes until the editable sequence changes`() {
@@ -80,23 +80,23 @@ class ImportedMusicPersistenceTest {
         song.channels[0].notes.single().noteValue = 0xA8
         f.sound.notifySongChanged(song, f.editor)
         f.sound.recordPianoRollEdit("Change gain")
-        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[0].copy(gain = 0x20), f.parser, f.editor)
-        assertEquals(0x6000, f.sound.pianoRollInstruments[0].sampleStartAddr)
+        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[24].copy(gain = 0x20), f.parser, f.editor)
+        assertEquals(0x6000, f.sound.pianoRollInstruments[24].sampleStartAddr)
 
         val file = File(directory, "music.smedit")
         assertTrue(ProjectFileService.saveProject(f.editor.project, file.absolutePath, null, false, {}))
         val reopened = EditorState().apply { testMode = true; initForProject(file, ProjectFileService.loadProject(file)) }
         val sound = SoundEditorState().apply { selectTrack(track); openPianoRoll(f.parser, reopened) }
-        assertEquals(0x6000, sound.pianoRollInstruments[0].sampleStartAddr)
-        assertEquals(0x20, sound.pianoRollInstruments[0].gain)
+        assertEquals(0x6000, sound.pianoRollInstruments[24].sampleStartAddr)
+        assertEquals(0x20, sound.pianoRollInstruments[24].gain)
         assertEquals(0xA8, sound.editingSong!!.channels[0].notes.single().noteValue)
         val snapshot = sound.buildPianoRollSpcSnapshotRam(f.parser, sound.editingSong!!)
         assertSample(snapshot)
-        assertEquals(0x20, snapshot[0x6C03].toInt() and 255)
+        assertEquals(0x20, snapshot[0x6C93].toInt() and 255)
         val spc = sound.buildSpcSnapshotBytes(snapshot, track.playIndex, track.name)
         val spcRam = NativeSpcEmulator.readSpcRam(spc)
         assertSample(spcRam)
-        assertEquals(0x20, spcRam[0x6C03].toInt() and 255)
+        assertEquals(0x20, spcRam[0x6C93].toInt() and 255)
         assertEquals(0xA8, NspcSequence.parse(spcRam, track.playIndex).channels[0].notes.single().noteValue)
 
         val raw = File(directory, "edited.nspc")
@@ -105,7 +105,7 @@ class ImportedMusicPersistenceTest {
         assertEquals(0xA8, imported.song.channels[0].notes.single().noteValue)
         val rawRam = ByteArray(65536).also { SpcData.applyTransferBlocks(it, imported.nativePayload!!.blocks) }
         assertSample(rawRam)
-        assertEquals(0x20, rawRam[0x6C03].toInt() and 255)
+        assertEquals(0x20, rawRam[0x6C93].toInt() and 255)
 
         val rom = f.parser.copyRomData()
         assertEquals(1, MusicRomExporter(reopened.project, {}).applyMusicEditsToRom(rom))
@@ -142,13 +142,14 @@ class ImportedMusicPersistenceTest {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(f.parser, track.songSet))
         }
         val resolved = ImportedMusicResolver.resolve(f.parser, saved(f))
-        assertContentEquals(stock.copyOfRange(0x6C06, 0x6CFC), resolved.ram.copyOfRange(0x6C06, 0x6CFC))
+        assertContentEquals(stock.copyOfRange(0x6C00, 0x6C90), resolved.ram.copyOfRange(0x6C00, 0x6C90))
+        assertContentEquals(stock.copyOfRange(0x6C96, 0x6CFC), resolved.ram.copyOfRange(0x6C96, 0x6CFC))
         assertEquals(42, f.sound.pianoRollInstruments.size)
     }
 
     @Test fun `an inherited instrument slot can be explicitly cleared through the shared owner`() {
         val f = fixture()
-        val inherited = f.sound.pianoRollInstruments[24]
+        val inherited = f.sound.pianoRollInstruments[25]
         assertTrue(PianoRollPreviewLogic.instrumentBytes(inherited).any { it.toInt() != 0 })
         f.sound.recordPianoRollEdit("Clear inherited instrument")
         f.sound.updatePianoRollInstrument(inherited.copy(srcn = 0, adsr1 = 0, adsr2 = 0, gain = 0, pitchAdj = 0), f.parser, f.editor)
@@ -180,7 +181,7 @@ class ImportedMusicPersistenceTest {
         val loud = assertNotNull(f.sound.renderEditedSong(f.parser, f.sound.editingSong!!))
         assertTrue(loud.maxOf { abs(it.toInt()) } > 100, "Imported short-note attacks must not be discarded")
         f.sound.recordPianoRollEdit("Mute gain")
-        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[0].copy(gain = 0), f.parser, f.editor)
+        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[24].copy(gain = 0), f.parser, f.editor)
         val muted = ImportedMusicResolver.resolve(f.parser, saved(f))
         assertNull(muted.allocation, "Instrument changes must not flatten imported sequences")
         assertSample(muted.ram)
@@ -195,14 +196,14 @@ class ImportedMusicPersistenceTest {
     @Test fun `sibling tracks use retained native samples and shared overrides from the same bank`() {
         val f = fixture()
         f.sound.recordPianoRollEdit("Shared gain")
-        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[0].copy(gain = 0x20), f.parser, f.editor)
+        f.sound.updatePianoRollInstrument(f.sound.pianoRollInstruments[24].copy(gain = 0x20), f.parser, f.editor)
         val sibling = SpcData.KNOWN_TRACKS.first { it.songSet == track.songSet && it.playIndex == 5 }
         val other = SoundEditorState().apply { selectTrack(sibling); openPianoRoll(f.parser, f.editor) }
-        assertEquals(0x6000, other.pianoRollInstruments[0].sampleStartAddr)
-        assertEquals(0x20, other.pianoRollInstruments[0].gain)
+        assertEquals(0x6000, other.pianoRollInstruments[24].sampleStartAddr)
+        assertEquals(0x20, other.pianoRollInstruments[24].gain)
         val ram = other.buildPianoRollSpcSnapshotRam(f.parser, other.editingSong!!)
         assertSample(ram)
-        assertEquals(0x20, ram[0x6C03].toInt() and 255)
+        assertEquals(0x20, ram[0x6C93].toInt() and 255)
         assertEquals(f.song.channels[0].notes.single().noteValue, NspcSequence.parse(ram, track.playIndex).channels[0].notes.single().noteValue)
         assertNotNull(other.pianoRollNativeExportBlocks(f.parser, other.editingSong!!), "A sibling's raw export must carry the shared custom sample bank")
     }

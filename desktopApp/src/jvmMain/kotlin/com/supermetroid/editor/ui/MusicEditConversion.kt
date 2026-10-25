@@ -14,6 +14,9 @@ import java.util.Base64
 internal object MusicEditConversion {
     fun key(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
 
+    fun copyProjectEdit(edit: MusicTrackEdit): MusicTrackEdit = edit.copy(
+        channels = copyChannels(edit.channels), nativePayload = copyNativePayload(edit.nativePayload))
+
     fun toProjectEdit(
         track: SpcData.TrackInfo,
         song: NspcSequence.Song,

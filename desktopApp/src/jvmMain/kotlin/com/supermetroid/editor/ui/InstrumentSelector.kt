@@ -197,7 +197,7 @@ internal fun SharedInstrumentScope(tracks: List<String>, edited: Boolean, onRese
         if (edited) TextButton(onClick = onReset, enabled = enabled, modifier = Modifier.testTag("instrument-bank-reset")) {
             Text("Reset sound", fontSize = fs.detail)
         }
-        if (commonSlot) Text("Common slot · may carry across banks", fontSize = fs.detail,
+        if (commonSlot) Text("Common sound · edits can block ROM export", fontSize = fs.detail,
             color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.testTag("instrument-common-warning").padding(top = 12.dp))
     }
 }

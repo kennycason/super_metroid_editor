@@ -14,34 +14,54 @@ internal class MusicRomExporter(
         romData: ByteArray,
         freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     ): Int {
-        val songSets = (project.musicEdits.values.map { it.songSet } +
-            project.musicInstrumentBanks.keys.map { it.toInt(16) }).distinct().sorted()
+        val songSets = MusicBankTransitions.editedSongSets(project)
         // Validate every bank before writing any transfer chains into the export copy.
-        val banks = songSets.associateWith { MusicBankResolver.resolve(RomParser(romData), project, it) }
-        var patched = 0
-        for ((songSet, bank) in banks) {
-            if (MusicInstrumentBanks.instruments(project, songSet).keys.any { it < 24 }) {
-                onLog("[EXPORT] Warning: common instrument slots (0–23) in bank ${MusicInstrumentBanks.key(songSet)} are not reset by vanilla bank loads; edits can carry into later banks.")
-            }
-            if (bank.writes.isEmpty()) continue
-            val chainBytes = writeRelocatedSongSetTransferChain(
-                romData, songSet, bank.writes, bank.hasNativePayload, freeSpaceAllocator)
-            patched += bank.patchedTracks
-            onLog("[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: ${bank.patchedTracks} music/bank edit(s), $chainBytes-byte transfer chain")
+        val parser = RomParser(romData)
+        val banks = songSets.associateWith { MusicBankResolver.resolve(parser, project, it) }.toMutableMap()
+        val transitions = MusicBankTransitions.inspect(parser, project, banks)
+        transitions.requireSafe()
+        for ((songSet, restorations) in transitions.instrumentRestorations) {
+            val bank = banks[songSet] ?: MusicBankResolver.resolve(parser, project, songSet)
+            val writes = MusicTransferChainBudget.mergeBlocks(bank.blocks, restorations).associate { it.destAddr to it.data }
+            banks[songSet] = bank.copy(writes = writes)
+            onLog("[EXPORT] Bank ${MusicInstrumentBanks.key(songSet)} will restore instrument slot(s) ${restorations.keys.joinToString { ((it - 0x6C00) / 6).toString() }} on load.")
         }
-        return patched
+        // Validate the concrete reset uploads too, rather than assuming a plan makes the bank safe.
+        val restored = MusicBankTransitions.inspect(parser, project, banks)
+        restored.requireSafe()
+        check(restored.instrumentRestorations.isEmpty()) { "Instrument bank restoration plan is incomplete" }
+        val chains = banks.filterValues { it.writes.isNotEmpty() }.map { (songSet, bank) ->
+            prepareTransferChain(parser, songSet, bank.writes, bank.hasNativePayload)
+        }
+        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, parser::snesToPc, parser::pcToSnes, guardBytes = 2)
+        val transferBanks = musicTransferBanks(parser, romData)
+        // Reserve the entire plan before the first ROM write. A reset chain that cannot
+        // fit must not leave a partly relocated set of music pointers in the caller's copy.
+        val allocations = chains.map { chain ->
+            allocator.reserve(chain.bytes.size, transferBanks,
+                "songSet ${MusicInstrumentBanks.key(chain.songSet)} transfer chain", alignment = 0x10)
+                ?: error("not enough contiguous free ROM space for ${chain.bytes.size}-byte relocated SPC transfer chain")
+        }
+        for ((chain, allocation) in chains.zip(allocations)) {
+            allocator.write(allocation, chain.bytes)
+            writeRomU24(romData, chain.pointerEntryPc, allocation.snesAddress)
+            onLog("[EXPORT] Relocated bank ${MusicInstrumentBanks.key(chain.songSet)} " +
+                "\$${chain.originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
+                "\$${allocation.snesAddress.toString(16).uppercase().padStart(6, '0')} (${chain.bytes.size} bytes)")
+        }
+        return banks.values.sumOf { it.patchedTracks }
     }
 
-    private fun writeRelocatedSongSetTransferChain(
-        romData: ByteArray,
+    private data class TransferChain(val songSet: Int, val pointerEntryPc: Int, val originalPointer: Int, val bytes: ByteArray)
+
+    private fun prepareTransferChain(
+        parser: RomParser,
         songSet: Int,
         spcWrites: Map<Int, ByteArray>,
         hasNativePayload: Boolean = false,
-        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
-    ): Int {
+    ): TransferChain {
         require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
 
-        val parser = RomParser(romData)
         val pointerEntryPc = SpcData.findSongSetPointerEntryPc(parser, songSet)
         require(pointerEntryPc >= 0) {
             "songSet 0x${songSet.toString(16)} has no writable transfer pointer table entry"
@@ -67,30 +87,7 @@ internal class MusicRomExporter(
             "SongSet 0x${songSet.toString(16).padStart(2, '0')} needs ${mergedChain.size} bytes, " +
                 "which exceeds the $maxBank-byte single-bank limit.$fallbackRisk"
         }
-        val relocatedChain = mergedChain
-        val allocation = (freeSpaceAllocator ?: RomFreeSpaceAllocator(
-            romData = romData,
-            snesToPc = parser::snesToPc,
-            pcToSnes = parser::pcToSnes,
-            guardBytes = 2,
-        )).allocate(
-            bytes = relocatedChain,
-            banks = musicTransferBanks(parser, romData),
-            label = "songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain",
-            alignment = 0x10,
-        ) ?: error("not enough contiguous free ROM space for ${relocatedChain.size}-byte relocated SPC transfer chain")
-        val writePc = allocation.pcOffset
-
-        val relocatedPointer = parser.pcToSnes(writePc)
-        writeRomU24(romData, pointerEntryPc, relocatedPointer)
-
-        onLog(
-            "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
-                "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
-                "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
-                "(merged, ${relocatedChain.size} bytes)"
-        )
-        return relocatedChain.size
+        return TransferChain(songSet, pointerEntryPc, originalPointer, mergedChain)
     }
 
     private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {
