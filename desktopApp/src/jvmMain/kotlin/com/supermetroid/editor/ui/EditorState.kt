@@ -2749,6 +2749,24 @@ class EditorState(
         dirty = true
     }
 
+    var musicSampleNameVersion by mutableStateOf(0)
+        private set
+
+    fun musicSampleNames(songSet: Int): Map<String, String> {
+        musicSampleNameVersion
+        val prefix = "${MusicInstrumentBanks.key(songSet)}:"
+        return project.musicSampleNames.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) }
+    }
+
+    fun renameMusicSample(songSet: Int, resourceId: String, name: String) {
+        val key = MusicSampleCatalog.nameKey(songSet, resourceId)
+        val normalized = name.trim().take(64).takeIf { it.isNotEmpty() }
+        if (project.musicSampleNames[key] == normalized) return
+        if (normalized == null) project.musicSampleNames.remove(key) else project.musicSampleNames[key] = normalized
+        musicSampleNameVersion++
+        dirty = true
+    }
+
     fun setMusicEdit(key: String, edit: MusicTrackEdit) {
         project.musicEdits[key] = edit
         dirty = true

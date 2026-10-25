@@ -67,8 +67,10 @@ internal object InstrumentDescriptions {
         else -> "One-shot sound"
     }
 
-    fun detail(entry: InstrumentEntry): String {
-        val source = if (entry.srcn >= 0x80) "Noise rate ${entry.srcn and 31}" else "Sample ${entry.srcn}"
+    fun detail(entry: InstrumentEntry): String = detail(entry, emptyMap())
+
+    fun detail(entry: InstrumentEntry, sampleNames: Map<Int, String>): String {
+        val source = sampleNames[entry.srcn] ?: if (entry.srcn >= 0x80) "Noise rate ${entry.srcn and 31}" else "Sample ${entry.srcn}"
         val envelope = if (entry.adsr1 and 0x80 == 0) "Gain envelope" else when (entry.adsr1 and 15) {
             in 0..5 -> "Slow attack"
             in 6..11 -> "Soft attack"
@@ -80,10 +82,10 @@ internal object InstrumentDescriptions {
     fun playable(entry: InstrumentEntry): Boolean =
         !empty(entry) && (entry.srcn >= 0x80 || (entry.sampleStartAddr >= 0 && entry.brrByteLength >= 9))
 
-    fun matches(entry: InstrumentEntry, names: Map<Int, String>, query: String): Boolean {
+    fun matches(entry: InstrumentEntry, names: Map<Int, String>, query: String, sampleNames: Map<Int, String> = emptyMap()): Boolean {
         val id = entry.index.toString(16).uppercase().padStart(2, '0')
         return query.trim().split(Regex("\\s+")).all { term ->
-            "${title(entry, names)} ${detail(entry)} ${entry.index} 0x$id".contains(term, ignoreCase = true)
+            "${title(entry, names)} ${detail(entry, sampleNames)} ${entry.index} 0x$id sample ${entry.srcn} 0x${entry.srcn.toString(16).padStart(2, '0')}".contains(term, ignoreCase = true)
         }
     }
 }
@@ -111,6 +113,7 @@ internal fun NoteInstrumentSelector(
     instrumentEditingEnabled: Boolean = true,
     sourceLabel: String = "ROM bank",
     soundContent: @Composable () -> Unit = {},
+    sampleNames: Map<Int, String> = emptyMap(),
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
@@ -133,8 +136,8 @@ internal fun NoteInstrumentSelector(
                 Column(Modifier.weight(1f)) {
                     Text(info?.let { InstrumentDescriptions.title(it, names) } ?: "Unknown instrument",
                         fontSize = fs.heading, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(info?.let(InstrumentDescriptions::detail) ?: "Unknown sound",
-                        fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(info?.let { InstrumentDescriptions.detail(it, sampleNames) } ?: "Unknown sound",
+                        fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text("Sound #${note.instrument}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -187,7 +190,7 @@ internal fun NoteInstrumentSelector(
             if (choosing) {
                 InstrumentPicker(instruments, names, usedIds, note.instrument, bankLabel, note.name,
                     nativePreviewAvailable, previewInstrument, previewBusy, onPreview,
-                    onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false }, sourceLabel = sourceLabel)
+                    onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false }, sourceLabel = sourceLabel, sampleNames = sampleNames)
             }
             if (editing && instrumentEditingEnabled) {
                 soundContent()
@@ -245,6 +248,7 @@ internal fun InstrumentPicker(
     onApply: (Int) -> Unit,
     onCancel: () -> Unit,
     sourceLabel: String = "ROM bank",
+    sampleNames: Map<Int, String> = emptyMap(),
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     var query by remember { mutableStateOf("") }
@@ -252,7 +256,7 @@ internal fun InstrumentPicker(
     var referencePitch by remember { mutableStateOf(false) }
     var candidate by remember(currentId) { mutableStateOf(currentId) }
     val available = instruments.filter(InstrumentDescriptions::playable)
-    val visible = available.filter { (!usedOnly || it.index in usedIds) && InstrumentDescriptions.matches(it, names, query) }
+    val visible = available.filter { (!usedOnly || it.index in usedIds) && InstrumentDescriptions.matches(it, names, query, sampleNames) }
         .sortedWith(compareByDescending<InstrumentEntry> { it.index == currentId }.thenByDescending { it.index in usedIds }.thenBy { it.index })
     val listState = rememberScrollState()
     Column(Modifier.fillMaxWidth().testTag("instrument-browser"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -285,7 +289,8 @@ internal fun InstrumentPicker(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(Modifier.weight(1f)) {
                                 Text(InstrumentDescriptions.title(entry, names), fontSize = fs.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(InstrumentDescriptions.detail(entry), fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(InstrumentDescriptions.detail(entry, sampleNames), fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             Text("#${entry.index}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             IconButton(onClick = { onPreview(entry.index, referencePitch) },

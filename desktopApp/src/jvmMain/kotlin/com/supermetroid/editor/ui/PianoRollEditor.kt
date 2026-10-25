@@ -242,6 +242,10 @@ fun PianoRollEditor(
     activeChannel: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry> = emptyList(),
     instrumentSourcePitches: Map<Int, Int> = emptyMap(),
+    sampleBrowser: MusicSampleBrowserState = MusicSampleBrowserState(),
+    onPreviewSample: (Int, Int, Note) -> Unit = { _, _, _ -> },
+    onChooseSample: (Int, Int) -> Unit = { _, _ -> },
+    onRenameSample: (String, String) -> Unit = { _, _ -> },
     instrumentNames: Map<Int, String> = emptyMap(),
     instrumentBankLabel: String = "Current sound bank",
     instrumentSourceLabel: String = "ROM bank",
@@ -1279,6 +1283,8 @@ fun PianoRollEditor(
                     totalTicks = totalTicks,
                     instrumentInfos = instrumentInfos,
                     instrumentSourcePitches = instrumentSourcePitches,
+                    sampleBrowser = sampleBrowser, onPreviewSample = onPreviewSample,
+                    onChooseSample = onChooseSample, onRenameSample = onRenameSample,
                     instrumentNames = instrumentNames,
                     instrumentBankLabel = instrumentBankLabel,
                     instrumentSourceLabel = instrumentSourceLabel,
@@ -1435,6 +1441,10 @@ internal fun NotePropertiesPanel(
     totalTicks: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry>,
     instrumentSourcePitches: Map<Int, Int> = emptyMap(),
+    sampleBrowser: MusicSampleBrowserState = MusicSampleBrowserState(),
+    onPreviewSample: (Int, Int, Note) -> Unit = { _, _, _ -> },
+    onChooseSample: (Int, Int) -> Unit = { _, _ -> },
+    onRenameSample: (String, String) -> Unit = { _, _ -> },
     instrumentNames: Map<Int, String>,
     instrumentBankLabel: String,
     instrumentSourceLabel: String,
@@ -1563,6 +1573,7 @@ internal fun NotePropertiesPanel(
 
             NoteInstrumentSelector(
                 note = note, instruments = instrumentInfos, names = instrumentNames,
+                sampleNames = sampleBrowser.samples.mapNotNull { sample -> sampleBrowser.names[sample.resourceId]?.let { sample.srcn to it } }.toMap(),
                 usedIds = usedInstrumentIds.toSet(), bankLabel = instrumentBankLabel,
                 sourceLabel = instrumentSourceLabel,
                 sharedTracks = sharedInstrumentTracks, sharedInstrumentEdited = note.instrument in sharedInstrumentEdits,
@@ -1586,7 +1597,12 @@ internal fun NotePropertiesPanel(
                 },
                 soundContent = {
                     instrumentInfos.firstOrNull { it.index == note.instrument }?.let { entry ->
-                        NativeInstrumentPanel(entry, instrumentSourcePitches[note.instrument], onInstrumentChanged)
+                        InstrumentRecordingEditor(entry, instrumentSourcePitches[note.instrument],
+                            sampleBrowser.copy(previewSource = sampleBrowser.previewSource.takeIf { previewInstrument == note.instrument }),
+                            instrumentInfos, instrumentNames, usedInstrumentIds.toSet(), note.name, nativeInstrumentPreviewAvailable,
+                            onPreview = { srcn, reference -> onPreviewSample(note.instrument, srcn,
+                                note.copy(noteValue = if (reference) NspcSequence.nameToNote("C4") else note.noteValue)) },
+                            onChoose = { onChooseSample(note.instrument, it) }, onRename = onRenameSample, onControlCommit = onInstrumentChanged)
                     }
                 },
                 advancedContent = {
@@ -1649,9 +1665,7 @@ private fun InstrumentInsightPanel(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    InstrumentNumberProperty("Sample ID", info.srcn, 3, 0xFF, if (info.srcn >= 0x80) "Noise source" else "BRR recording") {
-                        if (it in 0..39 || it in 0x80..0x9F) onInstrumentChanged(info.copy(srcn = it))
-                    }
+                    Text("SRCN ${hex(info.srcn)}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     InstrumentNumberProperty("ADSR1", info.adsr1, 3, 255, hex(info.adsr1)) {
                         onInstrumentChanged(info.copy(adsr1 = it))
                     }

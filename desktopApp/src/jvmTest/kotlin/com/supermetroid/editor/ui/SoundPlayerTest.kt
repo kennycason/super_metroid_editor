@@ -16,10 +16,12 @@ internal class DeferredSoundClip(
     var started = false
     var closed = false
     var position = 0
+    var audioBytes: ByteArray? = null
+        private set
     private val listeners = mutableListOf<LineListener>()
     val clip: Clip = Proxy.newProxyInstance(Clip::class.java.classLoader, arrayOf(Clip::class.java)) { _, method, args ->
         when (method.name) {
-            "open" -> { openError?.let { throw it }; null }
+            "open" -> { openError?.let { throw it }; audioBytes = (args?.getOrNull(1) as? ByteArray)?.copyOf(); null }
             "start", "loop" -> { startError?.let { throw it }; started = true; null }
             "close" -> { closed = true; running = false; null }
             "stop" -> { running = false; null }

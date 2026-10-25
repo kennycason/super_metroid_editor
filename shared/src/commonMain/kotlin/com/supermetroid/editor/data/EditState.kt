@@ -1020,6 +1020,8 @@ data class SmEditProject(
     val musicInstrumentBanks: MutableMap<String, MusicInstrumentBankEdit> = mutableMapOf(),
     /** Display-only instrument names, keyed by song set and instrument slot. Never changes ROM bytes. */
     val musicInstrumentNames: MutableMap<String, String> = mutableMapOf(),
+    /** Recording labels keyed by song set + content/loop identity, never just a reusable SRCN. */
+    val musicSampleNames: MutableMap<String, String> = mutableMapOf(),
     val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),
     val asmWorkspace: ProjectAsmWorkspaceSettings = ProjectAsmWorkspaceSettings(),
     var versionMajor: Int = 1,

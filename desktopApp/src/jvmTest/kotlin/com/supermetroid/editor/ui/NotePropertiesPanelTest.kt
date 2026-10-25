@@ -39,6 +39,9 @@ class NotePropertiesPanelTest {
         val message = mutableStateOf("")
         val busy = mutableStateOf(false)
         val preview = mutableStateOf<Int?>(null)
+        val browser = mutableStateOf(MusicSampleBrowserState())
+        val samplePreviews = mutableListOf<Triple<Int, Int, NspcSequence.Note>>()
+        val sampleChoices = mutableListOf<Pair<Int, Int>>()
         val history = mutableListOf<String>()
         var deleted = 0
         var closed = 0
@@ -51,7 +54,7 @@ class NotePropertiesPanelTest {
         val input = walk(tagged(scene, tag)).single { it.config.contains(SemanticsActions.SetText) }
         assertTrue(input.config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value)))
     }
-    private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, height: Int = 900,
+    private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, height: Int = 900, captureSuffix: String = "",
         check: suspend (ComposeScene, suspend () -> Unit, Fixture) -> Unit) {
         val fixture = Fixture()
         val scene = ComposeScene(coroutineContext = coroutineContext)
@@ -68,6 +71,9 @@ class NotePropertiesPanelTest {
                             NotePropertiesPanel(note = fixture.note.value, channel = 3, totalTicks = 960,
                                 instrumentInfos = instruments, instrumentNames = emptyMap(),
                                 instrumentSourcePitches = instruments.associate { it.index to it.nativePitch },
+                                sampleBrowser = fixture.browser.value,
+                                onPreviewSample = { index, srcn, note -> fixture.samplePreviews += Triple(index, srcn, note) },
+                                onChooseSample = { index, srcn -> fixture.sampleChoices += index to srcn },
                                 instrumentBankLabel = "Lower Norfair sound bank", instrumentSourceLabel = "ROM bank",
                                 sharedInstrumentTracks = listOf("Lower Norfair"), sharedInstrumentEdits = emptySet(),
                                 onResetSharedInstrument = {}, instrumentEditingEnabled = true,
@@ -91,7 +97,7 @@ class NotePropertiesPanelTest {
             render(); check(scene, render, fixture)
             if (System.getenv("SMEDIT_CAPTURE_INSTRUMENT_UI") == "true") {
                 val suffix = if (height == 900) "" else "-$height"
-                val file = File("build/test-output/note-properties-${theme.name}-${font.name}$suffix.png").apply { parentFile.mkdirs() }
+                val file = File("build/test-output/note-properties-${theme.name}-${font.name}$suffix$captureSuffix.png").apply { parentFile.mkdirs() }
                 surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
             }
         } finally { scene.close(); surface.close() }
@@ -168,6 +174,45 @@ class NotePropertiesPanelTest {
             val apply = tagged(scene, "instrument-advanced").boundsInRoot
             assertTrue(apply.height > 0)
             assertTrue(apply.top >= panel.top && apply.bottom <= panel.bottom)
+        }
+    }
+
+    private fun browser() = MusicSampleBrowserState(samples = listOf(0, 24).map { srcn ->
+        MusicSample(srcn, "brr:${srcn.toString().padStart(64, '0')}", 160, 90, null, List(16) { MusicSamplePeak(-0.5f, 0.5f) }, "Bank ROM")
+    })
+
+    @Test fun `note inspector routes sample preview pitches and shared choices without changing note identity`() = runBlocking {
+        withPanel { scene, render, f ->
+            f.browser.value = browser(); render()
+            click(scene, "instrument-edit-sound"); render()
+            click(scene, "sample-choose"); render()
+            click(scene, "sample-preview-0"); render()
+            assertEquals(24, f.samplePreviews.single().first)
+            assertEquals(0, f.samplePreviews.single().second)
+            assertEquals(NspcSequence.nameToNote("F1"), f.samplePreviews.single().third.noteValue)
+            click(scene, "sample-reference-pitch"); render()
+            click(scene, "sample-preview-0"); render()
+            assertEquals(NspcSequence.nameToNote("C4"), f.samplePreviews.last().third.noteValue)
+            click(scene, "sample-apply"); render()
+            assertEquals(listOf(24 to 0), f.sampleChoices)
+            assertTrue(f.history.isEmpty(), "Recording selection must use shared bank history, not note-edit history")
+            assertEquals(24, f.note.value.instrument)
+        }
+    }
+
+    @Test fun `bottom anchored sample browser stays stationary during native preview transitions`() = runBlocking {
+        withPanel(FontSize.LARGER, captureSuffix = "-samples") { scene, render, f ->
+            f.browser.value = browser(); render()
+            click(scene, "instrument-edit-sound"); render()
+            click(scene, "sample-choose"); render()
+            val tags = listOf("note-properties", "sample-browser", "sample-row-24", "sample-apply")
+            val bounds = tags.associateWith { tagged(scene, it).boundsInRoot }
+            for ((message, busy, srcn) in listOf(Triple("Preparing preview…", true, 24), Triple("Playing · sample #24 · F1", false, 24),
+                Triple("Preview finished · sample #24 · F1", false, null), Triple("Could not open audio output", false, null))) {
+                f.message.value = message; f.busy.value = busy; f.preview.value = if (srcn != null) 24 else null
+                f.browser.value = f.browser.value.copy(previewSource = srcn, previewBusy = busy); render()
+                tags.forEach { assertEquals(bounds[it], tagged(scene, it).boundsInRoot, message) }
+            }
         }
     }
 }

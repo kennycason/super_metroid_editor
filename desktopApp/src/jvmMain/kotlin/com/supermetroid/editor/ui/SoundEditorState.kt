@@ -60,6 +60,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     private var instrumentPreviewVersion = 0
     var instrumentPreviewIndex by mutableStateOf<Int?>(null)
         private set
+    var instrumentPreviewSample by mutableStateOf<Int?>(null)
+        private set
     var isInstrumentPreviewLoading by mutableStateOf(false)
         private set
     var instrumentPreviewMessage by mutableStateOf("")
@@ -113,6 +115,19 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         private set
     var pianoRollSourceInstruments by mutableStateOf<List<NspcRenderer.InstrumentEntry>>(emptyList())
         private set
+    var pianoRollSamples by mutableStateOf<List<MusicSample>>(emptyList())
+        private set
+    var pianoRollSampleVersion by mutableStateOf(0)
+        private set
+    var isLoadingPianoRollSamples by mutableStateOf(false)
+        private set
+    var pianoRollSamplesProblem by mutableStateOf<String?>(null)
+        private set
+    private var sampleCatalogRam: ByteArray? = null
+    private var sampleCatalogSongSet = -1
+    private var sampleCatalogBankBlocks: List<SpcData.TransferBlock> = emptyList()
+    private var sampleCatalogImports: List<Pair<String, List<SpcData.TransferBlock>>> = emptyList()
+    private var loadedSampleVersion = -1
     private var originalPianoRollInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
     private var originalPianoRollSong: NspcSequence.Song? = null
     private val pianoRollHistory = PianoRollEditLogic.EditHistory()
@@ -1236,11 +1251,66 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         try {
             val source = MusicBankResolver.sourceRam(parser, project, track.songSet, includeOverrides = false)
             pianoRollSourceInstruments = NspcRenderer.readInstrumentTable(source)
+            cacheSampleSource(source, parser, project, track.songSet)
             MusicInstrumentBanks.writes(MusicInstrumentBanks.instruments(project, track.songSet)).forEach { (at, data) -> data.copyInto(source, at) }
             pianoRollInstruments = NspcRenderer.readInstrumentTable(source)
         } catch (error: Exception) {
             instrumentBankProblem = error.message ?: "Cannot load shared sound bank"
         }
+    }
+
+    private fun cacheSampleSource(ram: ByteArray, parser: RomParser, project: SmEditProject, songSet: Int) {
+        val bankBlocks = SpcData.findSongSetTransferData(parser, songSet)
+        val imports = project.musicEdits.toSortedMap().values.filter { it.songSet == songSet }.mapNotNull { edit ->
+            edit.nativePayload?.let { it.sourceFileName to MusicEditConversion.toTransferBlocks(it) }
+        }
+        fun shape(blocks: List<SpcData.TransferBlock>) = blocks.map { it.destAddr to it.data.size }
+        if (sampleCatalogSongSet == songSet && sampleCatalogRam?.contentEquals(ram) == true &&
+            shape(bankBlocks) == shape(sampleCatalogBankBlocks) &&
+            imports.map { it.first to shape(it.second) } == sampleCatalogImports.map { it.first to shape(it.second) }) return
+        sampleCatalogRam = ram.copyOf()
+        sampleCatalogSongSet = songSet
+        sampleCatalogBankBlocks = bankBlocks
+        sampleCatalogImports = imports
+        pianoRollSampleVersion++
+        pianoRollSamples = emptyList()
+        pianoRollSamplesProblem = null
+        isLoadingPianoRollSamples = true
+    }
+
+    /** Detached snapshot in, small display catalog out; never decodes BRR during composition. */
+    suspend fun loadPianoRollSampleCatalog() {
+        val ram = sampleCatalogRam ?: return
+        val version = pianoRollSampleVersion
+        if (loadedSampleVersion == version) return
+        val blocks = sampleCatalogBankBlocks
+        val imports = sampleCatalogImports
+        isLoadingPianoRollSamples = true
+        try {
+            val samples = withContext(Dispatchers.Default) { MusicSampleCatalog.read(ram, blocks, imports) }
+            if (version != pianoRollSampleVersion) return
+            pianoRollSamples = samples
+            loadedSampleVersion = version
+            pianoRollSamplesProblem = null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (version == pianoRollSampleVersion) pianoRollSamplesProblem = error.message ?: "Cannot read bank samples"
+        } finally {
+            if (version == pianoRollSampleVersion) isLoadingPianoRollSamples = false
+        }
+    }
+
+    fun choosePianoRollSample(index: Int, srcn: Int): Boolean {
+        val parser = romParserRef ?: return false
+        val editor = editorStateRef ?: return false
+        if (loadedSampleVersion != pianoRollSampleVersion || instrumentBankProblem != null) return false
+        val sample = pianoRollSamples.firstOrNull { it.srcn == srcn } ?: return false
+        val entry = pianoRollInstruments.firstOrNull { it.index == index } ?: return false
+        if (entry.srcn == srcn) return false
+        recordPianoRollEdit("Change sound recording")
+        updatePianoRollInstrument(MusicSampleCatalog.apply(entry, sample), parser, editor)
+        return true
     }
 
     private fun projectForBank(song: NspcSequence.Song? = null): SmEditProject? {
@@ -1550,9 +1620,15 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     }
 
     /** Native single-note audition; its private RAM and player never replace the song or waveform. */
-    suspend fun previewInstrument(romParser: RomParser, index: Int, note: NspcSequence.Note) {
+    suspend fun previewInstrument(romParser: RomParser, index: Int, note: NspcSequence.Note, sampleSource: Int? = null) {
         val track = selectedTrack ?: return
-        val instrument = pianoRollInstruments.firstOrNull { it.index == index } ?: return
+        val original = pianoRollInstruments.firstOrNull { it.index == index } ?: return
+        if (sampleSource != null && (loadedSampleVersion != pianoRollSampleVersion || pianoRollSamples.none { it.srcn == sampleSource })) {
+            stopInstrumentPreview()
+            instrumentPreviewMessage = "Source is not available in this bank"
+            return
+        }
+        val instrument = if (sampleSource == null) original else original.copy(srcn = sampleSource)
         if (!nativeInstrumentPreviewAvailable) return
         stopPlayback()
         playAllEnabled = false
@@ -1567,6 +1643,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             return
         }
         instrumentPreviewIndex = index
+        instrumentPreviewSample = sampleSource
         isInstrumentPreviewLoading = true
         instrumentPreviewMessage = "Preparing preview…"
         try {
@@ -1579,11 +1656,13 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                 InstrumentAudition.render(InstrumentAudition.build(ram, instrument, previewNote, tempo))
             }
             if (version != instrumentPreviewVersion) return
-            instrumentPreviewMessage = "Playing · ${previewNote.name}"
+            val label = if (sampleSource == null) previewNote.name else "${if (sampleSource >= 0x80) "noise rate ${sampleSource and 31}" else "sample #$sampleSource"} · ${previewNote.name}"
+            instrumentPreviewMessage = "Playing · $label"
             instrumentPlayer.onComplete = {
                 if (version == instrumentPreviewVersion) {
                     instrumentPreviewIndex = null
-                    instrumentPreviewMessage = "Preview finished · ${previewNote.name}"
+                    instrumentPreviewSample = null
+                    instrumentPreviewMessage = "Preview finished · $label"
                 }
             }
             // Fixed monitor gain: envelope and gain changes must stay audible when comparing sounds.
@@ -1591,10 +1670,12 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                 SoundPlayer.PlaybackStart.STARTED -> Unit
                 SoundPlayer.PlaybackStart.EMPTY -> {
                     instrumentPreviewIndex = null
+                    instrumentPreviewSample = null
                     instrumentPreviewMessage = "No audio samples to play"
                 }
                 SoundPlayer.PlaybackStart.OUTPUT_UNAVAILABLE -> {
                     instrumentPreviewIndex = null
+                    instrumentPreviewSample = null
                     instrumentPreviewMessage = "Could not open audio output"
                 }
             }
@@ -1604,6 +1685,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         } catch (error: Exception) {
             if (version == instrumentPreviewVersion) {
                 instrumentPreviewIndex = null
+                instrumentPreviewSample = null
                 instrumentPreviewMessage = "Could not preview this instrument"
             }
             soundEditorLog.warn(error) { "[SPC-INSTRUMENT] Native audition failed for $index" }
@@ -1616,6 +1698,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         instrumentPreviewVersion++
         instrumentPlayer.stop()
         instrumentPreviewIndex = null
+        instrumentPreviewSample = null
         isInstrumentPreviewLoading = false
         instrumentPreviewMessage = ""
     }
@@ -1690,6 +1773,16 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
     fun selectTrack(track: SpcData.TrackInfo) {
         stopInstrumentPreview()
+        if (track.songSet != sampleCatalogSongSet) {
+            sampleCatalogRam = null
+            sampleCatalogSongSet = -1
+            sampleCatalogBankBlocks = emptyList()
+            sampleCatalogImports = emptyList()
+            pianoRollSampleVersion++
+            pianoRollSamples = emptyList()
+            pianoRollSamplesProblem = null
+            isLoadingPianoRollSamples = false
+        }
         val shouldAutoPlay = isPlaying || player.isActive() || autoPlayEnabled
         player.stop()
         isPlaying = false

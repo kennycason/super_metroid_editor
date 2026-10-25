@@ -17,6 +17,42 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class InstrumentAuditionTest {
+    @Test fun `recording and noise candidate previews match committed native audio without editing while browsing`() = runBlocking {
+        assumeTrue(NativeSpcEmulator.isAvailable(), "Native SPC library unavailable")
+        val parser = TestRomHelper.requireRomParser()
+        val devices = mutableListOf<DeferredSoundClip>()
+        val state = SoundEditorState(SoundPlayer { DeferredSoundClip().also { devices += it }.clip })
+        val editor = EditorState()
+        state.selectTrack(SpcData.KNOWN_TRACKS.first { it.songSet == 0x18 && it.playIndex == 5 })
+        state.openPianoRoll(parser, editor); state.loadPianoRollSampleCatalog()
+        val before = state.pianoRollInstruments.first { it.index >= 24 && it.nativePitch > 0 && InstrumentDescriptions.playable(it) }
+        val originalSong = PianoRollPreviewLogic.deepCopySong(state.editingSong!!)
+        val note = note().copy(instrument = before.index)
+        val recording = state.pianoRollSamples.first { !it.isNoise && it.srcn != before.srcn }
+        for (srcn in listOf(recording.srcn, 0x85)) {
+            val oldEntry = state.pianoRollInstruments[before.index]
+            val history = state.pianoRollUndoDepth
+            state.previewInstrument(parser, before.index, note, srcn)
+            val preview = devices.last().audioBytes!!
+            assertTrue(devices.last().started)
+            assertTrue(preview.any { it.toInt() != 0 }, "The native candidate fixture must exercise audible audio, not only matching silence")
+            assertEquals(srcn, state.instrumentPreviewSample)
+            assertEquals(oldEntry, state.pianoRollInstruments[before.index])
+            assertEquals(history, state.pianoRollUndoDepth)
+            assertEquals(originalSong, state.editingSong)
+            assertTrue(editor.project.musicEdits.isEmpty())
+            assertEquals(null, state.currentWaveform)
+            assertTrue(state.choosePianoRollSample(before.index, srcn))
+            assertEquals(null, state.instrumentPreviewSample)
+            state.previewInstrument(parser, before.index, note)
+            assertContentEquals(preview, devices.last().audioBytes, "Candidate and committed source must use the same native envelope, tuning, and samples")
+            assertEquals(history + 1, state.pianoRollUndoDepth)
+        }
+        state.stopInstrumentPreview()
+        state.previewInstrument(parser, before.index, note, 0x40)
+        assertEquals(null, state.instrumentPreviewIndex)
+        assertEquals("Source is not available in this bank", state.instrumentPreviewMessage)
+    }
     @Test fun `native preview reports playing until the accepted output actually completes`() = runBlocking {
         assumeTrue(NativeSpcEmulator.isAvailable(), "Native SPC library unavailable")
         val parser = TestRomHelper.requireRomParser()

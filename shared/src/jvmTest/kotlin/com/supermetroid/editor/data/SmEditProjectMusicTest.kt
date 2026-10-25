@@ -73,6 +73,7 @@ class SmEditProjectMusicTest {
         assertTrue(decoded.musicEdits.isEmpty())
         assertTrue(decoded.musicInstrumentBanks.isEmpty())
         assertTrue(decoded.musicInstrumentNames.isEmpty())
+        assertTrue(decoded.musicSampleNames.isEmpty())
     }
 
     @Test
@@ -84,6 +85,18 @@ class SmEditProjectMusicTest {
         assertEquals(project.musicInstrumentNames, decoded.musicInstrumentNames)
         assertTrue(decoded.musicEdits.isEmpty(), "Naming a sound must not create audio patches")
         assertTrue(decoded.musicInstrumentBanks.isEmpty())
+    }
+
+    @Test fun `recording labels round trip by resource identity without music overrides`() {
+        val project = SmEditProject(romPath = "/tmp/sm.smc")
+        project.musicSampleNames["03:brr:${"a".repeat(64)}"] = "Warm pluck"
+        project.musicSampleNames["18:brr:${"a".repeat(64)}"] = "Other bank"
+        project.musicSampleNames["03:noise:5"] = "Dust"
+        val decoded = json.decodeFromString(SmEditProject.serializer(), json.encodeToString(SmEditProject.serializer(), project))
+        assertEquals(project.musicSampleNames, decoded.musicSampleNames)
+        assertTrue(decoded.musicEdits.isEmpty())
+        assertTrue(decoded.musicInstrumentBanks.isEmpty())
+        assertTrue(decoded.musicInstrumentNames.isEmpty())
     }
 
     @Test

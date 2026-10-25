@@ -488,6 +488,7 @@ fun SoundEditorCanvas(
 
         // Piano roll mode vs waveform mode
         if (state.isPianoRollOpen && state.editingSong != null) {
+            LaunchedEffect(state.pianoRollSampleVersion) { state.loadPianoRollSampleCatalog() }
             // Tick update loop for playback cursor
             LaunchedEffect(state.isPlaying) {
                 while (state.isPlaying && state.isPianoRollOpen) {
@@ -514,6 +515,11 @@ fun SoundEditorCanvas(
                 activeChannel = state.pianoRollChannel,
                 instrumentInfos = state.pianoRollInstruments,
                 instrumentSourcePitches = state.pianoRollSourceInstruments.associate { it.index to it.nativePitch },
+                sampleBrowser = MusicSampleBrowserState(state.pianoRollSamples, editorState.musicSampleNames(state.currentSongSet),
+                    state.isLoadingPianoRollSamples, state.pianoRollSamplesProblem, state.instrumentPreviewSample, state.isInstrumentPreviewLoading),
+                onPreviewSample = { index, srcn, note -> if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note, srcn) } },
+                onChooseSample = { index, srcn -> state.choosePianoRollSample(index, srcn) },
+                onRenameSample = { resourceId, name -> editorState.renameMusicSample(state.currentSongSet, resourceId, name) },
                 instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
                 instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
                 instrumentSourceLabel = if (editorState.project.musicEdits.values.any {
