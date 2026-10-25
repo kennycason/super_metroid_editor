@@ -202,28 +202,6 @@ internal fun SharedInstrumentScope(tracks: List<String>, edited: Boolean, onRese
     }
 }
 
-@Composable
-internal fun InstrumentBankConflictPanel(conflicts: List<MusicInstrumentBanks.Conflict>, onChoose: (Int, MusicInstrumentBanks.Choice) -> Unit) {
-    val conflict = conflicts.firstOrNull() ?: return
-    val fs = LocalEditorTheme.current.fontSize.value
-    Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f))) {
-        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Shared instrument #${conflict.index} · choose one version", fontSize = fs.body, fontWeight = FontWeight.Medium)
-            Text("${conflicts.size} ${if (conflicts.size == 1) "conflict" else "conflicts"} · preview and export paused", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            for (choice in conflict.choices) {
-                OutlinedButton(onClick = { onChoose(conflict.index, choice) }, modifier = Modifier.testTag("instrument-bank-choice-${choice.trackKey}")) {
-                    Column {
-                        Text("Use ${choice.trackName.ifBlank { choice.trackKey }}", fontSize = fs.body)
-                        Text("Sample ${choice.instrument.srcn} · Gain ${choice.instrument.gain} · ADSR ${choice.instrument.adsr1.toString(16).uppercase()}/${choice.instrument.adsr2.toString(16).uppercase()} · Tune ${"%.3f".format(MusicInstrumentBanks.native(choice.instrument).tuningMultiplier)}×", fontSize = fs.detail)
-                    }
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun InstrumentPicker(

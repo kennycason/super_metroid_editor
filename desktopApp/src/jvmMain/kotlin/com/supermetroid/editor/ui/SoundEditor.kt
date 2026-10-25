@@ -504,7 +504,6 @@ fun SoundEditorCanvas(
                 )
             }
 
-            InstrumentBankConflictPanel(state.instrumentBankConflicts, state::resolveInstrumentBankConflict)
             state.instrumentBankProblem?.let { problem ->
                 Text(problem, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
@@ -519,7 +518,7 @@ fun SoundEditorCanvas(
                     editorState.project.musicInstrumentBanks[MusicInstrumentBanks.key(state.currentSongSet)]?.instruments?.keys.orEmpty()
                 },
                 onResetSharedInstrument = state::resetSharedInstrument,
-                instrumentEditingEnabled = state.instrumentBankConflicts.isEmpty() && state.instrumentBankProblem == null,
+                instrumentEditingEnabled = state.instrumentBankProblem == null,
                 nativeInstrumentPreviewAvailable = state.nativeInstrumentPreviewAvailable,
                 previewInstrument = state.instrumentPreviewIndex,
                 instrumentPreviewBusy = state.isInstrumentPreviewLoading,

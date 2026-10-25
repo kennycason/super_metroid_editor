@@ -873,7 +873,7 @@ data class MusicInstrumentEdit(
     val pitchAdj: Int,
 )
 
-/** One authoritative set of shared overrides; an empty record still supersedes legacy track snapshots. */
+/** Shared instrument overrides owned by one song set, independently of its arrangements. */
 @Serializable
 data class MusicInstrumentBankEdit(
     val instruments: MutableMap<Int, MusicInstrumentEdit> = mutableMapOf(),
@@ -890,7 +890,6 @@ data class MusicTransferBlockEdit(
 data class MusicNativeBaselineEdit(
     val tempo: Int,
     val channels: MutableList<MusicChannelEdit> = mutableListOf(),
-    val instruments: MutableList<MusicInstrumentEdit> = mutableListOf(),
 )
 
 @Serializable
@@ -900,7 +899,7 @@ data class MusicNativePayloadEdit(
     val sourcePlayIndex: Int = -1,
     val blocks: MutableList<MusicTransferBlockEdit> = mutableListOf(),
     /** Editable import baseline. Source blocks and samples remain intact after later edits. */
-    val baseline: MusicNativeBaselineEdit? = null,
+    val baseline: MusicNativeBaselineEdit,
 )
 
 /**
@@ -913,7 +912,6 @@ data class MusicTrackEdit(
     val trackName: String = "",
     val tempo: Int,
     val channels: MutableList<MusicChannelEdit> = mutableListOf(),
-    val instruments: MutableList<MusicInstrumentEdit> = mutableListOf(),
     val nativePayload: MusicNativePayloadEdit? = null,
 ) {
     companion object {
@@ -1018,7 +1016,7 @@ data class SmEditProject(
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
-    /** Shared instrument overrides, keyed by hexadecimal song set. Track instrument lists are snapshots only. */
+    /** The sole owner of instrument overrides, keyed by hexadecimal song set. */
     val musicInstrumentBanks: MutableMap<String, MusicInstrumentBankEdit> = mutableMapOf(),
     /** Display-only instrument names, keyed by song set and instrument slot. Never changes ROM bytes. */
     val musicInstrumentNames: MutableMap<String, String> = mutableMapOf(),

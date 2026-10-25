@@ -4,10 +4,12 @@ import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.jsonObject
+import kotlin.test.assertFailsWith
 
 class SmEditProjectMusicTest {
     private val json = Json {
-        ignoreUnknownKeys = true
         encodeDefaults = true
     }
 
@@ -30,18 +32,18 @@ class SmEditProjectMusicTest {
                     )
                 )
             ),
-            instruments = mutableListOf(
-                MusicInstrumentEdit(index = 2, tableAddr = 0x6C0C, srcn = 4, adsr1 = 0x8F, adsr2 = 0xE4, gain = 0x7F, pitchAdj = 0x1234)
-            ),
             nativePayload = MusicNativePayloadEdit(
                 formatLabel = "Raw N-SPC",
                 sourceFileName = "musicdata.nspc",
                 sourcePlayIndex = 5,
+                baseline = MusicNativeBaselineEdit(tempo = 27),
                 blocks = mutableListOf(
                     MusicTransferBlockEdit(destAddr = 0x5830, dataBase64 = "AQIDBA==")
                 )
             )
         )
+        project.musicInstrumentBanks["0F"] = MusicInstrumentBankEdit(mutableMapOf(
+            2 to MusicInstrumentEdit(index = 2, tableAddr = 0x6C0C, srcn = 4, adsr1 = 0x8F, adsr2 = 0xE4, gain = 0x7F, pitchAdj = 0x1234)))
 
         val encoded = json.encodeToString(SmEditProject.serializer(), project)
         val decoded = json.decodeFromString(SmEditProject.serializer(), encoded)
@@ -52,7 +54,9 @@ class SmEditProjectMusicTest {
         assertEquals(27, edit.tempo)
         assertEquals(0x94, edit.channels.single().notes.single().noteValue)
         assertEquals(listOf(27), edit.channels.single().commands.single().params)
-        assertEquals(0x1234, edit.instruments.single().pitchAdj)
+        assertEquals(0x1234, decoded.musicInstrumentBanks.getValue("0F").instruments.getValue(2).pitchAdj)
+        val trackJson = json.parseToJsonElement(encoded).jsonObject.getValue("musicEdits").jsonObject.getValue(key).jsonObject
+        assertTrue("instruments" !in trackJson, "Saved tracks must not contain competing instrument snapshots")
         assertEquals("Raw N-SPC", edit.nativePayload?.formatLabel)
         assertEquals("musicdata.nspc", edit.nativePayload?.sourceFileName)
         assertEquals(0x5830, edit.nativePayload?.blocks?.single()?.destAddr)
@@ -83,16 +87,21 @@ class SmEditProjectMusicTest {
     }
 
     @Test
-    fun `authoritative bank settings and empty reconciliation markers survive project round trip`() {
+    fun `bank settings survive project round trip independently of arrangements`() {
         val project = SmEditProject(romPath = "/tmp/sm.smc")
         project.musicInstrumentBanks["03"] = MusicInstrumentBankEdit(mutableMapOf(
             28 to MusicInstrumentEdit(28, 0x6CA8, 24, 0x8F, 0xE0, 63, 0x0001)))
-        project.musicInstrumentBanks["0F"] = MusicInstrumentBankEdit()
         val decoded = json.decodeFromString(SmEditProject.serializer(), json.encodeToString(SmEditProject.serializer(), project))
         assertEquals(project.musicInstrumentBanks, decoded.musicInstrumentBanks)
-        assertTrue(decoded.musicInstrumentBanks.containsKey("0F"))
-        assertTrue(decoded.musicInstrumentBanks.getValue("0F").instruments.isEmpty())
+        assertTrue(!decoded.musicInstrumentBanks.containsKey("0F"))
         assertTrue(decoded.musicEdits.isEmpty())
+    }
+
+    @Test
+    fun `native source must include its import-time sequence baseline`() {
+        assertFailsWith<SerializationException> {
+            json.decodeFromString(MusicNativePayloadEdit.serializer(), """{"blocks":[]}""")
+        }
     }
 
     @Test

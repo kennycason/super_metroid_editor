@@ -2716,9 +2716,10 @@ class EditorState(
     fun setMusicInstrumentBank(songSet: Int, bank: com.supermetroid.editor.data.MusicInstrumentBankEdit?) {
         require(songSet >= 0 && songSet % 3 == 0)
         val key = MusicInstrumentBanks.key(songSet)
-        if (project.musicInstrumentBanks[key] == bank) return
-        if (bank == null) project.musicInstrumentBanks.remove(key)
-        else project.musicInstrumentBanks[key] = requireNotNull(MusicInstrumentBanks.copy(bank))
+        val nonEmptyBank = bank?.takeIf { it.instruments.isNotEmpty() }
+        if (project.musicInstrumentBanks[key] == nonEmptyBank) return
+        if (nonEmptyBank == null) project.musicInstrumentBanks.remove(key)
+        else project.musicInstrumentBanks[key] = requireNotNull(MusicInstrumentBanks.copy(nonEmptyBank))
         dirty = true
         musicEditVersion++
     }

@@ -1,16 +1,14 @@
 package com.supermetroid.editor.ui
 
-import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.SpcData
-import com.supermetroid.editor.data.MusicNativePayloadEdit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Test
 
 class MusicEditConversionTest {
     @Test
-    fun `project edit round trips song notes commands and instruments`() {
+    fun `project edit round trips song notes and commands`() {
         val track = SpcData.TrackInfo(
             songSet = 0x0F,
             playIndex = 5,
@@ -31,21 +29,8 @@ class MusicEditConversionTest {
             command = 0xE7,
             params = intArrayOf(31)
         )
-        val instruments = listOf(
-            NspcRenderer.InstrumentEntry(
-                index = 2,
-                tableAddr = 0x6C0C,
-                srcn = 4,
-                adsr1 = 0x8F,
-                adsr2 = 0xE4,
-                gain = 0x7F,
-                pitchAdj = 0x1234
-            )
-        )
-
-        val edit = MusicEditConversion.toProjectEdit(track, song, instruments)
+        val edit = MusicEditConversion.toProjectEdit(track, song)
         val restoredSong = MusicEditConversion.toSong(edit)
-        val restoredInstruments = MusicEditConversion.toInstrumentEntries(edit)
 
         assertEquals("0F:05", MusicEditConversion.key(track.songSet, track.playIndex))
         assertEquals(31, restoredSong.tempo)
@@ -54,7 +39,6 @@ class MusicEditConversionTest {
         assertEquals(10, restoredSong.channels[2].notes.single().velocity)
         assertEquals(0xE7, restoredSong.channels[2].commands.single().command)
         assertEquals(31, restoredSong.channels[2].commands.single().params.single())
-        assertEquals(0x1234, restoredInstruments.single().pitchAdj)
     }
 
     @Test
@@ -63,15 +47,18 @@ class MusicEditConversionTest {
         song.channels[0].notes += NspcSequence.Note(0, 48, 0xA4)
         song.channels[0].commands += NspcSequence.ControlCommand(0, 0xE7, intArrayOf(36))
         val track = SpcData.TrackInfo(3, 6, "Test", "test")
-        val edit = MusicEditConversion.toProjectEdit(track, song, emptyList(), MusicNativePayloadEdit())
+        val payload = MusicEditConversion.toProjectNativePayload(
+            MusicTrackInterchange.NativePayload(emptyList(), 6, "source.nspc", "Raw N-SPC"), song)
+        val edit = MusicEditConversion.toProjectEdit(track, song, payload)
         val copy = MusicEditConversion.copyNativePayload(edit.nativePayload)!!
         edit.channels[0].notes.clear()
         edit.channels[0].commands.clear()
         assertNotEquals(MusicEditConversion.toSong(edit), MusicEditConversion.nativeBaselineSong(edit))
-        assertEquals(1, edit.nativePayload!!.baseline!!.channels[0].notes.size)
-        edit.nativePayload!!.baseline!!.channels[0].notes.clear()
-        edit.nativePayload!!.baseline!!.channels[0].commands.clear()
-        assertEquals(1, copy.baseline!!.channels[0].notes.size)
-        assertEquals(listOf(36), copy.baseline!!.channels[0].commands.single().params)
+        assertEquals(1, edit.nativePayload!!.baseline.channels[0].notes.size)
+        edit.nativePayload!!.baseline.channels[0].notes.clear()
+        edit.nativePayload!!.baseline.channels[0].commands.clear()
+        assertEquals(1, copy.baseline.channels[0].notes.size)
+        assertEquals(listOf(36), copy.baseline.channels[0].commands.single().params)
+        assertEquals(1, payload.baseline.channels[0].notes.size, "Saving must not share mutable baseline containers")
     }
 }

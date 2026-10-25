@@ -20,8 +20,7 @@ internal class MusicRomExporter(
         val banks = songSets.associateWith { MusicBankResolver.resolve(RomParser(romData), project, it) }
         var patched = 0
         for ((songSet, bank) in banks) {
-            val shared = MusicInstrumentBanks.inspect(RomParser(romData), project, songSet)
-            if (shared.instruments.keys.any { it < 24 }) {
+            if (MusicInstrumentBanks.instruments(project, songSet).keys.any { it < 24 }) {
                 onLog("[EXPORT] Warning: common instrument slots (0–23) in bank ${MusicInstrumentBanks.key(songSet)} are not reset by vanilla bank loads; edits can carry into later banks.")
             }
             if (bank.writes.isEmpty()) continue

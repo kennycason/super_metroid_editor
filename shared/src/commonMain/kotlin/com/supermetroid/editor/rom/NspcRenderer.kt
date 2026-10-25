@@ -46,7 +46,7 @@ object NspcRenderer {
         val adsr1: Int,
         val adsr2: Int,
         val gain: Int,
-        /** Raw little-endian view of the two stored bytes; retained for project/bundle compatibility. */
+        /** Raw little-endian packing of the two stored bytes; use [nativePitch] for the engine value. */
         val pitchAdj: Int,
         val index: Int = -1,
         val tableAddr: Int = 0,

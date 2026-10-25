@@ -5,6 +5,8 @@ import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.data.MusicInstrumentBankEdit
+import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -114,12 +116,15 @@ class ImpulseTrackerImportTest {
         val imported = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
         val source = requireNotNull(imported.nativePayload)
         val track = SpcData.KNOWN_TRACKS.first { it.songSet == 3 && it.playIndex == 6 }
-        val initial = MusicEditConversion.toProjectEdit(track, imported.song, imported.instruments,
-            MusicEditConversion.toProjectNativePayload(source))
+        val initial = MusicEditConversion.toProjectEdit(track, imported.song,
+            MusicEditConversion.toProjectNativePayload(source, imported.song))
         val changed = MusicEditConversion.toSong(initial).also { it.channels[0].notes.single().noteValue = 0xA8 }
-        val instruments = imported.instruments.map { if (it.index == 0) it.copy(gain = 0x20) else it }
-        val edit = MusicEditConversion.toProjectEdit(track, changed, instruments, initial.nativePayload)
-        val resolved = ImportedMusicResolver.resolve(RomParser(TestRomHelper.requireRomBytes()), edit)
+        val edit = MusicEditConversion.toProjectEdit(track, changed, initial.nativePayload)
+        val project = SmEditProject(romPath = "test.sfc")
+        project.musicEdits[MusicEditConversion.key(track.songSet, track.playIndex)] = edit
+        project.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)] = MusicInstrumentBankEdit(mutableMapOf(
+            0 to MusicInstrumentBanks.entry(imported.instruments.first { it.index == 0 }.copy(gain = 0x20))))
+        val resolved = MusicBankResolver.resolve(RomParser(TestRomHelper.requireRomBytes()), project, track.songSet)
         assertEquals(0xA8, NspcSequence.parse(resolved.ram, 6).channels[0].notes.single().noteValue)
         assertEquals(0x20, resolved.ram[0x6C03].toInt() and 255)
         for (sampleBlock in source.blocks.filter { it.destAddr >= 0x6E00 }) {

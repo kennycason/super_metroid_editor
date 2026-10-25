@@ -94,6 +94,7 @@ class MusicTransferChainBudgetTest {
             formatLabel = "Test",
             sourceFileName = "test.nspc",
             sourcePlayIndex = sourcePlayIndex,
+            baseline = com.supermetroid.editor.data.MusicNativeBaselineEdit(tempo = 36),
             blocks = blocks.map { (addr, data) ->
                 MusicTransferBlockEdit(addr, encoder.encodeToString(data))
             }.toMutableList()

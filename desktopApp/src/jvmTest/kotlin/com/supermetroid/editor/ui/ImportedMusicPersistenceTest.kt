@@ -37,7 +37,7 @@ class ImportedMusicPersistenceTest {
             SpcData.TransferBlock(0x6D00, byteArrayOf(0, 0x60, 0, 0x60)),
             SpcData.TransferBlock(0x6000, sample)
         )
-        val payload = MusicEditConversion.toProjectNativePayload(MusicTrackInterchange.NativePayload(blocks, 5, "custom.nspc", "Raw N-SPC"))
+        val payload = MusicEditConversion.toProjectNativePayload(MusicTrackInterchange.NativePayload(blocks, 5, "custom.nspc", "Raw N-SPC"), song)
         val importedRam = ByteArray(65536).also { SpcData.applyTransferBlocks(it, blocks) }
         val importedInstruments = NspcRenderer.readInstrumentTable(importedRam)
         sound.applyImportedPianoRollSong(song, importedInstruments, payload, editor, "test native")
@@ -136,24 +136,6 @@ class ImportedMusicPersistenceTest {
         assertNull(f.editor.getMusicEdit(track.songSet, track.playIndex))
     }
 
-    @Test fun `legacy projects initialize a baseline without rewriting native source`() {
-        val f = fixture()
-        val original = saved(f)
-        val legacy = original.copy(nativePayload = original.nativePayload!!.copy(baseline = null))
-        f.editor.setMusicEdit(MusicEditConversion.key(track.songSet, track.playIndex), legacy)
-        val sound = SoundEditorState().apply { selectTrack(track); openPianoRoll(f.parser, f.editor) }
-        assertSample(sound.buildPianoRollSpcSnapshotRam(f.parser, sound.editingSong!!))
-        sound.recordPianoRollEdit("Change legacy note")
-        sound.editingSong!!.channels[0].notes.single().noteValue = 0xAB
-        sound.notifySongChanged(sound.editingSong!!, f.editor)
-        val updated = saved(f)
-        assertNotNull(updated.nativePayload!!.baseline)
-        assertEquals(original.nativePayload!!.blocks, updated.nativePayload!!.blocks)
-        val resolved = ImportedMusicResolver.resolve(f.parser, updated)
-        assertSample(resolved.ram)
-        assertEquals(0xAB, NspcSequence.parse(resolved.ram, track.playIndex).channels[0].notes.single().noteValue)
-    }
-
     @Test fun `sparse raw import does not erase untouched instrument slots`() {
         val f = fixture()
         val stock = SpcData.buildInitialSpcRam(f.parser).also {
@@ -164,18 +146,18 @@ class ImportedMusicPersistenceTest {
         assertEquals(42, f.sound.pianoRollInstruments.size)
     }
 
-    @Test fun `an inherited slot can later be edited to the original zero placeholder values`() {
+    @Test fun `an inherited instrument slot can be explicitly cleared through the shared owner`() {
         val f = fixture()
         val inherited = f.sound.pianoRollInstruments[24]
         assertTrue(PianoRollPreviewLogic.instrumentBytes(inherited).any { it.toInt() != 0 })
         f.sound.recordPianoRollEdit("Clear inherited instrument")
         f.sound.updatePianoRollInstrument(inherited.copy(srcn = 0, adsr1 = 0, adsr2 = 0, gain = 0, pitchAdj = 0), f.parser, f.editor)
-        val resolved = ImportedMusicResolver.resolve(f.parser, saved(f))
+        val resolved = MusicBankResolver.resolve(f.parser, f.editor.project, track.songSet)
         assertContentEquals(ByteArray(6), resolved.ram.copyOfRange(inherited.tableAddr, inherited.tableAddr + 6))
         assertSample(resolved.ram)
         assertTrue(f.sound.undoPianoRollEdit(f.editor))
         assertContentEquals(PianoRollPreviewLogic.instrumentBytes(inherited),
-            ImportedMusicResolver.resolve(f.parser, saved(f)).ram.copyOfRange(inherited.tableAddr, inherited.tableAddr + 6))
+            MusicBankResolver.resolve(f.parser, f.editor.project, track.songSet).ram.copyOfRange(inherited.tableAddr, inherited.tableAddr + 6))
     }
 
     @Test fun `failed relocation leaves retained samples and arrangement intact`() {
@@ -183,7 +165,7 @@ class ImportedMusicPersistenceTest {
         val before = saved(f)
         val edited = MusicEditConversion.toProjectEdit(track,
             PianoRollPreviewLogic.deepCopySong(f.song).also { it.channels[0].notes.single().noteValue = 0xAD },
-            f.instruments, before.nativePayload)
+            before.nativePayload)
         assertFailsWith<IllegalStateException> {
             ImportedMusicResolver.resolve(f.parser, edited,
                 occupiedRanges = listOf(MusicSequenceBudget.SpcRange(0x1500, 0x10000)))

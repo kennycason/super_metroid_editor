@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.supermetroid.editor.data.MusicNativePayloadEdit
 import com.supermetroid.editor.data.MusicInstrumentBankEdit
-import com.supermetroid.editor.data.MusicInstrumentEdit
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.rom.NativeSpcEmulator
@@ -134,9 +133,6 @@ class SoundEditorState {
     var pendingTrackImport by mutableStateOf<PendingTrackImport?>(null)
         private set
     private var pianoRollNativeSource: MusicNativePayloadEdit? = null
-    internal var instrumentBankConflicts by mutableStateOf<List<MusicInstrumentBanks.Conflict>>(emptyList())
-        private set
-    private val instrumentBankChoices = mutableMapOf<Int, MusicInstrumentEdit>()
     var instrumentBankProblem by mutableStateOf<String?>(null)
         private set
     var instrumentBankTracks by mutableStateOf<List<String>>(emptyList())
@@ -151,7 +147,6 @@ class SoundEditorState {
         stopPlayback()
         romParserRef = romParser
         editorStateRef = editorState
-        instrumentBankChoices.clear()
         refreshInstrumentBank(romParser, editorState)
         playAllEnabled = false
         soundEditorLog.info {
@@ -171,10 +166,7 @@ class SoundEditorState {
 
         val savedEdit = editorState?.getMusicEdit(track.songSet, track.playIndex)
         val song = savedEdit?.let { MusicEditConversion.toSong(it) } ?: originalSong
-        val savedInstruments = savedEdit
-            ?.let { MusicEditConversion.toInstrumentEntries(it) }
-            ?.takeIf { it.isNotEmpty() }
-        setPianoRollSoundBank(savedEdit?.nativePayload, song, savedInstruments ?: originalInstruments)
+        setPianoRollSoundBank(savedEdit?.nativePayload, originalInstruments)
         song.title = track.name
         song.isModified = hasPianoRollEdits(song)
         editingSong = song
@@ -334,7 +326,7 @@ class SoundEditorState {
                 } else if (data.nativePayload != null) {
                     MusicTrackInterchange.writeRawTransferBlocks(
                         ImportedMusicResolver.resolve(romParser, MusicEditConversion.toProjectEdit(
-                            data.track, data.song, data.instruments, data.nativePayload
+                            data.track, data.song, data.nativePayload
                         )).blocks,
                         file
                     )
@@ -432,7 +424,7 @@ class SoundEditorState {
                 baseInstruments = originalPianoRollInstruments,
                 maxNativePayloadChainBytes = maxNativePayloadChainBytes
             )
-            val nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
+            val nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it, imported.song) }
             stagePendingTrackImport(
                 romParser = romParser,
                 track = track,
@@ -526,7 +518,7 @@ class SoundEditorState {
                 song = imported.song,
                 instruments = imported.instruments,
                 report = imported.report,
-                nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
+                nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it, imported.song) }
             )
             statusMessage = "Review ${imported.formatLabel} import report for ${file.name}"
             soundEditorLog.info {
@@ -641,13 +633,13 @@ class SoundEditorState {
         editableFallbackSong: NspcSequence.Song?,
         editableFallbackInstruments: List<NspcRenderer.InstrumentEntry>
     ): PendingImportDecision {
-        if (instrumentBankConflicts.isNotEmpty() || instrumentBankProblem != null) {
-            return PendingImportDecision(blockReason = "Resolve shared sound settings before replacing this bank.")
+        if (instrumentBankProblem != null) {
+            return PendingImportDecision(blockReason = instrumentBankProblem)
         }
         if (nativePayload != null && romParser != null && track != null) {
             editorStateRef?.project?.let { project ->
                 val staged = project.copy(musicEdits = project.musicEdits.toMutableMap().also {
-                    it[MusicEditConversion.key(track.songSet, track.playIndex)] = MusicEditConversion.toProjectEdit(track, song, instruments, nativePayload)
+                    it[MusicEditConversion.key(track.songSet, track.playIndex)] = MusicEditConversion.toProjectEdit(track, song, nativePayload)
                 })
                 try {
                     MusicBankResolver.sourceRam(romParser, staged, track.songSet, includeOverrides = false)
@@ -791,8 +783,8 @@ class SoundEditorState {
         if (nativePayload == null && importedInstruments.isNotEmpty()) {
             MusicInstrumentBanks.writes(importedInstruments.associate { it.index to MusicInstrumentBanks.entry(it) })
         }
-        require(instrumentBankConflicts.isEmpty() && instrumentBankProblem == null) {
-            "Resolve shared sound settings before replacing this bank."
+        require(instrumentBankProblem == null) {
+            instrumentBankProblem.orEmpty()
         }
         stopPlayback()
         recordPianoRollEdit("Import $label")
@@ -805,10 +797,9 @@ class SoundEditorState {
         }
         setPianoRollSoundBank(
             nativePayload,
-            nextSong,
             pianoRollInstruments
         )
-        // A bundle explicitly supplies instrument settings, unlike a saved track's stale snapshot.
+        // An editable bundle explicitly imports its settings into the shared bank owner.
         if (nativePayload == null && importedInstruments.isNotEmpty()) {
             val parser = romParserRef
             val editor = editorState ?: editorStateRef
@@ -860,7 +851,7 @@ class SoundEditorState {
         bankProject?.let { return MusicBankResolver.resolve(romParser, it, track.songSet).ram }
         if (nativePayload != null) {
             return ImportedMusicResolver.resolve(romParser, MusicEditConversion.toProjectEdit(
-                track, song, instruments, nativePayload
+                track, song, nativePayload
             )).ram
         }
         val baseRam = SpcData.buildInitialSpcRam(romParser)
@@ -943,24 +934,7 @@ class SoundEditorState {
             val savedEdit = editorState?.getMusicEdit(track.songSet, track.playIndex)
             val song = savedEdit?.let { MusicEditConversion.toSong(it) } ?: originalSong
             song.title = track.name
-            val savedInstruments = savedEdit
-                ?.let { MusicEditConversion.toInstrumentEntries(it) }
-                ?.takeIf { it.isNotEmpty() }
-            val nativePayload = savedEdit?.nativePayload
-            val instruments = if (editorStateRef != null) {
-                NspcRenderer.readInstrumentTable(ram)
-            } else if (nativePayload != null) {
-                NspcRenderer.readInstrumentTable(ImportedMusicResolver.sourceRam(
-                    romParser, track.songSet, track.playIndex, nativePayload, savedInstruments.orEmpty()
-                ))
-            } else if (savedInstruments != null) {
-                val patchedRam = ram.copyOf()
-                PianoRollPreviewLogic.writeInstrumentEntries(patchedRam, savedInstruments)
-                NspcRenderer.readInstrumentTable(patchedRam)
-            } else {
-                originalInstruments
-            }
-            TrackInterchangeData(track, song, originalSong, instruments, savedEdit?.nativePayload)
+            TrackInterchangeData(track, song, originalSong, originalInstruments, savedEdit?.nativePayload)
         } catch (e: Exception) {
             statusMessage = "Track export setup failed: ${e.message}"
             soundEditorLog.error(e) { "[SPC-IMPORT] Failed to resolve track export data: ${e.message}" }
@@ -1088,7 +1062,6 @@ class SoundEditorState {
 
     fun recordPianoRollEdit(label: String) {
         val song = editingSong ?: return
-        ensureInstrumentBank()
         pianoRollHistory.record(song, pianoRollInstruments, label, pianoRollNativeSource, currentInstrumentBank())
         syncPianoRollHistoryDepths()
         soundEditorLog.info { "[SPC-PIANO-UNDO] Record '$label' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
@@ -1102,7 +1075,6 @@ class SoundEditorState {
         syncPianoRollHistoryDepths()
         syncPianoRollProjectEdit(editorState)
         romParserRef?.let { refreshInstrumentBank(it, editorState ?: editorStateRef) }
-        instrumentBankChoices.clear()
         soundEditorLog.info { "[SPC-PIANO-UNDO] Undo '${snapshot.label}' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
         return true
     }
@@ -1115,7 +1087,6 @@ class SoundEditorState {
         syncPianoRollHistoryDepths()
         syncPianoRollProjectEdit(editorState)
         romParserRef?.let { refreshInstrumentBank(it, editorState ?: editorStateRef) }
-        instrumentBankChoices.clear()
         soundEditorLog.info { "[SPC-PIANO-UNDO] Redo '${snapshot.label}' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
         return true
     }
@@ -1148,8 +1119,8 @@ class SoundEditorState {
     ) {
         val idx = updated.index
         if (idx !in pianoRollInstruments.indices) return
-        if (instrumentBankConflicts.isNotEmpty() || instrumentBankProblem != null) {
-            statusMessage = "Resolve shared sound-bank settings first"
+        if (instrumentBankProblem != null) {
+            statusMessage = instrumentBankProblem.orEmpty()
             return
         }
         stopPlayback()
@@ -1171,7 +1142,6 @@ class SoundEditorState {
         val projectState = editorState ?: editorStateRef
         val track = selectedTrack
         if (projectState != null && track != null && romParser != null) {
-            ensureInstrumentBank()
             val source = MusicBankResolver.sourceRam(romParser, requireNotNull(projectForBank()), track.songSet, includeOverrides = false)
             val base = NspcRenderer.readInstrumentTable(source)[idx]
             val values = currentInstrumentBank()?.instruments?.toMutableMap() ?: mutableMapOf()
@@ -1198,33 +1168,15 @@ class SoundEditorState {
     private fun hasPianoRollEdits(song: NspcSequence.Song): Boolean {
         val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)?.hasDelta
             ?: song.isModified
-        val hasInstrumentDelta = PianoRollPreviewLogic.instrumentPatchWrites(
-            pianoRollInstruments,
-            originalPianoRollInstruments
-        ).isNotEmpty()
-        val managed = currentInstrumentBank() != null
-        return pianoRollNativeSource != null || hasNoteDelta || (!managed && hasInstrumentDelta)
+        return pianoRollNativeSource != null || hasNoteDelta
     }
 
     private fun setPianoRollSoundBank(
         payload: MusicNativePayloadEdit?,
-        song: NspcSequence.Song,
         instruments: List<NspcRenderer.InstrumentEntry>
     ) {
-        pianoRollNativeSource = payload?.let {
-            MusicEditConversion.copyNativePayload(MusicEditConversion.toProjectEdit(
-                requireNotNull(selectedTrack), song, instruments, it
-            ).nativePayload)
-        }
+        pianoRollNativeSource = MusicEditConversion.copyNativePayload(payload)
         pianoRollInstruments = romParserRef?.let { rebuildInstrumentMetadata(it, instruments) } ?: instruments
-        if (payload != null && payload.baseline == null) {
-            // Raw import models can contain zero placeholders for missing slots.
-            // Compare future edits against the actual merged bank, not those placeholders.
-            val merged = MusicEditConversion.toProjectEdit(requireNotNull(selectedTrack), song, pianoRollInstruments)
-            pianoRollNativeSource = pianoRollNativeSource?.let { source ->
-                source.copy(baseline = requireNotNull(source.baseline).copy(instruments = merged.instruments))
-            }
-        }
         refreshOpenBankInstruments()
     }
 
@@ -1233,7 +1185,7 @@ class SoundEditorState {
     }
 
     private fun currentNativeImportEdit(song: NspcSequence.Song): MusicTrackEdit =
-        MusicEditConversion.toProjectEdit(requireNotNull(selectedTrack), song, pianoRollInstruments, pianoRollNativeSource)
+        MusicEditConversion.toProjectEdit(requireNotNull(selectedTrack), song, pianoRollNativeSource)
 
     internal fun pianoRollNativeExportBlocks(romParser: RomParser, song: NspcSequence.Song): List<SpcData.TransferBlock>? =
         projectForBank(song)?.let { project ->
@@ -1246,16 +1198,6 @@ class SoundEditorState {
         editorStateRef?.project?.musicInstrumentBanks?.get(MusicInstrumentBanks.key(it.songSet))
     }
 
-    private fun ensureInstrumentBank() {
-        val parser = romParserRef ?: return
-        val editor = editorStateRef ?: return
-        val track = selectedTrack ?: return
-        val inspection = MusicInstrumentBanks.inspect(parser, editor.project, track.songSet)
-        if (inspection.conflicts.isEmpty() && currentInstrumentBank() == null) {
-            editor.setMusicInstrumentBank(track.songSet, MusicInstrumentBankEdit(inspection.instruments.toMutableMap()))
-        }
-    }
-
     private fun restoreInstrumentBank(bank: MusicInstrumentBankEdit?, editor: EditorState?) {
         val track = selectedTrack ?: return
         (editor ?: editorStateRef)?.setMusicInstrumentBank(track.songSet, bank)
@@ -1266,35 +1208,12 @@ class SoundEditorState {
         instrumentBankProblem = null
         instrumentBankTracks = (SpcData.KNOWN_TRACKS.filter { it.songSet == track.songSet }.map { it.name } +
             editor?.project?.musicEdits?.values.orEmpty().filter { it.songSet == track.songSet }.map { it.trackName }).distinct()
-        instrumentBankConflicts = emptyList()
         if (editor == null) return
         try {
-            MusicBankResolver.sourceRam(parser, editor.project, track.songSet, includeOverrides = false)
-            val inspection = MusicInstrumentBanks.inspect(parser, editor.project, track.songSet)
-            instrumentBankConflicts = inspection.conflicts
-            if (inspection.conflicts.isEmpty() && inspection.instruments.isNotEmpty() && currentInstrumentBank() == null) {
-                editor.setMusicInstrumentBank(track.songSet, MusicInstrumentBankEdit(inspection.instruments.toMutableMap()))
-            }
+            MusicBankResolver.sourceRam(parser, editor.project, track.songSet)
         } catch (error: Exception) {
             instrumentBankProblem = error.message ?: "Invalid sound-bank settings"
         }
-    }
-
-    internal fun resolveInstrumentBankConflict(index: Int, choice: MusicInstrumentBanks.Choice) {
-        val parser = romParserRef ?: return
-        val editor = editorStateRef ?: return
-        val track = selectedTrack ?: return
-        val inspection = MusicInstrumentBanks.inspect(parser, editor.project, track.songSet)
-        require(inspection.conflicts.any { it.index == index && choice in it.choices })
-        stopPlayback()
-        instrumentBankChoices[index] = choice.instrument
-        instrumentBankConflicts = inspection.conflicts.filter { it.index !in instrumentBankChoices }
-        if (instrumentBankConflicts.isNotEmpty()) return
-        recordPianoRollEdit("Resolve shared instrument settings")
-        editor.setMusicInstrumentBank(track.songSet, MusicInstrumentBankEdit((inspection.instruments + instrumentBankChoices).toMutableMap()))
-        instrumentBankChoices.clear()
-        refreshOpenBankInstruments()
-        statusMessage = "Resolved shared instrument settings"
     }
 
     fun resetSharedInstrument(index: Int) {
@@ -1309,7 +1228,7 @@ class SoundEditorState {
     private fun refreshOpenBankInstruments() {
         val parser = romParserRef ?: return
         val track = selectedTrack ?: return
-        if (instrumentBankConflicts.isNotEmpty() || instrumentBankProblem != null) return
+        if (instrumentBankProblem != null) return
         val project = projectForBank() ?: return
         try {
             pianoRollInstruments = NspcRenderer.readInstrumentTable(MusicBankResolver.sourceRam(parser, project, track.songSet))
@@ -1342,7 +1261,7 @@ class SoundEditorState {
         }
 
         val nativePayload = MusicEditConversion.copyNativePayload(pianoRollNativeSource)
-        projectState.setMusicEdit(key, MusicEditConversion.toProjectEdit(track, song, pianoRollInstruments, nativePayload))
+        projectState.setMusicEdit(key, MusicEditConversion.toProjectEdit(track, song, nativePayload))
         soundEditorLog.info { "[SPC-PIANO-SAVE] Staged project music edit key=$key (${track.name})" }
     }
 
@@ -1370,7 +1289,7 @@ class SoundEditorState {
         val track = selectedTrack
         val bankProject = projectForBank(song)
         if (bankProject != null && track != null) {
-            if (instrumentBankConflicts.isNotEmpty() || instrumentBankProblem != null) return ShortArray(0)
+            if (instrumentBankProblem != null) return ShortArray(0)
             return withContext(Dispatchers.Default) {
                 val ram = MusicBankResolver.sourceRam(romParser, bankProject, track.songSet)
                 val events = song.channels.flatMapIndexed { ch, channel -> channel.notes.map { PianoRollPreviewLogic.noteEvent(ch, it) } }
@@ -1381,7 +1300,7 @@ class SoundEditorState {
         return withContext(Dispatchers.Default) {
             if (importedEdit != null && track != null) {
                 val ram = ImportedMusicResolver.sourceRam(romParser, track.songSet, track.playIndex,
-                    requireNotNull(importedEdit.nativePayload), MusicEditConversion.toInstrumentEntries(importedEdit))
+                    requireNotNull(importedEdit.nativePayload))
                 val events = song.channels.flatMapIndexed { ch, channel -> channel.notes.map { PianoRollPreviewLogic.noteEvent(ch, it) } }
                 return@withContext NspcRenderer.renderToWav(events, ram, tempo = song.tempo)
             }
@@ -1461,7 +1380,7 @@ class SoundEditorState {
 
         val bankProject = projectForBank(song)
         if (bankProject != null) {
-            if (instrumentBankConflicts.isNotEmpty() || instrumentBankProblem != null) return null
+            if (instrumentBankProblem != null) return null
             return withContext(Dispatchers.Default) {
                 try {
                     val bank = MusicBankResolver.resolve(romParser, bankProject, track.songSet)
@@ -1593,7 +1512,7 @@ class SoundEditorState {
 
     fun buildSpcRamForTrack(romParser: RomParser, songSet: Int): ByteArray {
         val project = projectForBank()
-        if (project != null && instrumentBankConflicts.isEmpty() && instrumentBankProblem == null) {
+        if (project != null && instrumentBankProblem == null) {
             return MusicBankResolver.sourceRam(romParser, project, songSet)
         }
         val baseRam = SpcData.buildInitialSpcRam(romParser)
@@ -1608,7 +1527,9 @@ class SoundEditorState {
     ): List<NspcRenderer.InstrumentEntry> {
         val track = selectedTrack ?: return instruments
         val ram = pianoRollNativeSource?.let {
-            ImportedMusicResolver.sourceRam(romParser, track.songSet, track.playIndex, it, instruments)
+            ImportedMusicResolver.sourceRam(romParser, track.songSet, track.playIndex, it).also { ram ->
+                PianoRollPreviewLogic.writeInstrumentEntries(ram, instruments)
+            }
         } ?: buildSpcRamForTrack(romParser, track.songSet).also {
             PianoRollPreviewLogic.writeInstrumentEntries(it, instruments)
         }
@@ -1635,8 +1556,8 @@ class SoundEditorState {
         val instruments = pianoRollInstruments.toList()
         val payload = MusicEditConversion.copyNativePayload(pianoRollNativeSource)
         val bankProject = projectForBank()
-        if (instrumentBankConflicts.isNotEmpty() || instrumentBankProblem != null) {
-            instrumentPreviewMessage = "Resolve shared sound-bank settings first"
+        if (instrumentBankProblem != null) {
+            instrumentPreviewMessage = instrumentBankProblem.orEmpty()
             return
         }
         instrumentPreviewIndex = index
@@ -1645,7 +1566,7 @@ class SoundEditorState {
         try {
             val pcm = withContext(Dispatchers.Default) {
                 val ram = if (bankProject != null) MusicBankResolver.sourceRam(romParser, bankProject, track.songSet) else payload?.let {
-                    ImportedMusicResolver.sourceRam(romParser, track.songSet, track.playIndex, it, instruments)
+                    ImportedMusicResolver.sourceRam(romParser, track.songSet, track.playIndex, it)
                 } ?: buildSpcRamForTrack(romParser, track.songSet).also {
                     PianoRollPreviewLogic.writeInstrumentEntries(it, instruments)
                 }
@@ -1773,8 +1694,6 @@ class SoundEditorState {
         pendingTrackImport = null
         clearNativeSource()
         instrumentBankProblem = null
-        instrumentBankConflicts = emptyList()
-        instrumentBankChoices.clear()
         statusMessage = "Track: ${track.name}"
         autoPlayEnabled = shouldAutoPlay
         if (clearSamples) {
@@ -2065,7 +1984,7 @@ class SoundEditorState {
                 soundEditorLog.warn(error) { "[SPC] Shared bank native preview failed" }
             }
         }
-        // Conflicts propagate from sourceRam; never substitute a different bank or stock song.
+        // Invalid or overlapping source data must not substitute a different bank or stock song.
         val ram = bank?.ram ?: MusicBankResolver.sourceRam(parser, project, track.songSet)
         val song = project.musicEdits[MusicEditConversion.key(track.songSet, track.playIndex)]?.let { MusicEditConversion.toSong(it) }
             ?: NspcSequence.parse(ram, track.playIndex)

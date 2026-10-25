@@ -2,7 +2,6 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.MusicNativePayloadEdit
 import com.supermetroid.editor.data.MusicTrackEdit
-import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 
@@ -21,12 +20,10 @@ internal object ImportedMusicResolver {
         songSet: Int,
         playIndex: Int,
         payload: MusicNativePayloadEdit,
-        instruments: List<NspcRenderer.InstrumentEntry> = emptyList(),
     ): ByteArray {
         val ram = SpcData.buildInitialSpcRam(parser)
         SpcData.applyTransferBlocks(ram, SpcData.findSongSetTransferData(parser, songSet))
         apply(ram, MusicTransferChainBudget.compactedNativePayloadWrites(payload, playIndex))
-        apply(ram, instrumentWrites(ram, instruments, payload))
         return ram
     }
 
@@ -36,7 +33,6 @@ internal object ImportedMusicResolver {
         occupiedRanges: List<MusicSequenceBudget.SpcRange> = emptyList(),
         protectedPlayIndexes: Set<Int> = SpcData.KNOWN_TRACKS.filter { it.songSet == edit.songSet && it.playIndex != edit.playIndex }
             .mapTo(mutableSetOf()) { it.playIndex },
-        applyInstrumentOverrides: Boolean = true,
     ): Resolved {
         val payload = requireNotNull(edit.nativePayload) { "No retained native import" }
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
@@ -45,8 +41,6 @@ internal object ImportedMusicResolver {
         val sourceWrites = MusicTransferChainBudget.compactedNativePayloadWrites(payload, edit.playIndex)
         val sourceBlocks = sourceWrites.map { (at, data) -> SpcData.TransferBlock(at, data) }
         val ram = original.copyOf().also { apply(it, sourceWrites) }
-        val instrumentWrites = if (applyInstrumentOverrides) instrumentWrites(ram, MusicEditConversion.toInstrumentEntries(edit), payload) else emptyMap()
-        apply(ram, instrumentWrites)
 
         val song = MusicEditConversion.toSong(edit)
         val changedSequence = song != MusicEditConversion.nativeBaselineSong(edit)
@@ -63,26 +57,12 @@ internal object ImportedMusicResolver {
         } else null
 
         val bytes = java.util.TreeMap<Int, Int>()
-        for (writes in listOf(sourceWrites, sequence?.writes.orEmpty(), instrumentWrites)) {
+        for (writes in listOf(sourceWrites, sequence?.writes.orEmpty())) {
             for ((at, data) in writes) data.forEachIndexed { i, value -> bytes[at + i] = value.toInt() and 255 }
         }
         val writes = SpcData.packSpcBytesToWrites(bytes)
         apply(ram, writes)
         return Resolved(ram, writes, sequence?.allocation)
-    }
-
-    private fun instrumentWrites(ram: ByteArray, instruments: List<NspcRenderer.InstrumentEntry>, payload: MusicNativePayloadEdit): Map<Int, ByteArray> = buildMap {
-        val baseline = payload.baseline?.instruments?.associateBy { it.index }
-        for (entry in instruments) {
-            require(entry.index in 0 until 42 && entry.tableAddr == 0x6C00 + entry.index * 6) { "Invalid imported instrument slot ${entry.index}" }
-            val bytes = PianoRollPreviewLogic.instrumentBytes(entry)
-            // Sparse raw payloads can leave zero-filled placeholders in their
-            // editable model. Unchanged placeholders must not erase bank entries.
-            val old = baseline?.get(entry.index)
-            if (old != null && entry.srcn == old.srcn && entry.adsr1 == old.adsr1 && entry.adsr2 == old.adsr2 && entry.gain == old.gain && entry.pitchAdj == old.pitchAdj) continue
-            if (baseline == null) continue // Legacy payloads were always stored as pristine imports.
-            if (!ram.copyOfRange(entry.tableAddr, entry.tableAddr + 6).contentEquals(bytes)) put(entry.tableAddr, bytes)
-        }
     }
 
     private fun apply(ram: ByteArray, writes: Map<Int, ByteArray>) {

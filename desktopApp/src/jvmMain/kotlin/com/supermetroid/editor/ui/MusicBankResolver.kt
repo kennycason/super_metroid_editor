@@ -18,16 +18,14 @@ internal object MusicBankResolver {
         val sources = sourceWrites(project, songSet)
         for ((at, value) in sources) value.copyInto(ram, at)
         if (includeOverrides) {
-            val bank = MusicInstrumentBanks.inspect(parser, project, songSet)
-            bank.requireResolved()
-            for ((at, value) in MusicInstrumentBanks.writes(bank.instruments)) value.copyInto(ram, at)
+            val instruments = MusicInstrumentBanks.instruments(project, songSet)
+            for ((at, value) in MusicInstrumentBanks.writes(instruments)) value.copyInto(ram, at)
         }
         return ram
     }
 
     fun resolve(parser: RomParser, project: SmEditProject, songSet: Int): Resolved {
-        val bank = MusicInstrumentBanks.inspect(parser, project, songSet)
-        bank.requireResolved()
+        val instruments = MusicInstrumentBanks.instruments(project, songSet)
         val edits = project.musicEdits.toSortedMap().filterValues { it.songSet == songSet }
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
         val songBlocks = SpcData.findSongSetTransferData(parser, songSet)
@@ -45,7 +43,7 @@ internal object MusicBankResolver {
         var patched = 0
         for ((key, edit) in edits) {
             val writes = if (edit.nativePayload != null) {
-                val resolved = ImportedMusicResolver.resolve(parser, edit, occupied, protected, applyInstrumentOverrides = false)
+                val resolved = ImportedMusicResolver.resolve(parser, edit, occupied, protected)
                 resolved.allocation?.let { occupied += it }
                 resolved.writes
             } else {
@@ -62,7 +60,7 @@ internal object MusicBankResolver {
             patched++
         }
         // Explicit bank edits intentionally override retained source instrument bytes, once.
-        for ((at, data) in MusicInstrumentBanks.writes(bank.instruments)) {
+        for ((at, data) in MusicInstrumentBanks.writes(instruments)) {
             data.forEachIndexed { i, value -> bytes[at + i] = value.toInt() and 255 }
         }
         val writes = SpcData.packSpcBytesToWrites(bytes)

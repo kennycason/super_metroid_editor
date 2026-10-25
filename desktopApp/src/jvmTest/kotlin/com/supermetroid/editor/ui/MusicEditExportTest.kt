@@ -172,26 +172,21 @@ class MusicEditExportTest {
         inputRom.writeBytes(romBytes)
         val parser = RomParser(inputRom.readBytes())
         val songSet = 0x0F
-        val playIndex = 5
 
         val spcRam = SpcData.buildInitialSpcRam(parser).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
         }
-        val originalSong = NspcSequence.parse(spcRam, playIndex)
         val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
         assumeTrue(originalInstruments.isNotEmpty(), "No instruments found")
 
-        val editedInstruments = originalInstruments.toMutableList()
         val changed = originalInstruments.first().copy(gain = originalInstruments.first().gain xor 0x01)
-        editedInstruments[0] = changed
 
-        val track = SpcData.TrackInfo(songSet = songSet, playIndex = playIndex, name = "Green Brinstar", area = "Brinstar")
         val state = EditorState()
         state.testMode = true
         state.initForRom(inputRom.absolutePath)
-        state.project.musicEdits[MusicEditConversion.key(songSet, playIndex)] =
-            MusicEditConversion.toProjectEdit(track, originalSong, editedInstruments)
-        state.markDirty()
+        state.setMusicInstrumentBank(songSet, com.supermetroid.editor.data.MusicInstrumentBankEdit(
+            mutableMapOf(changed.index to MusicInstrumentBanks.entry(changed))))
+        assertTrue(state.project.musicEdits.isEmpty())
 
         val exportedPath = state.exportToRom(parser)
 
@@ -225,7 +220,6 @@ class MusicEditExportTest {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
         }
         val originalSong = NspcSequence.parse(spcRam, playIndex)
-        val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
         assumeTrue(originalSong.channels.any { it.notes.isNotEmpty() }, "Title Screen after-button track has no notes")
 
         val editedSong = PianoRollPreviewLogic.deepCopySong(originalSong)
@@ -245,7 +239,7 @@ class MusicEditExportTest {
         state.initForRom(inputRom.absolutePath)
         state.setMusicEdit(
             MusicEditConversion.key(songSet, playIndex),
-            MusicEditConversion.toProjectEdit(track, editedSong, originalInstruments)
+            MusicEditConversion.toProjectEdit(track, editedSong)
         )
 
         val exportedPath = state.exportToRom(parser)
@@ -304,7 +298,7 @@ class MusicEditExportTest {
                 sourcePlayIndex = sourcePlayIndex,
                 sourceFileName = "musicdata.nspc",
                 formatLabel = "Raw N-SPC"
-            )
+            ), song
         )
 
         val track = SpcData.TrackInfo(songSet = songSet, playIndex = targetPlayIndex, name = "Title Screen (After Button)", area = "Menu")
@@ -313,7 +307,7 @@ class MusicEditExportTest {
         state.initForRom(inputRom.absolutePath)
         state.setMusicEdit(
             MusicEditConversion.key(songSet, targetPlayIndex),
-            MusicEditConversion.toProjectEdit(track, song, emptyList(), payload)
+            MusicEditConversion.toProjectEdit(track, song, payload)
         )
 
         val exportedPath = state.exportToRom(parser)
@@ -347,7 +341,6 @@ class MusicEditExportTest {
         val spcRam = SpcData.buildInitialSpcRam(parser).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
         }
-        val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
 
         val state = EditorState()
         state.testMode = true
@@ -356,7 +349,6 @@ class MusicEditExportTest {
         val titleEdit = addOneNoteValueEdit(
             state = state,
             spcRam = spcRam,
-            originalInstruments = originalInstruments,
             songSet = songSet,
             playIndex = 5,
             name = "Title Screen"
@@ -364,7 +356,6 @@ class MusicEditExportTest {
         val afterButtonEdit = addOneNoteValueEdit(
             state = state,
             spcRam = spcRam,
-            originalInstruments = originalInstruments,
             songSet = songSet,
             playIndex = 6,
             name = "Title Screen After Button"
@@ -396,7 +387,6 @@ class MusicEditExportTest {
     private fun addOneNoteValueEdit(
         state: EditorState,
         spcRam: ByteArray,
-        originalInstruments: List<NspcRenderer.InstrumentEntry>,
         songSet: Int,
         playIndex: Int,
         name: String
@@ -418,7 +408,7 @@ class MusicEditExportTest {
         val track = SpcData.TrackInfo(songSet = songSet, playIndex = playIndex, name = name, area = "Menu")
         state.setMusicEdit(
             MusicEditConversion.key(songSet, playIndex),
-            MusicEditConversion.toProjectEdit(track, editedSong, originalInstruments)
+            MusicEditConversion.toProjectEdit(track, editedSong)
         )
         return ExpectedNoteEdit(playIndex, channelIndex, expectedNoteValue)
     }

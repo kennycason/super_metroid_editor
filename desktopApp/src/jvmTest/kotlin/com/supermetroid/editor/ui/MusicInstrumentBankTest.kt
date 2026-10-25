@@ -25,10 +25,11 @@ class MusicInstrumentBankTest {
     }
     private fun open(f: Fixture, track: SpcData.TrackInfo = first) = SoundEditorState().apply { selectTrack(track); openPianoRoll(f.parser, f.editor) }
     private fun bank(f: Fixture) = assertNotNull(f.editor.project.musicInstrumentBanks["03"])
-    private fun legacy(f: Fixture, track: SpcData.TrackInfo, slot: Int, gain: Int) {
-        val song = NspcSequence.parse(f.original, track.playIndex)
-        val entries = NspcRenderer.readInstrumentTable(f.original).map { if (it.index == slot) it.copy(gain = gain) else it }
-        f.editor.setMusicEdit(MusicEditConversion.key(3, track.playIndex), MusicEditConversion.toProjectEdit(track, song, entries))
+    private fun setBank(f: Fixture, vararg gains: Pair<Int, Int>) {
+        val entries = NspcRenderer.readInstrumentTable(f.original)
+        f.editor.setMusicInstrumentBank(3, MusicInstrumentBankEdit(gains.associate { (slot, gain) ->
+            slot to MusicInstrumentBanks.entry(entries[slot].copy(gain = gain))
+        }.toMutableMap()))
     }
 
     @Test fun `instrument-only edits are bank-owned shared on reopen and exported once without flattening tracks`() {
@@ -62,15 +63,12 @@ class MusicInstrumentBankTest {
         assertEquals(changed.gain, open(f, sibling).pianoRollInstruments[28].gain)
     }
 
-    @Test fun `unambiguous legacy overrides coalesce and reset does not resurrect stale track snapshots after saving`() {
+    @Test fun `bank settings survive save reopen and resetting the last override removes the bank record`() {
         val f = fixture()
-        legacy(f, first, 28, 31)
-        legacy(f, sibling, 29, 63)
-        val inspection = MusicInstrumentBanks.inspect(f.parser, f.editor.project, 3)
-        assertEquals(setOf(28, 29), inspection.instruments.keys)
-        assertTrue(inspection.conflicts.isEmpty())
+        setBank(f, 28 to 31, 29 to 63)
+        assertEquals(setOf(28, 29), MusicInstrumentBanks.instruments(f.editor.project, 3).keys)
         val sound = open(f)
-        assertEquals(63, sound.pianoRollInstruments[29].gain, "The first track's stale snapshot must not hide the sibling override")
+        assertEquals(63, sound.pianoRollInstruments[29].gain)
         sound.resetSharedInstrument(28)
         assertEquals(setOf(29), bank(f).instruments.keys)
         val stockGain = NspcRenderer.readInstrumentTable(f.original)[28].gain
@@ -82,52 +80,56 @@ class MusicInstrumentBankTest {
         assertEquals(stockGain, reopened.pianoRollInstruments[28].gain)
         assertEquals(63, reopened.pianoRollInstruments[29].gain)
         reopened.resetSharedInstrument(29)
-        assertNotNull(editor.project.musicInstrumentBanks["03"], "An empty authoritative record prevents old overrides resurfacing")
-        assertTrue(editor.project.musicInstrumentBanks["03"]!!.instruments.isEmpty())
+        assertFalse(editor.project.musicInstrumentBanks.containsKey("03"), "Default sounds need no saved bank record")
+        assertTrue(editor.project.musicEdits.isEmpty())
         assertTrue(reopened.undoPianoRollEdit(editor))
         assertEquals(63, editor.project.musicInstrumentBanks["03"]!!.instruments[29]!!.gain)
+        assertTrue(reopened.redoPianoRollEdit(editor))
+        assertFalse(editor.project.musicInstrumentBanks.containsKey("03"))
+        assertTrue(ProjectFileService.saveProject(editor.project, file.path, null, false, {}))
+        assertTrue(ProjectFileService.loadProject(file).musicInstrumentBanks.isEmpty())
     }
 
-    @Test fun `legacy conflicts never choose a winner implicitly and choosing a bank version supports undo redo`() {
+    @Test fun `note edits and undo redo never create instrument bank records`() {
         val f = fixture()
-        legacy(f, first, 28, 31)
-        legacy(f, sibling, 28, 63)
         val sound = open(f)
-        assertEquals(1, sound.instrumentBankConflicts.size)
+        sound.recordPianoRollEdit("Move note")
+        val song = PianoRollPreviewLogic.deepCopySong(sound.editingSong!!)
+        song.channels.first { it.notes.isNotEmpty() }.notes.first().tick += 1
+        sound.notifySongChanged(song, f.editor)
+        assertNotNull(f.editor.getMusicEdit(3, 5))
         assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
+        assertTrue(sound.undoPianoRollEdit(f.editor))
+        assertTrue(f.editor.project.musicEdits.isEmpty())
+        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
+        assertTrue(sound.redoPianoRollEdit(f.editor))
+        assertNotNull(f.editor.getMusicEdit(3, 5))
+        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
+    }
+
+    @Test fun `invalid bank settings block export before modifying ROM data`() {
+        val f = fixture()
+        setBank(f, 28 to 31)
+        val bank = bank(f)
+        bank.instruments[28] = bank.instruments.getValue(28).copy(tableAddr = 0x6000)
+        val sound = open(f)
+        assertTrue(assertNotNull(sound.instrumentBankProblem).contains("Invalid shared instrument slot"))
         val rom = f.parser.copyRomData()
         val error = assertFailsWith<IllegalArgumentException> { MusicRomExporter(f.editor.project, {}).applyMusicEditsToRom(rom) }
-        assertTrue(error.message!!.contains("Resolve shared instrument conflicts"))
+        assertTrue(error.message!!.contains("Invalid shared instrument slot"))
         assertContentEquals(f.parser.copyRomData(), rom)
-        sound.recordPianoRollEdit("Move a note")
-        sound.editingSong!!.channels.first { it.notes.isNotEmpty() }.notes.first().tick += 1
-        sound.notifySongChanged(sound.editingSong!!, f.editor)
-        assertTrue(sound.undoPianoRollEdit(f.editor))
-        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty(), "Note undo must not mark conflicting legacy data as reconciled")
-        val choice = sound.instrumentBankConflicts.single().choices.first { it.trackKey == "03:05" }
-        sound.resolveInstrumentBankConflict(28, choice)
-        assertTrue(sound.instrumentBankConflicts.isEmpty())
-        assertEquals(31, bank(f).instruments[28]!!.gain)
-        assertEquals(31, open(f, sibling).pianoRollInstruments[28].gain)
-        assertTrue(sound.undoPianoRollEdit(f.editor))
-        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
-        assertEquals(1, sound.instrumentBankConflicts.size)
-        assertTrue(sound.redoPianoRollEdit(f.editor))
-        assertTrue(sound.instrumentBankConflicts.isEmpty())
-        assertEquals(31, open(f, sibling).pianoRollInstruments[28].gain)
     }
 
-    @Test fun `identical legacy edits coalesce and project bank records stay separate from other banks and names`() {
+    @Test fun `bank settings stay separate from other banks and display names`() {
         val f = fixture()
-        legacy(f, first, 28, 31)
-        legacy(f, sibling, 28, 31)
-        assertEquals(1, MusicInstrumentBanks.inspect(f.parser, f.editor.project, 3).instruments.size)
-        assertTrue(MusicInstrumentBanks.inspect(f.parser, f.editor.project, 3).conflicts.isEmpty())
-        assertTrue(MusicInstrumentBanks.inspect(f.parser, f.editor.project, 0x0F).instruments.isEmpty())
+        setBank(f, 28 to 31)
+        assertEquals(1, MusicInstrumentBanks.instruments(f.editor.project, 3).size)
+        assertTrue(MusicInstrumentBanks.instruments(f.editor.project, 0x0F).isEmpty())
         open(f)
         f.editor.renameMusicInstrument(3, 28, "Shared lead")
         f.editor.setMusicInstrumentBank(3, MusicInstrumentBankEdit())
-        assertTrue(MusicInstrumentBanks.inspect(f.parser, f.editor.project, 3).instruments.isEmpty())
+        assertTrue(MusicInstrumentBanks.instruments(f.editor.project, 3).isEmpty())
+        assertFalse(f.editor.project.musicInstrumentBanks.containsKey("03"))
         assertEquals("Shared lead", f.editor.musicInstrumentNames(3)[28])
     }
 
@@ -140,7 +142,7 @@ class MusicInstrumentBankTest {
         assertEquals(23, bank(f).instruments[28]!!.gain)
         assertEquals(23, sound.pianoRollInstruments[28].gain)
         sound.resetSharedInstrument(28)
-        assertTrue(bank(f).instruments.isEmpty())
+        assertFalse(f.editor.project.musicInstrumentBanks.containsKey("03"))
         assertTrue(sound.undoPianoRollEdit(f.editor))
         assertEquals(23, bank(f).instruments[28]!!.gain)
     }
@@ -150,9 +152,9 @@ class MusicInstrumentBankTest {
         val song = NspcSequence.Song(tempo = 36).also { it.channels[0].notes += NspcSequence.Note(0, 48, 0xA4) }
         val blocks = NspcSequence.encode(song, 5, conductorAddrOverride = 0x7000)
             .map { (at, data) -> SpcData.TransferBlock(at, data) }
-        val payload = MusicEditConversion.toProjectNativePayload(MusicTrackInterchange.NativePayload(blocks, 5, "source.nspc", "Raw N-SPC"))
+        val payload = MusicEditConversion.toProjectNativePayload(MusicTrackInterchange.NativePayload(blocks, 5, "source.nspc", "Raw N-SPC"), song)
         for (track in listOf(first, sibling)) {
-            f.editor.setMusicEdit(MusicEditConversion.key(3, track.playIndex), MusicEditConversion.toProjectEdit(track, song, emptyList(), payload))
+            f.editor.setMusicEdit(MusicEditConversion.key(3, track.playIndex), MusicEditConversion.toProjectEdit(track, song, payload))
         }
         val sound = open(f)
         assertTrue(assertNotNull(sound.instrumentBankProblem).contains("overlaps"))
@@ -164,31 +166,7 @@ class MusicInstrumentBankTest {
         assertNotNull(f.editor.getMusicEdit(3, 6))
     }
 
-    @Test fun `multiple legacy conflicts commit atomically only after every slot has an explicit choice`() {
-        val f = fixture()
-        for ((track, gain) in listOf(first to 31, sibling to 63)) {
-            legacy(f, track, 28, gain)
-            val edit = f.editor.getMusicEdit(3, track.playIndex)!!
-            f.editor.setMusicEdit(MusicEditConversion.key(3, track.playIndex), edit.copy(instruments = edit.instruments.map {
-                if (it.index == 29) it.copy(gain = gain) else it
-            }.toMutableList()))
-        }
-        val sound = open(f)
-        val firstChoice = sound.instrumentBankConflicts.first { it.index == 28 }.choices.first { it.trackKey == "03:05" }
-        sound.resolveInstrumentBankConflict(28, firstChoice)
-        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
-        assertEquals(listOf(29), sound.instrumentBankConflicts.map { it.index })
-        assertFailsWith<IllegalArgumentException> { MusicBankResolver.resolve(f.parser, f.editor.project, 3) }
-        val secondChoice = sound.instrumentBankConflicts.single().choices.first { it.trackKey == "03:06" }
-        sound.resolveInstrumentBankConflict(29, secondChoice)
-        assertEquals(31, bank(f).instruments[28]!!.gain)
-        assertEquals(63, bank(f).instruments[29]!!.gain)
-        assertTrue(sound.undoPianoRollEdit(f.editor))
-        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
-        assertEquals(2, sound.instrumentBankConflicts.size)
-    }
-
-    @Test fun `explicit editable bundle imports its shared settings rather than treating them as stale snapshots`() {
+    @Test fun `explicit editable bundle imports shared settings with undo redo`() {
         val f = fixture()
         val sound = open(f)
         sound.recordPianoRollEdit("Original gain")

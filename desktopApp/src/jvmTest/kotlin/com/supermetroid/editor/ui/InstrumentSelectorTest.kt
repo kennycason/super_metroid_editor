@@ -176,32 +176,4 @@ class InstrumentSelectorTest {
         }
     }
 
-    @Test fun `legacy conflict panel requires an explicit version choice`() = runBlocking {
-        val scene = ComposeScene(coroutineContext = coroutineContext)
-        val surface = Surface.makeRasterN32Premul(680, 310)
-        val chosen = mutableListOf<Pair<Int, MusicInstrumentBanks.Choice>>()
-        val choices = listOf(
-            MusicInstrumentBanks.Choice("03:05", "Title Screen", MusicInstrumentBanks.entry(instruments[0].copy(gain = 31))),
-            MusicInstrumentBanks.Choice("03:06", "Title Screen (After Button)", MusicInstrumentBanks.entry(instruments[0].copy(gain = 63)))
-        )
-        try {
-            scene.constraints = Constraints.fixed(680, 310)
-            scene.setContent { MaterialTheme(colorScheme = EditorTheme.DARK.colorScheme) {
-                androidx.compose.foundation.layout.Column {
-                    InstrumentBankConflictPanel(listOf(MusicInstrumentBanks.Conflict(0, choices))) { index, choice -> chosen += index to choice }
-                }
-            } }
-            var time = System.nanoTime()
-            repeat(8) { Snapshot.sendApplyNotifications(); yield(); time += 16_666_667; scene.render(surface.canvas, time); delay(1) }
-            assertTrue(chosen.isEmpty())
-            assertTrue(hasTag(scene, "instrument-bank-choice-03:05"))
-            assertTrue(hasTag(scene, "instrument-bank-choice-03:06"))
-            if (System.getenv("SMEDIT_CAPTURE_INSTRUMENT_UI") == "true") {
-                val file = File("build/test-output/instrument-bank-conflict.png").apply { parentFile.mkdirs() }
-                surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
-            }
-            click(scene, "instrument-bank-choice-03:06")
-            assertEquals(listOf(0 to choices[1]), chosen)
-        } finally { scene.close(); surface.close() }
-    }
 }
