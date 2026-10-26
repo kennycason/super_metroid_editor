@@ -218,6 +218,13 @@ preserves the complete native terminator/entry address, and reserves all require
 before changing even an in-place sound. This reduces ROM-space use; it does not relax
 the common-resource or effect-sharing restrictions or install a loader hook.
 
+An instrument-only continuation prototype now has real CPU/APU regression coverage,
+including retained-RAM bank changes, native music/effect output, and LoROM crossings.
+It is not installed by the exporter: strict continuation-aware ROM reading, physical
+source ownership, and the atomic export plan must be integrated before enabling it.
+The native fixture uses an isolated mailbox-driven test ROM, not the running editor or
+a full gameplay/music-queue reproduction. See `docs/sound/sound_encode.md` for the gate.
+
 ## SMEDIT Implementation Map
 
 | Area | File | Role |
