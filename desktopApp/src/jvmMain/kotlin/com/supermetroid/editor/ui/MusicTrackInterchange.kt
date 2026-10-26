@@ -110,96 +110,98 @@ internal object MusicTrackInterchange {
     fun readMidi(file: File): NspcSequence.Song =
         readMidiWithReport(file).song
 
-    fun readMidiWithReport(file: File): MidiReadResult {
+    fun readMidiWithReport(file: File, instruments: List<NspcRenderer.InstrumentEntry> = emptyList()): MidiReadResult {
         val sequence = MidiSystem.getSequence(file)
-        val song = NspcSequence.Song(
-            tempo = readNspcTempo(sequence) ?: 36,
-            title = file.nameWithoutExtension,
-            isModified = true
-        )
-        val tickScale = if (sequence.divisionType == Sequence.PPQ && sequence.resolution > 0) {
-            MIDI_PPQ.toDouble() / sequence.resolution.toDouble()
-        } else {
-            1.0
+        val song = NspcSequence.Song(tempo = readNspcTempo(sequence) ?: 36, title = file.nameWithoutExtension, isModified = true)
+        val tickScale = if (sequence.divisionType == Sequence.PPQ && sequence.resolution > 0) MIDI_PPQ.toDouble() / sequence.resolution else 1.0
+        val programs = IntArray(16)
+        val nativeSlots = IntArray(16) { -1 }
+        val metadata = readSmeditInstrumentEvents(sequence)
+        // Pair by original channel and unclamped pitch: neither folded channels nor
+        // two out-of-range pitches may consume one another's note-off events.
+        val active = mutableMapOf<Pair<Int, Int>, ArrayDeque<ActiveNote>>()
+        val completed = mutableListOf<Pair<Int, NspcSequence.Note>>()
+        val candidates = instruments.filter { it.index in 0 until 42 && InstrumentDescriptions.playable(it) }
+        require(instruments.isEmpty() || candidates.isNotEmpty()) { "No playable sounds in the selected bank" }
+        var genericNotes = 0
+        var clamped = 0
+        var ignoredEvents = 0
+        var ignoredMetadata = 0
+        var unterminated = 0
+        var repacked = 0
+        var dropped = 0
+        fun slot(channel: Int): Int {
+            val native = nativeSlots[channel]
+            if (native in 0 until 42 && (instruments.isEmpty() || candidates.any { it.index == native })) return native
+            genericNotes++
+            // GM numbers are not native slots. Choose only loaded, playable entries.
+            // This is an explicitly approximate timbre match, never a sample import.
+            return candidates.minWithOrNull(compareBy<NspcRenderer.InstrumentEntry> {
+                val gm = midiProgramForInstrument(it.index, it, null).gmProgram
+                if (gm / 8 == programs[channel] / 8) 0 else 1
+            }.thenBy {
+                kotlin.math.abs(midiProgramForInstrument(it.index, it, null).gmProgram - programs[channel])
+            }.thenBy { it.index })?.index ?: 0
         }
-
-        val channelPrograms = IntArray(16) { 0 }
-        val smeditProgramEvents = readSmeditInstrumentEvents(sequence)
-        val active = mutableMapOf<Pair<Int, Int>, MutableList<ActiveNote>>()
-        val foldedChannels = mutableSetOf<Int>()
-        var clampedPitches = 0
-        var ignoredShortEvents = 0
-        var ignoredMetaEvents = 0
-        val events = sequence.tracks.flatMap { track ->
-            (0 until track.size()).map { track.get(it) }
-        }.sortedBy { it.tick }
-
+        fun finish(key: Pair<Int, Int>, tick: Int) {
+            val pending = active[key] ?: return
+            val note = pending.removeFirstOrNull() ?: return
+            completed += key.first to NspcSequence.Note(note.startTick, (tick - note.startTick).coerceAtLeast(1),
+                midiToNspc(key.second), note.velocity, instrument = note.instrument)
+            if (pending.isEmpty()) active.remove(key)
+        }
+        val events = sequence.tracks.flatMap { track -> (0 until track.size()).map { track.get(it) } }.sortedBy { it.tick }
         for (event in events) {
             val meta = event.message as? MetaMessage
             if (meta != null) {
-                if (meta.type != 0x03 && meta.type != 0x2F && meta.type != 0x51 && parseSmeditInstrumentMeta(meta) == null) {
-                    ignoredMetaEvents++
-                }
+                if (meta.type !in listOf(0x03, 0x2F, 0x51) && parseSmeditInstrumentMeta(meta) == null) ignoredMetadata++
                 continue
             }
             val message = event.message as? ShortMessage ?: continue
-            val midiChannel = message.channel
-            val editorChannel = midiChannel % 8
+            val key = message.channel to message.data1
+            val tick = midiTickToNspc(event.tick, tickScale)
             when (message.command) {
                 ShortMessage.PROGRAM_CHANGE -> {
-                    if (midiChannel >= 8) foldedChannels += midiChannel
-                    channelPrograms[midiChannel] = smeditProgramEvents[event.tick to midiChannel]
-                        ?: message.data1.coerceIn(0, 127)
+                    programs[message.channel] = message.data1
+                    nativeSlots[message.channel] = metadata[event.tick to message.channel] ?: -1
                 }
-                ShortMessage.NOTE_ON -> {
-                    if (midiChannel >= 8) foldedChannels += midiChannel
-                    val note = midiToNspc(message.data1)
-                    if (note != midiToNspcUnchecked(message.data1)) clampedPitches++
-                    val key = editorChannel to note
-                    val tick = midiTickToNspc(event.tick, tickScale)
-                    if (message.data2 > 0) {
-                        active.getOrPut(key) { mutableListOf() } += ActiveNote(
-                            startTick = tick,
-                            velocity = ((message.data2.coerceIn(1, 127) * 15) / 127).coerceIn(1, 15),
-                            instrument = channelPrograms[midiChannel]
-                        )
-                    } else {
-                        finishMidiNote(song, active, key, tick)
-                    }
+                ShortMessage.NOTE_ON -> if (message.data2 == 0) finish(key, tick) else {
+                    if (midiToNspc(message.data1) != midiToNspcUnchecked(message.data1)) clamped++
+                    active.getOrPut(key) { ArrayDeque() }.addLast(ActiveNote(tick,
+                        (message.data2 * 15 / 127).coerceIn(1, 15), slot(message.channel)))
                 }
-                ShortMessage.NOTE_OFF -> {
-                    if (midiChannel >= 8) foldedChannels += midiChannel
-                    val note = midiToNspc(message.data1)
-                    if (note != midiToNspcUnchecked(message.data1)) clampedPitches++
-                    val key = editorChannel to note
-                    finishMidiNote(song, active, key, midiTickToNspc(event.tick, tickScale))
-                }
-                else -> ignoredShortEvents++
+                ShortMessage.NOTE_OFF -> finish(key, tick)
+                else -> ignoredEvents++
             }
         }
-
-        for ((key, notes) in active.toList()) {
-            val endTick = notes.maxOfOrNull { it.startTick + MIDI_PPQ } ?: continue
-            while (notes.isNotEmpty()) finishMidiNote(song, active, key, endTick)
+        val end = midiTickToNspc(sequence.tickLength, tickScale)
+        for ((key, pending) in active.toMap()) while (pending.isNotEmpty()) {
+            unterminated++
+            finish(key, maxOf(end, pending.first().startTick + 1))
         }
-
+        val freeAt = IntArray(8)
+        for ((source, note) in completed.sortedWith(compareBy<Pair<Int, NspcSequence.Note>> { it.second.tick }
+            .thenByDescending { it.second.velocity }.thenBy { it.first }.thenBy { it.second.noteValue })) {
+            val preferred = source % 8
+            val target = if (freeAt[preferred] <= note.tick) preferred else freeAt.indices.firstOrNull { freeAt[it] <= note.tick }
+            if (target == null) { dropped++; continue }
+            if (target != source) repacked++
+            song.channels[target].notes += note
+            freeAt[target] = note.endTick
+        }
         sortSong(song)
         require(song.channels.any { it.notes.isNotEmpty() }) { "MIDI file contains no note events" }
-        val warnings = mutableListOf<String>()
-        if (sequence.divisionType != Sequence.PPQ) {
-            warnings += "MIDI file is not PPQ-based; tick timing was imported as-is."
-        }
-        if (foldedChannels.isNotEmpty()) {
-            warnings += "MIDI channels ${foldedChannels.sorted().joinToString()} were folded into the 8 SNES voices."
-        }
-        if (clampedPitches > 0) {
-            warnings += "$clampedPitches note event(s) were clamped to Super Metroid's C1-B6 range."
-        }
-        if (ignoredShortEvents > 0) {
-            warnings += "$ignoredShortEvents unsupported MIDI event(s) were ignored."
-        }
-        if (ignoredMetaEvents > 0) {
-            warnings += "$ignoredMetaEvents unsupported MIDI metadata event(s) were ignored."
+        val warnings = buildList {
+            if (sequence.divisionType != Sequence.PPQ) add("MIDI file is not PPQ-based; tick timing was imported as-is.")
+            if (repacked > 0) add("Voice packing moved $repacked note(s) into available SNES voices.")
+            if (dropped > 0) add("Voice packing dropped $dropped note(s) exceeding the 8-voice SNES limit.")
+            if (genericNotes > 0) add("General MIDI sounds were mapped approximately to ${if (candidates.isEmpty()) "common sound 0" else "playable sounds in this bank"}. Review sound choices before applying.")
+            if (clamped > 0) add("$clamped note(s) were clamped to Super Metroid's C1-B6 range.")
+            if (unterminated > 0) add("$unterminated note(s) without note-off were ended at the file boundary.")
+            if (ignoredEvents > 0) add("$ignoredEvents unsupported MIDI event(s) were ignored.")
+            if (ignoredMetadata > 0) add("$ignoredMetadata unsupported MIDI metadata event(s) were ignored.")
+            val tempos = events.count { (it.message as? MetaMessage)?.type == 0x51 }
+            if (tempos > 1) add("Only the initial MIDI tempo is imported; tempo changes were not retained.")
         }
         return MidiReadResult(song, reportForSong("MIDI", file.name, song, warnings))
     }
@@ -556,26 +558,6 @@ internal object MusicTrackInterchange {
             }
         }
         return null
-    }
-
-    private fun finishMidiNote(
-        song: NspcSequence.Song,
-        active: MutableMap<Pair<Int, Int>, MutableList<ActiveNote>>,
-        key: Pair<Int, Int>,
-        endTick: Int
-    ) {
-        val notes = active[key] ?: return
-        val started = notes.removeFirstOrNull() ?: return
-        val duration = (endTick - started.startTick).coerceAtLeast(1)
-        song.channels[key.first].notes += NspcSequence.Note(
-            tick = started.startTick,
-            duration = duration,
-            noteValue = key.second,
-            velocity = started.velocity,
-            quantize = 7,
-            instrument = started.instrument
-        )
-        if (notes.isEmpty()) active.remove(key)
     }
 
     private data class ActiveNote(

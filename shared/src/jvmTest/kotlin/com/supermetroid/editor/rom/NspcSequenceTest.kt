@@ -172,7 +172,7 @@ class NspcSequenceTest {
     }
 
     @Test
-    fun `encode ignores legacy EF flow-control commands`() {
+    fun `encode ignores expanded EF flow-control commands`() {
         val spcRam = ByteArray(65536)
         val subroutineAddr = 0x5900
         spcRam[subroutineAddr] = 0x9C.toByte()
@@ -320,10 +320,11 @@ class NspcSequenceTest {
     @Test
     fun `encode failOnOverflow rejects sequence data crossing instrument table`() {
         val song = NspcSequence.Song(tempo = 40)
+        var tick = 0
         repeat(3000) { i ->
             song.channels[0].notes.add(
                 NspcSequence.Note(
-                    tick = i * 24,
+                    tick = tick,
                     duration = 24 + (i % 48),
                     noteValue = 0x94,
                     velocity = 15,
@@ -331,6 +332,7 @@ class NspcSequenceTest {
                     instrument = 0x0B + (i % 20)
                 )
             )
+            tick += 24 + (i % 48)
         }
 
         assertThrows(IllegalStateException::class.java) {
@@ -368,14 +370,9 @@ class NspcSequenceTest {
 
         val song = NspcSequence.parse(spcRam, 5)
 
-        song.channels[0].notes += NspcSequence.Note(
-            tick = 84,
-            duration = 96,
-            noteValue = NspcSequence.nameToNote("G#1"),
-            velocity = 15,
-            quantize = 7,
-            instrument = 0x1B
-        )
+        // Edit an existing note. Adding another pitch on this busy voice is an overlap,
+        // which the encoder now rejects instead of silently shifting all later events.
+        song.channels[0].notes.first().noteValue = NspcSequence.nameToNote("G#1")
 
         val writes = NspcSequence.encode(song, 5, spcRam, failOnOverflow = true)
         assertTrue(

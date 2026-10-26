@@ -570,7 +570,7 @@ fun SoundEditorCanvas(
                                     val fallbackWav = state.renderPianoRollFallbackPreview(romParser, song)
                                     val peak = if (fallbackWav.isNotEmpty()) fallbackWav.maxOf { kotlin.math.abs(it.toInt()) } else 0
                                     soundEditorUiLog.info { "[SPC-PIANO] Fallback preview render: ${fallbackWav.size} samples, peak=$peak" }
-                                    state.startPianoRollPlayback(fallbackWav)
+                                    state.startPianoRollPlayback(fallbackWav, approximate = true)
                                 }
                             }
                         }

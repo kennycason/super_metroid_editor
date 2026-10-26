@@ -124,7 +124,7 @@ class MusicTrackInterchangeTest {
         assertEquals(96, result.song.channels[1].notes.single().duration)
         assertEquals(NspcSequence.NOTE_MAX, result.song.channels[1].notes.single().noteValue)
         assertTrue(result.report.hasWarnings)
-        assertTrue(result.report.warnings.any { it.contains("folded into the 8 SNES voices") })
+        assertTrue(result.report.warnings.any { it.contains("Voice packing moved") })
         assertTrue(result.report.warnings.any { it.contains("clamped") })
         assertTrue(result.report.warnings.any { it.contains("unsupported MIDI event") })
         assertTrue(result.report.warnings.any { it.contains("unsupported MIDI metadata") })
@@ -211,7 +211,7 @@ class MusicTrackInterchangeTest {
             playIndex = playIndex,
             spcRam = ram,
             failOnOverflow = true,
-            conductorAddrOverride = 0x5820,
+            conductorAddrOverride = 0x5830,
             sequenceEndAddr = 0x6000
         )
         for ((addr, data) in writes) data.copyInto(ram, addr)

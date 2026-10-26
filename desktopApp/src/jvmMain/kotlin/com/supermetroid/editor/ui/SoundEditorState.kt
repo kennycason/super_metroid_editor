@@ -392,7 +392,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
         try {
             val track = selectedTrack ?: return
-            val imported = MusicTrackInterchange.readMidiWithReport(file)
+            val imported = MusicTrackInterchange.readMidiWithReport(file, pianoRollInstruments)
             stagePendingTrackImport(
                 romParser = romParser,
                 track = track,
@@ -1005,7 +1005,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             .ifBlank { "track" }
 
     /** Start piano roll playback with tick tracking. */
-    fun startPianoRollPlayback(wav: ShortArray) {
+    fun startPianoRollPlayback(wav: ShortArray, approximate: Boolean = false) {
         stopInstrumentPreview()
         val song = editingSong ?: return
         val preview = normalizePreviewPcm(wav, extraGain = EDIT_TRACK_PREVIEW_GAIN)
@@ -1026,7 +1026,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         }
         player.play(preview, NativeSpcEmulator.SAMPLE_RATE)
         isPlaying = true
-        statusMessage = "Playing edit preview..."
+        statusMessage = if (approximate) "Approximate preview · native playback unavailable" else "Playing edit preview..."
     }
 
     /** Update piano roll playback tick based on elapsed time. */
