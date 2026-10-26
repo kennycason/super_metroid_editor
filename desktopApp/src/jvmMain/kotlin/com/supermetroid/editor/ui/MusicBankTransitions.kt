@@ -60,7 +60,7 @@ internal object MusicBankTransitions {
         if (resolved.isEmpty()) return Report(emptyList(), 0)
         val initial = SpcData.buildInitialSpcRam(parser)
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
-        val songSets = (SpcData.SONG_SETS + resolved.keys).distinct().sorted()
+        val songSets = (SpcData.TRANSFER_SONG_SETS.filter { it > 0 } + resolved.keys).distinct().sorted()
         val banks = songSets.associateWith { songSet ->
             val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
             require(originalBlocks.isNotEmpty()) { "No music transfer data for bank ${MusicInstrumentBanks.key(songSet)}" }

@@ -5,7 +5,7 @@ import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 
-/** Handles SPC music edit export — writing relocated transfer chains to the ROM. */
+/** Plans every music write before applying bank-local patches or relocated transfer chains. */
 internal class MusicRomExporter(
     private val project: SmEditProject,
     private val onLog: (String) -> Unit,
@@ -15,8 +15,17 @@ internal class MusicRomExporter(
         freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     ): Int {
         val songSets = MusicBankTransitions.editedSongSets(project)
+        if (songSets.isEmpty()) return 0
         // Validate every bank before writing any transfer chains into the export copy.
         val parser = RomParser(romData)
+        // Include the setup chain and unused native table entries: a shared ROM pointer
+        // must not turn a bank-owned edit into an implicit change to another bank.
+        val pointers = (SpcData.TRANSFER_SONG_SETS + songSets).distinct().associateWith {
+            SpcData.readSongSetPointer(parser, it).also { pointer ->
+                require(pointer > 0) { "No music transfer pointer for bank ${MusicInstrumentBanks.key(it)}" }
+            }
+        }
+        val sources = (pointers.values + 0xCF8000).distinct().associateWith { MusicRomTransferChain.read(parser, it) }
         val banks = songSets.associateWith { MusicBankResolver.resolve(parser, project, it) }.toMutableMap()
         val transitions = MusicBankTransitions.inspect(parser, project, banks)
         transitions.requireSafe()
@@ -30,17 +39,46 @@ internal class MusicRomExporter(
         val restored = MusicBankTransitions.inspect(parser, project, banks)
         restored.requireSafe()
         check(restored.instrumentRestorations.isEmpty()) { "Instrument bank restoration plan is incomplete" }
-        val chains = banks.filterValues { it.writes.isNotEmpty() }.map { (songSet, bank) ->
-            prepareTransferChain(parser, songSet, bank.writes, bank.hasNativePayload)
+        val plans = banks.filterValues { it.writes.isNotEmpty() }.map { (songSet, bank) ->
+            val pointer = pointers.getValue(songSet)
+            val source = sources.getValue(pointer)
+            val aliases = pointers.filterKeys { it != songSet }.values.map { sources.getValue(it).romRange } +
+                listOf(sources.getValue(0xCF8000).romRange)
+            // Every requested address must already be uploaded by THIS bank, including
+            // derived resets whose bytes equal cold-start RAM. Never patch the base upload.
+            val inPlace = if (source.covers(bank.writes)) {
+                SpcData.buildRomWritesForSpcRamWrites(parser, songSet, bank.writes).flatMap { (at, data) ->
+                    data.indices.mapNotNull { i ->
+                        (at + i to data[i]).takeIf { romData[at + i] != data[i] }
+                    }
+                }.toMap().takeIf { writes -> writes.keys.none { at -> aliases.any { at in it } } }
+            } else null
+            if (inPlace != null) BankWrite.InPlace(songSet, inPlace)
+            else prepareTransferChain(parser, songSet, bank.writes, source, bank.hasNativePayload)
         }
-        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, parser::snesToPc, parser::pcToSnes, guardBytes = 2)
+        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, parser::snesToPc, parser::pcToSnes,
+            guardBytes = 2)
+        allocator.protectRanges(sources.values.map { it.romRange })
         val transferBanks = musicTransferBanks(parser, romData)
         // Reserve the entire plan before the first ROM write. A reset chain that cannot
         // fit must not leave a partly relocated set of music pointers in the caller's copy.
+        val chains = plans.filterIsInstance<BankWrite.Relocated>()
         val allocations = chains.map { chain ->
             allocator.reserve(chain.bytes.size, transferBanks,
                 "songSet ${MusicInstrumentBanks.key(chain.songSet)} transfer chain", alignment = 0x10)
                 ?: error("not enough contiguous free ROM space for ${chain.bytes.size}-byte relocated SPC transfer chain")
+        }
+        // A shared allocator may have a different source inventory. Reject collisions
+        // before writes, even when live source data happens to look like erased fill.
+        for (allocation in allocations) {
+            val end = allocation.pcOffset + allocation.size
+            require(sources.values.none { allocation.pcOffset <= it.romRange.last && end > it.romRange.first }) {
+                "Music allocation overlaps live transfer data"
+            }
+        }
+        for (plan in plans.filterIsInstance<BankWrite.InPlace>()) {
+            for ((at, value) in plan.bytes) romData[at] = value
+            onLog("[EXPORT] Updated bank ${MusicInstrumentBanks.key(plan.songSet)} in place (${plan.bytes.size} changed bytes; no bank copy).")
         }
         for ((chain, allocation) in chains.zip(allocations)) {
             allocator.write(allocation, chain.bytes)
@@ -49,17 +87,21 @@ internal class MusicRomExporter(
                 "\$${chain.originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
                 "\$${allocation.snesAddress.toString(16).uppercase().padStart(6, '0')} (${chain.bytes.size} bytes)")
         }
-        return banks.values.sumOf { it.patchedTracks }
+        return songSets.sumOf { banks.getValue(it).patchedTracks }
     }
 
-    private data class TransferChain(val songSet: Int, val pointerEntryPc: Int, val originalPointer: Int, val bytes: ByteArray)
+    private sealed interface BankWrite {
+        data class InPlace(val songSet: Int, val bytes: Map<Int, Byte>) : BankWrite
+        data class Relocated(val songSet: Int, val pointerEntryPc: Int, val originalPointer: Int, val bytes: ByteArray) : BankWrite
+    }
 
     private fun prepareTransferChain(
         parser: RomParser,
         songSet: Int,
         spcWrites: Map<Int, ByteArray>,
+        source: MusicRomTransferChain,
         hasNativePayload: Boolean = false,
-    ): TransferChain {
+    ): BankWrite.Relocated {
         require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
 
         val pointerEntryPc = SpcData.findSongSetPointerEntryPc(parser, songSet)
@@ -68,7 +110,7 @@ internal class MusicRomExporter(
         }
 
         val originalPointer = SpcData.readSongSetPointer(parser, songSet)
-        val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
+        val originalBlocks = source.blocks
         require(originalBlocks.isNotEmpty()) {
             "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
         }
@@ -76,7 +118,7 @@ internal class MusicRomExporter(
         // Merge at the SPC RAM byte level so arrangements not being edited retain
         // their instruments, samples, and sequence data.
         val mergedBlocks = MusicTransferChainBudget.mergeBlocks(originalBlocks, spcWrites)
-        val mergedChain = serializeTransferChain(mergedBlocks)
+        val mergedChain = serializeTransferChain(mergedBlocks, source.entryAddress)
         val maxBank = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
         require(mergedChain.size <= maxBank) {
             val fallbackRisk = if (hasNativePayload) {
@@ -87,11 +129,11 @@ internal class MusicRomExporter(
             "SongSet 0x${songSet.toString(16).padStart(2, '0')} needs ${mergedChain.size} bytes, " +
                 "which exceeds the $maxBank-byte single-bank limit.$fallbackRisk"
         }
-        return TransferChain(songSet, pointerEntryPc, originalPointer, mergedChain)
+        return BankWrite.Relocated(songSet, pointerEntryPc, originalPointer, mergedChain)
     }
 
-    private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {
-        val out = java.io.ByteArrayOutputStream(blocks.sumOf { 4 + it.data.size } + 2)
+    private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>, entryAddress: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream(MusicTransferChainBudget.serializedTransferChainSize(blocks))
         for (block in blocks) {
             require(block.data.size <= 0xFFFF) {
                 "transfer block at 0x${block.destAddr.toString(16)} is too large (${block.data.size} bytes)"
@@ -101,6 +143,7 @@ internal class MusicRomExporter(
             out.write(block.data)
         }
         writeStreamU16(out, 0)
+        writeStreamU16(out, entryAddress)
         return out.toByteArray()
     }
 

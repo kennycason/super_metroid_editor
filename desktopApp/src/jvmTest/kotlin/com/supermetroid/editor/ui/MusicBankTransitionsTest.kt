@@ -52,7 +52,7 @@ class MusicBankTransitionsTest {
         gain(parser, project, 3, 0, stock.gain xor 1)
         assertEquals(stock.gain xor 1, MusicBankResolver.resolve(parser, project, 3).ram[0x6C03].toInt() and 255)
         val report = MusicBankTransitions.inspect(parser, project)
-        assertEquals((SpcData.SONG_SETS.size - 1) * 2, report.checkedTransitions)
+        assertEquals((SpcData.TRANSFER_SONG_SETS.size - 2) * 2, report.checkedTransitions)
         assertTrue(report.issues.any { it.sourceSongSet == 3 && it.targetSongSet == 0x0F &&
             it.resource == MusicBankTransitions.Resource.COMMON_INSTRUMENT && it.start == 0x6C03 })
         val rom = original.copyOf()
@@ -78,7 +78,7 @@ class MusicBankTransitionsTest {
         val ram = SpcData.buildInitialSpcRam(exported)
         SpcData.applyTransferBlocks(ram, SpcData.findSongSetTransferData(exported, 3))
         assertEquals(stock.gain xor 1, ram[0x6CAB].toInt() and 255)
-        for (target in SpcData.SONG_SETS.filter { it != 3 }) {
+        for (target in SpcData.TRANSFER_SONG_SETS.filter { it != 0 && it != 3 }) {
             val transitioned = ram.copyOf().also {
                 SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exported, target))
             }
@@ -138,9 +138,8 @@ class MusicBankTransitionsTest {
         gain(parser, project, 3, 28, 31)
         gain(parser, project, 0x0F, 28, 63)
         val before = MusicBankTransitions.snapshot(project)
-        // This test exercises transitions, not vanilla ROM free-space limits.
-        val originalBytes = parser.copyRomData()
-        val rom = originalBytes.copyOf(0x400000).also { it.fill(0xFF.toByte(), originalBytes.size) }
+        // In-place authored edits leave enough vanilla space for the three derived reset chains.
+        val rom = parser.copyRomData()
         assertEquals(2, MusicRomExporter(project, {}).applyMusicEditsToRom(rom))
         val exported = RomParser(rom)
         val ram = SpcData.buildInitialSpcRam(exported)
@@ -161,7 +160,9 @@ class MusicBankTransitionsTest {
         gain(parser, project, 0x0F, 28, 63)
         val rom = parser.copyRomData()
         val before = rom.copyOf()
-        val error = assertFailsWith<IllegalStateException> { MusicRomExporter(project, {}).applyMusicEditsToRom(rom) }
+        val noSpace = RomFreeSpaceAllocator(rom, parser::snesToPc, parser::pcToSnes,
+            excludedRanges = listOf(rom.indices))
+        val error = assertFailsWith<IllegalStateException> { MusicRomExporter(project, {}).applyMusicEditsToRom(rom, noSpace) }
         assertTrue(error.message!!.contains("not enough contiguous free ROM space"))
         assertContentEquals(before, rom)
     }

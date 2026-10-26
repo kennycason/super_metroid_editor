@@ -34,7 +34,7 @@ internal object MusicTransferChainBudget {
     }
 
     fun serializedTransferChainSize(blocks: List<SpcData.TransferBlock>): Int =
-        blocks.sumOf { 4 + it.data.size } + 2
+        blocks.sumOf { 4 + it.data.size } + 4 // size=0 plus the native entry address
 
     fun compactedNativePayloadWrites(
         payload: MusicNativePayloadEdit,

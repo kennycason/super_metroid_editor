@@ -4,8 +4,52 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.test.assertFailsWith
 
 class RomFreeSpaceAllocatorTest {
+    @Test fun `new live ranges protect erased bytes across all existing and future allocator views`() {
+        val rom = ByteArray(0x10000) { -1 }
+        val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes, guardBytes = 2)
+        val earlierView = allocator.observing {}
+        earlierView.protectRanges(listOf(0x6000 until 0x8004))
+        assertNull(allocator.reserve(1, listOf(0x80), "live end of bank"))
+        val next = earlierView.observing {}.reserve(4, listOf(0x81), "after live prefix")!!
+        assertEquals(0x8006, next.pcOffset)
+        assertEquals(next.pcOffset + next.size, allocator.reserve(4, listOf(0x81), "shared cursor")!!.pcOffset)
+        assertTrue(rom.all { it == (-1).toByte() }, "Protection and reservation do not mutate ROM")
+    }
+
+    @Test fun `late protection advances cached cursors without losing earlier reservations`() {
+        val rom = ByteArray(0x10000) { -1 }
+        val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes, guardBytes = 2)
+        val first = allocator.reserve(4, listOf(0x80), "earlier exporter")!!
+        assertEquals(2, first.pcOffset)
+        allocator.observing {}.protectRanges(listOf(0x100 until 0x200))
+        assertEquals(0x202, allocator.reserve(4, listOf(0x80), "after discovered source")!!.pcOffset)
+        allocator.write(first, byteArrayOf(1, 2, 3, 4))
+        assertEquals(listOf<Byte>(1, 2, 3, 4), rom.slice(first.pcOffset until first.pcOffset + first.size))
+    }
+
+    @Test fun `source protection rejects overlaps with previously reserved but unwritten bytes`() {
+        val rom = ByteArray(0x10000) { -1 }
+        val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes)
+        val first = allocator.observing {}.reserve(16, listOf(0x80), "reserved source conflict")!!
+        assertFailsWith<IllegalArgumentException> {
+            allocator.protectRanges(listOf(first.pcOffset until first.pcOffset + first.size))
+        }
+        assertEquals(first.pcOffset + first.size, allocator.reserve(4, listOf(0x80), "next")!!.pcOffset)
+        assertTrue(rom.all { it == (-1).toByte() })
+    }
+
+    @Test fun `invalid late protection is atomic and empty ranges are harmless`() {
+        val rom = ByteArray(0x10000) { -1 }
+        val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes)
+        allocator.protectRanges(listOf(IntRange.EMPTY))
+        assertFailsWith<IllegalArgumentException> { allocator.protectRanges(listOf(0..0x100, -1..1)) }
+        assertFailsWith<IllegalArgumentException> { allocator.protectRanges(listOf(rom.size..rom.size)) }
+        assertEquals(1, allocator.reserve(4, listOf(0x80), "invalid protection added nothing")!!.pcOffset)
+    }
+
     @Test fun `source envelopes exclude unchanged fill bytes across shared allocator views`() {
         val rom = ByteArray(0x300000)
         rom.fill(-1, 0x7F000, 0x80000)

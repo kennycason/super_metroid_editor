@@ -211,6 +211,12 @@ instrument entries that a later bank does not normally reload. Unrestored common
 shared sample pointers/BRR, and engine bytes block ROM export; isolated audition and
 SPC/N-SPC export remain available. The check is not a full command/effect-usage or ROM-space
 guarantee. All music chains and reset uploads must fit before any music ROM bytes are written.
+Existing covered bank bytes are patched in place when no other music bank shares those
+ROM locations. New upload ranges and aliased sources still use relocated chains. The
+exporter inventories setup and all native pointer entries, including unused bank `$48`,
+preserves the complete native terminator/entry address, and reserves all required space
+before changing even an in-place sound. This reduces ROM-space use; it does not relax
+the common-resource or effect-sharing restrictions or install a loader hook.
 
 ## SMEDIT Implementation Map
 

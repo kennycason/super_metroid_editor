@@ -192,10 +192,10 @@ class MusicEditExportTest {
 
         assertNotNull(exportedPath)
         val exportedParser = RomParser(File(exportedPath!!).readBytes())
-        assertNotEquals(
+        assertEquals(
             SpcData.readSongSetPointer(parser, songSet),
             SpcData.readSongSetPointer(exportedParser, songSet),
-            "music edits should export through a relocated song-set transfer chain"
+            "an existing instrument should reuse its bank's original transfer bytes"
         )
         val exportedRam = SpcData.buildInitialSpcRam(exportedParser).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exportedParser, songSet))

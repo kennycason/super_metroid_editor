@@ -65,6 +65,9 @@ object SpcData {
     /** Unique song sets referenced by tracks. */
     val SONG_SETS: List<Int> get() = KNOWN_TRACKS.map { it.songSet }.distinct().sorted()
 
+    /** Native pointer-table entries, including setup and the unused Samus-theme bank. */
+    val TRANSFER_SONG_SETS: List<Int> = (0x00..0x48 step 3).toList()
+
     // ─── SPC transfer block parsing ─────────────────────────────────
 
     /**
