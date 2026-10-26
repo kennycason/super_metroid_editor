@@ -74,6 +74,25 @@ internal class NativeMusicUploadFixture(private val directory: File, rom: ByteAr
     }
 
     fun play(index: Int) { core.writeWram(0x1E02, byteArrayOf(index.toByte())); command(2, "play track") }
+    /** Use the game's actual HandleMusicQueue, including its pointer-table lookup. */
+    fun queueBank(songSet: Int) {
+        core.writeWram(0x1E02, byteArrayOf(songSet.toByte(), 0))
+        command(6, "queued bank ${songSet.toString(16)}")
+        val status = core.readWram(0x1E06, 4)
+        assertEquals(0, status[1].toInt(), "Queued upload must preserve the caller's data bank")
+        assertEquals(0x1FFF, (status[2].toInt() and 255) or ((status[3].toInt() and 255) shl 8), "Queued upload must balance the CPU stack")
+        val current = core.readWram(0x7F3, 2)
+        assertEquals(songSet, (current[0].toInt() and 255) or ((current[1].toInt() and 255) shl 8))
+        frames(8)
+    }
+    /** One-way handoff: execute the original soft reset and title game loop. */
+    fun softResetToTitle(): ShortArray {
+        core.writeWram(0x1E00, byteArrayOf(7))
+        val audio = frames(360)
+        val current = core.readWram(0x7F3, 2)
+        assertEquals(3, (current[0].toInt() and 255) or ((current[1].toInt() and 255) shl 8), "Soft reset must reach the title music bank")
+        return audio
+    }
     fun effect(library: Int, index: Int) {
         require(library in 1..3)
         core.writeWram(0x1E02, byteArrayOf(index.toByte())); command(2 + library, "effect $library/$index")

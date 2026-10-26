@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.rom.SpcTransferStream
 
 /**
  * Static resource-lifetime check, not a fresh-RAM preview or a sound-effect usage analysis.
@@ -30,7 +31,7 @@ internal object MusicBankTransitions {
     data class Report(
         val issues: List<Issue>,
         val checkedTransitions: Int,
-        /** Small bank-local entries can be explicitly reloaded without copying common sample data. */
+        /** Complete instrument entries can be explicitly reloaded without copying sample data. */
         val instrumentRestorations: Map<Int, Map<Int, ByteArray>> = emptyMap(),
     ) {
         val canExport: Boolean get() = issues.isEmpty()
@@ -40,7 +41,7 @@ internal object MusicBankTransitions {
             error("Music ROM export blocked: ${first.resource.label.lowercase()} at SPC \$${first.start.toString(16).uppercase().padStart(4, '0')} " +
                 "from bank ${MusicInstrumentBanks.key(first.sourceSongSet)} is not restored when loading bank ${MusicInstrumentBanks.key(first.targetSongSet)}. " +
                 "Reset the sound or replace the import in bank ${MusicInstrumentBanks.key(first.editedSongSet)}. " +
-                "Audition and standalone SPC/N-SPC export remain available; common-resource restoration is not implemented.")
+                "Audition and standalone SPC/N-SPC export remain available; sample-data and engine restoration are not supported.")
         }
     }
 
@@ -130,7 +131,7 @@ internal object MusicBankTransitions {
             val target = banks.getValue(targetSet)
             if (target.loaded[at] || target.protected[at] == 0 || source.ram[at] == target.ram[at]) return
             val resource = Resource.entries[target.protected[at] - 1]
-            if (resource == Resource.INSTRUMENT) {
+            if (resource == Resource.INSTRUMENT || resource == Resource.COMMON_INSTRUMENT) {
                 val entry = 0x6C00 + (at - 0x6C00) / 6 * 6
                 restorations.getOrPut(targetSet) { sortedMapOf() }[entry] = target.ram.copyOfRange(entry, entry + 6)
                 return
@@ -157,6 +158,7 @@ internal object MusicBankTransitions {
                 for (at in target.dependencies) inspectByte(sourceSet, targetSet, at, targetSet)
             }
         }
+        if (restorations.isNotEmpty()) SpcTransferStream.requireSupportedLoader(parser)
         return Report(issues.distinct(), checked.size, restorations)
     }
 

@@ -7,6 +7,25 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertFailsWith
 
 class RomFreeSpaceAllocatorTest {
+    @Test fun `transaction validation checks all allocations without writing and honors bank fill bytes`() {
+        for (fill in listOf(0, 255)) {
+            val rom = ByteArray(0x10000) { fill.toByte() }
+            val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes, freeFillByteForBank = { fill })
+            val first = allocator.reserve(4, listOf(0x80), "first")!!
+            val second = allocator.reserve(4, listOf(0x80), "second")!!
+            val data = byteArrayOf(1, 2, 3, 4)
+            allocator.validateWrite(first, data)
+            allocator.validateWrite(second, data)
+            assertTrue(rom.all { it == fill.toByte() })
+            assertFailsWith<IllegalArgumentException> { allocator.validateWrite(second, ByteArray(3)) }
+            rom[second.pcOffset] = (fill xor 1).toByte()
+            assertFailsWith<IllegalArgumentException> {
+                for (allocation in listOf(first, second)) allocator.validateWrite(allocation, data)
+            }
+            assertTrue(rom.sliceArray(first.pcOffset until first.pcOffset + first.size).all { it == fill.toByte() })
+        }
+    }
+
     @Test fun `new live ranges protect erased bytes across all existing and future allocator views`() {
         val rom = ByteArray(0x10000) { -1 }
         val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes, guardBytes = 2)

@@ -34,7 +34,7 @@ CPU (65816)                          SPC-700
 | `$5800-$5807` | 8B      | Note ring length table                      |
 | `$5808-$5817` | 16B     | Note volume table                           |
 | `$5820-$6BFF` | ~5KB    | Tracker data (music sequences per song set) |
-| `$6C00-$6CE9` | 234B    | Instrument table                            |
+| `$6C00-$6CFB` | 252B    | Instrument table (42 slots x 6 bytes)        |
 | `$6D00-$6D9F` | 160B    | Sample directory (40 entries x 4 bytes)      |
 | `$6E00-$FFFF` | ~40KB   | BRR sample data                             |
 
@@ -52,6 +52,11 @@ Song set data is a chain of transfer blocks stored in ROM banks `$CF-$DF`:
 - Size = 0x0000 signals end of chain
 - Each block writes `size` bytes to ARAM starting at `dest`
 - Blocks are applied in order; later blocks overwrite earlier ones at the same address
+
+Instrument edits may add a small prefix ending in `[u16 0xFFFF] [u24 ROM pointer]`.
+SMEDIT installs a verified 43-byte CPU reader for this continuation marker; the retained
+music chain then continues within the same APU receive session. It is not a vanilla
+transfer block or a second engine upload. Unknown loader profiles are refused.
 
 ## Song Set Pointer Table (`$8F:E7E1`)
 
@@ -206,24 +211,28 @@ Saved tracks contain arrangements and optional native sources, not instrument sn
 There is no legacy sound migration or conflict-choice UI. Reset Track
 keeps shared manual overrides; **Reset sound** resets one shared slot with undo support.
 The compact bank-load status runs a background shared-resource preflight. Its expandable
-details identify affected sounds and banks. Export derives reset uploads for bank-local
-instrument entries that a later bank does not normally reload. Unrestored common sounds,
-shared sample pointers/BRR, and engine bytes block ROM export; isolated audition and
+details identify affected sounds and banks. Export derives compact reset uploads for
+common and bank-local instrument entries that a later bank does not normally reload.
+Shared sample pointers/BRR and engine bytes that are not restored still block ROM export; isolated audition and
 SPC/N-SPC export remain available. The check is not a full command/effect-usage or ROM-space
 guarantee. All music chains and reset uploads must fit before any music ROM bytes are written.
 Existing covered bank bytes are patched in place when no other music bank shares those
-ROM locations. New upload ranges and aliased sources still use relocated chains. The
+ROM locations. Missing instrument entries use prefixes; other new upload ranges and
+aliased sources still require isolated relocated chains. The
 exporter inventories setup and all native pointer entries, including unused bank `$48`,
 preserves the complete native terminator/entry address, and reserves all required space
 before changing even an in-place sound. This reduces ROM-space use; it does not relax
-the common-resource or effect-sharing restrictions or install a loader hook.
+the sample-data or effect-sharing restrictions. The exporter installs the exact verified
+instrument-only loader when needed, or reuses its verified installation on re-export.
+Preview/export/source mapping share a strict reader that follows discontiguous streams,
+tracks all owned physical spans, and rejects malformed, overlapping or cyclic chains.
+The complete serialized ROM is re-read and checked before any music bytes are committed.
 
-An instrument-only continuation prototype now has real CPU/APU regression coverage,
-including retained-RAM bank changes, native music/effect output, and LoROM crossings.
-It is not installed by the exporter: strict continuation-aware ROM reading, physical
-source ownership, and the atomic export plan must be integrated before enabling it.
-The native fixture uses an isolated mailbox-driven test ROM, not the running editor or
-a full gameplay/music-queue reproduction. See `docs/sound/sound_encode.md` for the gate.
+CPU/APU regression coverage includes retained-RAM bank changes via the original game
+music queue, repeated reentry, LoROM crossings, audible music/effects, and the original
+soft-reset path back to title music. Effect libraries run separately with silent controls.
+The fixture uses an isolated test ROM, not the user's running editor; this is not
+exhaustive gameplay or effect/dependency certification. See `docs/sound/sound_encode.md`.
 
 ## SMEDIT Implementation Map
 
@@ -235,9 +244,11 @@ a full gameplay/music-queue reproduction. See `docs/sound/sound_encode.md` for t
 | Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |
 | Retained native imports | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/ImportedMusicResolver.kt` | Low-level retained-source/baseline decoding and safe sequence relocation; project-wide composition belongs to the bank resolver |
 | Shared bank resolution | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicBankResolver.kt`, `MusicInstrumentBanks.kt` | Combine bank sources and arrangements, validate shared settings, and apply one bank-owned override per slot |
-| Bank-transition safety | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicBankTransitions.kt`, `MusicBankSafetyStatus.kt` | Check incoming/outgoing resource lifetimes, derive bank-local instrument resets, and show compact export-blocking details |
+| Bank-transition safety | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicBankTransitions.kt`, `MusicBankSafetyStatus.kt` | Check incoming/outgoing resource lifetimes, derive instrument resets, and show compact export-blocking details |
+| Music ROM transaction | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicRomExporter.kt`, `MusicTransferLoader.kt` | Protect source spans, reserve compact prefixes/isolated chains, verify and install the native loader, re-read serialized results before committing |
 | Audio playback | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundPlayer.kt` | JVM `Clip` playback for mono 16-bit PCM and WAV export helpers |
 | ROM/SPC transfer data | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcData.kt` | Song set pointer table, transfer block parsing, ARAM snapshots, sample directory parsing, BRR decode/encode, in-place sample replacement writes |
+| Strict ROM transfer reader | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcTransferStream.kt` | Validate native/continued streams and the exact loader profile; preserve physical source ownership and last-writer mapping |
 | N-SPC sequence model | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcSequence.kt` | Editable song model, piano-roll parser, simplified encoder back to N-SPC writes |
 | Kotlin fallback renderer | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcRenderer.kt` | Sequence parser and sample-based renderer used when native SPC render is unavailable or insufficient |
 | Native SPC emulator | `shared/src/jvmMain/kotlin/com/supermetroid/editor/rom/NativeSpcEmulator.kt` | JNA bridge to blargg `snes_spc`, builds SPC file images from ARAM, applies transfer blocks, sends play commands, renders mono/stereo PCM |

@@ -4,7 +4,8 @@ lorom
 org $80FFFC
 dw TestReset
 
-org $80A000
+; Stock free space: keep all gameplay routines intact for the final soft reset.
+org $80F000
 TestReset:
     sei
     clc
@@ -40,6 +41,14 @@ TestMailbox:
     beq TestMailbox
     cmp #$01
     beq TestUpload
+    cmp #$07
+    bne +
+    jml $808462
++
+    cmp #$06
+    bne +
+    jmp TestQueued
++
     cmp #$02
     beq TestMusic
     cmp #$03
@@ -79,6 +88,19 @@ TestWide:
     rep #$30
     clc
     jsl $808024
+    bra TestReturned
+TestQueued:
+    rep #$30
+    stz $0639
+    stz $063B
+    lda $1E02
+    and #$00FF
+    ora #$FF00
+    sta $063D
+    lda #$0001
+    sta $063F
+    clc
+    jsl $808F0C
 TestReturned:
     php
     sep #$20
@@ -94,4 +116,5 @@ TestReturned:
 TestDone:
     inc $1E01
     stz $1E00
-    bra TestMailbox
+    jmp TestMailbox
+warnpc $80FFC0

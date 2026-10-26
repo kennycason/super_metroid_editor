@@ -78,17 +78,18 @@ class MusicTransferLoaderTest {
         }
     }
 
-    @Test fun `continuation building block does not enable common resource exports`() {
+    @Test fun `verified continuation enables common instrument exports without changing the project`() {
         val parser = TestRomHelper.requireRomParser()
         val project = com.supermetroid.editor.data.SmEditProject(romPath = "test.sfc")
         val ram = SpcData.buildInitialSpcRam(parser)
         val original = com.supermetroid.editor.rom.NspcRenderer.readInstrumentTable(ram)[0]
         project.musicInstrumentBanks["03"] = com.supermetroid.editor.data.MusicInstrumentBankEdit(mutableMapOf(
             0 to MusicInstrumentBanks.entry(original.copy(gain = original.gain xor 1))))
-        assertFalse(MusicBankTransitions.inspect(parser, project).canExport)
+        assertTrue(MusicBankTransitions.inspect(parser, project).canExport)
         val rom = parser.copyRomData()
         val before = rom.copyOf()
-        assertFailsWith<IllegalStateException> { MusicRomExporter(project, {}).applyMusicEditsToRom(rom) }
-        assertContentEquals(before, rom)
+        assertEquals(1, MusicRomExporter(project, {}).applyMusicEditsToRom(rom))
+        assertNotNull(com.supermetroid.editor.rom.SpcTransferStream.installedCodePointer(RomParser(rom)))
+        assertContentEquals(before, parser.copyRomData())
     }
 }

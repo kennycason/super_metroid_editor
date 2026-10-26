@@ -222,6 +222,9 @@ class InstrumentSelectorTest {
                 render()
                 assertFalse(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Raw DSP settings" } })
                 assertTrue(hasTag(scene, "instrument-common-warning"))
+                assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text ->
+                    text.text == "Common sound · shared within this bank"
+                } })
                 click(scene, "instrument-bank-scope"); render()
                 assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Title Screen (After Button)" } })
                 for (type in listOf(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.KEY_RELEASED)) {

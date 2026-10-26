@@ -6,6 +6,7 @@ import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.rom.SpcTransferStream
 import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Test
 import kotlin.test.*
@@ -77,8 +78,8 @@ class MusicRomInPlaceExportTest {
             parser = RomParser(rom)
             val project = SmEditProject(romPath = "alias.sfc").also { edit(parser, it, 3) }
             val aliasRam = bankRam(parser, aliasSet)
-            val source = MusicRomTransferChain.read(parser, originalPointer)
-            val sourceBytes = rom.sliceArray(source.romRange)
+            val source = SpcTransferStream.read(parser, originalPointer)
+            val sourceBytes = rom.sliceArray(source.romRanges.single())
             val before = rom.copyOf()
             assertFailsWith<IllegalStateException> {
                 MusicRomExporter(project, {}).applyMusicEditsToRom(rom, noSpace(parser, rom))
@@ -88,7 +89,7 @@ class MusicRomInPlaceExportTest {
             val exported = RomParser(rom)
             assertNotEquals(originalPointer, SpcData.readSongSetPointer(exported, 3))
             assertEquals(originalPointer, SpcData.readSongSetPointer(exported, aliasSet))
-            assertContentEquals(sourceBytes, rom.sliceArray(source.romRange))
+            assertContentEquals(sourceBytes, rom.sliceArray(source.romRanges.single()))
             assertContentEquals(aliasRam, bankRam(exported, aliasSet))
             assertContentEquals(MusicBankResolver.resolve(parser, project, 3).ram, bankRam(exported, 3))
         }
@@ -98,8 +99,8 @@ class MusicRomInPlaceExportTest {
         val rom = TestRomHelper.requireRomParser().copyRomData()
         var parser = RomParser(rom)
         val sourcePointer = SpcData.readSongSetPointer(parser, 3)
-        val source = MusicRomTransferChain.read(parser, sourcePointer)
-        val suffixPc = source.romRange.first + source.blocks.takeWhile { it.destAddr != 0x6C90 }.sumOf { 4 + it.data.size }
+        val source = SpcTransferStream.read(parser, sourcePointer)
+        val suffixPc = source.romRanges.single().first + source.blocks.takeWhile { it.destAddr != 0x6C90 }.sumOf { 4 + it.data.size }
         val suffixPointer = parser.pcToSnes(suffixPc)
         pointer(rom, SpcData.findSongSetPointerEntryPc(parser, 0x48), suffixPointer)
         parser = RomParser(rom)
@@ -136,8 +137,8 @@ class MusicRomInPlaceExportTest {
     @Test fun `overlapping uploads patch only the final writer and preserve all block metadata`() {
         val rom = TestRomHelper.requireRomParser().copyRomData()
         var parser = RomParser(rom)
-        val source = MusicRomTransferChain.read(parser, SpcData.readSongSetPointer(parser, 3))
-        val bytes = rom.sliceArray(source.romRange)
+        val source = SpcTransferStream.read(parser, SpcData.readSongSetPointer(parser, 3))
+        val bytes = rom.sliceArray(source.romRanges.single())
         val instrument = bankRam(parser, 3).copyOfRange(0x6C90, 0x6C96)
         val out = java.io.ByteArrayOutputStream().also {
             it.write(bytes, 0, bytes.size - 4)
@@ -214,9 +215,9 @@ class MusicRomInPlaceExportTest {
             val old = SpcData.readSongSetPointer(parser, target)
             val new = SpcData.readSongSetPointer(exported, target)
             assertNotEquals(old, new)
-            val chain = MusicRomTransferChain.read(exported, new)
-            assertEquals(MusicRomTransferChain.read(parser, old).entryAddress, chain.entryAddress)
-            assertEquals(MusicTransferChainBudget.serializedTransferChainSize(chain.blocks), chain.romRange.count())
+            val chain = SpcTransferStream.read(exported, new)
+            assertEquals(SpcTransferStream.read(parser, old).entryAddress, chain.entryAddress)
+            assertEquals(2, chain.romRanges.size, "Small resets should precede retained chains, not copy them")
         }
         assertEquals(before.musicInstrumentBanks, project.musicInstrumentBanks)
         assertEquals(before.musicEdits, project.musicEdits)
@@ -225,12 +226,14 @@ class MusicRomInPlaceExportTest {
     @Test fun `unused native table bank participates in common resource transition checks`() {
         val parser = TestRomHelper.requireRomParser()
         val project = SmEditProject(romPath = "common.sfc").also { edit(parser, it, 3, slot = 0) }
-        assertTrue(MusicBankTransitions.inspect(parser, project).issues.any {
-            it.targetSongSet == 0x48 && it.resource == MusicBankTransitions.Resource.COMMON_INSTRUMENT
-        })
+        assertTrue(MusicBankTransitions.inspect(parser, project).instrumentRestorations.getValue(0x48).containsKey(0x6C00))
         val rom = parser.copyRomData()
         val before = rom.copyOf()
-        assertFailsWith<IllegalStateException> { MusicRomExporter(project, {}).applyMusicEditsToRom(rom) }
-        assertContentEquals(before, rom)
+        assertEquals(1, MusicRomExporter(project, {}).applyMusicEditsToRom(rom))
+        val unused = SpcData.buildInitialSpcRam(RomParser(rom)).also {
+            SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(RomParser(rom), 0x48))
+        }
+        assertContentEquals(SpcData.buildInitialSpcRam(parser).copyOfRange(0x6C00, 0x6C06), unused.copyOfRange(0x6C00, 0x6C06))
+        assertContentEquals(before, parser.copyRomData())
     }
 }

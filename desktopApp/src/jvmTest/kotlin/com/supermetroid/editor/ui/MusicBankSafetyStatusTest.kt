@@ -78,15 +78,15 @@ class MusicBankSafetyStatusTest {
 
     @Test fun `blocked status stays compact with readable grouped details at every font size`() = runBlocking {
         val issues = listOf(0x0F, 0x18).map { target ->
-            MusicBankTransitions.Issue(3, target, MusicBankTransitions.Resource.COMMON_INSTRUMENT, 0x6C03, 0x6C04)
+            MusicBankTransitions.Issue(3, target, MusicBankTransitions.Resource.DIRECTORY, 0x6D03, 0x6D04)
         }
         for (font in FontSize.entries) withStatus(MusicBankTransitions.Report(issues, 22), font = font) { scene, render ->
             assertTrue(hasText(scene, "ROM export blocked"))
-            assertFalse(hasText(scene, "Common instrument #0"), "Details must be opt-in")
+            assertFalse(hasText(scene, "Sample directory #0"), "Details must be opt-in")
             tagged(scene, "music-bank-check").config[SemanticsActions.OnClick].action!!.invoke(); render()
-            assertTrue(hasText(scene, "Common instrument #0"))
+            assertTrue(hasText(scene, "Sample directory #0"))
             assertTrue(hasText(scene, "Title Screen · 2 affected banks"))
-            assertTrue(hasText(scene, "SPC $6C03"))
+            assertTrue(hasText(scene, "SPC $6D03"))
             assertTrue(hasText(scene, "Audition and SPC/N-SPC export still work"))
             assertTrue(tagged(scene, "music-bank-check-details").boundsInRoot.height <= 440,
                 "$font must keep the details popup compact")

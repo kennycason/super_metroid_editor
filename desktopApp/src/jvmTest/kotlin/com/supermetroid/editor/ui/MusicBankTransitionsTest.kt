@@ -44,7 +44,7 @@ class MusicBankTransitionsTest {
         assertEquals(0, report.checkedTransitions)
     }
 
-    @Test fun `common edits that sound correct in fresh RAM are rejected before any ROM writes`() {
+    @Test fun `common edits receive explicit destination restorations instead of leaking between banks`() {
         val parser = parser()
         val project = project()
         val original = parser.copyRomData()
@@ -53,12 +53,11 @@ class MusicBankTransitionsTest {
         assertEquals(stock.gain xor 1, MusicBankResolver.resolve(parser, project, 3).ram[0x6C03].toInt() and 255)
         val report = MusicBankTransitions.inspect(parser, project)
         assertEquals((SpcData.TRANSFER_SONG_SETS.size - 2) * 2, report.checkedTransitions)
-        assertTrue(report.issues.any { it.sourceSongSet == 3 && it.targetSongSet == 0x0F &&
-            it.resource == MusicBankTransitions.Resource.COMMON_INSTRUMENT && it.start == 0x6C03 })
+        assertTrue(report.canExport)
+        assertEquals(SpcData.TRANSFER_SONG_SETS.size - 2, report.instrumentRestorations.size)
         val rom = original.copyOf()
-        val error = assertFailsWith<IllegalStateException> { MusicRomExporter(project, {}).applyMusicEditsToRom(rom) }
-        assertTrue(error.message!!.contains("not restored"))
-        assertContentEquals(original, rom)
+        assertEquals(1, MusicRomExporter(project, {}).applyMusicEditsToRom(rom))
+        assertContentEquals(original, parser.copyRomData())
         // Isolated previews and raw banks are still useful for sound design.
         assertTrue(MusicBankResolver.resolve(parser, project, 3).blocks.isNotEmpty())
     }
@@ -175,8 +174,8 @@ class MusicBankTransitionsTest {
         gain(parser, project, 3, 0, value)
         gain(parser, project, 0x0F, 0, value)
         val report = MusicBankTransitions.inspect(parser, project)
-        assertFalse(report.issues.any { it.sourceSongSet == 3 && it.targetSongSet == 0x0F })
-        assertTrue(report.issues.any { it.sourceSongSet == 0x0F && it.targetSongSet == 0x18 })
+        assertTrue(report.canExport)
+        assertTrue(report.instrumentRestorations.getValue(0x18).containsKey(0x6C00))
         val ram = MusicBankResolver.resolve(parser, project, 3).ram.copyOf()
         for (target in listOf(0x0F, 0x18)) SpcData.applyTransferBlocks(ram, SpcData.findSongSetTransferData(parser, target))
         assertEquals(value, ram[0x6C03].toInt() and 255)

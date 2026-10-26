@@ -63,7 +63,7 @@ class MusicSampleSelectionTest {
         assertEquals(candidate.srcn, f.sound.pianoRollInstruments[before.index].srcn)
     }
 
-    @Test fun `common source edits retain the existing export restriction and fail before ROM mutation`() = runBlocking {
+    @Test fun `common source choices export through instrument restoration without replacing sample bytes`() = runBlocking {
         val f = fixture()
         f.sound.loadPianoRollSampleCatalog()
         val before = f.sound.pianoRollInstruments[0]
@@ -71,9 +71,11 @@ class MusicSampleSelectionTest {
         assertTrue(f.sound.choosePianoRollSample(0, candidate.srcn))
         val rom = f.parser.copyRomData()
         val unchanged = rom.copyOf()
-        val failure = assertFailsWith<IllegalStateException> { MusicRomExporter(f.editor.project, {}).applyMusicEditsToRom(rom) }
-        assertTrue(failure.message.orEmpty().contains("common instrument"))
-        assertContentEquals(unchanged, rom)
+        assertEquals(1, MusicRomExporter(f.editor.project, {}).applyMusicEditsToRom(rom))
+        val exported = RomParser(rom)
+        val actual = SpcData.buildInitialSpcRam(exported).also { SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exported, 3)) }
+        assertEquals(candidate.srcn, actual[0x6C00].toInt() and 255)
+        assertContentEquals(f.parser.copyRomData(), unchanged)
     }
 
     @Test fun `source names follow imported content and provenance includes sibling imports across undo and reset`() = runBlocking {

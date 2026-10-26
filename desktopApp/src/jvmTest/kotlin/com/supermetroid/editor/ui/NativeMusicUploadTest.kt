@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.rom.SpcTransferStream
 import com.supermetroid.editor.rom.TestRomHelper
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import org.junit.jupiter.api.Test
@@ -49,9 +50,9 @@ class NativeMusicUploadTest {
         val rom = parser.copyRomData()
         val before = rom.copyOf()
         val pointers = SpcData.TRANSFER_SONG_SETS.associateWith { SpcData.readSongSetPointer(parser, it) }
-        val sources = pointers.values.associateWith { MusicRomTransferChain.read(parser, it) }
+        val sources = pointers.values.associateWith { SpcTransferStream.read(parser, it) }
         val allocator = RomFreeSpaceAllocator(rom, parser::snesToPc, parser::pcToSnes)
-        allocator.protectRanges(sources.values.map { it.romRange })
+        allocator.protectRanges(sources.values.map { it.romRanges.single() })
         val hook = assertNotNull(allocator.reserve(MusicTransferLoader.code.size, listOf(0xB8), "native continuation code", 16))
         val initial = SpcData.buildInitialSpcRam(parser)
         val common = initial.copyOfRange(0x6C00, 0x6C06)
@@ -76,7 +77,7 @@ class NativeMusicUploadTest {
             "Restoration should not duplicate ~434 KiB of retained music chains")
         assertTrue(prefixes.values.maxOf { it.first.pcOffset + it.first.size } - hook.pcOffset < 1024,
             "Even alignment gaps should fit the native demonstration in 1 KiB")
-        for (source in sources.values) assertContentEquals(before.sliceArray(source.romRange), rom.sliceArray(source.romRange))
+        for (source in sources.values) assertContentEquals(before.sliceArray(source.romRanges.single()), rom.sliceArray(source.romRanges.single()))
         NativeMusicUploadFixture(directory, rom).use { fixture ->
             val expected = initial.copyOf()
             val sequence = listOf(3, 0x0F, 3, 6, 3, 0x42) + prefixes.keys + listOf(3, 0x0F, 3)
@@ -131,18 +132,18 @@ class NativeMusicUploadTest {
             allocation.snesAddress
         }
         for ((at, bytes) in MusicTransferLoader.patchWrites(parser, code.snesAddress)) bytes.copyInto(rom, at)
-        NativeMusicUploadFixture(directory, rom).use { fixture ->
+        for (library in 1..3) NativeMusicUploadFixture(java.io.File(directory, "effect-$library"), rom).use { fixture ->
             fixture.upload(prefixes.getValue(3))
             assertContentEquals(changed, fixture.ram().copyOfRange(0x6C00, 0x6C06))
             fixture.upload(prefixes.getValue(0x0F), narrowCaller = true)
             assertContentEquals(common, fixture.ram().copyOfRange(0x6C00, 0x6C06))
-            for (library in 1..3) {
-                fixture.effect(library, 0)
-                fixture.frames(8)
-                fixture.effect(library, 1)
-                assertTrue(fixture.frames(45).any { it != 0.toShort() }, "Native effect $library/1 must remain audible")
-                assertContentEquals(common, fixture.ram().copyOfRange(0x6C00, 0x6C06))
-            }
+            fixture.effect(library, 0)
+            fixture.frames(8)
+            assertTrue(fixture.frames(30).all { it == 0.toShort() }, "No other library or BGM may mask the effect check")
+            val effect = if (library == 3) 5 else 1 // Library 3 / 1 is Silence, not an audible effect.
+            fixture.effect(library, effect)
+            assertTrue(fixture.frames(45).any { it != 0.toShort() }, "Native effect $library/$effect must remain audible")
+            assertContentEquals(common, fixture.ram().copyOfRange(0x6C00, 0x6C06))
         }
     }
 }

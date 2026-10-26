@@ -1,36 +1,25 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpcTransferStream
 import java.io.ByteArrayOutputStream
-import java.security.MessageDigest
 
 /**
- * Native continuation building block, deliberately not installed by MusicRomExporter yet.
+ * Verified instrument-only continuation writes for the atomic music ROM export plan.
  * A verified loader reads $FFFF + a ROM u24 as a continuation, without ending the APU
- * receive session. Current project/export readers must be integrated before enabling it.
+ * receive session. All ROM consumers use the same strict physical stream reader.
  */
 internal object MusicTransferLoader {
     const val PATCH_SNES = 0x8080B1
     private const val LOADER_START = 0x808024
     private const val LOADER_END = 0x808111
-    private const val ORIGINAL_SHA256 = "992a752c868ebd31545a8d098f989565b8014a96f1270edf45beb1f17058c048"
 
     // Independently assembled by the runtime fixture from transfer-continuation.asm.
     // Entry: M=0, X=0, DB:Y=next size, 8-bit kick already on the caller's stack.
     // Return: A=size, Y advanced as native IncYTwice, DB/$02 track ROM crossings.
-    val code: ByteArray get() = hex(
-        "B90000 C9FFFF F011 C8 F004 C8 F001 6B E602 D401 AB AB A00080 6B " +
-            "B90200 48 E220 B90400 8502 48 AB C220 7A 80D5")
+    val code: ByteArray get() = SpcTransferStream.loaderCode
 
-    fun requireOriginal(parser: RomParser) {
-        val rom = parser.getRomData()
-        val start = parser.snesToPc(LOADER_START)
-        val end = parser.snesToPc(LOADER_END)
-        require(start >= 0 && end <= rom.size) { "Music continuation loader is outside ROM bounds" }
-        val hash = MessageDigest.getInstance("SHA-256").digest(rom.copyOfRange(start, end))
-            .joinToString("") { "%02x".format(it.toInt() and 255) }
-        require(hash == ORIGINAL_SHA256) { "Music continuation requires the verified native CPU upload routine; loader bytes differ" }
-    }
+    fun requireOriginal(parser: RomParser) = SpcTransferStream.requireOriginalLoader(parser)
 
     /** Concrete writes only. The caller must reserve code/prefixes before applying any bytes. */
     fun patchWrites(parser: RomParser, codePointer: Int): Map<Int, ByteArray> {
@@ -71,5 +60,4 @@ internal object MusicTransferLoader {
     private fun requireRomPointer(pointer: Int) {
         require((pointer ushr 16) in 0x80..0xFF && (pointer and 0xFFFF) >= 0x8000) { "Invalid music continuation ROM pointer" }
     }
-    private fun hex(value: String) = value.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

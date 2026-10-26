@@ -27,14 +27,14 @@ class SpcDataTest {
     }
 
     @Test
-    fun `song set pointer table at 8F-E7E1 has all 24 song sets`() {
+    fun `song set pointer table at 8F-E7E1 has setup and all 24 music banks`() {
         val parser = loadTestRom() ?: return
         val table = SpcData.findSongSetPointerTable(parser)
 
         val expectedSets = listOf(
             0x00, 0x03, 0x06, 0x09, 0x0C, 0x0F, 0x12, 0x15,
             0x18, 0x1B, 0x1E, 0x21, 0x24, 0x27, 0x2A, 0x2D,
-            0x30, 0x33, 0x36, 0x39, 0x3C, 0x3F, 0x42, 0x45
+            0x30, 0x33, 0x36, 0x39, 0x3C, 0x3F, 0x42, 0x45, 0x48
         )
         for (ss in expectedSets) {
             assertTrue(table.containsKey(ss),

@@ -97,6 +97,12 @@ class RomFreeSpaceAllocator(
     }
 
     fun write(allocation: RomAllocation, bytes: ByteArray) {
+        validateWrite(allocation, bytes)
+        bytes.copyInto(romData, allocation.pcOffset)
+    }
+
+    /** Read-only validation so a multi-allocation transaction can check every write before committing. */
+    fun validateWrite(allocation: RomAllocation, bytes: ByteArray) {
         require(bytes.size == allocation.size) {
             "allocation ${allocation.label} expects ${allocation.size} bytes, got ${bytes.size}"
         }
@@ -112,7 +118,6 @@ class RomFreeSpaceAllocator(
                 "allocation ${allocation.label} overlaps used ROM byte at PC ${allocation.pcOffset + i}"
             }
         }
-        bytes.copyInto(romData, allocation.pcOffset)
     }
 
     private fun reserveInBank(
