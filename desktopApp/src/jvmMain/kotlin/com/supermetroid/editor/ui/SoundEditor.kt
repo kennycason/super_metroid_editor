@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -346,8 +347,15 @@ private fun SampleListContent(
 
     val currentSamples = state.samples
     val loading = state.isLoadingSamples
+    var showWorkbench by remember { mutableStateOf(false) }
+    if (showWorkbench) SampleWorkbench(state.sampleWorkbench, romParser) { showWorkbench = false }
 
     Column(modifier = modifier.verticalScroll(rememberScrollState())) {
+        OutlinedButton(shape = SoundControlShape, onClick = {
+            state.stopPlayback()
+            state.stopInstrumentPreview()
+            showWorkbench = true
+        }, modifier = Modifier.padding(8.dp).testTag("sample-new")) { Text("New sample", fontSize = fs.body) }
         if (loading) {
             Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) {
                 Text("Loading samples...", fontSize = fs.body)

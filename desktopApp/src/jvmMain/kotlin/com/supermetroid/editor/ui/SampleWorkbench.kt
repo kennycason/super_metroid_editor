@@ -1,0 +1,197 @@
+package com.supermetroid.editor.ui
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpcData
+import kotlinx.coroutines.*
+import java.awt.FileDialog
+import java.awt.Frame
+import java.io.File
+import kotlin.math.roundToInt
+
+@Composable
+internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val fs = LocalEditorTheme.current.fontSize.value
+    var fileBusy by remember { mutableStateOf(false) }
+    DisposableEffect(state) { onDispose { state.stop() } }
+    LaunchedEffect(state.draft) { delay(140); state.prepare() }
+    fun fileAction(title: String, extension: String, save: Boolean, action: suspend (File) -> Unit) {
+        state.stop()
+        val file = chooseSampleAssetFile(title, extension, save, state.draft.name) ?: return
+        scope.launch {
+            fileBusy = true
+            state.stop()
+            try { action(file) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { state.message = error.message ?: "File operation failed" }
+            finally { fileBusy = false }
+        }
+    }
+    AlertDialog(onDismissRequest = onClose, shape = SoundControlShape, modifier = Modifier.widthIn(max = 680.dp),
+        title = { Text("Sample workbench", fontSize = fs.heading) },
+        text = {
+            Box(Modifier.heightIn(max = 540.dp).verticalScroll(rememberScrollState())) {
+                SampleWorkbenchContent(state, parser != null, !fileBusy,
+                    onPlay = { parser?.let { scope.launch { state.preview(SpcData.buildInitialSpcRam(it)) } } },
+                    onImport = { fileAction("Import WAV (up to 1.024 seconds)", "wav", false) { file ->
+                        val draft = withContext(Dispatchers.IO) { SampleAuthoring.readWav(file) }
+                        state.update(draft)
+                    } },
+                    onOpen = { fileAction("Open sample draft", "smedit-sample", false) { file ->
+                        val draft = withContext(Dispatchers.IO) { SampleAuthoring.open(file) }
+                        state.update(draft)
+                    } },
+                    onSave = { fileAction("Save sample draft", "smedit-sample", true) { file ->
+                        val draft = state.draft
+                        withContext(Dispatchers.IO) { SampleAuthoring.save(draft, file) }
+                        state.message = "Saved draft · ${file.name}"
+                    } },
+                    onExport = { fileAction("Export raw BRR data", "brr", true) { file ->
+                        val encoded = state.encoded ?: return@fileAction
+                        withContext(Dispatchers.IO) { SampleAuthoring.exportBrr(encoded, file) }
+                        state.message = "Saved raw BRR · loop offset ${encoded.loopByteOffset?.let { "$it bytes" } ?: "none"}"
+                    } },
+                )
+            }
+        },
+        confirmButton = { TextButton(shape = SoundControlShape, onClick = onClose) { Text("Close", fontSize = fs.body) } },
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SampleWorkbenchContent(
+    state: SampleWorkbenchState,
+    canPreview: Boolean,
+    enabled: Boolean = true,
+    onPlay: () -> Unit,
+    onImport: () -> Unit,
+    onOpen: () -> Unit,
+    onSave: () -> Unit,
+    onExport: () -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val draft = state.draft
+    val encoded = state.encoded
+    val shape = draft.generator?.let { SampleAuthoring.Shape.valueOf(it) }
+    val period = draft.periodFrames
+    var invalidFields by remember { mutableStateOf(emptySet<String>()) }
+    var details by remember { mutableStateOf(false) }
+    fun fieldValidity(label: String, valid: Boolean) { invalidFields = if (valid) invalidFields - label else invalidFields + label }
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+        Column(Modifier.fillMaxWidth().testTag("sample-workbench"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Standalone draft · not added to a music bank", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(shape = SoundControlShape, enabled = enabled, onClick = onImport, modifier = Modifier.testTag("sample-import-wav")) { Text("Import WAV", fontSize = fs.detail) }
+                OutlinedButton(shape = SoundControlShape, enabled = enabled, onClick = onOpen) { Text("Open draft", fontSize = fs.detail) }
+            }
+            OutlinedTextField(draft.name, { state.update(draft.copy(name = it)) }, enabled = enabled, singleLine = true,
+                label = { Text("Name", fontSize = fs.detail) }, textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
+                modifier = Modifier.fillMaxWidth().testTag("sample-draft-name"))
+            Text("New waveform", fontSize = fs.body)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (value in SampleAuthoring.Shape.entries) OutlinedButton(shape = SoundControlShape, enabled = enabled,
+                    onClick = { state.update(SampleAuthoring.generate(value, period).copy(gainPercent = draft.gainPercent)) },
+                    modifier = Modifier.testTag("sample-generate-${value.name}")) {
+                    Text(value.name.lowercase().replaceFirstChar(Char::uppercase), fontSize = fs.detail)
+                }
+            }
+            Text(when (shape) { null -> "Imported recording · ${draft.pcm.size} frames"; SampleAuthoring.Shape.NOISE -> "Noise · 4096 frames";
+                else -> "Period · $period frames · ${SampleAuthoring.RATE / period} Hz" }, fontSize = fs.detail)
+            Slider(period.toFloat(), { value ->
+                val next = (value / 16).roundToInt().coerceIn(2, 32) * 16
+                if (next != period && shape != null) state.update(SampleAuthoring.generate(shape, next).copy(name = draft.name, gainPercent = draft.gainPercent))
+            }, valueRange = 32f..512f, steps = 29, enabled = enabled && shape != null && shape != SampleAuthoring.Shape.NOISE,
+                modifier = Modifier.testTag("sample-period"))
+            Text("Level · ${draft.gainPercent}%", fontSize = fs.detail)
+            Slider(draft.gainPercent.toFloat(), { state.update(draft.copy(gainPercent = it.roundToInt())) },
+                valueRange = 0f..100f, enabled = enabled, modifier = Modifier.testTag("sample-level"))
+            val waveColor = MaterialTheme.colorScheme.primary
+            val loopColor = MaterialTheme.colorScheme.tertiary
+            Canvas(Modifier.fillMaxWidth().height(84.dp).background(MaterialTheme.colorScheme.surfaceVariant, SoundControlShape).testTag("sample-encoded-waveform")) {
+                val pcm = encoded?.pcm ?: return@Canvas
+                val bins = minOf(128, pcm.size)
+                for (bin in 0 until bins) {
+                    val first = bin * pcm.size / bins
+                    val last = (bin + 1) * pcm.size / bins
+                    var low = 0; var high = 0
+                    for (at in first until last) { low = minOf(low, pcm[at].toInt()); high = maxOf(high, pcm[at].toInt()) }
+                    val x = (bin + 0.5f) * size.width / bins
+                    drawLine(waveColor, Offset(x, size.height * (0.5f - high / 65536f)), Offset(x, size.height * (0.5f - low / 65536f)), 2f)
+                }
+                encoded.loopFrame?.let { val x = it.toFloat() * size.width / pcm.size; drawLine(loopColor, Offset(x, 0f), Offset(x, size.height), 2f) }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(encoded?.let { "${"%.1f".format(it.pcm.size / 32.0)} ms · ${if (it.loopFrame == null) "one-shot" else "looped"} · ${it.brr.size} B BRR" }
+                    ?: "Encoded BRR preview", fontSize = fs.detail, modifier = Modifier.weight(1f))
+                TextButton(shape = SoundControlShape, onClick = { details = !details }) { Text(if (details) "Details ▴" else "Details ▾", fontSize = fs.detail) }
+            }
+            if (details) Text(encoded?.let { "32 kHz · ${it.pcm.size} frames · loop offset ${it.loopByteOffset?.let { at -> "$at bytes" } ?: "none"}" }
+                ?: "Native BRR · 16 frames per block", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(shape = SoundControlShape, onClick = onPlay, enabled = enabled && canPreview && encoded != null && invalidFields.isEmpty() && !state.previewing,
+                    modifier = Modifier.testTag("sample-play-brr")) { Text("Play BRR", fontSize = fs.body) }
+                OutlinedButton(shape = SoundControlShape, onClick = state::stop, enabled = state.previewing || state.playing,
+                    modifier = Modifier.testTag("sample-stop")) { Text("Stop", fontSize = fs.body) }
+            }
+            if (!canPreview) Text("Load a ROM for native preview", fontSize = fs.detail)
+            Text("Trim / loop · 16-frame boundaries", fontSize = fs.detail)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SampleFrameField("Start", draft.trimStart, enabled, draft.pcm, { fieldValidity("Start", it) }) { state.update(draft.copy(trimStart = it)) }
+                SampleFrameField("End", draft.trimEnd, enabled, draft.pcm, { fieldValidity("End", it) }) { state.update(draft.copy(trimEnd = it)) }
+                SampleFrameField("Loop start", draft.loopStart ?: draft.trimStart, enabled && draft.loopStart != null, draft.pcm,
+                    { fieldValidity("Loop start", it) }) { state.update(draft.copy(loopStart = it)) }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(draft.loopStart != null, { state.update(draft.copy(loopStart = if (it) draft.trimStart else null)) }, enabled = enabled,
+                    modifier = Modifier.testTag("sample-loop-enabled"))
+                Text("Loop", fontSize = fs.body)
+            }
+            Box(Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("sample-workbench-status")) {
+                Text(when { invalidFields.isNotEmpty() -> "Use whole-frame positions on 16-frame boundaries"; state.preparing -> "Encoding BRR…";
+                    state.previewing -> "Rendering native preview…"; state.problem != null -> state.problem!!; else -> state.message },
+                    fontSize = fs.detail, color = if (state.problem != null || invalidFields.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(shape = SoundControlShape, onClick = onSave, enabled = enabled && encoded != null && invalidFields.isEmpty(), modifier = Modifier.testTag("sample-save-draft")) { Text("Save draft", fontSize = fs.body) }
+                OutlinedButton(shape = SoundControlShape, onClick = onExport, enabled = enabled && encoded != null && invalidFields.isEmpty(), modifier = Modifier.testTag("sample-export-brr")) { Text("Export BRR", fontSize = fs.body) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SampleFrameField(label: String, value: Int, enabled: Boolean, source: List<Int>, onValidity: (Boolean) -> Unit, onChange: (Int) -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var text by remember(value, source) { mutableStateOf(value.toString()) }
+    val valid = text.toIntOrNull()?.let { it >= 0 && it % 16 == 0 } == true
+    LaunchedEffect(text, enabled) { onValidity(!enabled || valid) }
+    OutlinedTextField(text, { next -> text = next; next.toIntOrNull()?.takeIf { it >= 0 && it % 16 == 0 }?.let(onChange) },
+        enabled = enabled, isError = enabled && !valid, singleLine = true,
+        label = { Text(label, fontSize = fs.detail) }, textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
+        modifier = Modifier.width(150.dp).testTag("sample-frame-$label"))
+}
+
+private fun chooseSampleAssetFile(title: String, extension: String, save: Boolean, suggestedName: String): File? {
+    val dialog = FileDialog(null as Frame?, title, if (save) FileDialog.SAVE else FileDialog.LOAD)
+    try {
+        val stem = suggestedName.map { if (it.isLetterOrDigit() || it in " _.-") it else '_' }.joinToString("").trim().take(80).ifBlank { "sample" }
+        if (save) dialog.file = "$stem.$extension" else dialog.setFilenameFilter { _, name -> name.endsWith(".$extension", true) }
+        dialog.isVisible = true
+        val name = dialog.file ?: return null
+        val directory = dialog.directory ?: return null
+        return File(directory, if (save && !name.endsWith(".$extension", true)) "$name.$extension" else name)
+    } finally { dialog.dispose() }
+}

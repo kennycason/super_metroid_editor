@@ -187,6 +187,26 @@ imported BRR is larger than the original slot, it is trimmed to the original BRR
 and the final BRR block's end flag is forced on. It does not yet append a transfer block,
 patch DIR entries, relocate song-set transfer chains, or expand the ROM.
 
+## Standalone Sample Workbench
+
+**Sounds → Samples → New sample** creates a standalone recording asset, without changing
+the project or a loaded bank. Generate sine/triangle/pulse/saw/noise, or import a mono/stereo
+WAV (up to 1.024 seconds, converted to 32 kHz). Set level, trim and loop start on native
+16-frame boundaries. Oversize files are rejected instead of silently trimmed.
+
+The waveform shows the encoded BRR decode. **Play BRR** auditions those bytes through the
+native SPC engine at recorded rate in disposable RAM. It is not generic PCM playback or
+a fallback synth. Loop entries reset predictor history for stable subsequent iterations.
+
+**Save draft / Open draft** preserve source PCM and all authoring parameters in a versioned
+`.smedit-sample` file. Save explicitly to keep work across app restarts; project save does
+not include standalone drafts. **Export BRR** writes headerless raw compressed data: keep
+the draft for its loop offset, which also appears in the workbench. Asset writes are atomic.
+
+Adding a draft to a music bank is the next stage, not an enabled action. Sample-slot
+ownership, SPC/ROM allocation and shared DIR/BRR lifetime checks still need implementation;
+the instrument-only continuation loader does not make arbitrary sample insertion safe.
+
 ## Track Import/Export Formats
 
 SMEDIT exposes import/export from the main track page next to **Export WAV**, and from the
@@ -239,6 +259,7 @@ exhaustive gameplay or effect/dependency certification. See `docs/sound/sound_en
 | Area | File | Role |
 |------|------|------|
 | Track/sample browser UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditor.kt` | Track list, sample list, waveform view, Edit Track / Replace WAV actions |
+| Standalone sample authoring | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SampleAuthoring.kt`, `SampleWorkbench.kt`, `SampleWorkbenchState.kt` | Waveform/WAV creation, loop/trim, native encoded audition, reusable draft assets and raw BRR export; no bank insertion |
 | Sound state | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditorState.kt` | Selected track/sample state, native SPC previews, WAV import/export, sample replacement patch creation, piano-roll playback state |
 | Piano roll UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/PianoRollEditor.kt` | Virtualized track visualization/editing, 1x-8x zoom, seek bar, note insertion/removal/move/resize, right-click note properties, playback cursor |
 | Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |

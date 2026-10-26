@@ -81,6 +81,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     var currentLoopStart by mutableStateOf(-1)
         private set
     var sampleRate by mutableStateOf(32000)
+    internal val sampleWorkbench = SampleWorkbenchState()
     var loopEnabled by mutableStateOf(false)
     var autoPlayEnabled by mutableStateOf(false)
     var playAllEnabled by mutableStateOf(false)

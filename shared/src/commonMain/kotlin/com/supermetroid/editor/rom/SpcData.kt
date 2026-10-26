@@ -322,9 +322,10 @@ object SpcData {
      *
      * @param pcm Signed 16-bit PCM samples
      * @param loopBlock If >= 0, the block index where looping starts (sets loop flag)
+     * @param resetPredictorsAt Block indexes forced to filter 0 for history-independent entry
      * @return BRR encoded bytes
      */
-    fun encodeBrr(pcm: ShortArray, loopBlock: Int = -1): ByteArray {
+    fun encodeBrr(pcm: ShortArray, loopBlock: Int = -1, resetPredictorsAt: Set<Int> = emptySet()): ByteArray {
         val blockCount = (pcm.size + 15) / 16
         if (blockCount == 0) return ByteArray(0)
         val output = ByteArray(blockCount * 9)
@@ -347,7 +348,8 @@ object SpcData {
             var bestP1 = prev1
             var bestP2 = prev2
 
-            for (filter in 0..3) {
+            // A loop entry must decode independently of the predictor history at its tail.
+            for (filter in if (block in resetPredictorsAt) 0..0 else 0..3) {
                 for (shift in 0..12) {
                     var p1 = prev1
                     var p2 = prev2
