@@ -45,18 +45,27 @@ internal class SampleWorkbenchState(private val player: SoundPlayer = SoundPlaye
 
     suspend fun preview(ram: ByteArray) {
         val sample = encoded ?: return
+        play("Playing encoded BRR") { SampleAuthoring.preview(ram, sample) }
+    }
+
+    suspend fun previewInBank(bank: SampleBankPreview) {
+        val sample = encoded ?: return
+        play("Playing as ${bank.soundName}") { bank.build(sample) }
+    }
+
+    private suspend fun play(playingMessage: String, build: () -> InstrumentAudition.Preview) {
         stop()
         val token = audioVersion
         val expected = revision
         previewing = true
         try {
-            val pcm = withContext(Dispatchers.Default) { InstrumentAudition.render(SampleAuthoring.preview(ram, sample)) }
+            val pcm = withContext(Dispatchers.Default) { InstrumentAudition.render(build()) }
             if (expected != revision || token != audioVersion) return
             player.onComplete = {
                 if (token == audioVersion && expected == revision) { playing = false; message = "Preview finished" }
             }
             when (player.play(pcm)) {
-                SoundPlayer.PlaybackStart.STARTED -> { playing = true; message = "Playing encoded BRR" }
+                SoundPlayer.PlaybackStart.STARTED -> { playing = true; message = playingMessage }
                 SoundPlayer.PlaybackStart.EMPTY -> message = "Preview contains no frames"
                 SoundPlayer.PlaybackStart.OUTPUT_UNAVAILABLE -> message = "Cannot open audio output"
             }
@@ -66,10 +75,12 @@ internal class SampleWorkbenchState(private val player: SoundPlayer = SoundPlaye
     }
 
     fun stop() {
+        val wasActive = playing || previewing
         audioVersion++
         player.onComplete = null
         player.stop()
         previewing = false
         playing = false
+        if (wasActive) message = "Preview stopped"
     }
 }

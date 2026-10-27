@@ -194,9 +194,24 @@ the project or a loaded bank. Generate sine/triangle/pulse/saw/noise, or import 
 WAV (up to 1.024 seconds, converted to 32 kHz). Set level, trim and loop start on native
 16-frame boundaries. Oversize files are rejected instead of silently trimmed.
 
-The waveform shows the encoded BRR decode. **Play BRR** auditions those bytes through the
+The waveform shows the encoded BRR decode. **Play recording** auditions those bytes through the
 native SPC engine at recorded rate in disposable RAM. It is not generic PCM playback or
 a fallback synth. Loop entries reset predictor history for stable subsequent iterations.
+
+From a note's **Edit sound → Try new recording**, open the same workbench with a detached
+snapshot of that bank. **Play as sound** uses the selected sound's actual envelope, gain,
+tuning, and note pitch/length/velocity/gate. Generate a recording or **Open draft** to try a
+saved asset. This changes neither the selected sound nor the arrangement; close the dialog
+to return. The draft remains standalone and still needs an explicit local save.
+
+The bank fit check finds contiguous BRR space without reclaiming any boot/bank uploads,
+padding, sibling imports, relocated arrangements, or directory-referenced start/loop data.
+Only gaps in `$582C..$6BFF` are candidates. Oversize recordings disable **Play as sound**
+with a trimming suggestion; **Play recording**, saving and raw BRR export remain available.
+For example, the original Wrecked Ship bank has only a 217-byte gap under this conservative
+policy, so the default 288-byte waveform does not fit. This is a data-space check, **not**
+proof of a free instrument/SRCN slot, ROM capacity, or safe bank transitions. A bank import
+that changes the boot SPC engine is refused for this tryout, not played through a fallback.
 
 **Save draft / Open draft** preserve source PCM and all authoring parameters in a versioned
 `.smedit-sample` file. Save explicitly to keep work across app restarts; project save does
@@ -204,7 +219,7 @@ not include standalone drafts. **Export BRR** writes headerless raw compressed d
 the draft for its loop offset, which also appears in the workbench. Asset writes are atomic.
 
 Adding a draft to a music bank is the next stage, not an enabled action. Sample-slot
-ownership, SPC/ROM allocation and shared DIR/BRR lifetime checks still need implementation;
+ownership, persistent SPC/ROM allocation and shared DIR/BRR lifetime checks still need implementation;
 the instrument-only continuation loader does not make arbitrary sample insertion safe.
 
 ## Track Import/Export Formats
@@ -260,6 +275,7 @@ exhaustive gameplay or effect/dependency certification. See `docs/sound/sound_en
 |------|------|------|
 | Track/sample browser UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditor.kt` | Track list, sample list, waveform view, Edit Track / Replace WAV actions |
 | Standalone sample authoring | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SampleAuthoring.kt`, `SampleWorkbench.kt`, `SampleWorkbenchState.kt` | Waveform/WAV creation, loop/trim, native encoded audition, reusable draft assets and raw BRR export; no bank insertion |
+| Bank-aware sample tryout | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicSamplePlacement.kt` | Conservative contiguous data-space planning and private audition through a selected native sound; no unused-slot claim, project writes or export permission |
 | Sound state | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditorState.kt` | Selected track/sample state, native SPC previews, WAV import/export, sample replacement patch creation, piano-roll playback state |
 | Piano roll UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/PianoRollEditor.kt` | Virtualized track visualization/editing, 1x-8x zoom, seek bar, note insertion/removal/move/resize, right-click note properties, playback cursor |
 | Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |

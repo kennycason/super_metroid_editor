@@ -43,6 +43,7 @@ class MusicSamplePickerTest {
         val preview = mutableListOf<Pair<Int, Boolean>>()
         val renamed = mutableListOf<Pair<String, String>>()
         val controls = mutableListOf<InstrumentEntry>()
+        var tryouts = 0
     }
     private fun walk(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::walk)
     private fun nodes(scene: ComposeScene) = scene.roots.flatMap { walk(it.semanticsOwner.unmergedRootSemanticsNode) }
@@ -55,7 +56,7 @@ class MusicSamplePickerTest {
     private fun text(node: SemanticsNode): String =
         (node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } + node.children.map(::text)).joinToString(" ")
     private suspend fun withEditor(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, width: Int = 680,
-        available: Boolean = true, loading: Boolean = false, current: Int = 24, capture: String? = null,
+        available: Boolean = true, loading: Boolean = false, current: Int = 24, capture: String? = null, tryoutAvailable: Boolean = false,
         check: suspend (ComposeScene, suspend () -> Unit, Fixture) -> Unit) {
         val fixture = Fixture(MusicSampleBrowserState(if (loading) emptyList() else samples,
             mapOf(samples[0].resourceId to "Metal hit", samples[1].resourceId to "Warm loop"), loading))
@@ -74,7 +75,7 @@ class MusicSamplePickerTest {
                                 onPreview = { srcn, reference -> fixture.preview += srcn to reference }, onChoose = fixture.chosen::add,
                                 onRename = { id, name -> fixture.renamed += id to name
                                     fixture.browser.value = fixture.browser.value.copy(names = fixture.browser.value.names + (id to name)) },
-                                onControlCommit = fixture.controls::add)
+                                onControlCommit = fixture.controls::add, onTrySample = if (tryoutAvailable) { { fixture.tryouts++ } } else null)
                         }
                         }
                     }
@@ -91,6 +92,15 @@ class MusicSamplePickerTest {
                 surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
             }
         } finally { scene.close(); surface.close() }
+    }
+
+    @Test fun `opening a sample tryout is separate from choosing a source or changing shared controls`() = runBlocking {
+        withEditor(tryoutAvailable = true) { scene, render, f ->
+            click(scene, "sample-try-draft"); render()
+            assertEquals(1, f.tryouts)
+            assertTrue(f.chosen.isEmpty()); assertTrue(f.controls.isEmpty()); assertTrue(f.preview.isEmpty())
+        }
+        withEditor { scene, _, _ -> assertFalse(hasTag(scene, "sample-try-draft")) }
     }
 
     @Test fun `candidate search selection and pitch previews do not apply until Use sample`() = runBlocking {

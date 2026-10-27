@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
@@ -21,12 +22,22 @@ import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
-internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, onClose: () -> Unit) {
+internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, bankTarget: SampleBankPreview.Target? = null, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val fs = LocalEditorTheme.current.fontSize.value
     var fileBusy by remember { mutableStateOf(false) }
+    var bank by remember(parser, bankTarget) { mutableStateOf<SampleBankPreview?>(null) }
+    var bankProblem by remember(parser, bankTarget) { mutableStateOf<String?>(null) }
     DisposableEffect(state) { onDispose { state.stop() } }
     LaunchedEffect(state.draft) { delay(140); state.prepare() }
+    LaunchedEffect(parser, bankTarget) {
+        state.stop()
+        if (parser != null && bankTarget != null) {
+            try { bank = withContext(Dispatchers.Default) { SampleBankPreview.load(parser, bankTarget) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { bankProblem = error.message ?: "Cannot check this bank" }
+        }
+    }
     fun fileAction(title: String, extension: String, save: Boolean, action: suspend (File) -> Unit) {
         state.stop()
         val file = chooseSampleAssetFile(title, extension, save, state.draft.name) ?: return
@@ -63,6 +74,8 @@ internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, on
                         withContext(Dispatchers.IO) { SampleAuthoring.exportBrr(encoded, file) }
                         state.message = "Saved raw BRR · loop offset ${encoded.loopByteOffset?.let { "$it bytes" } ?: "none"}"
                     } },
+                    bankTarget = bankTarget?.let { "${it.bankName} · ${it.soundName} · ${it.note.name}" }, bank = bank, bankProblem = bankProblem,
+                    onPlayInBank = { bank?.let { scope.launch { state.previewInBank(it) } } },
                 )
             }
         },
@@ -81,6 +94,10 @@ internal fun SampleWorkbenchContent(
     onOpen: () -> Unit,
     onSave: () -> Unit,
     onExport: () -> Unit,
+    bankTarget: String? = null,
+    bank: SampleBankPreview? = null,
+    bankProblem: String? = null,
+    onPlayInBank: () -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val draft = state.draft
@@ -89,11 +106,27 @@ internal fun SampleWorkbenchContent(
     val period = draft.periodFrames
     var invalidFields by remember { mutableStateOf(emptySet<String>()) }
     var details by remember { mutableStateOf(false) }
+    val bankFit = remember(bank, encoded) { if (bank != null && encoded != null) runCatching { bank.layout.place(encoded) } else null }
     fun fieldValidity(label: String, valid: Boolean) { invalidFields = if (valid) invalidFields - label else invalidFields + label }
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.fillMaxWidth().testTag("sample-workbench"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Standalone draft · not added to a music bank", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (bankTarget != null) {
+                Text(bankTarget, fontSize = fs.body, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("sample-bank-target"))
+                Text("Tryout only · keeps this sound's envelope + tuning", fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(when {
+                    bankProblem != null -> bankProblem
+                    bank == null -> "Checking bank space…"
+                    encoded == null -> "Encode a recording to check its fit"
+                    bankFit?.isSuccess == true -> "${encoded.brr.size} B recording fits · ${bank.layout.largestBytes} B largest gap"
+                    else -> bankFit?.exceptionOrNull()?.message ?: "Cannot place this recording"
+                }, fontSize = fs.detail, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                    color = if (bankProblem != null || bankFit?.isFailure == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().height(64.dp).testTag("sample-bank-fit"))
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(shape = SoundControlShape, enabled = enabled, onClick = onImport, modifier = Modifier.testTag("sample-import-wav")) { Text("Import WAV", fontSize = fs.detail) }
                 OutlinedButton(shape = SoundControlShape, enabled = enabled, onClick = onOpen) { Text("Open draft", fontSize = fs.detail) }
             }
@@ -140,12 +173,17 @@ internal fun SampleWorkbenchContent(
             }
             if (details) Text(encoded?.let { "32 kHz · ${it.pcm.size} frames · loop offset ${it.loopByteOffset?.let { at -> "$at bytes" } ?: "none"}" }
                 ?: "Native BRR · 16 frames per block", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (bankTarget != null) Button(shape = SoundControlShape, onClick = onPlayInBank,
+                    enabled = enabled && canPreview && bank != null && bankFit?.isSuccess == true && invalidFields.isEmpty() && !state.previewing,
+                    modifier = Modifier.testTag("sample-play-in-bank")) { Text("Play as sound", fontSize = fs.body) }
                 Button(shape = SoundControlShape, onClick = onPlay, enabled = enabled && canPreview && encoded != null && invalidFields.isEmpty() && !state.previewing,
-                    modifier = Modifier.testTag("sample-play-brr")) { Text("Play BRR", fontSize = fs.body) }
+                    modifier = Modifier.testTag("sample-play-brr")) { Text("Play recording", fontSize = fs.body) }
                 OutlinedButton(shape = SoundControlShape, onClick = state::stop, enabled = state.previewing || state.playing,
                     modifier = Modifier.testTag("sample-stop")) { Text("Stop", fontSize = fs.body) }
             }
+            if (bankTarget != null) Text("Recording: original rate · Sound: selected note",
+                fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!canPreview) Text("Load a ROM for native preview", fontSize = fs.detail)
             Text("Trim / loop · 16-frame boundaries", fontSize = fs.detail)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -159,10 +197,11 @@ internal fun SampleWorkbenchContent(
                     modifier = Modifier.testTag("sample-loop-enabled"))
                 Text("Loop", fontSize = fs.body)
             }
-            Box(Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("sample-workbench-status")) {
+            Box(Modifier.fillMaxWidth().height(64.dp).testTag("sample-workbench-status")) {
                 Text(when { invalidFields.isNotEmpty() -> "Use whole-frame positions on 16-frame boundaries"; state.preparing -> "Encoding BRR…";
                     state.previewing -> "Rendering native preview…"; state.problem != null -> state.problem!!; else -> state.message },
-                    fontSize = fs.detail, color = if (state.problem != null || invalidFields.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontSize = fs.detail, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                    color = if (state.problem != null || invalidFields.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(shape = SoundControlShape, onClick = onSave, enabled = enabled && encoded != null && invalidFields.isEmpty(), modifier = Modifier.testTag("sample-save-draft")) { Text("Save draft", fontSize = fs.body) }

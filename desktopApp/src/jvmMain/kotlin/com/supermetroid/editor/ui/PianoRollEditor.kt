@@ -246,6 +246,7 @@ fun PianoRollEditor(
     onPreviewSample: (Int, Int, Note) -> Unit = { _, _, _ -> },
     onChooseSample: (Int, Int) -> Unit = { _, _ -> },
     onRenameSample: (String, String) -> Unit = { _, _ -> },
+    onTrySample: ((Note) -> Unit)? = null,
     instrumentNames: Map<Int, String> = emptyMap(),
     instrumentBankLabel: String = "Current sound bank",
     instrumentSourceLabel: String = "ROM bank",
@@ -1285,6 +1286,7 @@ fun PianoRollEditor(
                     instrumentSourcePitches = instrumentSourcePitches,
                     sampleBrowser = sampleBrowser, onPreviewSample = onPreviewSample,
                     onChooseSample = onChooseSample, onRenameSample = onRenameSample,
+                    onTrySample = onTrySample,
                     instrumentNames = instrumentNames,
                     instrumentBankLabel = instrumentBankLabel,
                     instrumentSourceLabel = instrumentSourceLabel,
@@ -1445,6 +1447,7 @@ internal fun NotePropertiesPanel(
     onPreviewSample: (Int, Int, Note) -> Unit = { _, _, _ -> },
     onChooseSample: (Int, Int) -> Unit = { _, _ -> },
     onRenameSample: (String, String) -> Unit = { _, _ -> },
+    onTrySample: ((Note) -> Unit)? = null,
     instrumentNames: Map<Int, String>,
     instrumentBankLabel: String,
     instrumentSourceLabel: String,
@@ -1602,7 +1605,8 @@ internal fun NotePropertiesPanel(
                             instrumentInfos, instrumentNames, usedInstrumentIds.toSet(), note.name, nativeInstrumentPreviewAvailable,
                             onPreview = { srcn, reference -> onPreviewSample(note.instrument, srcn,
                                 note.copy(noteValue = if (reference) NspcSequence.nameToNote("C4") else note.noteValue)) },
-                            onChoose = { onChooseSample(note.instrument, it) }, onRename = onRenameSample, onControlCommit = onInstrumentChanged)
+                            onChoose = { onChooseSample(note.instrument, it) }, onRename = onRenameSample, onControlCommit = onInstrumentChanged,
+                            onTrySample = onTrySample?.let { action -> { action(note.copy()) } })
                     }
                 },
                 advancedContent = {

@@ -42,6 +42,7 @@ class NotePropertiesPanelTest {
         val browser = mutableStateOf(MusicSampleBrowserState())
         val samplePreviews = mutableListOf<Triple<Int, Int, NspcSequence.Note>>()
         val sampleChoices = mutableListOf<Pair<Int, Int>>()
+        val sampleTryouts = mutableListOf<NspcSequence.Note>()
         val history = mutableListOf<String>()
         var deleted = 0
         var closed = 0
@@ -54,7 +55,7 @@ class NotePropertiesPanelTest {
         val input = walk(tagged(scene, tag)).single { it.config.contains(SemanticsActions.SetText) }
         assertTrue(input.config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value)))
     }
-    private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, height: Int = 900, captureSuffix: String = "",
+    private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, height: Int = 900, captureSuffix: String = "", tryoutAvailable: Boolean = false,
         check: suspend (ComposeScene, suspend () -> Unit, Fixture) -> Unit) {
         val fixture = Fixture()
         val scene = ComposeScene(coroutineContext = coroutineContext)
@@ -74,6 +75,7 @@ class NotePropertiesPanelTest {
                                 sampleBrowser = fixture.browser.value,
                                 onPreviewSample = { index, srcn, note -> fixture.samplePreviews += Triple(index, srcn, note) },
                                 onChooseSample = { index, srcn -> fixture.sampleChoices += index to srcn },
+                                onTrySample = if (tryoutAvailable) { { fixture.sampleTryouts += it } } else null,
                                 instrumentBankLabel = "Lower Norfair sound bank", instrumentSourceLabel = "ROM bank",
                                 sharedInstrumentTracks = listOf("Lower Norfair"), sharedInstrumentEdits = emptySet(),
                                 onResetSharedInstrument = {}, instrumentEditingEnabled = true,
@@ -101,6 +103,19 @@ class NotePropertiesPanelTest {
                 surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
             }
         } finally { scene.close(); surface.close() }
+    }
+
+    @Test fun `new recording tryout receives a detached selected note without history or source edits`() = runBlocking {
+        withPanel(tryoutAvailable = true) { scene, render, fixture ->
+            click(scene, "instrument-edit-sound"); render()
+            click(scene, "sample-try-draft"); render()
+            val note = fixture.sampleTryouts.single()
+            assertEquals(fixture.note.value, note)
+            assertNotSame(fixture.note.value, note)
+            note.noteValue = NspcSequence.nameToNote("C4")
+            assertEquals("F1", fixture.note.value.name)
+            assertTrue(fixture.history.isEmpty()); assertTrue(fixture.sampleChoices.isEmpty())
+        }
     }
 
     @Test fun `note title follows editor fonts with aligned right-hand actions and optional details`() = runBlocking {

@@ -40,7 +40,7 @@ data class MusicSampleBrowserState(
 internal fun InstrumentRecordingEditor(entry: InstrumentEntry, sourcePitch: Int?, browser: MusicSampleBrowserState,
     instruments: List<InstrumentEntry>, instrumentNames: Map<Int, String>, usedIds: Set<Int>, noteName: String,
     previewAvailable: Boolean, onPreview: (Int, Boolean) -> Unit, onChoose: (Int) -> Unit,
-    onRename: (String, String) -> Unit, onControlCommit: (InstrumentEntry) -> Unit) {
+    onRename: (String, String) -> Unit, onControlCommit: (InstrumentEntry) -> Unit, onTrySample: (() -> Unit)? = null) {
     val fs = LocalEditorTheme.current.fontSize.value
     var choosing by remember(entry.index, entry.srcn, browser.samples) { mutableStateOf(false) }
     val current = browser.samples.firstOrNull { it.srcn == entry.srcn }
@@ -59,6 +59,8 @@ internal fun InstrumentRecordingEditor(entry: InstrumentEntry, sourcePitch: Int?
         }
         Text(browser.problem ?: current?.let(::sampleDetail) ?: if (browser.loading) "Reading this bank" else "Check raw SRCN in Advanced",
             fontSize = fs.detail, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (onTrySample != null) TextButton(shape = SoundControlShape, onClick = onTrySample,
+            modifier = Modifier.testTag("sample-try-draft")) { Text("Try new recording", fontSize = fs.body) }
         if (choosing) {
             MusicSamplePicker(entry.srcn, browser, instruments, instrumentNames, usedIds, noteName, previewAvailable,
                 onPreview, onChoose = { onChoose(it); choosing = false }, onCancel = { choosing = false }, onRename)

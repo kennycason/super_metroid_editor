@@ -11,6 +11,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.*
+import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.rom.NspcSequence
+import com.supermetroid.editor.rom.TestRomHelper
 import kotlinx.coroutines.*
 import org.jetbrains.skia.Surface
 import org.junit.jupiter.api.Test
@@ -25,7 +28,8 @@ class SampleWorkbenchTest {
         return scene.roots.flatMap { walk(it.semanticsOwner.unmergedRootSemanticsNode) }
     }
     private fun tag(scene: ComposeScene, tag: String) = nodes(scene).single { it.config.getOrNull(SemanticsProperties.TestTag) == tag }
-    private suspend fun panel(font: FontSize, theme: EditorTheme, width: Int, check: suspend (ComposeScene, SampleWorkbenchState, suspend () -> Unit) -> Unit) {
+    private suspend fun panel(font: FontSize, theme: EditorTheme, width: Int, bankTarget: String? = null, bank: SampleBankPreview? = null,
+        bankProblem: String? = null, onPlayInBank: () -> Unit = {}, check: suspend (ComposeScene, SampleWorkbenchState, suspend () -> Unit) -> Unit) {
         val state = SampleWorkbenchState().also { it.prepare() }
         val scene = ComposeScene(coroutineContext = coroutineContext)
         val surface = Surface.makeRasterN32Premul(width, 760)
@@ -36,7 +40,8 @@ class SampleWorkbenchTest {
                 CompositionLocalProvider(LocalEditorTheme provides settings) {
                     MaterialTheme(colorScheme = theme.colorScheme, typography = font.materialTypography()) {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
-                            SampleWorkbenchContent(state, true, onPlay = {}, onImport = {}, onOpen = {}, onSave = {}, onExport = {})
+                            SampleWorkbenchContent(state, true, onPlay = {}, onImport = {}, onOpen = {}, onSave = {}, onExport = {},
+                                bankTarget = bankTarget, bank = bank, bankProblem = bankProblem, onPlayInBank = onPlayInBank)
                         }
                     }
                 }
@@ -48,7 +53,7 @@ class SampleWorkbenchTest {
             } }
             render(); check(scene, state, render)
             if (System.getenv("SMEDIT_CAPTURE_INSTRUMENT_UI") == "true") {
-                val file = File("build/test-output/sample-workbench-${theme.name}-${font.name}-$width.png").apply { parentFile.mkdirs() }
+                val file = File("build/test-output/sample-workbench-${if (bankTarget != null) "bank-" else ""}${theme.name}-${font.name}-$width.png").apply { parentFile.mkdirs() }
                 surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
             }
         } finally { state.stop(); scene.close(); surface.close() }
@@ -88,6 +93,48 @@ class SampleWorkbenchTest {
             assertFalse(tag(scene, "sample-save-draft").config.contains(SemanticsProperties.Disabled))
             state.update(state.draft.copy(loopStart = 1)); state.prepare(); render()
             assertTrue(tag(scene, "sample-save-draft").config.contains(SemanticsProperties.Disabled))
+        }
+    }
+
+    @Test fun `bank tryout is explicitly temporary with a real fit check and reachable actions at all editor sizes`() = runBlocking {
+        val bank = SampleBankPreview.load(TestRomHelper.requireRomParser(), SampleBankPreview.Target(3,
+            NspcSequence.Note(0, 120, 0xA4, instrument = 24), "Title Screen", "Test sound", SmEditProject(romPath = "test.sfc")))
+        var played = 0
+        for (font in FontSize.entries) for (theme in EditorTheme.entries) for (width in listOf(420, 680)) {
+            panel(font, theme, width, "Title Screen · Test sound · C4", bank, onPlayInBank = { played++ }) { scene, _, render ->
+                assertTrue(tag(scene, "sample-bank-target").boundsInRoot.right <= width)
+                assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> "Tryout only" in text.text } })
+                assertTrue(tag(scene, "sample-bank-fit").config[SemanticsProperties.Text].any { "fits" in it.text })
+                val scroll = nodes(scene).first { it.config.contains(SemanticsActions.ScrollBy) }
+                scroll.config[SemanticsActions.ScrollBy].action!!.invoke(0f, 400f); render()
+                val play = tag(scene, "sample-play-in-bank")
+                assertFalse(play.config.contains(SemanticsProperties.Disabled))
+                assertTrue(play.boundsInRoot.left >= 0 && play.boundsInRoot.right <= width)
+                assertTrue(play.boundsInRoot.top >= 0 && play.boundsInRoot.bottom <= 760, "Sound tryout must be reachable at every size")
+                assertTrue(play.config[SemanticsActions.OnClick].action!!.invoke())
+                assertTrue(nodes(scene).none { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Add to bank" } })
+            }
+        }
+        assertEquals(FontSize.entries.size * EditorTheme.entries.size * 2, played)
+    }
+
+    @Test fun `full or unsupported banks disable only sound tryout and keep standalone asset work available`() = runBlocking {
+        val bank = SampleBankPreview.load(TestRomHelper.requireRomParser(), SampleBankPreview.Target(3,
+            NspcSequence.Note(0, 120, 0xA4, instrument = 24), "Title Screen", "Test sound", SmEditProject(romPath = "test.sfc")))
+        panel(FontSize.LARGER, EditorTheme.LIGHT, 420, "Title Screen · Test sound", bank) { scene, state, render ->
+            val before = tag(scene, "sample-bank-fit").boundsInRoot
+            state.update(SampleDraft("Long recording", List(SampleAuthoring.MAX_FRAMES) { 1000 })); state.prepare(); render()
+            assertEquals(before, tag(scene, "sample-bank-fit").boundsInRoot, "Fit/error transitions must not resize the dialog")
+            assertTrue(tag(scene, "sample-bank-fit").config[SemanticsProperties.Text].any { "Trim" in it.text })
+            assertTrue(tag(scene, "sample-play-in-bank").config.contains(SemanticsProperties.Disabled))
+            assertFalse(tag(scene, "sample-play-brr").config.contains(SemanticsProperties.Disabled))
+            assertFalse(tag(scene, "sample-save-draft").config.contains(SemanticsProperties.Disabled))
+        }
+        for (problem in listOf(null, "Bank tryout requires the original SPC engine")) {
+            panel(FontSize.MEDIUM, EditorTheme.DARK, 680, "Title Screen · Test sound", bankProblem = problem) { scene, _, _ ->
+                assertTrue(tag(scene, "sample-play-in-bank").config.contains(SemanticsProperties.Disabled))
+                assertFalse(tag(scene, "sample-play-brr").config.contains(SemanticsProperties.Disabled))
+            }
         }
     }
 }
