@@ -7,6 +7,9 @@ import kotlin.math.roundToInt
 
 /** Native DSP controls. Stored bytes remain the sole saved/exported sound representation. */
 internal object NativeInstrumentSound {
+    enum class EnvelopeShape(val label: String, val attack: Int, val decay: Int, val sustain: Int, val fade: Int) {
+        PLUCK("Pluck", 15, 5, 1, 24), SOFT("Soft", 6, 3, 5, 0), HOLD("Hold", 15, 0, 7, 0)
+    }
     enum class GainMode(val label: String, val bits: Int) {
         FIXED("Fixed level", 0), FALL("Linear fall", 0x80),
         EXPONENTIAL_FALL("Exponential fall", 0xA0), RISE("Linear rise", 0xC0), BENT_RISE("Bent rise", 0xE0)
@@ -29,6 +32,19 @@ internal object NativeInstrumentSound {
     // Switching gain modes preserves the applicable low bits, never guesses a new volume/rate.
     fun gainMode(entry: InstrumentEntry, mode: GainMode) = entry.copy(gain = mode.bits or (entry.gain and if (mode == GainMode.FIXED) 127 else 31))
     fun gainValue(entry: InstrumentEntry, value: Int) = entry.copy(gain = gainMode(entry).bits or value.coerceIn(0, if (entry.gain < 0x80) 127 else 31))
+
+    /** Envelope starting points, not timbre/sample presets. Preserve every other native byte. */
+    fun shape(entry: InstrumentEntry, shape: EnvelopeShape) =
+        fade(sustain(decay(attack(envelope(entry, true), shape.attack), shape.decay), shape.sustain), shape.fade)
+
+    fun matchingShape(entry: InstrumentEntry): EnvelopeShape? = EnvelopeShape.entries.firstOrNull {
+        usesEnvelope(entry) && entry.adsr1 == shape(entry, it).adsr1 && entry.adsr2 == shape(entry, it).adsr2
+    }
+
+    fun noiseRate(entry: InstrumentEntry, value: Int): InstrumentEntry {
+        require(entry.srcn >= 0x80) { "Noise rate requires a noise source" }
+        return entry.copy(srcn = (entry.srcn and 0xE0) or value.coerceIn(0, 31))
+    }
 
     fun tuningCents(entry: InstrumentEntry, sourcePitch: Int): Double? =
         if (sourcePitch > 0 && entry.nativePitch > 0) 1200.0 * log2(entry.nativePitch.toDouble() / sourcePitch) else null

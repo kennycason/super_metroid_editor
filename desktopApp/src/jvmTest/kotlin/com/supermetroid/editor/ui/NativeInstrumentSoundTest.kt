@@ -9,6 +9,44 @@ class NativeInstrumentSoundTest {
     private val sound = InstrumentEntry(24, 0xA9, 0xB5, 0x63, 0x0001, 28, 0x6CA8, 0x9000, 0x9000, 144, true)
     private val native = NativeInstrumentSound
 
+    @Test fun `envelope shapes contain only native envelope edits and preserve source gain tuning and metadata`() {
+        for (shape in NativeInstrumentSound.EnvelopeShape.entries) {
+            val source = sound.copy(adsr1 = 0)
+            val shaped = native.shape(source, shape)
+            assertTrue(native.usesEnvelope(shaped))
+            assertEquals(shape.attack, native.attack(shaped))
+            assertEquals(shape.decay, native.decay(shaped))
+            assertEquals(shape.sustain, native.sustain(shaped))
+            assertEquals(shape.fade, native.fade(shaped))
+            assertEquals(source, shaped.copy(adsr1 = source.adsr1, adsr2 = source.adsr2))
+            assertEquals(shape, native.matchingShape(shaped))
+            assertEquals(shaped, native.shape(shaped, shape))
+        }
+        assertNull(native.matchingShape(sound.copy(adsr1 = 0)))
+    }
+
+    @Test fun `shape guide distinguishes pluck soft attack and held level with fixed release`() {
+        val hold = native.envelopeGuide(native.shape(sound, NativeInstrumentSound.EnvelopeShape.HOLD))
+        val soft = native.envelopeGuide(native.shape(sound, NativeInstrumentSound.EnvelopeShape.SOFT))
+        val pluck = native.envelopeGuide(native.shape(sound, NativeInstrumentSound.EnvelopeShape.PLUCK))
+        assertTrue(hold[100] > soft[100])
+        assertTrue(hold[32000] > 2000)
+        assertTrue(soft[32000] in 1400..1600)
+        assertEquals(0, pluck[32000])
+        for (levels in listOf(hold, soft, pluck)) assertEquals(0, levels.last())
+    }
+
+    @Test fun `noise rate preserves the native noise flag upper bits and all other instrument settings`() {
+        for (srcn in 128..255) for (rate in 0..31) {
+            val source = sound.copy(srcn = srcn)
+            val changed = native.noiseRate(source, rate)
+            assertEquals(srcn and 0xE0, changed.srcn and 0xE0)
+            assertEquals(rate, changed.srcn and 31)
+            assertEquals(source, changed.copy(srcn = srcn))
+        }
+        assertFailsWith<IllegalArgumentException> { native.noiseRate(sound, 5) }
+    }
+
     @Test fun `envelope edits change only the intended bitfield and preserve inactive gain and metadata`() {
         for (byte in 0..255) {
             val source = sound.copy(adsr1 = byte, adsr2 = byte)

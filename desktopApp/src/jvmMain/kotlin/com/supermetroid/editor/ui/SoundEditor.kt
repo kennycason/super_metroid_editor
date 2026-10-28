@@ -573,8 +573,7 @@ fun SoundEditorCanvas(
                 onUndo = { state.undoPianoRollEdit(editorState) },
                 onRedo = { state.redoPianoRollEdit(editorState) },
                 onInstrumentChanged = {
-                    state.recordPianoRollEdit("Instrument edit")
-                    state.updatePianoRollInstrument(it, romParser, editorState)
+                    if (track != null) state.commitPianoRollInstrument(track.id, it, romParser, editorState)
                 },
                 onActiveChannelChanged = { state.pianoRollChannel = it },
                 onSongChanged = { state.notifySongChanged(it, editorState) },

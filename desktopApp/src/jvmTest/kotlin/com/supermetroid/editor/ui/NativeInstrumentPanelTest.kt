@@ -2,6 +2,8 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -57,7 +59,7 @@ class NativeInstrumentPanelTest {
             scene.setContent {
                 CompositionLocalProvider(LocalEditorTheme provides settings) {
                     MaterialTheme(colorScheme = theme.colorScheme, typography = font.materialTypography()) {
-                        Column(Modifier.padding(8.dp)) {
+                        Column(Modifier.verticalScroll(rememberScrollState()).padding(8.dp)) {
                             NoteInstrumentSelector(NspcSequence.Note(0, 48, 0xA4, instrument = sound.index), listOf(entry.value),
                                 mapOf(sound.index to "Looped lead"), setOf(sound.index), "Test sound bank", true,
                                 null, false, "", { _, _ -> }, {}, { _, _ -> }, {}, advancedContent = { androidx.compose.material3.Text("Raw bytes") },
@@ -103,10 +105,10 @@ class NativeInstrumentPanelTest {
         }
     }
 
-    @Test fun `sliders commit native bitfields and source relative tuning with no-op changes ignored`() = runBlocking {
+    @Test fun `knobs commit native bitfields and source relative tuning with no-op changes ignored`() = runBlocking {
         withPanel { scene, render, commits ->
             click(scene, "instrument-edit-sound"); render()
-            progress(scene, "sound-attack", 3f); render()
+            progress(scene, "sound-attack", 12f); render()
             assertEquals(1, commits.size)
             assertEquals(3, NativeInstrumentSound.attack(commits.last()))
             assertEquals(original.adsr1 and 0xF0, commits.last().adsr1 and 0xF0)
@@ -118,7 +120,7 @@ class NativeInstrumentPanelTest {
             assertEquals(3, commits.size)
             assertEquals(256, commits.last().nativePitch)
             assertTrue(tagged(scene, "sound-tuning-reset").config.contains(SemanticsProperties.Disabled))
-            assertFalse(tagged(scene, "sound-attack").config[SemanticsActions.SetProgress].action!!.invoke(3f))
+            assertFalse(tagged(scene, "sound-attack").config[SemanticsActions.SetProgress].action!!.invoke(12f))
             assertEquals(3, commits.size)
         }
     }
@@ -126,28 +128,29 @@ class NativeInstrumentPanelTest {
     @Test fun `a drag updates the guide locally and commits only once after pointer release`() = runBlocking {
         withPanel { scene, render, commits ->
             click(scene, "instrument-edit-sound"); render()
-            val slider = tagged(scene, "sound-attack").boundsInRoot
-            val start = Offset(slider.left + 30, slider.center.y)
+            val knob = tagged(scene, "sound-attack").boundsInRoot
+            val start = knob.center
+            scene.sendPointerEvent(PointerEventType.Move, start); render()
             scene.sendPointerEvent(PointerEventType.Press, start, button = PointerButton.Primary); render()
-            for (x in listOf(50f, 70f, 95f)) {
-                scene.sendPointerEvent(PointerEventType.Move, Offset(slider.left + x, slider.center.y)); render()
+            for (dy in listOf(20f, 40f, 60f)) {
+                scene.sendPointerEvent(PointerEventType.Move, start - Offset(0f, dy)); render()
                 assertTrue(commits.isEmpty(), "A shared-bank edit must not be recorded for every drag frame")
             }
-            scene.sendPointerEvent(PointerEventType.Release, Offset(slider.left + 95, slider.center.y), button = PointerButton.Primary); render()
+            scene.sendPointerEvent(PointerEventType.Release, start - Offset(0f, 60f), button = PointerButton.Primary); render()
             assertEquals(1, commits.size)
             assertTrue(NativeInstrumentSound.attack(commits.single()) != NativeInstrumentSound.attack(original))
         }
     }
 
-    @Test fun `keyboard slider edits commit once on key release and retain native steps`() = runBlocking {
+    @Test fun `keyboard knob edits commit once on key release and turn clockwise for longer times`() = runBlocking {
         withPanel { scene, render, commits ->
             click(scene, "instrument-edit-sound"); render()
             assertTrue(tagged(scene, "sound-attack").config[SemanticsActions.RequestFocus].action!!.invoke())
             render()
-            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_LEFT, AwtKeyEvent.CHAR_UNDEFINED)))
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED)))
             render()
             assertTrue(commits.isEmpty())
-            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_RELEASED, 0L, 0, AwtKeyEvent.VK_LEFT, AwtKeyEvent.CHAR_UNDEFINED)))
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_RELEASED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED)))
             render()
             assertEquals(1, commits.size)
             assertEquals(NativeInstrumentSound.attack(original) - 1, NativeInstrumentSound.attack(commits.single()))
@@ -159,14 +162,14 @@ class NativeInstrumentPanelTest {
             click(scene, "instrument-edit-sound"); render()
             tagged(scene, "sound-attack").config[SemanticsActions.RequestFocus].action!!.invoke(); render()
             repeat(3) {
-                scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_LEFT, AwtKeyEvent.CHAR_UNDEFINED)))
+                scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED)))
                 render()
             }
             assertTrue(commits.isEmpty())
-            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_RELEASED, 0L, 0, AwtKeyEvent.VK_LEFT, AwtKeyEvent.CHAR_UNDEFINED))); render()
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_RELEASED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED))); render()
             assertEquals(1, commits.size)
             assertEquals(10, NativeInstrumentSound.attack(commits.last()))
-            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED))); render()
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_LEFT, AwtKeyEvent.CHAR_UNDEFINED))); render()
             assertEquals(1, commits.size)
             tagged(scene, "sound-fine").config[SemanticsActions.RequestFocus].action!!.invoke(); render()
             assertEquals(2, commits.size)
@@ -198,9 +201,10 @@ class NativeInstrumentPanelTest {
     @Test fun `fine tune drag stays on its own axis when native rounding crosses half a semitone`() = runBlocking {
         withPanel { scene, render, commits ->
             click(scene, "instrument-edit-sound"); render()
-            val slider = tagged(scene, "sound-fine").boundsInRoot
-            val end = Offset(slider.right - 1, slider.center.y)
-            scene.sendPointerEvent(PointerEventType.Press, slider.center, button = PointerButton.Primary); render()
+            val knob = tagged(scene, "sound-fine").boundsInRoot
+            val end = knob.center - Offset(0f, 160f)
+            scene.sendPointerEvent(PointerEventType.Move, knob.center); render()
+            scene.sendPointerEvent(PointerEventType.Press, knob.center, button = PointerButton.Primary); render()
             scene.sendPointerEvent(PointerEventType.Move, end); render()
             assertEquals(50f, tagged(scene, "sound-fine").config[SemanticsProperties.ProgressBarRangeInfo].current)
             assertEquals(0f, tagged(scene, "sound-transpose").config[SemanticsProperties.ProgressBarRangeInfo].current)
@@ -231,6 +235,10 @@ class NativeInstrumentPanelTest {
                 val bounds = tagged(scene, tag).boundsInRoot
                 assertTrue(bounds.width > 0 && bounds.right <= 420)
             }
+            nodes(scene).first { it.config.contains(SemanticsActions.ScrollBy) }.config[SemanticsActions.ScrollBy].action!!.invoke(0f, 2000f); render()
+            val fine = tagged(scene, "sound-fine").boundsInRoot
+            assertEquals(72f, fine.height, "Narrow layouts scroll instead of shrinking knobs")
+            assertTrue(fine.top >= 0 && fine.bottom <= 900)
             assertTrue(commits.isEmpty())
         }
     }
@@ -249,6 +257,66 @@ class NativeInstrumentPanelTest {
             assertTrue(tagged(scene, "instrument-edit-sound").config.contains(SemanticsProperties.Disabled))
             assertFalse(hasTag(scene, "native-sound-controls"))
             assertTrue(commits.isEmpty())
+        }
+    }
+
+    @Test fun `shape shortcuts commit one native envelope edit and leave source gain and tuning alone`() = runBlocking {
+        withPanel { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            for ((index, shape) in NativeInstrumentSound.EnvelopeShape.entries.withIndex()) {
+                click(scene, "sound-shape-menu"); render()
+                click(scene, "sound-shape-${shape.name}"); render()
+                assertEquals(index + 1, commits.size)
+                val shaped = commits.last()
+                assertEquals(shape, NativeInstrumentSound.matchingShape(shaped))
+                assertEquals(original, shaped.copy(adsr1 = original.adsr1, adsr2 = original.adsr2))
+                click(scene, "sound-shape-menu"); render()
+                click(scene, "sound-shape-${shape.name}"); render()
+                assertEquals(index + 1, commits.size, "Choosing the same shape is not another undo entry")
+            }
+        }
+    }
+
+    @Test fun `noise has a native rate knob instead of fabricated musical transpose controls`() = runBlocking {
+        withPanel(sound = original.copy(srcn = 0x85), captureName = "noise") { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            assertTrue(hasTag(scene, "sound-noise-rate"))
+            assertFalse(hasTag(scene, "sound-transpose"))
+            progress(scene, "sound-noise-rate", 9f); render()
+            assertEquals(1, commits.size)
+            assertEquals(original.copy(srcn = 0x89), commits.single())
+        }
+    }
+
+    @Test fun `returning fine tuning to its original position preserves exact high precision native pitch`() = runBlocking {
+        val nativePitch = 33001
+        val precise = original.copy(pitchAdj = ((nativePitch and 255) shl 8) or (nativePitch ushr 8))
+        withPanel(sound = precise, sourcePitch = 32768) { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            val start = tagged(scene, "sound-fine").boundsInRoot.center
+            scene.sendPointerEvent(PointerEventType.Move, start); render()
+            scene.sendPointerEvent(PointerEventType.Press, start, button = PointerButton.Primary); render()
+            scene.sendPointerEvent(PointerEventType.Move, start - Offset(0f, 24f)); render()
+            scene.sendPointerEvent(PointerEventType.Move, start); render()
+            scene.sendPointerEvent(PointerEventType.Release, start, button = PointerButton.Primary); render()
+            assertTrue(commits.isEmpty())
+            click(scene, "sound-shape-menu"); render(); click(scene, "sound-shape-PLUCK"); render()
+            assertEquals(nativePitch, commits.single().nativePitch, "A cancelled tuning draft must not leak rounded pitch into the next edit")
+        }
+    }
+
+    @Test fun `changing mode finishes the latest bank settings without a stale keyboard gesture restoring envelope mode`() = runBlocking {
+        withPanel { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            tagged(scene, "sound-attack").config[SemanticsActions.RequestFocus].action!!.invoke(); render()
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED))); render()
+            assertTrue(commits.isEmpty())
+            click(scene, "sound-mode-gain"); render()
+            assertEquals(1, commits.size)
+            assertFalse(NativeInstrumentSound.usesEnvelope(commits.single()))
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_RELEASED, 0L, 0, AwtKeyEvent.VK_RIGHT, AwtKeyEvent.CHAR_UNDEFINED))); render()
+            assertEquals(1, commits.size)
+            assertTrue(hasTag(scene, "sound-gain-value"))
         }
     }
 }

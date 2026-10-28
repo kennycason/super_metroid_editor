@@ -1130,6 +1130,16 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         pianoRollRedoDepth = pianoRollHistory.redoDepth
     }
 
+    /** A late focus/wheel callback from a closed/switched inspector must not edit the next bank. */
+    internal fun commitPianoRollInstrument(expectedTrackId: Int, updated: NspcRenderer.InstrumentEntry, romParser: RomParser?, editorState: EditorState? = null): Boolean {
+        if (!isPianoRollOpen || selectedTrackId != expectedTrackId || instrumentBankProblem != null) return false
+        val before = pianoRollInstruments.getOrNull(updated.index) ?: return false
+        if (PianoRollPreviewLogic.instrumentBytes(before).contentEquals(PianoRollPreviewLogic.instrumentBytes(updated))) return false
+        recordPianoRollEdit("Instrument edit")
+        updatePianoRollInstrument(updated, romParser, editorState)
+        return true
+    }
+
     fun updatePianoRollInstrument(
         updated: NspcRenderer.InstrumentEntry,
         romParser: RomParser?,

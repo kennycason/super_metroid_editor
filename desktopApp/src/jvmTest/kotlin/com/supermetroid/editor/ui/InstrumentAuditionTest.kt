@@ -85,6 +85,27 @@ class InstrumentAuditionTest {
     )
     private fun note(duration: Int = 48) = NspcSequence.Note(0, duration, NspcSequence.nameToNote("C4"), instrument = 30)
 
+    @Test fun `native shape shortcuts produce audible soft attack pluck and held sustain using the same recording`() {
+        assumeTrue(NativeSpcEmulator.isAvailable(), "Native SPC library unavailable")
+        val ram = SpcData.buildInitialSpcRam(TestRomHelper.requireRomParser())
+        byteArrayOf(0xB3.toByte(), 0x03, 0x57, 0x77, 0x53, 0x0D, 0xB9.toByte(), 0x99.toByte(), 0xBD.toByte()).copyInto(ram, 0x9000)
+        byteArrayOf(0, 0x90.toByte(), 0, 0x90.toByte()).copyInto(ram, 0x6D00)
+        val before = ram.copyOf()
+        fun render(shape: NativeInstrumentSound.EnvelopeShape) = InstrumentAudition.render(InstrumentAudition.build(ram, NativeInstrumentSound.shape(instrument(), shape), note(120)))
+        val hold = render(NativeInstrumentSound.EnvelopeShape.HOLD)
+        val soft = render(NativeInstrumentSound.EnvelopeShape.SOFT)
+        val pluck = render(NativeInstrumentSound.EnvelopeShape.PLUCK)
+        fun energy(audio: ShortArray, from: Int, to: Int) = (from until to).sumOf { abs(audio[it].toInt()).toLong() }
+        val onset = hold.indexOfFirst { abs(it.toInt()) > 100 }
+        assertTrue(onset >= 0, "Native held shape must be audible")
+        val earlyHold = energy(hold, onset, onset + 1000)
+        val earlySoft = energy(soft, onset, onset + 1000)
+        assertTrue(earlyHold > earlySoft * 2, "Early native attack energy: hold=$earlyHold, soft=$earlySoft")
+        assertTrue(energy(hold, 16000, 22000) > 100000)
+        assertTrue(energy(pluck, 16000, 22000) < energy(hold, 16000, 22000) / 100)
+        assertContentEquals(before, ram)
+    }
+
     @Test fun `native sound controls change audible attack sustain gain and musical tuning without replacing samples`() {
         assumeTrue(NativeSpcEmulator.isAvailable(), "Native SPC library unavailable")
         val parser = TestRomHelper.requireRomParser()

@@ -1,18 +1,9 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -20,30 +11,22 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.NspcRenderer.InstrumentEntry
 import java.util.Locale
@@ -54,109 +37,142 @@ import kotlin.math.roundToInt
 @Composable
 internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, onCommit: (InstrumentEntry) -> Unit) {
     val fs = LocalEditorTheme.current.fontSize.value
-    var draft by remember(entry) { mutableStateOf(entry) }
+    // All subcompositions/gesture callbacks retain the same state cells. Replacing
+    // those cells on each bank commit leaves an otherwise unchanged tuning module
+    // pointing at the previous envelope draft.
+    var draft by remember { mutableStateOf(entry) }
+    var submitted by remember { mutableStateOf(entry) }
+    val currentCommit by rememberUpdatedState(onCommit)
+    remember(entry) { draft = entry; submitted = entry }
     fun commit(updated: InstrumentEntry = draft) {
         draft = updated
-        if (updated != entry) onCommit(updated)
+        if (updated != submitted) { submitted = updated; currentCommit(updated) }
     }
-    val envelope = NativeInstrumentSound.usesEnvelope(draft)
-    Column(Modifier.fillMaxWidth().testTag("native-sound-controls"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            FilterChip(envelope, { commit(NativeInstrumentSound.envelope(draft, true)) },
-                shape = SoundControlShape, label = { Text("Envelope", fontSize = fs.body) }, modifier = Modifier.testTag("sound-mode-envelope"))
-            FilterChip(!envelope, { commit(NativeInstrumentSound.envelope(draft, false)) },
-                shape = SoundControlShape, label = { Text("Gain", fontSize = fs.body) }, modifier = Modifier.testTag("sound-mode-gain"))
-        }
-        EnvelopeGuide(draft)
-        if (envelope) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                SoundParameter("Attack", NativeInstrumentSound.attack(draft), 0..15, timeLabel(NativeInstrumentSound.attackSeconds(draft)),
-                    "sound-attack", { draft = NativeInstrumentSound.attack(draft, it) }, { commit() })
-                SoundParameter("Decay", NativeInstrumentSound.decay(draft), 0..7,
-                    if (NativeInstrumentSound.sustain(draft) == 7) "No level drop" else timeLabel(NativeInstrumentSound.decaySeconds(draft)),
-                    "sound-decay", { draft = NativeInstrumentSound.decay(draft, it) }, { commit() }, enabled = NativeInstrumentSound.sustain(draft) != 7)
-                SoundParameter("Sustain level", NativeInstrumentSound.sustain(draft), 0..7,
-                    String.format(Locale.ROOT, "%.1f%%", (NativeInstrumentSound.sustain(draft) + 1) * 12.5),
-                    "sound-sustain", { draft = NativeInstrumentSound.sustain(draft, it) }, { commit() })
-                SoundParameter("Sustain fade", NativeInstrumentSound.fade(draft), 0..31,
-                    NativeInstrumentSound.fadeSeconds(draft)?.let(::timeLabel) ?: "Hold level",
-                    "sound-fade", { draft = NativeInstrumentSound.fade(draft, it) }, { commit() })
+    BoxWithConstraints(Modifier.fillMaxWidth().testTag("native-sound-controls")) {
+        val wide = maxWidth >= 600.dp
+        val envelopeContent: @Composable ColumnScope.() -> Unit = {
+            val envelope = NativeInstrumentSound.usesEnvelope(draft)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(envelope, { commit(NativeInstrumentSound.envelope(draft, true)) }, shape = SoundControlShape,
+                    label = { Text("Envelope", fontSize = fs.body) }, modifier = Modifier.testTag("sound-mode-envelope"))
+                FilterChip(!envelope, { commit(NativeInstrumentSound.envelope(draft, false)) }, shape = SoundControlShape,
+                    label = { Text("Gain", fontSize = fs.body) }, modifier = Modifier.testTag("sound-mode-gain"))
+                if (envelope) EnvelopeShapes(draft) { commit(it) }
             }
-        } else {
-            val mode = NativeInstrumentSound.gainMode(draft)
-            var expanded by remember { mutableStateOf(false) }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Box(Modifier.padding(top = 4.dp)) {
-                    OutlinedButton(shape = SoundControlShape, onClick = { expanded = true }, modifier = Modifier.testTag("sound-gain-mode")) {
-                        Text("${mode.label} ▾", fontSize = fs.body)
-                    }
-                    DropdownMenu(expanded, { expanded = false }) {
-                        NativeInstrumentSound.GainMode.entries.forEach { choice ->
-                            DropdownMenuItem(text = { Text(choice.label, fontSize = fs.body) },
-                                onClick = { expanded = false; commit(NativeInstrumentSound.gainMode(draft, choice)) },
-                                modifier = Modifier.testTag("sound-gain-${choice.name}"))
+            EnvelopeGuide(draft)
+            if (envelope) {
+                // Time knobs turn clockwise for longer times; raw native rates run backwards.
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val fourAcross = maxWidth >= 424.dp
+                    val controls: List<@Composable () -> Unit> = listOf(
+                        { SoundParameter("Attack", 15 - NativeInstrumentSound.attack(draft), 0..15, timeLabel(NativeInstrumentSound.attackSeconds(draft)),
+                            "sound-attack", { draft = NativeInstrumentSound.attack(draft, 15 - it) }, { commit() }) },
+                        { SoundParameter("Decay", 7 - NativeInstrumentSound.decay(draft), 0..7,
+                            if (NativeInstrumentSound.sustain(draft) == 7) "No drop" else timeLabel(NativeInstrumentSound.decaySeconds(draft)),
+                            "sound-decay", { draft = NativeInstrumentSound.decay(draft, 7 - it) }, { commit() }, enabled = NativeInstrumentSound.sustain(draft) != 7) },
+                        { SoundParameter("Sustain", NativeInstrumentSound.sustain(draft), 0..7,
+                            String.format(Locale.ROOT, "%.1f%%", (NativeInstrumentSound.sustain(draft) + 1) * 12.5),
+                            "sound-sustain", { draft = NativeInstrumentSound.sustain(draft, it) }, { commit() }) },
+                        { SoundParameter("Held fade", 31 - NativeInstrumentSound.fade(draft), 0..31,
+                            NativeInstrumentSound.fadeSeconds(draft)?.let(::timeLabel) ?: "Hold",
+                            "sound-fade", { draft = NativeInstrumentSound.fade(draft, 31 - it) }, { commit() }) },
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (row in controls.chunked(if (fourAcross) 4 else 2)) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            row.forEach { it() }
                         }
                     }
                 }
-                SoundParameter(if (mode == NativeInstrumentSound.GainMode.FIXED) "Level" else "Rate",
-                    NativeInstrumentSound.gainValue(draft), 0..if (mode == NativeInstrumentSound.GainMode.FIXED) 127 else 31,
-                    if (mode == NativeInstrumentSound.GainMode.FIXED) "${(NativeInstrumentSound.gainValue(draft) * 100.0 / 127).roundToInt()}%"
-                    else if (NativeInstrumentSound.gainValue(draft) == 0) "Hold" else "${NativeInstrumentSound.gainValue(draft)} / 31 · faster →",
-                    "sound-gain-value", { draft = NativeInstrumentSound.gainValue(draft, it) }, { commit() })
-            }
-            if (mode == NativeInstrumentSound.GainMode.FALL || mode == NativeInstrumentSound.GainMode.EXPONENTIAL_FALL) {
-                Text("Falling gain starts silent on a new note", fontSize = fs.detail, color = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.testTag("sound-gain-silent"))
-            } else if (mode != NativeInstrumentSound.GainMode.FIXED && NativeInstrumentSound.gainValue(draft) == 0) {
-                Text("Rate 0 holds silence on a new note", fontSize = fs.detail, color = MaterialTheme.colorScheme.tertiary)
-            }
+            } else GainControls(draft, { draft = it }, { commit(it) }, { commit() })
         }
-        Text("Key-off release: fixed · use Play to hear changes", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TuningControls(draft, entry, sourcePitch, onDraft = { draft = it }, onCommit = { commit(it) }, onFinish = { commit() })
+        val tuningContent: @Composable ColumnScope.() -> Unit = {
+            TuningControls(draft, entry, sourcePitch, wide, onDraft = { draft = it }, onCommit = { commit(it) }, onFinish = { commit() })
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (wide) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SynthModule(Modifier.weight(1f), envelopeContent)
+                SynthModule(Modifier.width(132.dp), tuningContent)
+            } else {
+                SynthModule(Modifier.fillMaxWidth(), envelopeContent)
+                SynthModule(Modifier.fillMaxWidth(), tuningContent)
+            }
+            Text("Drag up/down · Shift: fine · click, then scroll or use arrows", fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
 @Composable
-@OptIn(ExperimentalComposeUiApi::class)
-private fun SoundParameter(label: String, value: Int, range: IntRange, readout: String, tag: String,
-    onDraft: (Int) -> Unit, onCommit: () -> Unit, enabled: Boolean = true) {
+private fun SynthModule(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Surface(modifier, shape = SoundControlShape, color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+    }
+}
+
+@Composable
+private fun EnvelopeShapes(entry: InstrumentEntry, onCommit: (InstrumentEntry) -> Unit) {
     val fs = LocalEditorTheme.current.fontSize.value
-    var keyboardDraft by remember { mutableStateOf(false) }
-    Column(Modifier.width(148.dp)) {
-        Text(label, fontSize = fs.body, color = MaterialTheme.colorScheme.onSurface)
-        Text(readout, fontSize = fs.detail, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Slider(value = value.coerceIn(range).toFloat(), onValueChange = { onDraft(it.roundToInt()) },
-            onValueChangeFinished = onCommit, valueRange = range.first.toFloat()..range.last.toFloat(),
-            steps = (range.last - range.first - 1).coerceAtLeast(0), enabled = enabled,
-            modifier = Modifier.fillMaxWidth().height(30.dp).testTag(tag).semantics { contentDescription = label }
-                // This project's Compose Material slider exposes accessibility progress
-                // but has no desktop arrow-key handler. Preserve native one-step editing.
-                .onFocusChanged { if (!it.isFocused && keyboardDraft) { keyboardDraft = false; onCommit() } }
-                .onPreviewKeyEvent { event ->
-                    if (!enabled) return@onPreviewKeyEvent false
-                    val next = when (event.key) {
-                        Key.DirectionLeft, Key.DirectionDown -> value - 1
-                        Key.DirectionRight, Key.DirectionUp -> value + 1
-                        Key.MoveHome -> range.first
-                        Key.MoveEnd -> range.last
-                        else -> return@onPreviewKeyEvent false
-                    }
-                    when (event.type) {
-                        KeyEventType.KeyDown -> { keyboardDraft = true; onDraft(next.coerceIn(range)); true }
-                        KeyEventType.KeyUp -> { keyboardDraft = false; onCommit(); true }
-                        else -> false
-                    }
-                })
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(shape = SoundControlShape, onClick = { expanded = true }, modifier = Modifier.testTag("sound-shape-menu")) {
+            Text("${NativeInstrumentSound.matchingShape(entry)?.label ?: "Shape"} ▾", fontSize = fs.body)
+        }
+        DropdownMenu(expanded, { expanded = false }) {
+            Text("Envelope shape", fontSize = fs.detail, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+            NativeInstrumentSound.EnvelopeShape.entries.forEach { shape ->
+                DropdownMenuItem(text = { Text(shape.label, fontSize = fs.body) },
+                    onClick = { expanded = false; onCommit(NativeInstrumentSound.shape(entry, shape)) }, modifier = Modifier.testTag("sound-shape-${shape.name}"))
+            }
+        }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TuningControls(entry: InstrumentEntry, committed: InstrumentEntry, sourcePitch: Int?, onDraft: (InstrumentEntry) -> Unit,
+private fun GainControls(entry: InstrumentEntry, onDraft: (InstrumentEntry) -> Unit, onCommit: (InstrumentEntry) -> Unit, onFinish: () -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val mode = NativeInstrumentSound.gainMode(entry)
+    var expanded by remember { mutableStateOf(false) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box {
+            OutlinedButton(shape = SoundControlShape, onClick = { expanded = true }, modifier = Modifier.testTag("sound-gain-mode")) { Text("${mode.label} ▾", fontSize = fs.body) }
+            DropdownMenu(expanded, { expanded = false }) {
+                NativeInstrumentSound.GainMode.entries.forEach { choice ->
+                    DropdownMenuItem(text = { Text(choice.label, fontSize = fs.body) },
+                        onClick = { expanded = false; onCommit(NativeInstrumentSound.gainMode(entry, choice)) }, modifier = Modifier.testTag("sound-gain-${choice.name}"))
+                }
+            }
+        }
+        SoundParameter(if (mode == NativeInstrumentSound.GainMode.FIXED) "Level" else "Rate", NativeInstrumentSound.gainValue(entry),
+            0..if (mode == NativeInstrumentSound.GainMode.FIXED) 127 else 31,
+            if (mode == NativeInstrumentSound.GainMode.FIXED) "${(NativeInstrumentSound.gainValue(entry) * 100.0 / 127).roundToInt()}%"
+            else if (NativeInstrumentSound.gainValue(entry) == 0) "Hold" else "${NativeInstrumentSound.gainValue(entry)} / 31",
+            "sound-gain-value", { onDraft(NativeInstrumentSound.gainValue(entry, it)) }, onFinish)
+    }
+    if (mode == NativeInstrumentSound.GainMode.FALL || mode == NativeInstrumentSound.GainMode.EXPONENTIAL_FALL) {
+        Text("Falling gain starts silent on a new note", fontSize = fs.detail, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.testTag("sound-gain-silent"))
+    } else if (mode != NativeInstrumentSound.GainMode.FIXED && NativeInstrumentSound.gainValue(entry) == 0) {
+        Text("Rate 0 holds silence on a new note", fontSize = fs.detail, color = MaterialTheme.colorScheme.tertiary)
+    }
+}
+
+@Composable
+private fun SoundParameter(label: String, value: Int, range: IntRange, readout: String, tag: String,
+    onDraft: (Int) -> Unit, onCommit: () -> Unit, enabled: Boolean = true) {
+    SynthKnob(label, value, range, readout, tag, onDraft, onCommit, enabled)
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TuningControls(entry: InstrumentEntry, committed: InstrumentEntry, sourcePitch: Int?, vertical: Boolean, onDraft: (InstrumentEntry) -> Unit,
     onCommit: (InstrumentEntry) -> Unit, onFinish: () -> Unit) {
     val fs = LocalEditorTheme.current.fontSize.value
+    Text(if (entry.srcn >= 0x80) "Noise" else "Tuning", fontSize = fs.body)
     if (entry.srcn >= 0x80 || sourcePitch == null || sourcePitch == 0) {
-        Text(if (entry.srcn >= 0x80) "Noise pitch uses its source rate" else "Source tuning unavailable · use Advanced",
+        if (entry.srcn >= 0x80) SoundParameter("Rate", entry.srcn and 31, 0..31, "${entry.srcn and 31} / 31", "sound-noise-rate",
+            { onDraft(NativeInstrumentSound.noiseRate(entry, it)) }, onFinish)
+        Text(if (entry.srcn >= 0x80) "Shared noise clock" else "Source tuning unavailable · use Advanced",
             fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("sound-tuning-unavailable"))
         return
     }
@@ -166,27 +182,36 @@ private fun TuningControls(entry: InstrumentEntry, committed: InstrumentEntry, s
     // must not flip a fine-tune drag into another semitone while the pointer is down.
     var semitones by remember(sourcePitch, committed.nativePitch) { mutableStateOf((baseCents / 100).roundToInt()) }
     var fine by remember(sourcePitch, committed.nativePitch) { mutableStateOf((baseCents - (baseCents / 100).roundToInt() * 100).roundToInt()) }
+    fun tuned(semitones: Int, fine: Int): InstrumentEntry {
+        val baseSemitones = (baseCents / 100).roundToInt()
+        val baseFine = (baseCents - baseSemitones * 100).roundToInt()
+        // Returning/cancelling a gesture restores the exact native word, not a rounded-cent approximation.
+        return if (semitones == baseSemitones && fine == baseFine) entry.copy(pitchAdj = committed.pitchAdj)
+        else NativeInstrumentSound.tuning(entry, sourcePitch, semitones * 100.0 + fine)
+    }
     fun finish() {
         onFinish()
         val actual = cents ?: 0.0
         semitones = (actual / 100).roundToInt()
         fine = (actual - semitones * 100).roundToInt()
     }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Tuning", fontSize = fs.body)
-        Text(if (cents == null) "Zero / silent" else String.format(Locale.ROOT, "%+.0f cents · source-relative", cents),
-            fontSize = fs.detail, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f).testTag("sound-tuning-readout"))
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Source-relative", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (cents == null) "Zero / silent" else String.format(Locale.ROOT, "%+.0f cents", cents),
+            fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("sound-tuning-readout"))
         TextButton(shape = SoundControlShape, onClick = { onCommit(NativeInstrumentSound.tuning(entry, sourcePitch, 0.0)) },
             enabled = entry.nativePitch != sourcePitch, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-            modifier = Modifier.height(32.dp).testTag("sound-tuning-reset")) { Text("Reset tuning", fontSize = fs.detail) }
+            modifier = Modifier.height(28.dp).testTag("sound-tuning-reset")) { Text("Reset tuning", fontSize = fs.detail) }
     }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        SoundParameter("Transpose", semitones, minOf(-24, semitones)..maxOf(24, semitones), "$semitones semitones", "sound-transpose",
-            { semitones = it; onDraft(NativeInstrumentSound.tuning(entry, sourcePitch, it * 100.0 + fine)) }, ::finish)
+    val knobs: @Composable () -> Unit = {
+        val baseSemitones = (baseCents / 100).roundToInt()
+        SoundParameter("Transpose", semitones, minOf(-24, baseSemitones)..maxOf(24, baseSemitones), "$semitones semitones", "sound-transpose",
+            { semitones = it; onDraft(tuned(it, fine)) }, ::finish)
         SoundParameter("Fine", fine, -50..50, "$fine cents", "sound-fine",
-            { fine = it; onDraft(NativeInstrumentSound.tuning(entry, sourcePitch, semitones * 100.0 + it)) }, ::finish)
+            { fine = it; onDraft(tuned(semitones, it)) }, ::finish)
     }
+    if (vertical) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { knobs() }
+    else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { knobs() }
 }
 
 @Composable
@@ -196,11 +221,17 @@ private fun EnvelopeGuide(entry: InstrumentEntry) {
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
     Column {
-        Text("Envelope guide · 2 s hold", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Canvas(Modifier.fillMaxWidth().height(64.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("2 s hold", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Release · fixed", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Canvas(Modifier.fillMaxWidth().height(88.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
             .testTag("sound-envelope-guide").semantics { contentDescription = "Envelope level over two seconds, then fixed key-off release; sample playback may end sooner" }) {
             val left = 4f; val width = (size.width - 8).coerceAtLeast(1f); val height = (size.height - 8).coerceAtLeast(1f)
-            for (fraction in listOf(0f, 0.5f, 1f)) drawLine(grid, Offset(left, 4 + height * fraction), Offset(left + width, 4 + height * fraction))
+            for (fraction in listOf(0f, 0.5f, 1f)) {
+                drawLine(grid.copy(alpha = 0.5f), Offset(left, 4 + height * fraction), Offset(left + width, 4 + height * fraction))
+                drawLine(grid.copy(alpha = 0.5f), Offset(left + width * fraction, 4f), Offset(left + width * fraction, 4 + height))
+            }
             val path = Path()
             val points = width.roundToInt().coerceAtLeast(2)
             for (i in 0..points) {

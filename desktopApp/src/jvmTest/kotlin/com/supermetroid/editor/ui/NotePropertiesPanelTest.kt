@@ -192,6 +192,20 @@ class NotePropertiesPanelTest {
         }
     }
 
+    @Test fun `synth knobs keep their full target size and can be reached in a short inspector`() = runBlocking {
+        withPanel(FontSize.LARGER, height = 480, captureSuffix = "-synth") { scene, render, _ ->
+            click(scene, "instrument-edit-sound"); render()
+            val content = tagged(scene, "note-properties-content")
+            val fine = tagged(scene, "sound-fine")
+            val delta = fine.positionInRoot.y - content.boundsInRoot.top - 180f
+            content.config[SemanticsActions.ScrollBy].action!!.invoke(0f, delta); render()
+            val bounds = tagged(scene, "sound-fine").boundsInRoot
+            assertEquals(72f, bounds.width)
+            assertEquals(72f, bounds.height)
+            assertTrue(bounds.top >= 0 && bounds.bottom <= 480)
+        }
+    }
+
     private fun browser() = MusicSampleBrowserState(samples = listOf(0, 24).map { srcn ->
         MusicSample(srcn, "brr:${srcn.toString().padStart(64, '0')}", 160, 90, null, List(16) { MusicSamplePeak(-0.5f, 0.5f) }, "Bank ROM")
     })

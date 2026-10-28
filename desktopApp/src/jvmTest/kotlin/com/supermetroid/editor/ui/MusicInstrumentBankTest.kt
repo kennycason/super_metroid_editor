@@ -32,6 +32,48 @@ class MusicInstrumentBankTest {
         }.toMutableMap()))
     }
 
+    @Test fun `envelope shape shortcut is one shared undoable bank edit and reopens and exports as native bytes`() {
+        val f = fixture()
+        val sound = open(f)
+        val source = sound.pianoRollInstruments.first { it.index >= 24 && InstrumentDescriptions.playable(it) }
+        val shaped = NativeInstrumentSound.shape(source, NativeInstrumentSound.EnvelopeShape.SOFT)
+        assertTrue(sound.commitPianoRollInstrument(first.id, shaped, f.parser, f.editor))
+        assertEquals(1, sound.pianoRollUndoDepth)
+        assertTrue(f.editor.project.musicEdits.isEmpty())
+        assertEquals(source.srcn, sound.pianoRollInstruments[source.index].srcn)
+        assertEquals(source.pitchAdj, sound.pianoRollInstruments[source.index].pitchAdj)
+        assertTrue(sound.undoPianoRollEdit(f.editor))
+        assertContentEquals(PianoRollPreviewLogic.instrumentBytes(source), PianoRollPreviewLogic.instrumentBytes(sound.pianoRollInstruments[source.index]))
+        assertTrue(sound.redoPianoRollEdit(f.editor))
+        val file = File(directory, "envelope-shape.smedit")
+        assertTrue(ProjectFileService.saveProject(f.editor.project, file.path, null, false, {}))
+        val editor = EditorState().apply { testMode = true; initForProject(file, ProjectFileService.loadProject(file)) }
+        val reopened = SoundEditorState().apply { selectTrack(sibling); openPianoRoll(f.parser, editor) }
+        assertContentEquals(PianoRollPreviewLogic.instrumentBytes(shaped), PianoRollPreviewLogic.instrumentBytes(reopened.pianoRollInstruments[source.index]))
+        val rom = f.parser.copyRomData()
+        assertEquals(1, MusicRomExporter(editor.project, {}).applyMusicEditsToRom(rom))
+        val parser = RomParser(rom)
+        val exported = SpcData.buildInitialSpcRam(parser).also { SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, 3)) }
+        assertContentEquals(reopened.buildPianoRollSpcSnapshotRam(f.parser, reopened.editingSong!!), exported)
+    }
+
+    @Test fun `late instrument gestures cannot edit a different track or a closed inspector`() {
+        val f = fixture()
+        val sound = open(f)
+        val source = sound.pianoRollInstruments.first { it.index >= 24 && InstrumentDescriptions.playable(it) }
+        val shaped = NativeInstrumentSound.shape(source, NativeInstrumentSound.EnvelopeShape.SOFT)
+        assertFalse(sound.commitPianoRollInstrument(first.id, source, f.parser, f.editor))
+        assertEquals(0, sound.pianoRollUndoDepth)
+        val other = SpcData.KNOWN_TRACKS.first { it.songSet == 0x18 && it.playIndex == 5 }
+        sound.selectTrack(other); sound.openPianoRoll(f.parser, f.editor)
+        assertFalse(sound.commitPianoRollInstrument(first.id, shaped, f.parser, f.editor))
+        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
+        assertEquals(0, sound.pianoRollUndoDepth)
+        sound.closePianoRoll()
+        assertFalse(sound.commitPianoRollInstrument(other.id, shaped, f.parser, f.editor))
+        assertTrue(f.editor.project.musicInstrumentBanks.isEmpty())
+    }
+
     @Test fun `native envelope and musical tuning edits keep their source reference through undo save reopen and export`() {
         val f = fixture()
         val sound = open(f)
