@@ -12,6 +12,19 @@ import java.util.IdentityHashMap
 internal object PianoRollEditLogic {
     const val HORIZONTAL_SCROLL_MULTIPLIER = 24f
 
+    data class EncodingCheck(val bytes: Int? = null, val problem: String? = null) {
+        val canEncode get() = bytes != null
+    }
+
+    /** Drafts may temporarily violate native voice rules. Rendering the editor must not. */
+    fun checkEncoding(song: Song): EncodingCheck = try {
+        EncodingCheck(bytes = NspcSequence.encodedSequenceSize(song))
+    } catch (error: IllegalArgumentException) {
+        EncodingCheck(problem = error.message ?: "Cannot encode these notes")
+    } catch (error: IllegalStateException) {
+        EncodingCheck(problem = error.message ?: "Cannot encode this timeline")
+    }
+
     data class NoteRef(val channel: Int, val note: Note)
 
     data class ClipboardNote(

@@ -596,7 +596,7 @@ object NspcSequence {
         val notes = channel.notes.sortedBy { it.tick }
         require(notes.all { it.tick >= 0 && it.duration > 0 && it.endTick > it.tick }) { "Notes need a positive length and non-negative start" }
         require(notes.zipWithNext().all { (a, b) -> a.endTick <= b.tick }) {
-            "Voice ${channelIndex + 1} has overlapping notes. Move overlapping notes to another voice."
+            "Voice ${channelIndex + 1} has overlapping notes. Move or shorten a note."
         }
         val commands = channel.commands.filterNot { isFlowControlCommand(it.command) }.sortedBy { it.tick }
         require(commands.all { it.tick >= 0 }) { "Commands need a non-negative start" }

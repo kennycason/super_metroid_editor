@@ -199,8 +199,9 @@ private data class PianoRollDragState(
     val currentTick: Int,
     val currentDuration: Int,
     val currentNoteValue: Int,
-    val changed: Boolean = false
-)
+) {
+    val changed get() = currentTick != startTick || currentDuration != startDuration || currentNoteValue != startNoteValue
+}
 
 private fun quantizeTick(tick: Int): Int =
     ((tick + NOTE_TICK_STEP / 2) / NOTE_TICK_STEP) * NOTE_TICK_STEP
@@ -320,11 +321,14 @@ fun PianoRollEditor(
     var dragState by remember { mutableStateOf<PianoRollDragState?>(null) }
     var selectionBox by remember { mutableStateOf<PianoRollSelectionBox?>(null) }
     var clipboardNotes by remember { mutableStateOf<List<PianoRollEditLogic.ClipboardNote>>(emptyList()) }
-    val flattenedBytes = remember(song, editVersion) { NspcSequence.encodedSequenceSize(song) }
-    val originalFlatBytes = originalFlattenedBytes.takeIf { it > 0 } ?: flattenedBytes
-    val trackUsageBytes = (originalSequenceBytes + flattenedBytes - originalFlatBytes).coerceAtLeast(0)
+    val encoding = remember(song, editVersion) { PianoRollEditLogic.checkEncoding(song) }
+    val flattenedBytes = encoding.bytes
+    val trackUsageBytes = flattenedBytes?.let { bytes ->
+        val originalFlatBytes = originalFlattenedBytes.takeIf { it > 0 } ?: bytes
+        (originalSequenceBytes + bytes - originalFlatBytes).coerceAtLeast(0)
+    }
     val budgetFit = remember(song, editVersion, relocationBudgetBytes, flattenedBytes) {
-        if (song.isModified && relocationBudgetBytes > 0 && flattenedBytes > relocationBudgetBytes) {
+        if (flattenedBytes != null && song.isModified && relocationBudgetBytes > 0 && flattenedBytes > relocationBudgetBytes) {
             runCatching { MusicSequenceBudget.fitSongToEncodedBudget(song, relocationBudgetBytes) }.getOrNull()
         } else {
             null
@@ -514,8 +518,8 @@ fun PianoRollEditor(
                 Button(shape = SoundControlShape,
                     onClick = onPlay,
                     contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp),
-                    enabled = !isPlaying
+                    modifier = Modifier.height(28.dp).testTag("piano-roll-play"),
+                    enabled = !isPlaying && encoding.canEncode
                 ) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(14.dp))
                     Spacer(Modifier.width(2.dp))
@@ -593,7 +597,7 @@ fun PianoRollEditor(
                 OutlinedButton(shape = SoundControlShape,
                     onClick = { undoMusicEdit() },
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(28.dp).testTag("piano-roll-undo"),
                     enabled = canUndo
                 ) {
                     Icon(Icons.Default.Undo, "Undo music edit", Modifier.size(15.dp))
@@ -601,7 +605,7 @@ fun PianoRollEditor(
                 OutlinedButton(shape = SoundControlShape,
                     onClick = { redoMusicEdit() },
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(28.dp).testTag("piano-roll-redo"),
                     enabled = canRedo
                 ) {
                     Icon(Icons.Default.Redo, "Redo music edit", Modifier.size(15.dp))
@@ -736,6 +740,7 @@ fun PianoRollEditor(
             originalSequenceBytes = originalSequenceBytes,
             isModified = song.isModified,
             fitPreview = budgetFit,
+            problem = encoding.problem,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
         )
 
@@ -1051,6 +1056,7 @@ fun PianoRollEditor(
                     ) {
                         Canvas(
                             modifier = Modifier
+                                .testTag("piano-roll-grid")
                                 .fillMaxWidth()
                                 .height(gridHeight.dp)
                                 .onPointerEvent(PointerEventType.Press) { event ->
@@ -1155,15 +1161,14 @@ fun PianoRollEditor(
                                                 currentTick = (state.startTick + dxTicks).coerceIn(0, maxStartTickForDuration(state.currentDuration)),
                                                 currentNoteValue = (state.startNoteValue + pitchDelta)
                                                     .coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX),
-                                                changed = true
                                             )
                                         }
                                         PianoRollDragMode.ResizeEnd -> {
-                                            val maxDuration = (totalTicks - state.startTick).coerceAtLeast(NOTE_TICK_STEP)
+                                            val maxDuration = (totalTicks - state.startTick).coerceAtLeast(1)
                                             state.copy(
-                                                currentDuration = quantizeTick(state.startDuration + dxTicks)
-                                                    .coerceIn(NOTE_TICK_STEP, maxDuration),
-                                                changed = true
+                                                // Snap the drag delta, not a native note's original length.
+                                                // A click/jitter must not turn e.g. 30 ticks into 36.
+                                                currentDuration = (state.startDuration + dxTicks).coerceIn(1, maxDuration),
                                             )
                                         }
                                     }
@@ -1322,15 +1327,24 @@ fun PianoRollEditor(
 
 @Composable
 private fun PianoRollExportBudgetMeter(
-    trackUsageBytes: Int,
-    flattenedBytes: Int,
+    trackUsageBytes: Int?,
+    flattenedBytes: Int?,
     budgetBytes: Int,
     relocationBudgetBytes: Int,
     originalSequenceBytes: Int,
     isModified: Boolean,
     fitPreview: MusicSequenceBudget.FitResult?,
+    problem: String? = null,
     modifier: Modifier = Modifier
 ) {
+    if (problem != null || trackUsageBytes == null || flattenedBytes == null) {
+        Surface(modifier = modifier, color = MaterialTheme.colorScheme.errorContainer, shape = SoundControlShape) {
+            Text("Track playback/export blocked · ${problem ?: "Cannot measure this arrangement"}",
+                fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp).testTag("piano-roll-encoding-problem"))
+        }
+        return
+    }
     val hasBudget = budgetBytes > 0
     val ratio = if (hasBudget) trackUsageBytes.toFloat() / budgetBytes else 0f
     val trackDelta = trackUsageBytes - originalSequenceBytes
