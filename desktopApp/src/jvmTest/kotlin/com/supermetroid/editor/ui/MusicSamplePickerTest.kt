@@ -95,7 +95,12 @@ class MusicSamplePickerTest {
     }
 
     @Test fun `opening a sample tryout is separate from choosing a source or changing shared controls`() = runBlocking {
-        withEditor(tryoutAvailable = true) { scene, render, f ->
+        withEditor(tryoutAvailable = true, capture = "new-recording") { scene, render, f ->
+            val change = tagged(scene, "sample-choose").boundsInRoot
+            val create = tagged(scene, "sample-try-draft").boundsInRoot
+            assertEquals("New recording", text(tagged(scene, "sample-try-draft")).trim())
+            assertEquals(change.top, create.top)
+            assertTrue(create.left > change.right)
             click(scene, "sample-try-draft"); render()
             assertEquals(1, f.tryouts)
             assertTrue(f.chosen.isEmpty()); assertTrue(f.controls.isEmpty()); assertTrue(f.preview.isEmpty())

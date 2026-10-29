@@ -1,8 +1,6 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.Snapshot
@@ -39,7 +37,7 @@ class SampleWorkbenchTest {
             scene.setContent {
                 CompositionLocalProvider(LocalEditorTheme provides settings) {
                     MaterialTheme(colorScheme = theme.colorScheme, typography = font.materialTypography()) {
-                        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                        Column(Modifier.fillMaxSize().padding(12.dp)) {
                             SampleWorkbenchContent(state, true, onPlay = {}, onImport = {}, onOpen = {}, onSave = {}, onExport = {},
                                 bankTarget = bankTarget, bank = bank, bankProblem = bankProblem, onPlayInBank = onPlayInBank)
                         }
@@ -59,18 +57,38 @@ class SampleWorkbenchTest {
         } finally { state.stop(); scene.close(); surface.close() }
     }
 
-    @Test fun `workbench uses editor fonts themes narrow wrapping and scrollable asset actions`() = runBlocking {
-        for (font in FontSize.entries) for (theme in EditorTheme.entries) for (width in listOf(420, 680)) panel(font, theme, width) { scene, _, render ->
+    @Test fun `workbench uses editor fonts themes narrow wrapping and always visible asset actions`() = runBlocking {
+        for (font in FontSize.entries) for (theme in EditorTheme.entries) for (width in listOf(420, 680, 1120)) panel(font, theme, width) { scene, _, render ->
             assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> "not added to a music bank" in text.text } })
-            for (key in listOf("sample-import-wav", "sample-generate-SINE", "sample-generate-NOISE", "sample-encoded-waveform")) {
+            for (key in listOf("sample-import-wav", "sample-generate-SINE", "sample-generate-NOISE")) {
                 val bounds = tag(scene, key).boundsInRoot
                 assertTrue(bounds.left >= 0 && bounds.right <= width, "$font/$theme/$width/$key")
             }
             val scroll = nodes(scene).first { it.config.contains(SemanticsActions.ScrollBy) }
+            val saveBeforeScroll = tag(scene, "sample-save-draft").boundsInRoot
+            assertTrue(saveBeforeScroll.top >= 0 && saveBeforeScroll.bottom <= 760, "Save must be visible without scrolling")
             scroll.config[SemanticsActions.ScrollBy].action!!.invoke(0f, 2000f); render()
             val save = tag(scene, "sample-save-draft")
-            assertTrue(save.boundsInRoot.bottom <= 760 && save.boundsInRoot.top >= 0, "Save must be reachable at every size")
+            assertEquals(saveBeforeScroll, save.boundsInRoot, "Save must stay visible while editing")
             assertFalse(save.config.contains(SemanticsProperties.Disabled))
+        }
+    }
+
+    @Test fun `wide workbench shows source preview and trim side by side without scrolling`() = runBlocking {
+        for (font in FontSize.entries) panel(font, EditorTheme.DARK, 1120,
+            bankTarget = "Lower Norfair · Looped sound · C3") { scene, _, _ ->
+            val source = tag(scene, "sample-source-module").boundsInRoot
+            val preview = tag(scene, "sample-preview-module").boundsInRoot
+            assertEquals(source.top, preview.top)
+            assertTrue(source.right < preview.left)
+            for (key in listOf("sample-import-wav", "sample-level", "sample-period", "sample-encoded-waveform",
+                "sample-frame-Loop start", "sample-play-in-bank", "sample-save-draft", "sample-export-brr")) {
+                val bounds = tag(scene, key).boundsInRoot
+                assertTrue(bounds.width > 0 && bounds.height > 0 && bounds.left >= 0 && bounds.right <= 1120 && bounds.top >= 0 && bounds.bottom <= 760,
+                    "$font/$key must be visible without scrolling: $bounds")
+            }
+            val scroll = nodes(scene).first { it.config.contains(SemanticsProperties.VerticalScrollAxisRange) }
+            assertEquals(0f, scroll.config[SemanticsProperties.VerticalScrollAxisRange].maxValue(), "$font should fit the wide layout")
         }
     }
 
@@ -81,6 +99,9 @@ class SampleWorkbenchTest {
             assertEquals(before, tag(scene, "sample-workbench-status").boundsInRoot)
             state.message = "Cannot open audio output"; render()
             assertEquals(before, tag(scene, "sample-workbench-status").boundsInRoot)
+            tag(scene, "sample-period").config[SemanticsActions.SetProgress].action!!.invoke(16f); render()
+            assertEquals(256, state.draft.periodFrames, "The period knob uses whole BRR blocks")
+            assertEquals(1024, state.draft.pcm.size)
             tag(scene, "sample-level").config[SemanticsActions.SetProgress].action!!.invoke(25f); render()
             assertEquals(25, state.draft.gainPercent)
             assertTrue(tag(scene, "sample-play-brr").config.contains(SemanticsProperties.Disabled))

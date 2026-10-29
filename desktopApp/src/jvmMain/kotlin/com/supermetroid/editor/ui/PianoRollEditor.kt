@@ -1674,7 +1674,7 @@ private fun InstrumentInsightPanel(
 
             if (info != null) {
                 Text(
-                    "Sound = sample + envelope + tuning · shared bank settings",
+                    "Raw sound data · ADSR and GAIN pack the envelope controls above into native bytes",
                     fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

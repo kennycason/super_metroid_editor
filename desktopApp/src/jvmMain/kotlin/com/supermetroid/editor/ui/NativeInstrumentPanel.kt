@@ -1,7 +1,6 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,7 +10,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,6 +48,7 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
     }
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("native-sound-controls")) {
         val wide = maxWidth >= 600.dp
+        val fourAcross = (if (wide) maxWidth - 162.dp else maxWidth - 20.dp) >= 424.dp
         val envelopeContent: @Composable ColumnScope.() -> Unit = {
             val envelope = NativeInstrumentSound.usesEnvelope(draft)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -59,11 +58,10 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
                     label = { Text("Gain", fontSize = fs.body) }, modifier = Modifier.testTag("sound-mode-gain"))
                 if (envelope) EnvelopeShapes(draft) { commit(it) }
             }
-            EnvelopeGuide(draft)
+            EnvelopeGuide(draft, if (wide) Modifier.weight(1f) else Modifier)
             if (envelope) {
                 // Time knobs turn clockwise for longer times; raw native rates run backwards.
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val fourAcross = maxWidth >= 424.dp
+                Box(Modifier.fillMaxWidth()) {
                     val controls: List<@Composable () -> Unit> = listOf(
                         { SoundParameter("Attack", 15 - NativeInstrumentSound.attack(draft), 0..15, timeLabel(NativeInstrumentSound.attackSeconds(draft)),
                             "sound-attack", { draft = NativeInstrumentSound.attack(draft, 15 - it) }, { commit() }) },
@@ -89,9 +87,11 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
             TuningControls(draft, entry, sourcePitch, wide, onDraft = { draft = it }, onCommit = { commit(it) }, onFinish = { commit() })
         }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (wide) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SynthModule(Modifier.weight(1f), envelopeContent)
-                SynthModule(Modifier.width(132.dp), tuningContent)
+            if (wide) {
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SynthModule(Modifier.weight(1f).fillMaxHeight().testTag("sound-envelope-module"), envelopeContent)
+                    SynthModule(Modifier.width(132.dp).fillMaxHeight().testTag("sound-tuning-module"), tuningContent)
+                }
             } else {
                 SynthModule(Modifier.fillMaxWidth(), envelopeContent)
                 SynthModule(Modifier.fillMaxWidth(), tuningContent)
@@ -99,14 +99,6 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
             Text("Drag up/down · Shift: fine · click, then scroll or use arrows", fontSize = fs.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }
-}
-
-@Composable
-private fun SynthModule(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier, shape = SoundControlShape, color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }
 
@@ -215,17 +207,17 @@ private fun TuningControls(entry: InstrumentEntry, committed: InstrumentEntry, s
 }
 
 @Composable
-private fun EnvelopeGuide(entry: InstrumentEntry) {
+private fun EnvelopeGuide(entry: InstrumentEntry, modifier: Modifier = Modifier) {
     val fs = LocalEditorTheme.current.fontSize.value
     val levels = remember(entry.adsr1, entry.adsr2, entry.gain) { NativeInstrumentSound.envelopeGuide(entry) }
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
-    Column {
+    Column(modifier.heightIn(min = 108.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("2 s hold", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Release · fixed", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Canvas(Modifier.fillMaxWidth().height(88.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+        Canvas(Modifier.fillMaxWidth().weight(1f).heightIn(min = 88.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
             .testTag("sound-envelope-guide").semantics { contentDescription = "Envelope level over two seconds, then fixed key-off release; sample playback may end sooner" }) {
             val left = 4f; val width = (size.width - 8).coerceAtLeast(1f); val height = (size.height - 8).coerceAtLeast(1f)
             for (fraction in listOf(0f, 0.5f, 1f)) {

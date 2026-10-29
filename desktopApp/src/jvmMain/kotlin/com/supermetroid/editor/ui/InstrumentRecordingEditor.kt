@@ -51,16 +51,19 @@ internal fun InstrumentRecordingEditor(entry: InstrumentEntry, sourcePitch: Int?
                 Text(current?.let { browser.names[it.resourceId] ?: it.title } ?: if (browser.loading) "Loading samples…" else "Unlisted source #${entry.srcn}",
                     fontSize = fs.body, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            OutlinedButton(shape = SoundControlShape, onClick = { choosing = !choosing }, enabled = !browser.loading && browser.samples.isNotEmpty(),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                modifier = Modifier.height(32.dp).testTag("sample-choose")) {
-                Text(if (choosing) "Close samples" else "Change source", fontSize = fs.body)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(shape = SoundControlShape, onClick = { choosing = !choosing }, enabled = !browser.loading && browser.samples.isNotEmpty(),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp).testTag("sample-choose")) {
+                    Text(if (choosing) "Close samples" else "Change source", fontSize = fs.body)
+                }
+                if (onTrySample != null) OutlinedButton(shape = SoundControlShape, onClick = onTrySample,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp).testTag("sample-try-draft")) { Text("New recording", fontSize = fs.body) }
             }
         }
         Text(browser.problem ?: current?.let(::sampleDetail) ?: if (browser.loading) "Reading this bank" else "Check raw SRCN in Advanced",
             fontSize = fs.detail, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (onTrySample != null) TextButton(shape = SoundControlShape, onClick = onTrySample,
-            modifier = Modifier.testTag("sample-try-draft")) { Text("Try new recording", fontSize = fs.body) }
         if (choosing) {
             MusicSamplePicker(entry.srcn, browser, instruments, instrumentNames, usedIds, noteName, previewAvailable,
                 onPreview, onChoose = { onChoose(it); choosing = false }, onCancel = { choosing = false }, onRename)

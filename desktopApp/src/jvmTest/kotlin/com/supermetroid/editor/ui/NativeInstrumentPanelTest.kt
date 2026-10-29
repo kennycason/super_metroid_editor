@@ -94,6 +94,12 @@ class NativeInstrumentPanelTest {
                 assertTrue(bounds.height > 0 && bounds.left >= 0 && bounds.right <= 680 && bounds.bottom <= 900, "$font / $theme / $tag")
             }
             assertFalse(hasTag(scene, "sound-gain-value"), "Inactive GAIN must not look editable in envelope mode")
+            val envelope = tagged(scene, "sound-envelope-module").boundsInRoot
+            val tuning = tagged(scene, "sound-tuning-module").boundsInRoot
+            assertEquals(tuning.top, envelope.top)
+            assertEquals(tuning.bottom, envelope.bottom, "The envelope module must match the tuning module's height")
+            assertTrue(tagged(scene, "sound-envelope-guide").boundsInRoot.height > 88f, "The graph should fill the extra height")
+            assertEquals(72f, tagged(scene, "sound-attack").boundsInRoot.height, "Knobs keep their standard size")
             click(scene, "instrument-advanced"); render()
             assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Raw bytes" } })
             click(scene, "instrument-choose"); render()
