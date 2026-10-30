@@ -57,7 +57,7 @@ internal object MusicSamplePlacement {
         return Layout(gaps)
     }
 
-    private fun validate(sample: SampleAuthoring.Encoded) {
+    internal fun validate(sample: SampleAuthoring.Encoded) {
         require(sample.brr.isNotEmpty() && sample.brr.size % 9 == 0 && sample.brr.size / 9 * 16 == sample.pcm.size) {
             "Recording must contain complete BRR blocks"
         }
@@ -80,16 +80,21 @@ internal class SampleBankPreview private constructor(
     private val ram: ByteArray,
     private val instrument: NspcRenderer.InstrumentEntry,
     private val note: NspcSequence.Note,
+    private val samples: List<com.supermetroid.editor.data.MusicSampleEdit>,
 ) {
-    data class Target(val songSet: Int, val note: NspcSequence.Note, val bankName: String, val soundName: String, val project: SmEditProject)
+    data class Target(val songSet: Int, val note: NspcSequence.Note, val bankName: String, val soundName: String, val project: SmEditProject, val trackId: Int? = null)
+
+    fun allocation(sample: SampleAuthoring.Encoded): MusicSamplePlacement.Range = samples.firstOrNull {
+        it.loopByteOffset == sample.loopByteOffset && MusicSampleBanks.decode(it).contentEquals(sample.brr)
+    }?.let { MusicSamplePlacement.Range(it.startAddr, it.startAddr + sample.brr.size) } ?: layout.place(sample)
 
     fun build(sample: SampleAuthoring.Encoded): InstrumentAudition.Preview {
-        val allocation = layout.place(sample)
+        val allocation = allocation(sample)
         val result = ram.copyOf()
         sample.brr.copyInto(result, allocation.start)
         // This replaces one directory entry ONLY in disposable audition RAM. It makes
         // no assertion that a native slot is unused, or that replacing it is export-safe.
-        val srcn = instrument.srcn.takeIf { it in 0 until 40 } ?: 0
+        val srcn = instrument.srcn.takeIf { it in 0 until SpcData.SAMPLE_COUNT } ?: 0
         val loop = allocation.start + (sample.loopByteOffset ?: 0)
         byteArrayOf(allocation.start.toByte(), (allocation.start ushr 8).toByte(), loop.toByte(), (loop ushr 8).toByte())
             .copyInto(result, 0x6D00 + srcn * 4)
@@ -115,7 +120,9 @@ internal class SampleBankPreview private constructor(
                 SpcData.TransferBlock(range.start, boot.copyOfRange(range.start, range.endExclusive))
             }
             return SampleBankPreview(target.bankName, target.soundName, MusicSamplePlacement.inspect(resolved.ram, protected),
-                resolved.ram.copyOf(), NspcRenderer.readInstrumentTable(resolved.ram)[target.note.instrument], target.note.copy())
+                resolved.ram.copyOf(), NspcRenderer.readInstrumentTable(resolved.ram).firstOrNull { it.index == target.note.instrument }
+                    ?: error("Choose an available sound in this bank"), target.note.copy(),
+                target.project.musicInstrumentBanks[MusicInstrumentBanks.key(target.songSet)]?.samples.orEmpty().values.toList())
         }
     }
 }

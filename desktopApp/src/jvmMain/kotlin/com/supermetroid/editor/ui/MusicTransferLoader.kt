@@ -2,10 +2,11 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcTransferStream
+import com.supermetroid.editor.rom.SpcData
 import java.io.ByteArrayOutputStream
 
 /**
- * Verified instrument-only continuation writes for the atomic music ROM export plan.
+ * Verified resource continuation writes for the atomic music ROM export plan.
  * A verified loader reads $FFFF + a ROM u24 as a continuation, without ending the APU
  * receive session. All ROM consumers use the same strict physical stream reader.
  */
@@ -46,6 +47,25 @@ internal object MusicTransferLoader {
         for ((at, data) in entries) require(at in 0x6C00 until 0x6CFC && (at - 0x6C00) % 6 == 0 && data.size == 6) {
             "A music restoration prefix can contain only complete native instrument entries"
         }
+        return encodePrefix(entries, continuationPointer)
+    }
+
+    /** Owned BRR allocations and reserved directory cells; never engine or common sample bytes. */
+    fun samplePrefix(entries: Map<Int, ByteArray>, continuationPointer: Int): ByteArray {
+        require(entries.isNotEmpty()) { "A sample prefix needs data" }
+        requireRomPointer(continuationPointer)
+        require((continuationPointer and 0xFFFF) != 0xFFFF) { "Music continuation size word cannot straddle a ROM bank" }
+        for ((at, data) in entries) require(data.isNotEmpty() && when {
+            at in MusicSamplePlacement.START until MusicSamplePlacement.END -> data.size % 9 == 0 && data.size <= MusicSamplePlacement.END - at
+            at in 0x6C00 until 0x6CFC -> (at - 0x6C00) % 6 == 0 && data.size == 6
+            at in SpcData.SAMPLE_DIRECTORY + SpcData.STOCK_SAMPLE_COUNT * 4 until SpcData.SAMPLE_DIRECTORY_END ->
+                (at - SpcData.SAMPLE_DIRECTORY) % 4 == 0 && data.size == 4
+            else -> false
+        }) { "A sample prefix must contain owned BRR data, complete instruments or reserved sample directory cells" }
+        return encodePrefix(entries, continuationPointer)
+    }
+
+    private fun encodePrefix(entries: Map<Int, ByteArray>, continuationPointer: Int): ByteArray {
         val blocks = MusicTransferChainBudget.mergeBlocks(emptyList(), entries)
         val out = ByteArrayOutputStream()
         fun word(value: Int) { out.write(value and 255); out.write((value ushr 8) and 255) }

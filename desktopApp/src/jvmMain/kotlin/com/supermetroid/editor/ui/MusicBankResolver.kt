@@ -17,6 +17,7 @@ internal object MusicBankResolver {
         }
         val sources = sourceWrites(project, songSet)
         for ((at, value) in sources) value.copyInto(ram, at)
+        for ((at, value) in MusicSampleBanks.writes(parser, project, songSet, ram, sources)) value.copyInto(ram, at)
         if (includeOverrides) {
             val instruments = MusicInstrumentBanks.instruments(project, songSet)
             for ((at, value) in MusicInstrumentBanks.writes(instruments)) value.copyInto(ram, at)
@@ -30,8 +31,11 @@ internal object MusicBankResolver {
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
         val songBlocks = SpcData.findSongSetTransferData(parser, songSet)
         val original = SpcData.buildInitialSpcRam(parser).also { SpcData.applyTransferBlocks(it, songBlocks) }
-        val sources = sourceWrites(project, songSet)
-        val source = original.copyOf().also { ram -> sources.forEach { (at, data) -> data.copyInto(ram, at) } }
+        val retainedSources = sourceWrites(project, songSet)
+        val retained = original.copyOf().also { ram -> retainedSources.forEach { (at, data) -> data.copyInto(ram, at) } }
+        val samples = MusicSampleBanks.writes(parser, project, songSet, retained, retainedSources)
+        val sources = retainedSources + samples
+        val source = retained.copyOf().also { ram -> samples.forEach { (at, data) -> data.copyInto(ram, at) } }
         val known = SpcData.KNOWN_TRACKS.filter { it.songSet == songSet }.mapTo(mutableSetOf()) { it.playIndex }
         known += edits.values.map { it.playIndex }
         val protected = known - edits.values.map { it.playIndex }.toSet()
@@ -59,6 +63,7 @@ internal object MusicBankResolver {
             merge(bytes, owners, writes, "'$key' (${edit.trackName})")
             patched++
         }
+        merge(bytes, owners, samples, "project samples")
         // Explicit bank edits intentionally override retained source instrument bytes, once.
         for ((at, data) in MusicInstrumentBanks.writes(instruments)) {
             data.forEachIndexed { i, value -> bytes[at + i] = value.toInt() and 255 }

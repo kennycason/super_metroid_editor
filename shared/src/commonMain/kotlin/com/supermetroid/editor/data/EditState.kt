@@ -877,6 +877,17 @@ data class MusicInstrumentEdit(
 @Serializable
 data class MusicInstrumentBankEdit(
     val instruments: MutableMap<Int, MusicInstrumentEdit> = mutableMapOf(),
+    /** Project-owned BRR samples in explicitly reserved directory entries. */
+    val samples: MutableMap<Int, MusicSampleEdit> = mutableMapOf(),
+)
+
+@Serializable
+data class MusicSampleEdit(
+    val srcn: Int,
+    val startAddr: Int,
+    val brrBase64: String,
+    val loopByteOffset: Int? = null,
+    val name: String,
 )
 
 @Serializable

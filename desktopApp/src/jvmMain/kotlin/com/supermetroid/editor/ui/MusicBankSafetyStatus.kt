@@ -86,6 +86,8 @@ internal fun MusicBankSafetyStatus(report: MusicBankTransitions.Report?, problem
                             val count = report.instrumentRestorations.size
                             Text("$count ${if (count == 1) "bank" else "banks"} will reload instrument settings on export.", fontSize = fs.detail)
                         }
+                        if (report.sampleDirectoryRestorations.isNotEmpty()) Text(
+                            "Project sample directory entries will be reloaded between banks.", fontSize = fs.detail)
                     }
                     report != null -> {
                         Text("Shared resources are not reloaded:", fontSize = fs.detail)

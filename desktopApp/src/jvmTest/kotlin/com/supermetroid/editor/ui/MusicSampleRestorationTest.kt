@@ -73,7 +73,7 @@ class MusicSampleRestorationTest {
 
     @Test fun `invalid unterminated engine table and unowned requests fail closed`() {
         val initial = ByteArray(65536).also { recording(it) }
-        for (at in listOf(-1, 65536, 0x5000, 0x6CFF, 0x6DA0, 0x6200)) {
+        for (at in listOf(-1, 65536, 0x5000, 0x6CFF, SpcData.SAMPLE_DIRECTORY_END, 0x6200)) {
             assertFails { derive(initial, mapOf(3 to bank(initial)), MusicSampleRestoration.Need(3, at, at + 1)) }
         }
         for (start in listOf(0xFFFF, 0x6500, 0x5800, 0x6C00)) {
@@ -90,6 +90,13 @@ class MusicSampleRestorationTest {
         assertFails { derive(crossing, mapOf(3 to bank(crossing)), MusicSampleRestoration.Need(3, 0x6BFC, 0x6BFD)) }
         assertFails { derive(initial, mapOf(3 to bank(initial, SpcData.TransferBlock(65535, byteArrayOf(1, 2)))) ) }
         assertFails { derive(initial, mapOf(3 to bank(initial)), MusicSampleRestoration.Need(6, 0x6000, 0x6001)) }
+    }
+
+    @Test fun `reserved custom directory cells restore as complete entries`() {
+        val initial = ByteArray(65536)
+        val plan = derive(initial, mapOf(3 to bank(initial)), MusicSampleRestoration.Need(3, 0x6DFF, 0x6E00))
+        assertEquals(setOf(0x6DFC), plan.writes.getValue(3).keys)
+        assertEquals(4, plan.payloadBytes)
     }
 
     @Test fun `restoration is deterministic detached and never claims sample or instrument slots`() {

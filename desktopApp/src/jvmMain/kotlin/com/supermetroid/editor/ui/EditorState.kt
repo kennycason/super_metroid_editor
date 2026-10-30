@@ -2710,13 +2710,13 @@ class EditorState(
 
     fun hasMusicEdit(songSet: Int, playIndex: Int): Boolean =
         project.musicEdits.containsKey(musicEditKey(songSet, playIndex)) ||
-            project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.instruments?.isNotEmpty() == true ||
+            project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.let { it.instruments.isNotEmpty() || it.samples.isNotEmpty() } == true ||
             project.musicEdits.values.any { it.songSet == songSet && it.nativePayload != null }
 
     fun setMusicInstrumentBank(songSet: Int, bank: com.supermetroid.editor.data.MusicInstrumentBankEdit?) {
         require(songSet >= 0 && songSet % 3 == 0)
         val key = MusicInstrumentBanks.key(songSet)
-        val nonEmptyBank = bank?.takeIf { it.instruments.isNotEmpty() }
+        val nonEmptyBank = bank?.takeIf { it.instruments.isNotEmpty() || it.samples.isNotEmpty() }
         if (project.musicInstrumentBanks[key] == nonEmptyBank) return
         if (nonEmptyBank == null) project.musicInstrumentBanks.remove(key)
         else project.musicInstrumentBanks[key] = requireNotNull(MusicInstrumentBanks.copy(nonEmptyBank))
@@ -2754,8 +2754,12 @@ class EditorState(
 
     fun musicSampleNames(songSet: Int): Map<String, String> {
         musicSampleNameVersion
+        musicEditVersion
         val prefix = "${MusicInstrumentBanks.key(songSet)}:"
-        return project.musicSampleNames.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) }
+        val authored = project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.samples.orEmpty().values.mapNotNull {
+            runCatching { MusicSampleBanks.resourceId(it) to it.name }.getOrNull()
+        }.toMap()
+        return authored + project.musicSampleNames.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) }
     }
 
     fun renameMusicSample(songSet: Int, resourceId: String, name: String) {

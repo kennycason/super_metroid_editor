@@ -23,7 +23,7 @@ object NspcRenderer {
     private const val SAMPLE_DIR_ADDR = 0x6D00
     private const val PITCH_TABLE_ADDR = 0x1E66
     private const val MAX_INSTRUMENTS = 42
-    private const val MAX_SAMPLES = 40
+    private const val MAX_SAMPLES = SpcData.SAMPLE_COUNT
 
     private val DEFAULT_PITCH_TABLE = intArrayOf(
         0x085F, 0x08DE, 0x0965, 0x09F4, 0x0A8C, 0x0B2C,

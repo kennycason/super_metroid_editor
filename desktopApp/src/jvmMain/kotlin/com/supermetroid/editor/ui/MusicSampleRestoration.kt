@@ -7,7 +7,7 @@ import com.supermetroid.editor.rom.SpcTransferStream
 
 /**
  * Detached sample-lifetime prototype. This is NOT an export permission or a spare-slot
- * detector: the production exporter remains instrument-only. Native acceptance must use
+ * detector: production export owns project samples separately. Native acceptance must use
  * these concrete writes through the CPU/APU uploader, not just a fresh-RAM preview.
  */
 internal object MusicSampleRestoration {
@@ -47,7 +47,8 @@ internal object MusicSampleRestoration {
             "Sample restoration cannot restore SPC engine code"
         }
         val needs = report.issues.map { Need(it.targetSongSet, it.start, it.endExclusive) } +
-            report.instrumentRestorations.flatMap { (set, writes) -> writes.map { (at, data) -> Need(set, at, at + data.size) } }
+            report.instrumentRestorations.flatMap { (set, writes) -> writes.map { (at, data) -> Need(set, at, at + data.size) } } +
+            report.sampleDirectoryRestorations.flatMap { (set, writes) -> writes.map { (at, data) -> Need(set, at, at + data.size) } }
         val engine = baseBlocks.filter { it.destAddr < 0x5800 }.map {
             MusicSequenceBudget.SpcRange(it.destAddr, minOf(0x5800, it.destAddr + it.data.size))
         }
@@ -122,7 +123,7 @@ internal object MusicSampleRestoration {
                 MusicSequenceBudget.sampleRanges(ram).map { Stream(it, ram) }
         }
 
-        fun protected(at: Int) = at in 0x6C00 until 0x6CFC || at in 0x6D00 until 0x6DA0 ||
+        fun protected(at: Int) = at in 0x6C00 until 0x6CFC || at in 0x6D00 until SpcData.SAMPLE_DIRECTORY_END ||
             engine.any { at in it.start until it.endExclusive } || streams.any { at in it.range.start until it.range.endExclusive }
 
         fun units(at: Int): List<MusicSequenceBudget.SpcRange> {
@@ -131,7 +132,7 @@ internal object MusicSampleRestoration {
                 val start = 0x6C00 + (at - 0x6C00) / 6 * 6
                 return listOf(MusicSequenceBudget.SpcRange(start, start + 6))
             }
-            if (at in 0x6D00 until 0x6DA0) {
+            if (at in 0x6D00 until SpcData.SAMPLE_DIRECTORY_END) {
                 val start = 0x6D00 + (at - 0x6D00) / 4 * 4
                 return listOf(MusicSequenceBudget.SpcRange(start, start + 4))
             }
@@ -141,7 +142,7 @@ internal object MusicSampleRestoration {
                 if (!stream.validated) {
                     val range = stream.range
                     require(range.start >= 0x5800 && range.size > 0 && range.size % 9 == 0 &&
-                        !(range.start < 0x6DA0 && range.endExclusive > 0x6C00) &&
+                        !(range.start < SpcData.SAMPLE_DIRECTORY_END && range.endExclusive > 0x6C00) &&
                         engine.none { it.start < range.endExclusive && it.endExclusive > range.start } &&
                         (stream.ram[range.endExclusive - 9].toInt() and 1) != 0) {
                         "Cannot restore an incomplete or overlapping BRR recording at 0x${range.start.toString(16)}"

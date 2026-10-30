@@ -46,22 +46,32 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         val banks = songSets.associateWith { MusicBankResolver.resolve(parser, project, it) }.toMutableMap()
         val transitions = MusicBankTransitions.inspect(parser, project, banks)
         transitions.requireSafe()
-        for ((songSet, resets) in transitions.instrumentRestorations) {
+        for (songSet in transitions.instrumentRestorations.keys + transitions.sampleDirectoryRestorations.keys) {
+            val resets = transitions.instrumentRestorations[songSet].orEmpty() + transitions.sampleDirectoryRestorations[songSet].orEmpty()
             val bank = banks[songSet] ?: MusicBankResolver.resolve(parser, project, songSet)
             banks[songSet] = bank.copy(writes = MusicTransferChainBudget.mergeBlocks(bank.blocks, resets).associate { it.destAddr to it.data })
         }
         val proposed = MusicBankTransitions.inspect(parser, project, banks)
         proposed.requireSafe()
         check(proposed.instrumentRestorations.isEmpty()) { "Instrument restoration plan is incomplete" }
+        check(proposed.sampleDirectoryRestorations.isEmpty()) { "Sample directory restoration plan is incomplete" }
         val plans = banks.filterValues { it.writes.isNotEmpty() }.map { (songSet, bank) ->
             val pointer = pointers.getValue(songSet)
             val source = sources.getValue(pointer)
             val loaded = BooleanArray(65536)
             for (block in source.sourceBlocks) loaded.fill(true, block.destAddr, block.destAddr + block.data.size)
             val missing = bank.writes.flatMap { (at, data) -> data.indices.map { at + it }.filter { !loaded[it] } }
-            val canPrefix = missing.all { it in 0x6C00 until 0x6CFC }
-            val prefix = if (canPrefix) missing.map { 0x6C00 + (it - 0x6C00) / 6 * 6 }.distinct().associateWith {
-                bank.ram.copyOfRange(it, it + 6)
+            val samples = project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.samples.orEmpty().values
+                .map { it.startAddr until it.startAddr + MusicSampleBanks.decode(it).size }
+            fun unit(at: Int): IntRange? = when (at) {
+                in 0x6C00 until 0x6CFC -> (0x6C00 + (at - 0x6C00) / 6 * 6).let { it until it + 6 }
+                in SpcData.SAMPLE_DIRECTORY + SpcData.STOCK_SAMPLE_COUNT * 4 until SpcData.SAMPLE_DIRECTORY_END ->
+                    (SpcData.SAMPLE_DIRECTORY + (at - SpcData.SAMPLE_DIRECTORY) / 4 * 4).let { it until it + 4 }
+                else -> samples.firstOrNull { at in it }
+            }
+            val canPrefix = missing.all { unit(it) != null }
+            val prefix = if (canPrefix) missing.mapNotNull(::unit).distinct().associate {
+                it.first to bank.ram.copyOfRange(it.first, it.last + 1)
             } else emptyMap()
             val covered = if (canPrefix) {
                 val bytes = sortedMapOf<Int, Int>()
@@ -95,7 +105,7 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
             reserve(requireNotNull(it.relocated).size, "relocated SPC transfer chain for bank ${MusicInstrumentBanks.key(it.songSet)}", 16)
         }
         val prefixes = plans.filter { it.prefix.isNotEmpty() }.associateWith {
-            reserve(MusicTransferLoader.instrumentPrefix(it.prefix, it.originalPointer).size,
+            reserve(prefix(it.prefix, it.originalPointer).size,
                 "instrument prefix for bank ${MusicInstrumentBanks.key(it.songSet)}", 2)
         }
         val allocated = mutableListOf<Pair<RomAllocation, ByteArray>>()
@@ -108,7 +118,7 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
                 pointer = allocation.snesAddress
             }
             prefixes[plan]?.let { allocation ->
-                allocated += allocation to MusicTransferLoader.instrumentPrefix(plan.prefix, pointer)
+                allocated += allocation to prefix(plan.prefix, pointer)
                 pointer = allocation.snesAddress
             }
             if (pointer != plan.originalPointer) {
@@ -149,17 +159,22 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         val checked = MusicBankTransitions.inspect(parser, project, concrete)
         checked.requireSafe()
         check(checked.instrumentRestorations.isEmpty()) { "Serialized instrument restorations are incomplete" }
+        check(checked.sampleDirectoryRestorations.isEmpty()) { "Serialized sample directory restorations are incomplete" }
         // Commit only after every stream, bank, transition and allocation has passed.
         for ((allocation, data) in allocated) allocator.validateWrite(allocation, data)
         for ((allocation, data) in allocated) allocator.write(allocation, data)
         for ((at, data) in writes) data.copyInto(romData, at)
         for (plan in plans) onLog("[EXPORT] Bank ${MusicInstrumentBanks.key(plan.songSet)}: " + when {
-            plan.prefix.isNotEmpty() -> "instrument prefix (${plan.prefix.size} settings) + retained music"
+            plan.prefix.isNotEmpty() -> "resource prefix (${plan.prefix.size} entries) + retained music"
             plan.relocated != null -> "relocated SPC transfer chain (${plan.relocated.size} bytes)"
             else -> "updated in place (${plan.patches.sumOf { it.second.size }} changed bytes; no bank copy)"
         })
         return songSets.sumOf { banks.getValue(it).patchedTracks }
     }
+
+    private fun prefix(entries: Map<Int, ByteArray>, pointer: Int): ByteArray =
+        if (entries.keys.all { it in 0x6C00 until 0x6CFC }) MusicTransferLoader.instrumentPrefix(entries, pointer)
+        else MusicTransferLoader.samplePrefix(entries, pointer)
 
     private fun serialize(source: SpcTransferStream.Chain, writes: Map<Int, ByteArray>, native: Boolean, songSet: Int): ByteArray {
         val blocks = MusicTransferChainBudget.mergeBlocks(source.blocks, writes)

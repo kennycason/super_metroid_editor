@@ -33,6 +33,8 @@ internal object MusicBankTransitions {
         val checkedTransitions: Int,
         /** Complete instrument entries can be explicitly reloaded without copying sample data. */
         val instrumentRestorations: Map<Int, Map<Int, ByteArray>> = emptyMap(),
+        /** Reserved project directory cells must be reset on every incoming bank load. */
+        val sampleDirectoryRestorations: Map<Int, Map<Int, ByteArray>> = emptyMap(),
     ) {
         val canExport: Boolean get() = issues.isEmpty()
 
@@ -79,7 +81,7 @@ internal object MusicBankTransitions {
             // entries are not advertised as safe for duplication or effect isolation.
             protect(0x6C00, 0x6C90, Resource.COMMON_INSTRUMENT)
             protect(0x6C90, 0x6CFC, Resource.INSTRUMENT)
-            protect(0x6D00, 0x6DA0, Resource.DIRECTORY)
+            protect(0x6D00, SpcData.SAMPLE_DIRECTORY_END, Resource.DIRECTORY)
             for (range in MusicSequenceBudget.sampleRanges(initial) + MusicSequenceBudget.sampleRanges(ram)) {
                 protect(range.start, range.endExclusive, Resource.SAMPLE)
             }
@@ -115,7 +117,7 @@ internal object MusicBankTransitions {
                 val entry = 0x6C00 + slot * 6
                 depend(entry, entry + 6)
                 val srcn = ram[entry].toInt() and 255
-                if (srcn >= 40) continue // Noise does not consume BRR data.
+                if (srcn >= SpcData.SAMPLE_COUNT) continue // Noise does not consume BRR data.
                 val dir = 0x6D00 + srcn * 4
                 depend(dir, dir + 4)
                 sample((ram[dir].toInt() and 255) or ((ram[dir + 1].toInt() and 255) shl 8))
@@ -125,12 +127,18 @@ internal object MusicBankTransitions {
         }
         val issues = mutableListOf<Issue>()
         val restorations = sortedMapOf<Int, MutableMap<Int, ByteArray>>()
+        val directories = sortedMapOf<Int, MutableMap<Int, ByteArray>>()
         val checked = mutableSetOf<Pair<Int, Int>>()
         fun inspectByte(sourceSet: Int, targetSet: Int, at: Int, editedSet: Int) {
             val source = banks.getValue(sourceSet)
             val target = banks.getValue(targetSet)
             if (target.loaded[at] || target.protected[at] == 0 || source.ram[at] == target.ram[at]) return
             val resource = Resource.entries[target.protected[at] - 1]
+            if (resource == Resource.DIRECTORY && at >= SpcData.SAMPLE_DIRECTORY + SpcData.STOCK_SAMPLE_COUNT * 4) {
+                val entry = SpcData.SAMPLE_DIRECTORY + (at - SpcData.SAMPLE_DIRECTORY) / 4 * 4
+                directories.getOrPut(targetSet) { sortedMapOf() }[entry] = target.ram.copyOfRange(entry, entry + 4)
+                return
+            }
             if (resource == Resource.INSTRUMENT || resource == Resource.COMMON_INSTRUMENT) {
                 val entry = 0x6C00 + (at - 0x6C00) / 6 * 6
                 restorations.getOrPut(targetSet) { sortedMapOf() }[entry] = target.ram.copyOfRange(entry, entry + 6)
@@ -158,8 +166,8 @@ internal object MusicBankTransitions {
                 for (at in target.dependencies) inspectByte(sourceSet, targetSet, at, targetSet)
             }
         }
-        if (restorations.isNotEmpty()) SpcTransferStream.requireSupportedLoader(parser)
-        return Report(issues.distinct(), checked.size, restorations)
+        if (restorations.isNotEmpty() || directories.isNotEmpty()) SpcTransferStream.requireSupportedLoader(parser)
+        return Report(issues.distinct(), checked.size, restorations, directories)
     }
 
     fun editedSongSets(project: SmEditProject): List<Int> =

@@ -27,12 +27,15 @@ import java.awt.Frame
 import java.io.File
 
 @Composable
-internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, bankTarget: SampleBankPreview.Target? = null, onClose: () -> Unit) {
+internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, bankTarget: SampleBankPreview.Target? = null,
+    onUseSample: ((MusicSampleBanks.Application) -> Unit)? = null, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val fs = LocalEditorTheme.current.fontSize.value
     var fileBusy by remember { mutableStateOf(false) }
     var bank by remember(parser, bankTarget) { mutableStateOf<SampleBankPreview?>(null) }
     var bankProblem by remember(parser, bankTarget) { mutableStateOf<String?>(null) }
+    var application by remember(parser, bankTarget) { mutableStateOf<MusicSampleBanks.Application?>(null) }
+    var useProblem by remember(parser, bankTarget) { mutableStateOf<String?>(null) }
     DisposableEffect(state) { onDispose { state.stop() } }
     LaunchedEffect(state.draft) { delay(140); state.prepare() }
     LaunchedEffect(parser, bankTarget) {
@@ -41,6 +44,17 @@ internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, ba
             try { bank = withContext(Dispatchers.Default) { SampleBankPreview.load(parser, bankTarget) } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { bankProblem = error.message ?: "Cannot check this bank" }
+        }
+    }
+    LaunchedEffect(parser, bankTarget, state.encoded, state.draft.name) {
+        application = null; useProblem = null
+        val sample = state.encoded
+        val name = state.draft.name
+        if (parser != null && bankTarget != null && sample != null && onUseSample != null) {
+            delay(80)
+            try { application = withContext(Dispatchers.Default) { MusicSampleBanks.plan(parser, bankTarget, sample, name) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { useProblem = error.message ?: "Cannot use this sample in this bank" }
         }
     }
     fun fileAction(title: String, extension: String, save: Boolean, action: suspend (File) -> Unit) {
@@ -86,6 +100,13 @@ internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, ba
                     } },
                     bankTarget = bankTarget?.let { "${it.bankName} · ${it.soundName} · ${it.note.name}" }, bank = bank, bankProblem = bankProblem,
                     onPlayInBank = { bank?.let { scope.launch { state.previewInBank(it) } } },
+                    application = application, useProblem = useProblem,
+                    onUseSample = onUseSample?.let { use -> {
+                        application?.let { planned ->
+                            try { use(planned); state.stop(); onClose() }
+                            catch (error: Exception) { state.message = error.message ?: "Cannot apply this sample" }
+                        }
+                    } },
                     modifier = Modifier.weight(1f, fill = false),
                 )
             }
@@ -108,6 +129,9 @@ internal fun SampleWorkbenchContent(
     bank: SampleBankPreview? = null,
     bankProblem: String? = null,
     onPlayInBank: () -> Unit = {},
+    application: MusicSampleBanks.Application? = null,
+    useProblem: String? = null,
+    onUseSample: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -118,7 +142,7 @@ internal fun SampleWorkbenchContent(
     var invalidFields by remember { mutableStateOf(emptySet<String>()) }
     var details by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
-    val bankFit = remember(bank, encoded) { if (bank != null && encoded != null) runCatching { bank.layout.place(encoded) } else null }
+    val bankFit = remember(bank, encoded) { if (bank != null && encoded != null) runCatching { bank.allocation(encoded) } else null }
     fun fieldValidity(label: String, valid: Boolean) { invalidFields = if (valid) invalidFields - label else invalidFields + label }
     val ready = enabled && encoded != null && invalidFields.isEmpty()
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -189,16 +213,19 @@ internal fun SampleWorkbenchContent(
                     if (bankTarget != null) {
                         Text(bankTarget, fontSize = fs.detail, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("sample-bank-target"))
-                        Text("Tryout only · uses this sound's envelope + tuning", fontSize = fs.detail,
+                        Text(if (onUseSample == null) "Tryout only · uses this sound's envelope + tuning" else "Keeps envelope + tuning · shared bank sound", fontSize = fs.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(when {
                             bankProblem != null -> bankProblem
+                            useProblem != null -> useProblem
                             bank == null -> "Checking bank space…"
                             encoded == null -> "Encoding sample…"
-                            bankFit?.isSuccess == true -> "${encoded.brr.size} B sample fits"
+                            application != null -> "${application.bytes} B sample · ${application.remainingBytes} B left\nLargest gap · ${application.largestGapBytes} B"
+                            onUseSample != null -> "Checking sample placement…"
+                            bankFit?.isSuccess == true -> "${encoded.brr.size} B sample fits · ${bank.layout.totalBytes} B available"
                             else -> bankFit?.exceptionOrNull()?.message ?: "Cannot place this sample"
                         }, fontSize = fs.detail, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            color = if (bankProblem != null || bankFit?.isFailure == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (bankProblem != null || useProblem != null || bankFit?.isFailure == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth().height(44.dp).testTag("sample-bank-fit"))
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -237,12 +264,18 @@ internal fun SampleWorkbenchContent(
                         color = if (state.problem != null || invalidFields.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(shape = SoundControlShape, onClick = onSave, enabled = ready,
+                    if (onUseSample != null) Button(shape = SoundControlShape, onClick = onUseSample,
+                        enabled = ready && application?.changed == true && useProblem == null,
+                        modifier = Modifier.testTag("sample-use-in-sound")) { Text(if (application?.changed == false) "Already in sound" else "Use sample in sound", fontSize = fs.body) }
+                    if (onUseSample == null) Button(shape = SoundControlShape, onClick = onSave, enabled = ready,
+                        modifier = Modifier.testTag("sample-save-draft")) { Text("Save sample", fontSize = fs.body) }
+                    else OutlinedButton(shape = SoundControlShape, onClick = onSave, enabled = ready,
                         modifier = Modifier.testTag("sample-save-draft")) { Text("Save sample", fontSize = fs.body) }
                     OutlinedButton(shape = SoundControlShape, onClick = onExport, enabled = ready,
                         modifier = Modifier.testTag("sample-export-brr")) { Text("Export BRR", fontSize = fs.body) }
                 }
-                Text("Save as a sample file · not added to a music bank", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (onUseSample == null) "Save as a sample file · not added to a music bank" else
+                    "Use updates this shared sound · Save sample creates a separate file", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -275,8 +308,14 @@ private fun SampleFrameField(label: String, value: Int, enabled: Boolean, source
     val fs = LocalEditorTheme.current.fontSize.value
     var text by remember(value, source) { mutableStateOf(value.toString()) }
     val valid = text.toIntOrNull()?.let { it >= 0 && it % 16 == 0 } == true
-    LaunchedEffect(text, enabled) { onValidity(!enabled || valid) }
-    OutlinedTextField(text, { next -> text = next; next.toIntOrNull()?.takeIf { it >= 0 && it % 16 == 0 }?.let(onChange) },
+    val currentValidity by rememberUpdatedState(onValidity)
+    LaunchedEffect(text, enabled) { currentValidity(!enabled || valid) }
+    OutlinedTextField(text, { next ->
+        text = next
+        val frame = next.toIntOrNull()?.takeIf { it >= 0 && it % 16 == 0 }
+        currentValidity(!enabled || frame != null)
+        frame?.let(onChange)
+    },
         enabled = enabled, isError = enabled && !valid, singleLine = true,
         label = { Text(label, fontSize = fs.detail) }, textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
         modifier = Modifier.width(142.dp).testTag("sample-frame-$label"))

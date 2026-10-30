@@ -134,6 +134,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     private var sampleCatalogRam: ByteArray? = null
     private var sampleCatalogSongSet = -1
     private var sampleCatalogBankBlocks: List<SpcData.TransferBlock> = emptyList()
+    private var sampleCatalogCustom: List<SpcData.TransferBlock> = emptyList()
     private var sampleCatalogImports: List<Pair<String, List<SpcData.TransferBlock>>> = emptyList()
     private var loadedSampleVersion = -1
     private var originalPianoRollInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
@@ -836,7 +837,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                     if (PianoRollPreviewLogic.instrumentBytes(entry).contentEquals(PianoRollPreviewLogic.instrumentBytes(defaults.getValue(entry.index)))) values.remove(entry.index)
                     else values[entry.index] = MusicInstrumentBanks.entry(entry)
                 }
-                editor.setMusicInstrumentBank(track.songSet, MusicInstrumentBankEdit(values))
+                editor.setMusicInstrumentBank(track.songSet, (currentInstrumentBank() ?: MusicInstrumentBankEdit()).copy(instruments = values))
                 refreshOpenBankInstruments()
             }
         }
@@ -1166,7 +1167,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         val old = pianoRollInstruments[idx]
         val normalized = updated.copy(
             // Preserve the engine's noise source flag when editing other settings.
-            srcn = if (updated.srcn >= 0x80) updated.srcn.coerceAtMost(255) else updated.srcn.coerceIn(0, 39),
+            srcn = if (updated.srcn >= 0x80) updated.srcn.coerceAtMost(255) else updated.srcn.coerceIn(0, SpcData.SAMPLE_COUNT - 1),
             adsr1 = updated.adsr1.coerceIn(0, 255),
             adsr2 = updated.adsr2.coerceIn(0, 255),
             gain = updated.gain.coerceIn(0, 255),
@@ -1185,7 +1186,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             val values = currentInstrumentBank()?.instruments?.toMutableMap() ?: mutableMapOf()
             if (PianoRollPreviewLogic.instrumentBytes(base).contentEquals(PianoRollPreviewLogic.instrumentBytes(normalized))) values.remove(idx)
             else values[idx] = MusicInstrumentBanks.entry(normalized)
-            projectState.setMusicInstrumentBank(track.songSet, MusicInstrumentBankEdit(values))
+            projectState.setMusicInstrumentBank(track.songSet, (currentInstrumentBank() ?: MusicInstrumentBankEdit()).copy(instruments = values))
         }
 
         pianoRollInstruments = if (romParser != null) {
@@ -1233,7 +1234,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     internal fun pianoRollNativeExportBlocks(romParser: RomParser, song: NspcSequence.Song): List<SpcData.TransferBlock>? =
         projectForBank(song)?.let { project ->
             val track = requireNotNull(selectedTrack)
-            if (project.musicEdits.values.any { it.songSet == track.songSet && it.nativePayload != null }) MusicBankResolver.resolve(romParser, project, track.songSet).blocks
+            if (project.musicEdits.values.any { it.songSet == track.songSet && it.nativePayload != null } || currentInstrumentBank()?.samples?.isNotEmpty() == true) MusicBankResolver.resolve(romParser, project, track.songSet).blocks
             else null
         } ?: pianoRollNativeSource?.let { ImportedMusicResolver.resolve(romParser, currentNativeImportEdit(song)).blocks }
 
@@ -1297,6 +1298,10 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         sampleCatalogSongSet = songSet
         sampleCatalogBankBlocks = bankBlocks
         sampleCatalogImports = imports
+        sampleCatalogCustom = project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.samples.orEmpty().values.flatMap { sample ->
+            listOf(SpcData.TransferBlock(sample.startAddr, MusicSampleBanks.decode(sample)),
+                SpcData.TransferBlock(SpcData.SAMPLE_DIRECTORY + sample.srcn * 4, ram.copyOfRange(SpcData.SAMPLE_DIRECTORY + sample.srcn * 4, SpcData.SAMPLE_DIRECTORY + sample.srcn * 4 + 4)))
+        }
         pianoRollSampleVersion++
         pianoRollSamples = emptyList()
         pianoRollSamplesProblem = null
@@ -1310,9 +1315,10 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         if (loadedSampleVersion == version) return
         val blocks = sampleCatalogBankBlocks
         val imports = sampleCatalogImports
+        val custom = sampleCatalogCustom
         isLoadingPianoRollSamples = true
         try {
-            val samples = withContext(Dispatchers.Default) { MusicSampleCatalog.read(ram, blocks, imports) }
+            val samples = withContext(Dispatchers.Default) { MusicSampleCatalog.read(ram, blocks, imports, custom) }
             if (version != pianoRollSampleVersion) return
             pianoRollSamples = samples
             loadedSampleVersion = version
@@ -1335,6 +1341,30 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         if (entry.srcn == srcn) return false
         recordPianoRollEdit("Change sound recording")
         updatePianoRollInstrument(MusicSampleCatalog.apply(entry, sample), parser, editor)
+        return true
+    }
+
+    internal fun useWorkbenchSample(application: MusicSampleBanks.Application, parser: RomParser, editor: EditorState): Boolean {
+        val target = application.target
+        val track = selectedTrack ?: error("Choose a track before using this sample")
+        require(isPianoRollOpen && track.songSet == target.songSet && (target.trackId == null || track.id == target.trackId)) {
+            "The selected track changed. Reopen the sample workbench."
+        }
+        require(editor.project.projectId == target.project.projectId && editor.project.romPath == target.project.romPath &&
+            editor.project.musicEdits == target.project.musicEdits && editor.project.musicInstrumentBanks == target.project.musicInstrumentBanks) {
+            "The sound bank changed. Reopen the sample workbench."
+        }
+        if (!application.changed) return false
+        require(instrumentBankProblem == null) { instrumentBankProblem.orEmpty() }
+        val staged = MusicBankTransitions.snapshot(editor.project)
+        staged.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)] = requireNotNull(MusicInstrumentBanks.copy(application.bank))
+        MusicBankResolver.resolve(parser, staged, track.songSet)
+        recordPianoRollEdit("Use sample in sound")
+        stopPlayback()
+        editor.setMusicInstrumentBank(track.songSet, application.bank)
+        refreshInstrumentBank(parser, editor)
+        refreshOpenBankInstruments()
+        statusMessage = "Using sample in ${target.soundName} · ${application.remainingBytes} B sample memory available"
         return true
     }
 
@@ -2003,7 +2033,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
             val bankProject = editorStateRef?.project
             val sharedEdited = bankProject != null && (savedEdit != null ||
-                bankProject.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)]?.instruments?.isNotEmpty() == true ||
+                bankProject.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)]?.let { it.instruments.isNotEmpty() || it.samples.isNotEmpty() } == true ||
                 bankProject.musicEdits.values.any { it.songSet == track.songSet && it.nativePayload != null })
             if (sharedEdited) {
                 return@withContext renderSharedBankPreview(parser, track, requireNotNull(bankProject), rate)

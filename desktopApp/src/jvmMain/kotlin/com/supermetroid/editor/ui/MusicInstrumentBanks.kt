@@ -12,7 +12,7 @@ internal object MusicInstrumentBanks {
         value.index, value.tableAddr, value.srcn, value.adsr1, value.adsr2, value.gain, value.pitchAdj)
     fun native(value: MusicInstrumentEdit) = NspcRenderer.InstrumentEntry(
         value.srcn, value.adsr1, value.adsr2, value.gain, value.pitchAdj, value.index, value.tableAddr)
-    fun copy(bank: MusicInstrumentBankEdit?) = bank?.copy(instruments = bank.instruments.toMutableMap())
+    fun copy(bank: MusicInstrumentBankEdit?) = bank?.copy(instruments = bank.instruments.toMutableMap(), samples = bank.samples.toMutableMap())
 
     fun instruments(project: SmEditProject, songSet: Int): Map<Int, MusicInstrumentEdit> {
         val instruments = project.musicInstrumentBanks[key(songSet)]?.instruments.orEmpty()

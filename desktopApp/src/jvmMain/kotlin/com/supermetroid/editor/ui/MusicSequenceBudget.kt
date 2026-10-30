@@ -124,7 +124,7 @@ internal object MusicSequenceBudget {
             val size = SpcData.measureBrrSize(ram, at)
             if (size > 0) add(SpcRange(at, at + size))
         }
-        for (slot in 0 until 40) {
+        for (slot in 0 until SpcData.SAMPLE_COUNT) {
             val dir = 0x6D00 + slot * 4
             protect((ram[dir].toInt() and 255) or ((ram[dir + 1].toInt() and 255) shl 8))
             protect((ram[dir + 2].toInt() and 255) or ((ram[dir + 3].toInt() and 255) shl 8))

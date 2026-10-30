@@ -416,7 +416,8 @@ fun SoundEditorCanvas(
     }
 
     sampleTryout?.let { target ->
-        SampleWorkbench(state.sampleWorkbench, romParser, target) { sampleTryout = null }
+        SampleWorkbench(state.sampleWorkbench, romParser, target,
+            onUseSample = { application -> romParser?.let { state.useWorkbenchSample(application, it, editorState) } }) { sampleTryout = null }
     }
 
     LaunchedEffect(state.selectedTrackId, state.sampleRate, editorState.musicEditVersion) {
@@ -544,7 +545,7 @@ fun SoundEditorCanvas(
                     val names = editorState.musicInstrumentNames(state.currentSongSet)
                     sampleTryout = SampleBankPreview.Target(state.currentSongSet, note.copy(), track?.name ?: "Current bank",
                         state.pianoRollInstruments.getOrNull(note.instrument)?.let { InstrumentDescriptions.title(it, names) } ?: "Sound #${note.instrument}",
-                        MusicBankTransitions.snapshot(editorState.project))
+                        MusicBankTransitions.snapshot(editorState.project), track?.id)
                 } else null,
                 instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
                 instrumentBankLabel = "${track?.name.orEmpty()} sound bank",

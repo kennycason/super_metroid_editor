@@ -13,6 +13,11 @@ import com.supermetroid.editor.util.EditorLog
  * Transfer block format: [size:u16] [spcDest:u16] [data:size bytes]...  [0x0000 = end]
  */
 object SpcData {
+    const val STOCK_SAMPLE_COUNT = 40
+    const val SAMPLE_COUNT = 64 // Directory ends at $6E00, before common BRR data.
+    const val SAMPLE_DIRECTORY = 0x6D00
+    const val SAMPLE_DIRECTORY_END = SAMPLE_DIRECTORY + SAMPLE_COUNT * 4
+
 
     // ─── Known SM tracks (song set, play index) → name ──────────────
 
@@ -139,8 +144,15 @@ object SpcData {
      * We try common DIR values used by SM's SPC engine.
      */
     fun findSampleDirectory(spcRam: ByteArray): List<SampleDirEntry> {
-        // SM typically uses DIR page at $6C (directory at $6C00)
-        // Also try other common values
+        val native = (0 until SAMPLE_COUNT).mapNotNull { index ->
+            val at = SAMPLE_DIRECTORY + index * 4
+            val start = (spcRam[at].toInt() and 255) or ((spcRam[at + 1].toInt() and 255) shl 8)
+            val loop = (spcRam[at + 2].toInt() and 255) or ((spcRam[at + 3].toInt() and 255) shl 8)
+            if (start < 0x5800 || start in 0x6C00 until SAMPLE_DIRECTORY_END || measureBrrSize(spcRam, start) <= 0) null
+            else SampleDirEntry(index, start, loop)
+        }
+        if (native.size >= 4) return native
+        // Other SPC engines may use another directory page.
         for (dirPage in listOf(0x6C, 0x6D, 0x04, 0x02, 0x1A)) {
             val dirAddr = dirPage * 0x100
             val entries = parseSampleDirectory(spcRam, dirAddr)

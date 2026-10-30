@@ -32,14 +32,14 @@ internal object MusicSampleCatalog {
     private data class Brr(val start: Int, val end: Int, val loops: Boolean)
 
     fun read(ram: ByteArray, bankBlocks: List<SpcData.TransferBlock> = emptyList(),
-        imports: List<Pair<String, List<SpcData.TransferBlock>>> = emptyList()): List<MusicSample> {
+        imports: List<Pair<String, List<SpcData.TransferBlock>>> = emptyList(), customBlocks: List<SpcData.TransferBlock> = emptyList()): List<MusicSample> {
         require(ram.size == 65536)
         fun word(at: Int) = (ram[at].toInt() and 255) or ((ram[at + 1].toInt() and 255) shl 8)
         fun brr(start: Int): Brr? {
             if (start < 0x5800) return null // Never offer engine bytes as a recording.
             var at = start
             repeat(4096) {
-                if (at + 9 > ram.size || (at < 0x6DA0 && at + 9 > 0x6C00)) return null
+                if (at + 9 > ram.size || (at < SpcData.SAMPLE_DIRECTORY_END && at + 9 > 0x6C00)) return null
                 val header = ram[at].toInt() and 255
                 at += 9
                 if (header and 1 != 0) return Brr(start, at, header and 2 != 0)
@@ -48,7 +48,7 @@ internal object MusicSampleCatalog {
         }
         fun touches(block: SpcData.TransferBlock, start: Int, end: Int) = block.destAddr < end && block.destAddr + block.data.size > start
         return buildList {
-            for (srcn in 0 until 40) {
+            for (srcn in 0 until SpcData.SAMPLE_COUNT) {
                 val dir = 0x6D00 + srcn * 4
                 val data = brr(word(dir)) ?: continue
                 val loopAddr = word(dir + 2)
@@ -61,14 +61,12 @@ internal object MusicSampleCatalog {
                     linked?.loops == true -> introBytes / 9 * 16
                     else -> null // A linked tail with END but no LOOP plays once, then stops.
                 }
-                val digest = MessageDigest.getInstance("SHA-256")
-                val loopOffset = loopFrame ?: -1
-                repeat(4) { digest.update((loopOffset ushr (it * 8)).toByte()) }
-                val resource = "brr:" + digest.digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+                val resource = resourceId(bytes, loopFrame)
                 fun affects(block: SpcData.TransferBlock) = touches(block, dir, dir + 4) || touches(block, data.start, data.end) ||
                     (linked != null && touches(block, linked.start, linked.end))
                 val imported = imports.filter { (_, blocks) -> blocks.any(::affects) }.map { it.first }.distinct()
                 val origin = when {
+                    customBlocks.any(::affects) -> "Project sample"
                     imported.isNotEmpty() -> "Import"
                     bankBlocks.any(::affects) -> "Bank ROM"
                     else -> "Shared ROM"
@@ -92,6 +90,13 @@ internal object MusicSampleCatalog {
     }
 
     fun apply(entry: InstrumentEntry, sample: MusicSample) = entry.copy(srcn = sample.srcn)
+
+    fun resourceId(bytes: ByteArray, loopFrame: Int?): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val loop = loopFrame ?: -1
+        repeat(4) { digest.update((loop ushr (it * 8)).toByte()) }
+        return "brr:" + digest.digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
 
     fun nameKey(songSet: Int, resourceId: String): String {
         require(songSet >= 0 && songSet % 3 == 0)

@@ -110,6 +110,16 @@ class SmEditProjectMusicTest {
         assertTrue(decoded.musicEdits.isEmpty())
     }
 
+    @Test fun `project sample bytes loop ownership and names survive JSON round trip`() {
+        val project = SmEditProject(romPath = "/tmp/sm.smc")
+        val sample = MusicSampleEdit(40, 0x6000, "AwAAAAAAAAAA", 0, "Soft sine")
+        project.musicInstrumentBanks["03"] = MusicInstrumentBankEdit(samples = mutableMapOf(40 to sample))
+        val decoded = SmEditProjectFormat.decode(SmEditProjectFormat.encode(project))
+        assertEquals(sample, decoded.musicInstrumentBanks.getValue("03").samples.getValue(40))
+        assertTrue(decoded.musicEdits.isEmpty())
+        assertTrue(decoded.musicInstrumentBanks.getValue("03").instruments.isEmpty())
+    }
+
     @Test
     fun `native source must include its import-time sequence baseline`() {
         assertFailsWith<SerializationException> {
