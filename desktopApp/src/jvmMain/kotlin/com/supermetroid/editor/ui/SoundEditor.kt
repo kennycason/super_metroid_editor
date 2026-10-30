@@ -409,6 +409,11 @@ fun SoundEditorCanvas(
     val scope = rememberCoroutineScope()
     val musicEditVersion = editorState.musicEditVersion
     var sampleTryout by remember(state.selectedTrackId) { mutableStateOf<SampleBankPreview.Target?>(null) }
+    DisposableEffect(state) { onDispose { state.stopInstrumentPreview(); state.sampleWorkbench.stop() } }
+    LaunchedEffect(state.instrumentPreviewRefreshVersion) {
+        kotlinx.coroutines.delay(90)
+        state.refreshInstrumentPreview()
+    }
 
     sampleTryout?.let { target ->
         SampleWorkbench(state.sampleWorkbench, romParser, target) { sampleTryout = null }
@@ -556,6 +561,8 @@ fun SoundEditorCanvas(
                 previewInstrument = state.instrumentPreviewIndex,
                 instrumentPreviewBusy = state.isInstrumentPreviewLoading,
                 instrumentPreviewMessage = state.instrumentPreviewMessage,
+                liveInstrumentPreview = state.liveInstrumentPreview,
+                onLiveInstrumentPreviewChanged = state::setInstrumentPreviewLive,
                 onPreviewInstrument = { index, note ->
                     if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note) }
                 },

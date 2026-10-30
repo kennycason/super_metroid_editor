@@ -47,7 +47,7 @@ internal fun InstrumentRecordingEditor(entry: InstrumentEntry, sourcePitch: Int?
     Column(Modifier.fillMaxWidth().testTag("instrument-recording-editor"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
-                Text(if (entry.srcn >= 0x80) "Noise source" else "Recording", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (entry.srcn >= 0x80) "Noise source" else "Sample", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(current?.let { browser.names[it.resourceId] ?: it.title } ?: if (browser.loading) "Loading samples…" else "Unlisted source #${entry.srcn}",
                     fontSize = fs.body, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -59,10 +59,10 @@ internal fun InstrumentRecordingEditor(entry: InstrumentEntry, sourcePitch: Int?
                 }
                 if (onTrySample != null) OutlinedButton(shape = SoundControlShape, onClick = onTrySample,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = Modifier.height(32.dp).testTag("sample-try-draft")) { Text("New recording", fontSize = fs.body) }
+                    modifier = Modifier.height(32.dp).testTag("sample-try-draft")) { Text("New sample", fontSize = fs.body) }
             }
         }
-        Text(browser.problem ?: current?.let(::sampleDetail) ?: if (browser.loading) "Reading this bank" else "Check raw SRCN in Advanced",
+        Text(browser.problem ?: current?.let(::sampleDetail) ?: if (browser.loading) "Reading this bank" else "Source #${entry.srcn} · choose a sample from this bank",
             fontSize = fs.detail, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (choosing) {
             MusicSamplePicker(entry.srcn, browser, instruments, instrumentNames, usedIds, noteName, previewAvailable,
@@ -100,13 +100,13 @@ internal fun MusicSamplePicker(currentSrcn: Int, browser: MusicSampleBrowserStat
     }.sortedWith(compareByDescending<MusicSample> { it.srcn == currentSrcn }.thenByDescending { it.srcn in usedSources }.thenBy { it.srcn })
     val scroll = rememberScrollState()
     Column(Modifier.fillMaxWidth().testTag("sample-browser"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("${visible.size} of ${available.size} ${if (noise) "noise sources" else "recordings"} · current bank", fontSize = fs.detail,
+        Text("${visible.size} of ${available.size} ${if (noise) "noise sources" else "samples"} · current bank", fontSize = fs.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("sample-count"))
         OutlinedTextField(query, { query = it }, singleLine = true, textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
             placeholder = { Text("Search names, sources, or IDs", fontSize = fs.body) }, modifier = Modifier.fillMaxWidth().testTag("sample-search"))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(!noise, { noise = false; candidate = if (currentSrcn < 0x80) currentSrcn else -1 }, shape = SoundControlShape,
-                label = { Text("Recordings", fontSize = fs.detail) }, modifier = Modifier.testTag("sample-recordings"))
+                label = { Text("Samples", fontSize = fs.detail) }, modifier = Modifier.testTag("sample-recordings"))
             FilterChip(noise, { noise = true; candidate = if (currentSrcn >= 0x80) currentSrcn else -1 }, shape = SoundControlShape,
                 label = { Text("Noise", fontSize = fs.detail) }, modifier = Modifier.testTag("sample-noise"))
             FilterChip(usedOnly, { usedOnly = !usedOnly }, shape = SoundControlShape, label = { Text("Used in track", fontSize = fs.detail) }, modifier = Modifier.testTag("sample-used"))
@@ -168,7 +168,7 @@ internal fun MusicSamplePicker(currentSrcn: Int, browser: MusicSampleBrowserStat
     }
 }
 
-private fun sampleDetail(sample: MusicSample): String = if (sample.isNoise) "Generated · no recording" else {
+private fun sampleDetail(sample: MusicSample): String = if (sample.isNoise) "Generated · no sample data" else {
     val length = when {
         sample.frames < 32 -> "<1 ms"
         sample.frames < 32000 -> "${sample.frames * 1000 / 32000} ms"
@@ -185,9 +185,9 @@ private fun SampleWaveform(sample: MusicSample?, modifier: Modifier) {
     val guide = MaterialTheme.colorScheme.outlineVariant
     Box(modifier, contentAlignment = Alignment.Center) {
         if (sample == null || sample.isNoise) {
-            Text(if (sample?.isNoise == true) "Generated noise · rate ${sample.srcn and 31}" else "No recording to display",
+            Text(if (sample?.isNoise == true) "Generated noise · rate ${sample.srcn and 31}" else "No sample to display",
                 fontSize = fs.detail, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else Canvas(Modifier.fillMaxSize().semantics { contentDescription = "Recording waveform${if (sample.loopFrame != null) " with loop marker" else ""}" }) {
+        } else Canvas(Modifier.fillMaxSize().semantics { contentDescription = "Sample waveform${if (sample.loopFrame != null) " with loop marker" else ""}" }) {
             val center = size.height / 2
             drawLine(guide, Offset(0f, center), Offset(size.width, center))
             sample.loopFrame?.let { loop ->

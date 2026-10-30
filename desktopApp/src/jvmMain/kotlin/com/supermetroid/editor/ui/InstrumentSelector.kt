@@ -90,7 +90,7 @@ internal object InstrumentDescriptions {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun NoteInstrumentSelector(
     note: NspcSequence.Note,
@@ -106,7 +106,7 @@ internal fun NoteInstrumentSelector(
     onStopPreview: () -> Unit,
     onRename: (Int, String) -> Unit,
     onChoose: (Int) -> Unit,
-    advancedContent: @Composable () -> Unit,
+    bankContent: @Composable () -> Unit = {},
     sharedTracks: List<String> = emptyList(),
     sharedInstrumentEdited: Boolean = false,
     onResetSharedInstrument: () -> Unit = {},
@@ -114,11 +114,12 @@ internal fun NoteInstrumentSelector(
     sourceLabel: String = "ROM bank",
     soundContent: @Composable () -> Unit = {},
     sampleNames: Map<Int, String> = emptyMap(),
+    livePreview: Boolean = true,
+    onLivePreviewChanged: ((Boolean) -> Unit)? = null,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
     var choosing by remember(bankLabel, note.instrument) { mutableStateOf(false) }
-    var advanced by remember(bankLabel) { mutableStateOf(false) }
     var editing by remember(bankLabel) { mutableStateOf(false) }
     var renaming by remember(bankLabel, note.instrument) { mutableStateOf(false) }
     var name by remember(bankLabel, note.instrument, names) { mutableStateOf(names[note.instrument].orEmpty()) }
@@ -155,7 +156,7 @@ internal fun NoteInstrumentSelector(
                 OutlinedButton(shape = SoundControlShape, onClick = { renaming = !renaming }, enabled = info != null) {
                     Text("Rename", fontSize = fs.body)
                 }
-                OutlinedButton(shape = SoundControlShape, onClick = { editing = !editing; if (editing) choosing = false },
+                OutlinedButton(shape = SoundControlShape, onClick = { editing = !editing; if (editing) choosing = false else onStopPreview() },
                     enabled = instrumentEditingEnabled && info != null, modifier = Modifier.testTag("instrument-edit-sound")) {
                     Text(if (editing) "Close editor" else "Edit sound", fontSize = fs.body)
                 }
@@ -178,9 +179,13 @@ internal fun NoteInstrumentSelector(
                 Text(when {
                     !nativePreviewAvailable -> "Native preview unavailable"
                     previewMessage.isNotEmpty() -> previewMessage
+                    livePreview && onLivePreviewChanged != null -> "Live · repeats and follows edits until Stop"
                     else -> "Ready to preview"
                 }, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                if (onLivePreviewChanged != null) FilterChip(livePreview, { onLivePreviewChanged(!livePreview) },
+                    shape = SoundControlShape, label = { Text("Live", fontSize = fs.detail) },
+                    modifier = Modifier.height(32.dp).testTag("instrument-preview-live"))
                 OutlinedButton(shape = SoundControlShape, onClick = onStopPreview, enabled = previewInstrument != null,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.width(64.dp).height(32.dp).testTag("instrument-preview-stop")) {
@@ -194,10 +199,7 @@ internal fun NoteInstrumentSelector(
             }
             if (editing && instrumentEditingEnabled) {
                 soundContent()
-                TextButton(shape = SoundControlShape, onClick = { advanced = !advanced }, modifier = Modifier.testTag("instrument-advanced")) {
-                    Text(if (advanced) "Hide advanced" else "Advanced", fontSize = fs.body)
-                }
-                if (advanced) advancedContent()
+                bankContent()
             }
         }
     }

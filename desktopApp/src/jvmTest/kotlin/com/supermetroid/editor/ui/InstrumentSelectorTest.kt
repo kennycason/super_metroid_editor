@@ -170,7 +170,7 @@ class InstrumentSelectorTest {
                             androidx.compose.foundation.layout.Column {
                                 NoteInstrumentSelector(NspcSequence.Note(0, 48, 0x98), instruments, names, setOf(1),
                                     "Lower Norfair sound bank", true, preview.value, busy.value, message.value,
-                                    { _, _ -> }, {}, { _, _ -> }, {}, advancedContent = {})
+                                    { _, _ -> }, {}, { _, _ -> }, {}, bankContent = {})
                             }
                         }
                     }
@@ -207,7 +207,7 @@ class InstrumentSelectorTest {
                             androidx.compose.foundation.layout.Column(Modifier.onSizeChanged { measuredHeight = it.height }) {
                                 NoteInstrumentSelector(NspcSequence.Note(0, 48, 0x98), instruments, names, setOf(1),
                                     "Lower Norfair sound bank", true, null, false, "", { _, _ -> }, {}, { _, _ -> }, {},
-                                    advancedContent = { androidx.compose.material3.Text("Raw DSP settings") },
+                                    bankContent = { androidx.compose.material3.Text("Bank details") },
                                     sharedTracks = listOf("Title Screen", "Title Screen (After Button)"), sharedInstrumentEdited = true)
                             }
                         }
@@ -220,7 +220,7 @@ class InstrumentSelectorTest {
                     scene.render(surface.canvas, time); delay(1)
                 } }
                 render()
-                assertFalse(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Raw DSP settings" } })
+                assertFalse(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Bank details" } })
                 assertTrue(hasTag(scene, "instrument-common-warning"))
                 assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text ->
                     text.text == "Common sound · shared within this bank"

@@ -58,6 +58,7 @@ class InstrumentAuditionTest {
         val parser = TestRomHelper.requireRomParser()
         val device = DeferredSoundClip()
         val state = SoundEditorState(SoundPlayer { device.clip })
+        state.setInstrumentPreviewLive(false)
         val editor = EditorState()
         state.selectTrack(SpcData.KNOWN_TRACKS.first { it.songSet == 0x18 && it.playIndex == 5 })
         state.openPianoRoll(parser, editor)

@@ -39,6 +39,7 @@ class NotePropertiesPanelTest {
         val message = mutableStateOf("")
         val busy = mutableStateOf(false)
         val preview = mutableStateOf<Int?>(null)
+        val live = mutableStateOf(true)
         val browser = mutableStateOf(MusicSampleBrowserState())
         val samplePreviews = mutableListOf<Triple<Int, Int, NspcSequence.Note>>()
         val sampleChoices = mutableListOf<Pair<Int, Int>>()
@@ -81,6 +82,8 @@ class NotePropertiesPanelTest {
                                 onResetSharedInstrument = {}, instrumentEditingEnabled = true,
                                 nativeInstrumentPreviewAvailable = true, previewInstrument = fixture.preview.value,
                                 instrumentPreviewBusy = fixture.busy.value, instrumentPreviewMessage = fixture.message.value,
+                                liveInstrumentPreview = fixture.live.value,
+                                onLiveInstrumentPreviewChanged = { fixture.live.value = it; fixture.preview.value = null },
                                 onPreviewInstrument = { _, _ -> }, onStopInstrumentPreview = {}, onRenameInstrument = { _, _ -> },
                                 usedInstrumentIds = listOf(24, 31), onInstrumentChanged = {},
                                 onClose = { fixture.closed++ }, onDelete = { fixture.deleted++ },
@@ -118,6 +121,18 @@ class NotePropertiesPanelTest {
         }
     }
 
+    @Test fun `Live control is selected by default and changes audition mode without editing the note`() = runBlocking {
+        withPanel { scene, render, fixture ->
+            val note = fixture.note.value.copy()
+            assertTrue(tagged(scene, "instrument-preview-live").config[SemanticsProperties.Selected])
+            click(scene, "instrument-preview-live"); render()
+            assertFalse(fixture.live.value)
+            assertFalse(tagged(scene, "instrument-preview-live").config[SemanticsProperties.Selected])
+            assertEquals(note, fixture.note.value)
+            assertTrue(fixture.history.isEmpty())
+        }
+    }
+
     @Test fun `note title follows editor fonts with aligned right-hand actions and optional details`() = runBlocking {
         for (font in FontSize.entries) for (theme in EditorTheme.entries) withPanel(font, theme) { scene, render, fixture ->
             assertFalse(nodes(scene).any { it.config.getOrNull(SemanticsProperties.TestTag) == "note-details" })
@@ -137,6 +152,20 @@ class NotePropertiesPanelTest {
             assertNotNull(tagged(scene, "note-number-Gate"))
             click(scene, "note-delete"); click(scene, "note-close")
             assertEquals(1, fixture.deleted); assertEquals(1, fixture.closed)
+        }
+    }
+
+    @Test fun `visible bank sound chips switch only the note instrument and keep settings available`() = runBlocking {
+        withPanel(captureSuffix = "-sound-values") { scene, render, fixture ->
+            val original = fixture.note.value.copy()
+            click(scene, "instrument-edit-sound"); render()
+            assertNotNull(tagged(scene, "sound-values"))
+            click(scene, "sound-bank-select-24"); render()
+            assertTrue(fixture.history.isEmpty())
+            click(scene, "sound-bank-select-31"); render()
+            assertEquals(original.copy(instrument = 31), fixture.note.value)
+            assertEquals(listOf("Set note instrument"), fixture.history)
+            assertNotNull(tagged(scene, "sound-value-pitch"))
         }
     }
 
@@ -179,14 +208,15 @@ class NotePropertiesPanelTest {
         withPanel(FontSize.LARGER, height = 480) { scene, render, _ ->
             click(scene, "note-details-toggle"); render()
             click(scene, "instrument-edit-sound"); render()
-            click(scene, "instrument-advanced"); render()
+            assertFalse(nodes(scene).any { it.config.getOrNull(SemanticsProperties.TestTag) == "instrument-advanced" })
+            assertNotNull(tagged(scene, "sound-values"))
             val content = tagged(scene, "note-properties-content")
             val range = content.config[SemanticsProperties.VerticalScrollAxisRange]
             assertTrue(range.maxValue() > 0)
             assertTrue(content.config[SemanticsActions.ScrollBy].action!!.invoke(0f, 2000f))
             render()
             val panel = tagged(scene, "note-properties").boundsInRoot
-            val apply = tagged(scene, "instrument-advanced").boundsInRoot
+            val apply = tagged(scene, "sound-bank-details").boundsInRoot
             assertTrue(apply.height > 0)
             assertTrue(apply.top >= panel.top && apply.bottom <= panel.bottom)
         }

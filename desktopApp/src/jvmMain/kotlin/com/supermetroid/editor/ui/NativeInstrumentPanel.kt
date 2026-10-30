@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -48,7 +49,8 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
     }
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("native-sound-controls")) {
         val wide = maxWidth >= 600.dp
-        val fourAcross = (if (wide) maxWidth - 162.dp else maxWidth - 20.dp) >= 424.dp
+        val valuesBeside = maxWidth >= 1000.dp
+        val fourAcross = (if (wide) maxWidth - 162.dp - (if (valuesBeside) 322.dp else 0.dp) else maxWidth - 20.dp) >= 424.dp
         val envelopeContent: @Composable ColumnScope.() -> Unit = {
             val envelope = NativeInstrumentSound.usesEnvelope(draft)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -91,6 +93,9 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     SynthModule(Modifier.weight(1f).fillMaxHeight().testTag("sound-envelope-module"), envelopeContent)
                     SynthModule(Modifier.width(132.dp).fillMaxHeight().testTag("sound-tuning-module"), tuningContent)
+                    if (valuesBeside) key(draft.index) {
+                        NativeSoundValues(draft, Modifier.width(312.dp).fillMaxHeight()) { commit(it) }
+                    }
                 }
             } else {
                 SynthModule(Modifier.fillMaxWidth(), envelopeContent)
@@ -98,6 +103,7 @@ internal fun NativeInstrumentPanel(entry: InstrumentEntry, sourcePitch: Int?, on
             }
             Text("Drag up/down · Shift: fine · click, then scroll or use arrows", fontSize = fs.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!valuesBeside) key(draft.index) { NativeSoundValues(draft, Modifier.fillMaxWidth()) { commit(it) } }
         }
     }
 }
@@ -164,7 +170,7 @@ private fun TuningControls(entry: InstrumentEntry, committed: InstrumentEntry, s
     if (entry.srcn >= 0x80 || sourcePitch == null || sourcePitch == 0) {
         if (entry.srcn >= 0x80) SoundParameter("Rate", entry.srcn and 31, 0..31, "${entry.srcn and 31} / 31", "sound-noise-rate",
             { onDraft(NativeInstrumentSound.noiseRate(entry, it)) }, onFinish)
-        Text(if (entry.srcn >= 0x80) "Shared noise clock" else "Source tuning unavailable · use Advanced",
+        Text(if (entry.srcn >= 0x80) "Shared noise clock" else "Source tuning unavailable · set Pitch in Sound values",
             fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("sound-tuning-unavailable"))
         return
     }

@@ -58,6 +58,13 @@ internal object PianoRollPlaybackTiming {
 class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()) {
     private val player = SoundPlayer()
     private var instrumentPreviewVersion = 0
+    private data class InstrumentPreviewRequest(val parser: RomParser, val index: Int, val note: NspcSequence.Note,
+        val sampleSource: Int?, val trackId: Int)
+    private var instrumentPreviewRequest: InstrumentPreviewRequest? = null
+    var liveInstrumentPreview by mutableStateOf(true)
+        private set
+    internal var instrumentPreviewRefreshVersion by mutableStateOf(0)
+        private set
     var instrumentPreviewIndex by mutableStateOf<Int?>(null)
         private set
     var instrumentPreviewSample by mutableStateOf<Int?>(null)
@@ -1110,7 +1117,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     }
 
     private fun restorePianoRollSnapshot(snapshot: PianoRollEditLogic.EditSnapshot) {
-        stopPlayback()
+        stopTrackPlayback()
+        if (!liveInstrumentPreview) stopInstrumentPreview()
         val restored = PianoRollPreviewLogic.deepCopySong(snapshot.song)
         editingSong = restored
         pianoRollInstruments = snapshot.instruments.map { it.copy() }
@@ -1118,6 +1126,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         restored.isModified = hasPianoRollEdits(restored)
         pianoRollPlaybackTick = pianoRollPlaybackTick.coerceAtMost(restored.totalTicks)
         statusMessage = "Restored: ${snapshot.label}"
+        invalidateInstrumentPreview()
     }
 
     private fun clearPianoRollHistory() {
@@ -1151,7 +1160,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             statusMessage = instrumentBankProblem.orEmpty()
             return
         }
-        stopPlayback()
+        stopTrackPlayback()
+        if (!liveInstrumentPreview || instrumentPreviewRequest?.index != idx) stopInstrumentPreview()
 
         val old = pianoRollInstruments[idx]
         val normalized = updated.copy(
@@ -1191,6 +1201,10 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         soundEditorLog.info { "[SPC-PIANO-INST] Set index=${hexByte(idx)} $before -> $after" }
         syncPianoRollProjectEdit(editorState)
         statusMessage = "Edited shared instrument #$idx"
+        // A chosen source replaces a candidate audition, retaining the auditioned note.
+        instrumentPreviewRequest = instrumentPreviewRequest?.copy(sampleSource = null)
+        instrumentPreviewSample = null
+        invalidateInstrumentPreview()
     }
 
     private fun hasPianoRollEdits(song: NspcSequence.Song): Boolean {
@@ -1641,7 +1655,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         }
         val instrument = if (sampleSource == null) original else original.copy(srcn = sampleSource)
         if (!nativeInstrumentPreviewAvailable) return
-        stopPlayback()
+        stopTrackPlayback()
         playAllEnabled = false
         val version = ++instrumentPreviewVersion
         val previewNote = note.copy(instrument = index)
@@ -1650,11 +1664,14 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         val payload = MusicEditConversion.copyNativePayload(pianoRollNativeSource)
         val bankProject = projectForBank()
         if (instrumentBankProblem != null) {
+            stopInstrumentPreview()
             instrumentPreviewMessage = instrumentBankProblem.orEmpty()
             return
         }
         instrumentPreviewIndex = index
         instrumentPreviewSample = sampleSource
+        instrumentPreviewRequest = InstrumentPreviewRequest(romParser, index, note.copy(), sampleSource, selectedTrackId)
+        val loop = liveInstrumentPreview
         isInstrumentPreviewLoading = true
         instrumentPreviewMessage = "Preparing preview…"
         try {
@@ -1673,20 +1690,23 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                 if (version == instrumentPreviewVersion) {
                     instrumentPreviewIndex = null
                     instrumentPreviewSample = null
+                    instrumentPreviewRequest = null
                     instrumentPreviewMessage = "Preview finished · $label"
                 }
             }
             // Fixed monitor gain: envelope and gain changes must stay audible when comparing sounds.
-            when (instrumentPlayer.play(pcm, NativeSpcEmulator.SAMPLE_RATE)) {
+            when (instrumentPlayer.play(pcm, NativeSpcEmulator.SAMPLE_RATE, loop = loop)) {
                 SoundPlayer.PlaybackStart.STARTED -> Unit
                 SoundPlayer.PlaybackStart.EMPTY -> {
                     instrumentPreviewIndex = null
                     instrumentPreviewSample = null
+                    instrumentPreviewRequest = null
                     instrumentPreviewMessage = "No audio samples to play"
                 }
                 SoundPlayer.PlaybackStart.OUTPUT_UNAVAILABLE -> {
                     instrumentPreviewIndex = null
                     instrumentPreviewSample = null
+                    instrumentPreviewRequest = null
                     instrumentPreviewMessage = "Could not open audio output"
                 }
             }
@@ -1695,8 +1715,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             throw cancelled
         } catch (error: Exception) {
             if (version == instrumentPreviewVersion) {
-                instrumentPreviewIndex = null
-                instrumentPreviewSample = null
+                stopInstrumentPreview()
                 instrumentPreviewMessage = "Could not preview this instrument"
             }
             soundEditorLog.warn(error) { "[SPC-INSTRUMENT] Native audition failed for $index" }
@@ -1707,11 +1726,32 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
     fun stopInstrumentPreview() {
         instrumentPreviewVersion++
+        instrumentPreviewRequest = null
+        instrumentPlayer.onComplete = null
         instrumentPlayer.stop()
         instrumentPreviewIndex = null
         instrumentPreviewSample = null
         isInstrumentPreviewLoading = false
         instrumentPreviewMessage = ""
+    }
+
+    fun setInstrumentPreviewLive(enabled: Boolean) {
+        if (enabled == liveInstrumentPreview) return
+        stopInstrumentPreview()
+        liveInstrumentPreview = enabled
+    }
+
+    private fun invalidateInstrumentPreview() {
+        if (!liveInstrumentPreview || instrumentPreviewRequest == null) return
+        instrumentPreviewVersion++
+        isInstrumentPreviewLoading = true
+        instrumentPreviewRefreshVersion++
+    }
+
+    internal suspend fun refreshInstrumentPreview() {
+        val request = instrumentPreviewRequest ?: return
+        if (!liveInstrumentPreview || request.trackId != selectedTrackId || !isPianoRollOpen) return
+        previewInstrument(request.parser, request.index, request.note, request.sampleSource)
     }
 
     private fun relocatedSequencePatchForTrack(
@@ -2200,6 +2240,10 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
     fun stopPlayback() {
         stopInstrumentPreview()
+        stopTrackPlayback()
+    }
+
+    private fun stopTrackPlayback() {
         player.stop()
         isPlaying = false
         playbackPosition = 0f

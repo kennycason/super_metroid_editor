@@ -143,6 +143,7 @@ class SampleAuthoringTest {
     @Test fun `native preview accepts asynchronous output and stop invalidates stale renders`() = runBlocking {
         val devices = mutableListOf<DeferredSoundClip>()
         val state = SampleWorkbenchState(SoundPlayer { DeferredSoundClip().also { devices += it }.clip })
+        state.setLiveEnabled(false)
         state.prepare()
         val ram = SpcData.buildInitialSpcRam(TestRomHelper.requireRomParser())
         val pending = launch(start = CoroutineStart.UNDISPATCHED) { state.preview(ram) }

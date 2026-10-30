@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.NspcRenderer.InstrumentEntry
@@ -62,7 +63,7 @@ class NativeInstrumentPanelTest {
                         Column(Modifier.verticalScroll(rememberScrollState()).padding(8.dp)) {
                             NoteInstrumentSelector(NspcSequence.Note(0, 48, 0xA4, instrument = sound.index), listOf(entry.value),
                                 mapOf(sound.index to "Looped lead"), setOf(sound.index), "Test sound bank", true,
-                                null, false, "", { _, _ -> }, {}, { _, _ -> }, {}, advancedContent = { androidx.compose.material3.Text("Raw bytes") },
+                                null, false, "", { _, _ -> }, {}, { _, _ -> }, {}, bankContent = { androidx.compose.material3.Text("Bank details") },
                                 sharedTracks = listOf("First track", "Sibling track"), instrumentEditingEnabled = editingEnabled, soundContent = {
                                     NativeInstrumentPanel(entry.value, sourcePitch) { commits += it; entry.value = it }
                                 })
@@ -83,7 +84,7 @@ class NativeInstrumentPanelTest {
         } finally { scene.close(); surface.close() }
     }
 
-    @Test fun `editing and browsing expose native controls and nested Advanced without creating edits`() = runBlocking {
+    @Test fun `sound editor exposes musical and exact values together without an advanced toggle or opening edits`() = runBlocking {
         for (font in FontSize.entries) for (theme in EditorTheme.entries) withPanel(font, theme, captureName = "envelope") { scene, render, commits ->
             assertFalse(hasTag(scene, "native-sound-controls"))
             assertFalse(hasTag(scene, "instrument-advanced"))
@@ -100,14 +101,97 @@ class NativeInstrumentPanelTest {
             assertEquals(tuning.bottom, envelope.bottom, "The envelope module must match the tuning module's height")
             assertTrue(tagged(scene, "sound-envelope-guide").boundsInRoot.height > 88f, "The graph should fill the extra height")
             assertEquals(72f, tagged(scene, "sound-attack").boundsInRoot.height, "Knobs keep their standard size")
-            click(scene, "instrument-advanced"); render()
-            assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Raw bytes" } })
+            assertFalse(hasTag(scene, "instrument-advanced"))
+            for (tag in listOf("sound-value-adsr1", "sound-value-adsr2", "sound-value-gain", "sound-value-pitch")) {
+                val bounds = tagged(scene, tag).boundsInRoot
+                assertTrue(bounds.width > 0 && bounds.height > 0 && bounds.left >= 0 && bounds.right <= 680 && bounds.bottom <= 900,
+                    "$font / $theme / $tag")
+            }
+            assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text == "Bank details" } })
             click(scene, "instrument-choose"); render()
             assertFalse(hasTag(scene, "native-sound-controls"))
             assertTrue(hasTag(scene, "instrument-browser"))
             assertTrue(commits.isEmpty())
             click(scene, "instrument-edit-sound"); render()
-            click(scene, "instrument-advanced"); render()
+        }
+    }
+
+    private fun key(scene: ComposeScene, code: Int) {
+        for (type in listOf(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.KEY_RELEASED))
+            scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), type, 0L, 0, code, AwtKeyEvent.CHAR_UNDEFINED)))
+    }
+
+    @Test fun `desktop sound values sit beside envelope and tuning while keeping every field visible`() = runBlocking {
+        for (font in FontSize.entries) for (theme in EditorTheme.entries) withPanel(font, theme, width = 1280,
+            captureName = "sound-values") { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            val envelope = tagged(scene, "sound-envelope-module").boundsInRoot
+            val tuning = tagged(scene, "sound-tuning-module").boundsInRoot
+            val values = tagged(scene, "sound-values").boundsInRoot
+            assertEquals(envelope.top, values.top)
+            assertEquals(envelope.bottom, values.bottom)
+            assertTrue(values.left > tuning.right)
+            for (tag in listOf("sound-value-adsr1", "sound-value-adsr2", "sound-value-gain", "sound-value-pitch")) {
+                val bounds = tagged(scene, tag).boundsInRoot
+                assertTrue(bounds.width > 0 && bounds.height > 0 && bounds.right <= 1280 && bounds.bottom < 900)
+            }
+            assertTrue(commits.isEmpty())
+        }
+    }
+
+    private suspend fun editValue(scene: ComposeScene, render: suspend () -> Unit, tag: String, text: String) {
+        tagged(scene, tag).config[SemanticsActions.RequestFocus].action!!.invoke(); render()
+        tagged(scene, tag).config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(text)); render()
+    }
+
+    @Test fun `exact sound fields accept decimal and hex and synchronize knobs with one bank edit per input`() = runBlocking {
+        withPanel { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            editValue(scene, render, "sound-value-adsr1", "0x8F")
+            assertTrue(commits.isEmpty(), "Typing must not create partial bank edits")
+            key(scene, AwtKeyEvent.VK_ENTER); render()
+            assertEquals(listOf(original.copy(adsr1 = 0x8F)), commits)
+            assertEquals(0f, tagged(scene, "sound-attack").config[SemanticsProperties.ProgressBarRangeInfo].current)
+            editValue(scene, render, "sound-value-adsr2", "224")
+            tagged(scene, "sound-value-gain").config[SemanticsActions.RequestFocus].action!!.invoke(); render()
+            assertEquals(2, commits.size)
+            assertEquals(0xE0, commits.last().adsr2)
+            assertEquals(7f, tagged(scene, "sound-sustain").config[SemanticsProperties.ProgressBarRangeInfo].current)
+            editValue(scene, render, "sound-value-pitch", "0x0200")
+            key(scene, AwtKeyEvent.VK_ENTER); render()
+            assertEquals(3, commits.size)
+            assertEquals(512, commits.last().nativePitch)
+            assertEquals(12f, tagged(scene, "sound-transpose").config[SemanticsProperties.ProgressBarRangeInfo].current)
+            progress(scene, "sound-attack", 3f); render()
+            assertEquals(commits.last().adsr1.toString(), tagged(scene, "sound-value-adsr1").config[SemanticsProperties.EditableText].text)
+            editValue(scene, render, "sound-value-adsr1", "0")
+            key(scene, AwtKeyEvent.VK_ENTER); render()
+            assertTrue(hasTag(scene, "sound-gain-value"))
+            editValue(scene, render, "sound-value-gain", "64")
+            key(scene, AwtKeyEvent.VK_ENTER); render()
+            assertEquals(6, commits.size)
+            assertEquals(64f, tagged(scene, "sound-gain-value").config[SemanticsProperties.ProgressBarRangeInfo].current)
+        }
+    }
+
+    @Test fun `invalid canceled and unchanged sound values never change the bank`() = runBlocking {
+        withPanel { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            for ((tag, value) in listOf("sound-value-adsr1" to "256", "sound-value-adsr2" to "-1",
+                "sound-value-gain" to "0x", "sound-value-pitch" to "65536")) {
+                editValue(scene, render, tag, value)
+                key(scene, AwtKeyEvent.VK_ENTER); render()
+                assertTrue(commits.isEmpty())
+                assertTrue(walk(tagged(scene, tag)).any { it.config.contains(SemanticsProperties.Error) }, "$tag must explain invalid input")
+                tagged(scene, tag).config[SemanticsActions.RequestFocus].action!!.invoke(); render()
+                key(scene, AwtKeyEvent.VK_ESCAPE); render()
+                assertFalse(walk(tagged(scene, tag)).any { it.config.contains(SemanticsProperties.Error) })
+            }
+            editValue(scene, render, "sound-value-adsr1", "1")
+            key(scene, AwtKeyEvent.VK_ESCAPE); render()
+            editValue(scene, render, "sound-value-adsr1", original.adsr1.toString())
+            key(scene, AwtKeyEvent.VK_ENTER); render()
+            assertTrue(commits.isEmpty())
         }
     }
 

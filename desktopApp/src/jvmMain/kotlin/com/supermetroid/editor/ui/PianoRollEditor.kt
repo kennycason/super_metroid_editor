@@ -81,6 +81,7 @@ import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -261,6 +262,8 @@ fun PianoRollEditor(
     instrumentPreviewMessage: String = "",
     onPreviewInstrument: (Int, Note) -> Unit = { _, _ -> },
     onStopInstrumentPreview: () -> Unit = {},
+    liveInstrumentPreview: Boolean = true,
+    onLiveInstrumentPreviewChanged: ((Boolean) -> Unit)? = null,
     onRenameInstrument: (Int, String) -> Unit = { _, _ -> },
     canUndo: Boolean = false,
     canRedo: Boolean = false,
@@ -1305,11 +1308,14 @@ fun PianoRollEditor(
                     instrumentPreviewMessage = instrumentPreviewMessage,
                     onPreviewInstrument = onPreviewInstrument,
                     onStopInstrumentPreview = onStopInstrumentPreview,
+                    liveInstrumentPreview = liveInstrumentPreview,
+                    onLiveInstrumentPreviewChanged = onLiveInstrumentPreviewChanged,
                     onRenameInstrument = onRenameInstrument,
                     usedInstrumentIds = song.channels.flatMap { it.notes.map { note -> note.instrument } }.toSet().sorted(),
                     onInstrumentChanged = onInstrumentChanged,
-                    onClose = { showNoteProperties = false },
+                    onClose = { onStopInstrumentPreview(); showNoteProperties = false },
                     onDelete = {
+                        onStopInstrumentPreview()
                         setSelection(listOf(PianoRollEditLogic.NoteRef(selectedChannel, noteForProperties)))
                         deleteSelection("properties")
                     },
@@ -1482,6 +1488,8 @@ internal fun NotePropertiesPanel(
     onDelete: () -> Unit,
     onBeforeChange: (String) -> Unit,
     onChanged: () -> Unit,
+    liveInstrumentPreview: Boolean = true,
+    onLiveInstrumentPreviewChanged: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -1602,6 +1610,8 @@ internal fun NotePropertiesPanel(
                     onPreviewInstrument(index, note.copy(noteValue = if (reference) NspcSequence.nameToNote("C4") else note.noteValue))
                 },
                 onStopPreview = onStopInstrumentPreview,
+                livePreview = liveInstrumentPreview,
+                onLivePreviewChanged = onLiveInstrumentPreviewChanged,
                 onRename = onRenameInstrument,
                 onChoose = { inst ->
                     val old = note.instrument
@@ -1623,8 +1633,8 @@ internal fun NotePropertiesPanel(
                             onTrySample = onTrySample?.let { action -> { action(note.copy()) } })
                     }
                 },
-                advancedContent = {
-                    InstrumentInsightPanel(note, channel, instrumentInfos, usedInstrumentIds, onInstrumentChanged) { inst ->
+                bankContent = {
+                    InstrumentBankPanel(note, instrumentInfos, instrumentNames, usedInstrumentIds) { inst ->
                         if (inst != note.instrument) {
                             onBeforeChange("Set note instrument")
                             note.instrument = inst
@@ -1637,120 +1647,41 @@ internal fun NotePropertiesPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun InstrumentInsightPanel(
+private fun InstrumentBankPanel(
     note: Note,
-    channel: Int,
-    instrumentInfos: List<NspcRenderer.InstrumentEntry>,
-    usedInstrumentIds: List<Int>,
-    onInstrumentChanged: (NspcRenderer.InstrumentEntry) -> Unit,
-    onInstrumentSelected: (Int) -> Unit
+    instruments: List<NspcRenderer.InstrumentEntry>,
+    names: Map<Int, String>,
+    usedIds: List<Int>,
+    onSelect: (Int) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
-    val info = instrumentInfos.getOrNull(note.instrument)
-    val validRange = if (instrumentInfos.isNotEmpty()) "0..${instrumentInfos.lastIndex}" else "unknown"
-
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        shape = RoundedCornerShape(5.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Sound #${note.instrument}", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurface)
-                Text("Slots: $validRange", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (info == null) {
-                    Text("No table entry found for this bank", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
-                }
+    val info = instruments.firstOrNull { it.index == note.instrument }
+    SynthModule(Modifier.fillMaxWidth().testTag("sound-bank-details")) {
+        Text("Bank sounds", fontSize = fs.body, fontWeight = FontWeight.Medium)
+        if (usedIds.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (id in usedIds) FilterChip(id == note.instrument, onClick = { onSelect(id) }, shape = SoundControlShape,
+                    modifier = Modifier.testTag("sound-bank-select-$id"),
+                    label = { Text(names[id]?.let { "$it · #$id" } ?: "Sound #$id", fontSize = fs.detail,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis) })
             }
-
-            if (info != null) {
-                Text(
-                    "Raw sound data · ADSR and GAIN pack the envelope controls above into native bytes",
-                    fontSize = fs.detail,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("SRCN ${hex(info.srcn)}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    InstrumentNumberProperty("ADSR1", info.adsr1, 3, 255, hex(info.adsr1)) {
-                        onInstrumentChanged(info.copy(adsr1 = it))
-                    }
-                    InstrumentNumberProperty("ADSR2", info.adsr2, 3, 255, hex(info.adsr2)) {
-                        onInstrumentChanged(info.copy(adsr2 = it))
-                    }
-                    InstrumentNumberProperty("GAIN", info.gain, 3, 255, hex(info.gain)) {
-                        onInstrumentChanged(info.copy(gain = it))
-                    }
-                    InstrumentNumberProperty("Tune", info.nativePitch, 5, 0xFFFF, "${"%.3f".format(info.tuningMultiplier)}x") {
-                        onInstrumentChanged(info.copy(pitchAdj = ((it and 0xFF) shl 8) or ((it ushr 8) and 0xFF)))
-                    }
-                    Text(
-                        instrumentSummary(info),
-                        fontSize = fs.detail,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-
-            if (usedInstrumentIds.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Used sounds:", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    for (inst in usedInstrumentIds.take(12)) {
-                        val selected = inst == note.instrument
-                        Surface(
-                            modifier = Modifier.height(24.dp).clickable { onInstrumentSelected(inst) },
-                            color = if (selected) CHANNEL_COLORS[channel].copy(alpha = 0.65f) else Color(0xFF202033),
-                            shape = RoundedCornerShape(4.dp),
-                            border = BorderStroke(1.dp, if (selected) CHANNEL_COLORS[channel] else Color(0xFF3A3A4A))
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxHeight().padding(horizontal = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    hex(inst),
-                                    fontSize = fs.detail,
-                                    color = if (selected) Color.White else Color(0xFFAABBCC)
-                                )
-                            }
-                        }
-                    }
-                    if (usedInstrumentIds.size > 12) {
-                        Text("+${usedInstrumentIds.size - 12}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+        }
+        if (info != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val facts = listOf(
+                "Source" to "#${info.srcn}",
+                "Sample data" to if (info.srcn >= 0x80) "Generated noise" else if (info.brrByteLength >= 0) "${info.brrByteLength} B BRR" else "Unavailable",
+                "Table" to hex(info.tableAddr, 4),
+                "Sample start" to hexOrUnknown(info.sampleStartAddr),
+                "Loop start" to if (info.brrLoops) hexOrUnknown(info.sampleLoopAddr) else "One-shot",
+            )
+            for ((label, value) in facts) Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(value, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
-}
-
-private fun instrumentSummary(info: NspcRenderer.InstrumentEntry): String {
-    val brrBytes = if (info.brrByteLength >= 0) "${info.brrByteLength}B (${info.brrByteLength / 9} blocks)" else "unknown"
-    val loop = if (info.brrLoops) "loop flag present" else "no loop flag seen"
-    val adsrMode = if ((info.adsr1 and 0x80) != 0) "ADSR" else "GAIN"
-    val attack = info.adsr1 and 0x0F
-    val decay = (info.adsr1 shr 4) and 0x07
-    val sustainLevel = (info.adsr2 shr 5) and 0x07
-    val sustainRate = info.adsr2 and 0x1F
-    return "table=${hex(info.tableAddr, 4)} entry=${hex(info.index)} sample=${hexOrUnknown(info.sampleStartAddr)} " +
-        "loopPtr=${hexOrUnknown(info.sampleLoopAddr)} BRR=$brrBytes, $loop\n" +
-        "mode=$adsrMode A=$attack D=$decay SL=$sustainLevel SR=$sustainRate tune=${"%.3f".format(info.tuningMultiplier)}x"
 }
 
 @Composable
@@ -1789,29 +1720,5 @@ private fun NoteNumberProperty(
             fontSize = fs.body,
             modifier = Modifier.width(88.dp).testTag("note-number-$label")
         )
-    }
-}
-
-@Composable
-private fun InstrumentNumberProperty(
-    label: String,
-    value: Int,
-    maxDigits: Int,
-    maxValue: Int,
-    hint: String,
-    onChange: (Int) -> Unit
-) {
-    val fs = LocalEditorTheme.current.fontSize.value
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        StatNumberInput(
-            value = value,
-            onChange = onChange,
-            maxDigits = maxDigits,
-            maxValue = maxValue,
-            fontSize = fs.body,
-            modifier = Modifier.width(if (maxValue > 255) 68.dp else 46.dp)
-        )
-        Text(hint, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

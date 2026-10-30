@@ -61,7 +61,7 @@ internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, ba
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("New recording", fontSize = fs.heading, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    Text("New sample", fontSize = fs.heading, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                     OutlinedButton(shape = SoundControlShape, onClick = onClose) { Text("Close", fontSize = fs.body) }
                 }
                 SampleWorkbenchContent(state, parser != null, !fileBusy,
@@ -70,14 +70,14 @@ internal fun SampleWorkbench(state: SampleWorkbenchState, parser: RomParser?, ba
                         val draft = withContext(Dispatchers.IO) { SampleAuthoring.readWav(file) }
                         state.update(draft)
                     } },
-                    onOpen = { fileAction("Load recording (.smedit-sample)", "smedit-sample", false) { file ->
+                    onOpen = { fileAction("Load sample (.smedit-sample)", "smedit-sample", false) { file ->
                         val draft = withContext(Dispatchers.IO) { SampleAuthoring.open(file) }
                         state.update(draft)
                     } },
-                    onSave = { fileAction("Save recording (.smedit-sample)", "smedit-sample", true) { file ->
+                    onSave = { fileAction("Save sample (.smedit-sample)", "smedit-sample", true) { file ->
                         val draft = state.draft
                         withContext(Dispatchers.IO) { SampleAuthoring.save(draft, file) }
-                        state.message = "Saved recording · ${file.name}"
+                        state.message = "Saved sample · ${file.name}"
                     } },
                     onExport = { fileAction("Export raw BRR data", "brr", true) { file ->
                         val encoded = state.encoded ?: return@fileAction
@@ -131,7 +131,7 @@ internal fun SampleWorkbenchContent(
                         OutlinedButton(shape = SoundControlShape, enabled = enabled, onClick = onImport,
                             modifier = Modifier.testTag("sample-import-wav")) { Text("Import WAV", fontSize = fs.detail) }
                         OutlinedButton(shape = SoundControlShape, enabled = enabled, onClick = onOpen,
-                            modifier = Modifier.testTag("sample-load-recording")) { Text("Load recording", fontSize = fs.detail) }
+                            modifier = Modifier.testTag("sample-load-recording")) { Text("Load sample", fontSize = fs.detail) }
                     }
                     OutlinedTextField(draft.name, { state.update(draft.copy(name = it)) }, enabled = enabled, singleLine = true,
                         label = { Text("Name", fontSize = fs.detail) }, textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
@@ -161,13 +161,13 @@ internal fun SampleWorkbenchContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            val recordingControls: @Composable () -> Unit = {
+            val sampleControls: @Composable () -> Unit = {
                 SynthModule(Modifier.fillMaxWidth().testTag("sample-preview-module")) {
-                    Text("Recording", fontSize = fs.body, fontWeight = FontWeight.Medium)
+                    Text("Sample", fontSize = fs.body, fontWeight = FontWeight.Medium)
                     SampleEncodedWaveform(encoded)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(encoded?.let { "${"%.1f".format(it.pcm.size / 32.0)} ms · ${if (it.loopFrame == null) "one-shot" else "looped"} · ${it.brr.size} B" }
-                            ?: "Encoding recording…", fontSize = fs.detail, modifier = Modifier.weight(1f))
+                            ?: "Encoding sample…", fontSize = fs.detail, modifier = Modifier.weight(1f))
                         TextButton(shape = SoundControlShape, onClick = { details = !details }) {
                             Text(if (details) "Details ▴" else "Details ▾", fontSize = fs.detail)
                         }
@@ -175,12 +175,14 @@ internal fun SampleWorkbenchContent(
                     if (details) Text(encoded?.let { "32 kHz · ${it.pcm.size} frames · loop offset ${it.loopByteOffset?.let { at -> "$at bytes" } ?: "none"}" }
                         ?: "Native BRR · 16 frames per block", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(state.live, { state.setLiveEnabled(!state.live) }, shape = SoundControlShape,
+                            label = { Text("Live", fontSize = fs.detail) }, modifier = Modifier.testTag("sample-live"))
                         if (bankTarget != null) Button(shape = SoundControlShape, onClick = onPlayInBank,
                             enabled = ready && canPreview && bank != null && bankFit?.isSuccess == true && !state.previewing,
                             modifier = Modifier.testTag("sample-play-in-bank")) { Text("Play as sound", fontSize = fs.body) }
                         OutlinedButton(shape = SoundControlShape, onClick = onPlay, enabled = ready && canPreview && !state.previewing,
-                            modifier = Modifier.testTag("sample-play-brr")) { Text("Play recording", fontSize = fs.body) }
-                        OutlinedButton(shape = SoundControlShape, onClick = state::stop, enabled = state.previewing || state.playing,
+                            modifier = Modifier.testTag("sample-play-brr")) { Text("Play sample", fontSize = fs.body) }
+                        OutlinedButton(shape = SoundControlShape, onClick = state::stop, enabled = state.auditionActive,
                             modifier = Modifier.testTag("sample-stop")) { Text("Stop", fontSize = fs.body) }
                     }
                     if (!canPreview) Text("Load a ROM for native preview", fontSize = fs.detail)
@@ -192,9 +194,9 @@ internal fun SampleWorkbenchContent(
                         Text(when {
                             bankProblem != null -> bankProblem
                             bank == null -> "Checking bank space…"
-                            encoded == null -> "Encoding recording…"
-                            bankFit?.isSuccess == true -> "${encoded.brr.size} B recording fits"
-                            else -> bankFit?.exceptionOrNull()?.message ?: "Cannot place this recording"
+                            encoded == null -> "Encoding sample…"
+                            bankFit?.isSuccess == true -> "${encoded.brr.size} B sample fits"
+                            else -> bankFit?.exceptionOrNull()?.message ?: "Cannot place this sample"
                         }, fontSize = fs.detail, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             color = if (bankProblem != null || bankFit?.isFailure == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth().height(44.dp).testTag("sample-bank-fit"))
@@ -219,27 +221,28 @@ internal fun SampleWorkbenchContent(
                     Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = 14.dp)) {
                         if (wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Column(Modifier.weight(0.44f)) { sourceControls() }
-                            Column(Modifier.weight(0.56f)) { recordingControls() }
+                            Column(Modifier.weight(0.56f)) { sampleControls() }
                         } else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             sourceControls()
-                            recordingControls()
+                            sampleControls()
                         }
                     }
                     VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                 }
                 Box(Modifier.fillMaxWidth().height(44.dp).testTag("sample-workbench-status")) {
                     Text(when { invalidFields.isNotEmpty() -> "Use whole-frame positions on 16-frame boundaries"; state.preparing -> "Encoding BRR…";
-                        state.previewing -> "Rendering native preview…"; state.problem != null -> state.problem!!; else -> state.message },
+                        state.previewing -> "Rendering native preview…"; state.problem != null -> state.problem!!;
+                        state.message.isNotEmpty() -> state.message; state.live -> "Live · repeats and follows edits until Stop"; else -> "Ready to preview" },
                         fontSize = fs.detail, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         color = if (state.problem != null || invalidFields.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Button(shape = SoundControlShape, onClick = onSave, enabled = ready,
-                        modifier = Modifier.testTag("sample-save-draft")) { Text("Save recording", fontSize = fs.body) }
+                        modifier = Modifier.testTag("sample-save-draft")) { Text("Save sample", fontSize = fs.body) }
                     OutlinedButton(shape = SoundControlShape, onClick = onExport, enabled = ready,
                         modifier = Modifier.testTag("sample-export-brr")) { Text("Export BRR", fontSize = fs.body) }
                 }
-                Text("Save as a recording file · not added to a music bank", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Save as a sample file · not added to a music bank", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

@@ -92,6 +92,17 @@ class SampleWorkbenchTest {
         }
     }
 
+    @Test fun `Live control switches between repeating and one shot audition without changing the sample`() = runBlocking {
+        panel(FontSize.LARGER, EditorTheme.DARK, 1120) { scene, state, render ->
+            val draft = state.draft
+            assertTrue(tag(scene, "sample-live").config[SemanticsProperties.Selected])
+            tag(scene, "sample-live").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertFalse(state.live)
+            assertFalse(tag(scene, "sample-live").config[SemanticsProperties.Selected])
+            assertEquals(draft, state.draft)
+        }
+    }
+
     @Test fun `previews have stationary status geometry and invalid edits disable save and playback`() = runBlocking {
         panel(FontSize.LARGER, EditorTheme.DARK, 680) { scene, state, render ->
             val before = tag(scene, "sample-workbench-status").boundsInRoot

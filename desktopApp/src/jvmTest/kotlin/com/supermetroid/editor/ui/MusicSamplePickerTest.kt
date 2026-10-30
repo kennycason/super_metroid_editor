@@ -98,7 +98,7 @@ class MusicSamplePickerTest {
         withEditor(tryoutAvailable = true, capture = "new-recording") { scene, render, f ->
             val change = tagged(scene, "sample-choose").boundsInRoot
             val create = tagged(scene, "sample-try-draft").boundsInRoot
-            assertEquals("New recording", text(tagged(scene, "sample-try-draft")).trim())
+            assertEquals("New sample", text(tagged(scene, "sample-try-draft")).trim())
             assertEquals(change.top, create.top)
             assertTrue(create.left > change.right)
             click(scene, "sample-try-draft"); render()
@@ -113,7 +113,7 @@ class MusicSamplePickerTest {
             assertTrue(hasTag(scene, "native-sound-controls"))
             click(scene, "sample-choose"); render()
             assertFalse(hasTag(scene, "native-sound-controls"))
-            assertTrue(text(tagged(scene, "sample-count")).contains("3 of 3 recordings"))
+            assertTrue(text(tagged(scene, "sample-count")).contains("3 of 3 samples"))
             assertTrue(tagged(scene, "sample-row-24").boundsInRoot.top < tagged(scene, "sample-row-0").boundsInRoot.top)
             setText(scene, "sample-search", "metal"); render()
             assertTrue(hasTag(scene, "sample-row-0")); assertFalse(hasTag(scene, "sample-row-24"))

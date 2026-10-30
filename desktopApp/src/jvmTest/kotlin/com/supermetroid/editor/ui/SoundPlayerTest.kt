@@ -14,6 +14,7 @@ internal class DeferredSoundClip(
 ) {
     var running = false
     var started = false
+    var looping = false
     var closed = false
     var position = 0
     var audioBytes: ByteArray? = null
@@ -22,7 +23,7 @@ internal class DeferredSoundClip(
     val clip: Clip = Proxy.newProxyInstance(Clip::class.java.classLoader, arrayOf(Clip::class.java)) { _, method, args ->
         when (method.name) {
             "open" -> { openError?.let { throw it }; audioBytes = (args?.getOrNull(1) as? ByteArray)?.copyOf(); null }
-            "start", "loop" -> { startError?.let { throw it }; started = true; null }
+            "start", "loop" -> { startError?.let { throw it }; started = true; looping = method.name == "loop"; null }
             "close" -> { closed = true; running = false; null }
             "stop" -> { running = false; null }
             "isRunning", "isActive" -> running
