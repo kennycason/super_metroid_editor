@@ -40,6 +40,8 @@ class NotePropertiesPanelTest {
         val busy = mutableStateOf(false)
         val preview = mutableStateOf<Int?>(null)
         val live = mutableStateOf(true)
+        val original = mutableStateOf(false)
+        val auditions = mutableListOf<Pair<Int, NspcSequence.Note>>()
         val browser = mutableStateOf(MusicSampleBrowserState())
         val samplePreviews = mutableListOf<Triple<Int, Int, NspcSequence.Note>>()
         val sampleChoices = mutableListOf<Pair<Int, Int>>()
@@ -47,6 +49,7 @@ class NotePropertiesPanelTest {
         val history = mutableListOf<String>()
         var deleted = 0
         var closed = 0
+        var stopped = 0
     }
     private fun walk(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::walk)
     private fun nodes(scene: ComposeScene) = scene.roots.flatMap { walk(it.semanticsOwner.unmergedRootSemanticsNode) }
@@ -57,6 +60,7 @@ class NotePropertiesPanelTest {
         assertTrue(input.config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value)))
     }
     private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, height: Int = 900, captureSuffix: String = "", tryoutAvailable: Boolean = false,
+        auditionAvailable: Boolean = false,
         check: suspend (ComposeScene, suspend () -> Unit, Fixture) -> Unit) {
         val fixture = Fixture()
         val scene = ComposeScene(coroutineContext = coroutineContext)
@@ -84,7 +88,10 @@ class NotePropertiesPanelTest {
                                 instrumentPreviewBusy = fixture.busy.value, instrumentPreviewMessage = fixture.message.value,
                                 liveInstrumentPreview = fixture.live.value,
                                 onLiveInstrumentPreviewChanged = { fixture.live.value = it; fixture.preview.value = null },
-                                onPreviewInstrument = { _, _ -> }, onStopInstrumentPreview = {}, onRenameInstrument = { _, _ -> },
+                                auditionOriginal = fixture.original.value, originalAuditionIds = instruments.map { it.index }.toSet(),
+                                onAuditionOriginalChanged = if (auditionAvailable) { { fixture.original.value = it } } else null,
+                                onAuditionInstrument = if (auditionAvailable) { { index, note -> fixture.auditions += index to note } } else null,
+                                onPreviewInstrument = { _, _ -> }, onStopInstrumentPreview = { fixture.stopped++ }, onRenameInstrument = { _, _ -> },
                                 usedInstrumentIds = listOf(24, 31), onInstrumentChanged = {},
                                 onClose = { fixture.closed++ }, onDelete = { fixture.deleted++ },
                                 onBeforeChange = fixture.history::add,
@@ -130,6 +137,28 @@ class NotePropertiesPanelTest {
             assertFalse(tagged(scene, "instrument-preview-live").config[SemanticsProperties.Selected])
             assertEquals(note, fixture.note.value)
             assertTrue(fixture.history.isEmpty())
+        }
+    }
+
+    @Test fun `audition keyboard changes preview pitch and comparison without mutating selected notes or history`() = runBlocking {
+        withPanel(auditionAvailable = true, captureSuffix = "-audition") { scene, render, fixture ->
+            val original = fixture.note.value.copy()
+            click(scene, "instrument-edit-sound"); render()
+            val pitch = NspcSequence.nameToNote("G1")
+            click(scene, "audition-key-$pitch"); render()
+            assertEquals(24, fixture.auditions.single().first)
+            assertEquals(original.copy(noteValue = pitch), fixture.auditions.single().second)
+            assertNotSame(fixture.note.value, fixture.auditions.single().second)
+            click(scene, "audition-original"); render()
+            assertTrue(fixture.original.value)
+            click(scene, "instrument-preview-current"); render()
+            assertEquals(pitch, fixture.auditions.last().second.noteValue, "Play keeps the chosen audition pitch")
+            click(scene, "audition-note-pitch"); render()
+            assertEquals(original.noteValue, fixture.auditions.last().second.noteValue)
+            assertEquals(original, fixture.note.value)
+            assertTrue(fixture.history.isEmpty()); assertTrue(fixture.sampleChoices.isEmpty())
+            click(scene, "sound-bank-select-31"); render()
+            assertTrue(fixture.stopped > 0, "Selecting another sound ends the previous audition")
         }
     }
 

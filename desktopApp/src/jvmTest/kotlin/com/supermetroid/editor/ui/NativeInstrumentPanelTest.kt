@@ -49,11 +49,13 @@ class NativeInstrumentPanelTest {
     }
     private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK,
         sound: InstrumentEntry = original, sourcePitch: Int? = 256, width: Int = 680, captureName: String? = null, editingEnabled: Boolean = true,
+        audition: Boolean = false,
         check: suspend (ComposeScene, suspend () -> Unit, MutableList<InstrumentEntry>) -> Unit) {
         val scene = ComposeScene(coroutineContext = coroutineContext)
         val surface = Surface.makeRasterN32Premul(width, 900)
         val entry = mutableStateOf(sound)
         val commits = mutableListOf<InstrumentEntry>()
+        val compareOriginal = mutableStateOf(false)
         try {
             scene.constraints = Constraints.fixed(width, 900)
             val settings = EditorThemeState().apply { fontSize.value = font; this.theme.value = theme }
@@ -64,6 +66,9 @@ class NativeInstrumentPanelTest {
                             NoteInstrumentSelector(NspcSequence.Note(0, 48, 0xA4, instrument = sound.index), listOf(entry.value),
                                 mapOf(sound.index to "Looped lead"), setOf(sound.index), "Test sound bank", true,
                                 null, false, "", { _, _ -> }, {}, { _, _ -> }, {}, bankContent = { androidx.compose.material3.Text("Bank details") },
+                                auditionOriginal = compareOriginal.value, originalAuditionIds = setOf(sound.index),
+                                onAuditionOriginalChanged = if (audition) { { compareOriginal.value = it } } else null,
+                                onAuditionPitch = if (audition) { { _, _ -> } } else null,
                                 sharedTracks = listOf("First track", "Sibling track"), instrumentEditingEnabled = editingEnabled, soundContent = {
                                     NativeInstrumentPanel(entry.value, sourcePitch) { commits += it; entry.value = it }
                                 })
@@ -135,6 +140,18 @@ class NativeInstrumentPanelTest {
                 val bounds = tagged(scene, tag).boundsInRoot
                 assertTrue(bounds.width > 0 && bounds.height > 0 && bounds.right <= 1280 && bounds.bottom < 900)
             }
+            assertTrue(commits.isEmpty())
+        }
+    }
+
+    @Test fun `audition keyboard fits with the desktop synth modules and comparing creates no edits`() = runBlocking {
+        withPanel(FontSize.LARGER, width = 1280, captureName = "audition", audition = true) { scene, render, commits ->
+            click(scene, "instrument-edit-sound"); render()
+            click(scene, "audition-original"); render()
+            val keyboard = tagged(scene, "sound-audition").boundsInRoot
+            val envelope = tagged(scene, "sound-envelope-module").boundsInRoot
+            assertTrue(keyboard.bottom < envelope.top)
+            assertTrue(tagged(scene, "sound-value-pitch").boundsInRoot.bottom <= 900)
             assertTrue(commits.isEmpty())
         }
     }

@@ -37,10 +37,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -116,6 +118,10 @@ internal fun NoteInstrumentSelector(
     sampleNames: Map<Int, String> = emptyMap(),
     livePreview: Boolean = true,
     onLivePreviewChanged: ((Boolean) -> Unit)? = null,
+    auditionOriginal: Boolean = false,
+    originalAuditionIds: Set<Int> = emptySet(),
+    onAuditionOriginalChanged: ((Boolean) -> Unit)? = null,
+    onAuditionPitch: ((Int, Int) -> Unit)? = null,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
@@ -123,6 +129,9 @@ internal fun NoteInstrumentSelector(
     var editing by remember(bankLabel) { mutableStateOf(false) }
     var renaming by remember(bankLabel, note.instrument) { mutableStateOf(false) }
     var name by remember(bankLabel, note.instrument, names) { mutableStateOf(names[note.instrument].orEmpty()) }
+    var auditionPitch by remember(bankLabel, note.instrument) { mutableStateOf(note.noteValue) }
+    val stopPreview by rememberUpdatedState(onStopPreview)
+    DisposableEffect(bankLabel, note.instrument) { onDispose { stopPreview() } }
 
     Surface(
         modifier = Modifier.testTag("note-sound-selector"),
@@ -143,11 +152,13 @@ internal fun NoteInstrumentSelector(
                 Text("Sound #${note.instrument}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedButton(shape = SoundControlShape, onClick = { onPreview(note.instrument, false) },
-                    enabled = nativePreviewAvailable && info?.let(InstrumentDescriptions::playable) == true,
+                OutlinedButton(shape = SoundControlShape, onClick = {
+                    if (editing && onAuditionPitch != null) onAuditionPitch(note.instrument, auditionPitch) else onPreview(note.instrument, false)
+                }, enabled = nativePreviewAvailable && if (editing && auditionOriginal && onAuditionPitch != null)
+                    note.instrument in originalAuditionIds else info?.let(InstrumentDescriptions::playable) == true,
                     modifier = Modifier.testTag("instrument-preview-current")) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp))
-                    Text("Play ${note.name}", fontSize = fs.body)
+                    Text("Play ${NspcSequence.noteToName(if (editing && onAuditionPitch != null) auditionPitch else note.noteValue)}", fontSize = fs.body)
                 }
                 Button(shape = SoundControlShape, onClick = { choosing = !choosing; if (choosing) editing = false }, enabled = instruments.isNotEmpty(),
                     modifier = Modifier.testTag("instrument-choose")) {
@@ -198,6 +209,11 @@ internal fun NoteInstrumentSelector(
                     onApply = { onChoose(it); choosing = false }, onCancel = { choosing = false }, sourceLabel = sourceLabel, sampleNames = sampleNames)
             }
             if (editing && instrumentEditingEnabled) {
+                if (onAuditionPitch != null && onAuditionOriginalChanged != null) SoundAuditionKeyboard(
+                    pitch = auditionPitch, notePitch = note.noteValue, original = auditionOriginal,
+                    originalAvailable = note.instrument in originalAuditionIds, enabled = nativePreviewAvailable,
+                    editedAvailable = info?.let(InstrumentDescriptions::playable) == true,
+                    onPitch = { auditionPitch = it; onAuditionPitch(note.instrument, it) }, onOriginal = onAuditionOriginalChanged)
                 soundContent()
                 bankContent()
             }

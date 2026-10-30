@@ -264,6 +264,10 @@ fun PianoRollEditor(
     onStopInstrumentPreview: () -> Unit = {},
     liveInstrumentPreview: Boolean = true,
     onLiveInstrumentPreviewChanged: ((Boolean) -> Unit)? = null,
+    auditionOriginal: Boolean = false,
+    originalAuditionIds: Set<Int> = emptySet(),
+    onAuditionOriginalChanged: ((Boolean) -> Unit)? = null,
+    onAuditionInstrument: ((Int, Note) -> Unit)? = null,
     onRenameInstrument: (Int, String) -> Unit = { _, _ -> },
     canUndo: Boolean = false,
     canRedo: Boolean = false,
@@ -1310,6 +1314,8 @@ fun PianoRollEditor(
                     onStopInstrumentPreview = onStopInstrumentPreview,
                     liveInstrumentPreview = liveInstrumentPreview,
                     onLiveInstrumentPreviewChanged = onLiveInstrumentPreviewChanged,
+                    auditionOriginal = auditionOriginal, originalAuditionIds = originalAuditionIds,
+                    onAuditionOriginalChanged = onAuditionOriginalChanged, onAuditionInstrument = onAuditionInstrument,
                     onRenameInstrument = onRenameInstrument,
                     usedInstrumentIds = song.channels.flatMap { it.notes.map { note -> note.instrument } }.toSet().sorted(),
                     onInstrumentChanged = onInstrumentChanged,
@@ -1490,6 +1496,10 @@ internal fun NotePropertiesPanel(
     onChanged: () -> Unit,
     liveInstrumentPreview: Boolean = true,
     onLiveInstrumentPreviewChanged: ((Boolean) -> Unit)? = null,
+    auditionOriginal: Boolean = false,
+    originalAuditionIds: Set<Int> = emptySet(),
+    onAuditionOriginalChanged: ((Boolean) -> Unit)? = null,
+    onAuditionInstrument: ((Int, Note) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -1612,6 +1622,9 @@ internal fun NotePropertiesPanel(
                 onStopPreview = onStopInstrumentPreview,
                 livePreview = liveInstrumentPreview,
                 onLivePreviewChanged = onLiveInstrumentPreviewChanged,
+                auditionOriginal = auditionOriginal, originalAuditionIds = originalAuditionIds,
+                onAuditionOriginalChanged = onAuditionOriginalChanged,
+                onAuditionPitch = onAuditionInstrument?.let { play -> { index, pitch -> play(index, note.copy(noteValue = pitch, instrument = index)) } },
                 onRename = onRenameInstrument,
                 onChoose = { inst ->
                     val old = note.instrument

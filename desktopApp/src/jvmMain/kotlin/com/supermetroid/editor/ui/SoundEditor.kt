@@ -564,6 +564,12 @@ fun SoundEditorCanvas(
                 instrumentPreviewMessage = state.instrumentPreviewMessage,
                 liveInstrumentPreview = state.liveInstrumentPreview,
                 onLiveInstrumentPreviewChanged = state::setInstrumentPreviewLive,
+                auditionOriginal = state.instrumentAuditionOriginal,
+                originalAuditionIds = state.pianoRollSourceInstruments.filter(InstrumentDescriptions::playable).mapTo(mutableSetOf()) { it.index },
+                onAuditionOriginalChanged = state::compareOriginalInstrument,
+                onAuditionInstrument = { index, note ->
+                    if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note, original = state.instrumentAuditionOriginal) }
+                },
                 onPreviewInstrument = { index, note ->
                     if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note) }
                 },
