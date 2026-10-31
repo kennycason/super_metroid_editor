@@ -12,40 +12,6 @@ internal object MusicSequenceBudget {
     const val LOW_SEQUENCE_MAX = 0x6C00
     const val SEQUENCE_EXPORT_MAX = RomConstants.SPC_RAM_SIZE
 
-    private val COMMAND_PARAM_COUNT = mapOf(
-        0xE0 to 1,
-        0xE1 to 2,
-        0xE2 to 3,
-        0xE3 to 0,
-        0xE4 to 1,
-        0xE5 to 2,
-        0xE6 to 0,
-        0xE7 to 1,
-        0xE8 to 1,
-        0xE9 to 2,
-        0xEA to 1,
-        0xEB to 3,
-        0xEC to 0,
-        0xED to 1,
-        0xEE to 2,
-        0xEF to 3,
-        0xF0 to 1,
-        0xF1 to 3,
-        0xF2 to 3,
-        0xF3 to 0,
-        0xF4 to 1,
-        0xF5 to 3,
-        0xF6 to 0,
-        0xF7 to 3,
-        0xF8 to 3,
-        0xF9 to 3,
-        0xFA to 1,
-        0xFB to 2,
-        0xFC to 0,
-        0xFD to 0,
-        0xFE to 0,
-    )
-
     data class SpcRange(
         val start: Int,
         val endExclusive: Int
@@ -60,9 +26,10 @@ internal object MusicSequenceBudget {
         val budgetBytes: Int,
         val cutoffTick: Int,
         val removedNotes: Int,
-        val removedCommands: Int
+        val removedCommands: Int,
+        val removedTicks: Int = 0,
     ) {
-        val trimmed get() = removedNotes > 0 || removedCommands > 0
+        val trimmed get() = removedNotes > 0 || removedCommands > 0 || removedTicks > 0
     }
 
     data class TrackBudget(
@@ -177,7 +144,12 @@ internal object MusicSequenceBudget {
     ): RelocatedSequencePatch {
         val availableRange = largestAvailableRange(occupiedRanges)
             ?: error("no free SPC sequence RAM for music edit $key")
-        val fit = fitSongToEncodedBudget(song, availableRange.size)
+        val encodedBytes = NspcSequence.encodedSequenceSize(song)
+        require(encodedBytes <= availableRange.size) {
+            "Music edit $key needs $encodedBytes B of SPC sequence RAM; the largest safe gap is ${availableRange.size} B. " +
+                "The complete arrangement cannot fit; no notes or commands were removed."
+        }
+        val fit = FitResult(song, encodedBytes, encodedBytes, availableRange.size, song.totalTicks, 0, 0)
         val allocation = allocateRange(
             occupiedRanges = occupiedRanges,
             size = fit.encodedBytes,
@@ -277,7 +249,8 @@ internal object MusicSequenceBudget {
             budgetBytes = budgetBytes,
             cutoffTick = bestCutoff,
             removedNotes = originalNoteCount - fittedNoteCount,
-            removedCommands = originalCommandCount - fittedCommandCount
+            removedCommands = originalCommandCount - fittedCommandCount,
+            removedTicks = (song.totalTicks - fitted.totalTicks).coerceAtLeast(0),
         )
     }
 
@@ -402,7 +375,7 @@ internal object MusicSequenceBudget {
                     ranges += collectChannelStreamRanges(spcRam, subroutineAddr, visited)
                 }
                 b >= 0xE0 -> {
-                    ptr += COMMAND_PARAM_COUNT[b] ?: 0
+                    ptr += NspcSequence.commandParameterCount(b) ?: 0
                 }
             }
         }

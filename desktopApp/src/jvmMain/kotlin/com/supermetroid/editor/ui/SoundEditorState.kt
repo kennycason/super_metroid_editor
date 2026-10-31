@@ -164,8 +164,6 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         private set
     var pianoRollOriginalSequenceBytes by mutableStateOf(0)
         private set
-    var pianoRollOriginalFlattenedBytes by mutableStateOf(0)
-        private set
     var pendingTrackImport by mutableStateOf<PendingTrackImport?>(null)
         private set
     private var pianoRollNativeSource: MusicNativePayloadEdit? = null
@@ -197,7 +195,6 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         pianoRollExportBudgetBytes = trackBudget.trackBytes
         pianoRollRelocationBudgetBytes = trackBudget.relocationBytes
         pianoRollOriginalSequenceBytes = trackBudget.trackBytes
-        pianoRollOriginalFlattenedBytes = NspcSequence.encodedSequenceSize(originalSong)
         originalPianoRollInstruments = originalInstruments
         originalPianoRollSong = PianoRollPreviewLogic.deepCopySong(originalSong)
 
@@ -247,7 +244,6 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         pianoRollExportBudgetBytes = 0
         pianoRollRelocationBudgetBytes = 0
         pianoRollOriginalSequenceBytes = 0
-        pianoRollOriginalFlattenedBytes = 0
         clearPianoRollHistory()
         pendingTrackImport = null
         clearNativeSource()
@@ -291,7 +287,6 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         pianoRollExportBudgetBytes = trackBudget.trackBytes
         pianoRollRelocationBudgetBytes = trackBudget.relocationBytes
         pianoRollOriginalSequenceBytes = trackBudget.trackBytes
-        pianoRollOriginalFlattenedBytes = NspcSequence.encodedSequenceSize(song)
         originalPianoRollInstruments = pianoRollInstruments
         originalPianoRollSong = PianoRollPreviewLogic.deepCopySong(song)
         song.title = track.name
@@ -799,7 +794,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         lines += report.compactSummary()
         lines += "tempo ${report.tempo}, editable N-SPC estimate ${report.encodedBytes} B"
         if (pianoRollExportBudgetBytes > 0 && report.encodedBytes > pianoRollExportBudgetBytes) {
-            lines += "Over vanilla track budget by ${report.encodedBytes - pianoRollExportBudgetBytes} B; ROM export will require relocation or trimming."
+            lines += "Packed sequence is ${report.encodedBytes - pianoRollExportBudgetBytes} B larger than the ROM footprint; export can relocate it within available bank memory."
         }
         if (pianoRollRelocationBudgetBytes > 0 && report.encodedBytes > pianoRollRelocationBudgetBytes) {
             lines += "Over current relocation budget by ${report.encodedBytes - pianoRollRelocationBudgetBytes} B; use Apply Fitted to trim before applying."

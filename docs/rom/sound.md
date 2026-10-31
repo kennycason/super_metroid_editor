@@ -313,6 +313,18 @@ reserved buffer. Other source commands are retained read-only. Operand-only edit
 native calls/loops when their bytes are not shared with sibling tracks; structural edits
 use checked sequence allocation and can require additional SPC RAM.
 
+Structural track encoding now reuses repeated native phrases through single-level `EF`
+calls, including phrases shared across voices. **Sequence memory** reports packed size,
+bytes saved and estimated relocation space. The original ROM footprint is informational:
+an edited track can move into another protected-free SPC region, and its upload chain can
+move in ROM when needed. Each bank still has only 64KB of SPC RAM shared by engine,
+sequences and samples. Export rejects a complete arrangement that cannot fit; it never
+automatically removes notes or shortens their duration. **Apply Fitted** remains an
+explicit staged-import action.
+
+You can compose or import new music into an existing track slot. Creating additional
+track IDs or new banks is not yet exposed as an **Add track** action.
+
 **Sound bank** opens the current bank's resource manager. It shows free bytes, largest
 gap, project sample users and verified empty sound slots. **New sound** creates a sine in
 an unused all-zero slot. **Copy into slot** replaces a chosen slot's sound settings.

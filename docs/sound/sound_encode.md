@@ -6,6 +6,21 @@ Super Metroid music loads a song set into SPC RAM with transfer blocks stored in
 
 The editor persists music edits in `.smedit` and can preview them in the sound editor. ROM export reuses existing bank-owned payload bytes when all requested uploads are already covered and no other bank shares those ROM bytes. New upload ranges require a relocated, merged transfer chain. Choosing safe SPC RAM addresses for edited sequences and restoring resources across bank changes are separate requirements.
 
+## Compact Encoding Checkpoint — 2026-10-31
+
+- Structural edits now factor repeated, complete native instruction sequences into `EF` subroutine calls. Bodies can be shared across voices, adjacent repetitions use native counts 1–255, and longer runs split into multiple calls. Calls never nest: the engine has one return address per voice. Length/quantize/velocity prefixes stay attached to their notes; opcode operands and END bytes are never mistaken for instructions.
+- This is lossless factoring of the editable arrangement, rather than recovery of the original ROM's exact phrase/conductor structure. Operand-only edits can still preserve original native bytes. The bounded packing search uses exact token comparisons after hashing and retains literal data whenever sharing would grow the result. Every packed stream expands to the same literal bytes.
+- Preflight, relocated encoding, native imports, previews and ROM export use the same packed-size calculation. The **Sequence memory** meter shows packed bytes, bytes saved and estimated relocation space. The old original-track footprint is informational; exceeding it does not itself block export. The existing bank export check remains the final check for all shared resources and sibling arrangements.
+- Edited test arrangements measured **1399 → 1180 B** for Title Screen, **4046 → 2490 B** for the bank `$0F` track, and **3529 → 2081 B** for Lower Norfair. Savings depend on the music; unique content cannot always be compressed enough.
+- Actual CPU/APU tests load and play exported edits for both Title Screen tracks and bank `$0F`, then repeat bank entry. Native SPC comparisons retain every parsed note/command and compare audio against literal encoding. Additional call instructions can shift DSP register-write phase slightly; the synthetic multi-voice fixture measured at most 9 PCM levels and 0.225 RMS error on 16-bit output. Exact expansion tests independently verify all emitted musical bytes, relocations, command operands and long repeat counts.
+- Complete-track allocation now rejects insufficient space directly. It never fits by truncation. Explicit staged import fitting remains available, and its trimmed flag also accounts for shortened held notes even when event counts are unchanged. Occupancy scanning uses the parser's shared native command lengths, including the correct pan, vibrato, volume-fade and tempo-fade widths.
+
+Relocation has two distinct limits: ROM chains can move into available cartridge space, while each loaded SPC bank must still fit its engine, recordings, directory, sounds and arrangements into 64KB. Moving data in ROM does not create SPC RAM. Repacking and existing free RAM gaps help; a dedicated new music bank can separate arrangements but still needs its own sample/instrument allocation and room-trigger integration.
+
+New compositions can already replace existing track slots through Edit Track or import. The browser still uses the known native track catalog. Additional song IDs, track records and new bank creation do not yet have an **Add track** workflow.
+
+Checkpoint validation: **477 regressions passed** across desktop/shared, with three optional external IT fixtures skipped. This includes lossless byte expansion, native PCM comparison, exact size/allocation boundaries, complete-track failure, native CPU/APU packed exports and reentry, existing sample/ownership/import/export checks, and Compose layouts. The full run exposed an old test assumption that every note edit must move its conductor; the updated test verifies the entire edited arrangement and untouched sibling instead, allowing safe reuse of the original gap and ROM chain. Its focused rerun passed.
+
 ## Problem
 
 Re-encoding a track in its original SPC sequence allocation can grow the encoded bytes. If it grows into another track's original conductor/block table/channel data, the game may play wrong music, silence, or black-screen. This happened when Title Screen playIndex `5` and Title Screen After Button playIndex `6` shared song set `0x03`: one edit corrupted the sibling track's sequence pointers and produced writes around `0x18F0`, which is unsafe SPC engine RAM.
@@ -45,14 +60,14 @@ Implemented:
 - Explicit encoder placement: export can choose the relocated conductor address instead of overwriting the original conductor.
 - SPC occupancy checks: export protects unedited sibling tracks, base/common transfer ranges, instrument table data, sample directory data, and BRR sample ranges.
 - Free-range allocation: export places edited sequences in a protected-free SPC RAM range and patches the selected play index to the relocated conductor.
-- Editor budget meter: the piano roll progress bar shows the per-track compact edit budget, not the larger relocation pool. It starts at the vanilla compact sequence size, adding notes consumes budget, and deleting notes frees budget. The message also reports the current phase-1 flattened export size versus relocation space, because that is what ROM export writes today for note edits until phase 2 compact/subroutine-preserving export exists.
+- Editor budget meter: **Sequence memory** shows packed size and savings against estimated relocation space. The original footprint is shown for unchanged tracks without treating it as a hard edit limit.
 - Export preflight: the fitting helper can estimate a shortened arrangement, but ROM export rejects a fit that would discard notes or commands. Explicit import fitting remains a staged user action.
 - Preview parity: piano-roll playback and waveform playback try the same relocated native N-SPC patch path as ROM export before falling back to software/delta overlay. This keeps newly-added notes from sounding correct in the app but different in the exported ROM.
-- Safe failure: if the trimmed edited sequence still cannot fit, export fails instead of writing a ROM that can black-screen.
+- Safe failure: if the complete packed sequence cannot fit, export fails before publication. Export never shortens it.
 
 Current limitation:
 
-- The encoder flattens expanded N-SPC subroutines. Some tracks, especially Title Screen playIndex `5`, become much larger than vanilla. Subroutine-preserving or compact encoding is needed to keep full songs while still fitting SPC RAM.
+- The editable model expands original control flow. Factoring recovers repeated phrases, but does not reproduce arbitrary original conductor loops or find a globally optimal encoding. An arrangement can still exceed the largest protected-free SPC gap.
 
 ## Safety Rules
 
@@ -76,7 +91,7 @@ Current limitation:
 
 ## Future Improvements
 
-- Preserve N-SPC subroutines instead of flattening everything, reducing encoded size.
+- Recover original conductor/phrase structure where useful beyond the current lossless phrase factoring.
 - Compact original sequence allocations for a song set when there is no simple free tail.
 - Show ROM-export eligibility in the UI before export.
 - Add an allocation/debug view showing sequence ranges, instrument table, and free SPC RAM.
@@ -269,7 +284,7 @@ Sound roadmap completion checkpoint — 2026-10-31:
 - **Sound bank** in Edit Track shows free memory, largest gap, project-owned samples/users and verified empty slots. **New sound** creates a sine only in an all-zero, unreferenced native slot; **Copy into slot** explicitly replaces an existing sound's settings. **Remove** is limited to unreferenced project-owned samples. Resource inventory follows native finite conductor branches and subroutine calls without a playback tick cutoff, includes common music and effects, and scans every native sound-table slot before cleanup. Each action uses the existing bank transaction, one Undo step and checked production export.
 - The native table remains 42 sounds; no slot expansion or arbitrary-engine support is claimed. Desktop export supports these edits. The headless build service continues to reject unsupported audio edits explicitly rather than dropping them. Common ROM recordings are not deletable project resources.
 
-The planned desktop sound workflow is implemented. Further sound work is optional expansion: compact encoding for larger structural arrangements, new effect-program allocation, additional native engines, native-table expansion, richer MIDI DSP approximation, and headless audio export.
+The planned desktop sound workflow is implemented. Compact structural-edit encoding is covered by the later checkpoint at the top of this document. Further sound work includes new track/bank creation, new effect-program allocation, additional native engines, native-table expansion, richer MIDI DSP approximation, and headless audio export.
 
 Checkpoint verification: **469 tests passed**, with three optional external IT fixtures skipped. Native SPC and required CPU/APU exported-ROM tests ran without skips. Compose captures cover both themes and all editor font sizes for effects, expression and bank management, including narrow bank/expression layouts. This includes existing sample/preset/held-audition, MIDI, bank-transition, persistence and ROM-export regressions. The runtime harness verifies the uploader, queue and soft-reset paths; it is not exhaustive gameplay coverage.
 
@@ -289,6 +304,7 @@ SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --off
   --tests '*MidiVoicePackingTest' --tests '*NativeSequenceFidelityTest' \
   --tests '*SoundEffectsTest' --tests '*MusicExpressionTest' --tests '*NativeCommandPatchesTest' \
   --tests '*SoundBankManagementTest' --tests '*SoundRoadmapUiTest' \
+  --tests '*CompactMusicEncodingTest' \
   --tests '*SampleAuthoringTest' --tests '*SampleWorkbenchTest' --tests '*MusicSamplePlacementTest' \
   --tests '*MusicSampleRestorationTest' --tests '*NativeSampleRestorationTest' \
   --tests '*ImpulseTrackerImportTest' --tests '*PianoRollEditLogicTest' --tests '*PianoRollEditorTest' \

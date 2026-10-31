@@ -275,10 +275,8 @@ fun PianoRollEditor(
     onRenameInstrument: (Int, String) -> Unit = { _, _ -> },
     canUndo: Boolean = false,
     canRedo: Boolean = false,
-    exportBudgetBytes: Int = 0,
     relocationBudgetBytes: Int = 0,
     originalSequenceBytes: Int = 0,
-    originalFlattenedBytes: Int = 0,
     onRecordUndo: (String) -> Unit = {},
     onUndo: () -> Boolean = { false },
     onRedo: () -> Boolean = { false },
@@ -334,18 +332,6 @@ fun PianoRollEditor(
     var selectionBox by remember { mutableStateOf<PianoRollSelectionBox?>(null) }
     var clipboardNotes by remember { mutableStateOf<List<PianoRollEditLogic.ClipboardNote>>(emptyList()) }
     val encoding = remember(song, editVersion) { PianoRollEditLogic.checkEncoding(song) }
-    val flattenedBytes = encoding.bytes
-    val trackUsageBytes = flattenedBytes?.let { bytes ->
-        val originalFlatBytes = originalFlattenedBytes.takeIf { it > 0 } ?: bytes
-        (originalSequenceBytes + bytes - originalFlatBytes).coerceAtLeast(0)
-    }
-    val budgetFit = remember(song, editVersion, relocationBudgetBytes, flattenedBytes) {
-        if (flattenedBytes != null && song.isModified && relocationBudgetBytes > 0 && flattenedBytes > relocationBudgetBytes) {
-            runCatching { MusicSequenceBudget.fitSongToEncodedBudget(song, relocationBudgetBytes) }.getOrNull()
-        } else {
-            null
-        }
-    }
 
     fun scrollTo(x: Float) {
         hScrollPx = x.coerceIn(0f, maxHScroll)
@@ -753,13 +739,11 @@ fun PianoRollEditor(
         }
 
         PianoRollExportBudgetMeter(
-            trackUsageBytes = trackUsageBytes,
-            flattenedBytes = flattenedBytes,
-            budgetBytes = exportBudgetBytes,
+            encodedBytes = encoding.bytes,
+            savedBytes = encoding.savedBytes,
             relocationBudgetBytes = relocationBudgetBytes,
             originalSequenceBytes = originalSequenceBytes,
             isModified = song.isModified,
-            fitPreview = budgetFit,
             problem = encoding.problem,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
         )
@@ -1361,80 +1345,42 @@ fun PianoRollEditor(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PianoRollExportBudgetMeter(
-    trackUsageBytes: Int?,
-    flattenedBytes: Int?,
-    budgetBytes: Int,
-    relocationBudgetBytes: Int,
-    originalSequenceBytes: Int,
-    isModified: Boolean,
-    fitPreview: MusicSequenceBudget.FitResult?,
-    problem: String? = null,
-    modifier: Modifier = Modifier
+    encodedBytes: Int?, savedBytes: Int, relocationBudgetBytes: Int, originalSequenceBytes: Int,
+    isModified: Boolean, problem: String? = null, modifier: Modifier = Modifier,
 ) {
-    if (problem != null || trackUsageBytes == null || flattenedBytes == null) {
-        Surface(modifier = modifier, color = MaterialTheme.colorScheme.errorContainer, shape = SoundControlShape) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    if (problem != null || encodedBytes == null) {
+        Surface(modifier, color = MaterialTheme.colorScheme.errorContainer, shape = SoundControlShape) {
             Text("Track playback/export blocked · ${problem ?: "Cannot measure this arrangement"}",
-                fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onErrorContainer,
+                fontSize = fs.detail, color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp).testTag("piano-roll-encoding-problem"))
         }
         return
     }
-    val hasBudget = budgetBytes > 0
-    val ratio = if (hasBudget) trackUsageBytes.toFloat() / budgetBytes else 0f
-    val trackDelta = trackUsageBytes - originalSequenceBytes
-    val trackOver = trackUsageBytes - budgetBytes
-    val relocationText = when {
-        relocationBudgetBytes <= 0 -> "phase-1 flat export ${flattenedBytes} B"
-        flattenedBytes <= relocationBudgetBytes -> "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B"
-        fitPreview != null -> {
-            "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B trims after tick ${fitPreview.cutoffTick}"
+    val available = relocationBudgetBytes.takeIf { it > 0 }
+    val fits = available != null && encodedBytes <= available
+    val color = if (available != null && !fits && isModified) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val message = buildString {
+        append("Packed edit $encodedBytes B")
+        if (savedBytes > 0) append(" · saves $savedBytes B")
+        if (available != null) {
+            append(" · estimated space $available B")
+            if (!fits && isModified) append(" · complete track exceeds space by ${encodedBytes - available} B")
         }
-        else -> "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B cannot fit"
+        if (!isModified && originalSequenceBytes > 0) append(" · ROM footprint $originalSequenceBytes B")
     }
-    val color = when {
-        !hasBudget -> MaterialTheme.colorScheme.outline
-        trackUsageBytes <= budgetBytes -> Color(0xFF55D17A)
-        ratio <= 1.10f -> Color(0xFFE0B84F)
-        else -> Color(0xFFE06666)
-    }
-    val message = when {
-        !hasBudget -> "Track budget unavailable; $relocationText"
-        !isModified -> {
-            "Track budget $trackUsageBytes/$budgetBytes B vanilla; $relocationText"
+    SynthModule(modifier.testTag("piano-roll-sequence-budget")) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Sequence memory", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(message, fontSize = fs.detail, color = color)
         }
-        trackUsageBytes <= budgetBytes -> {
-            val deltaLabel = if (trackDelta >= 0) "+$trackDelta" else trackDelta.toString()
-            "Track budget $trackUsageBytes/$budgetBytes B ($deltaLabel B); $relocationText"
-        }
-        relocationBudgetBytes > 0 && flattenedBytes <= relocationBudgetBytes -> {
-            "Track over by $trackOver B; $relocationText"
-        }
-        fitPreview != null -> "Track over by $trackOver B; $relocationText"
-        else -> "Track over by $trackOver B; $relocationText"
-    }
-
-    Surface(
-        modifier = modifier,
-        color = Color(0xFF171722),
-        shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.45f))
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp)
-        ) {
-            Text("Export budget", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LinearProgressIndicator(
-                progress = ratio.coerceIn(0f, 1f),
-                modifier = Modifier.width(160.dp).height(6.dp),
-                color = color,
-                trackColor = Color(0xFF2B2B38)
-            )
-            Text(message, fontSize = 9.sp, color = color, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-        }
+        if (available != null) LinearProgressIndicator(
+            progress = (encodedBytes.toFloat() / available).coerceIn(0f, 1f),
+            modifier = Modifier.fillMaxWidth().height(4.dp), color = color,
+            trackColor = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 

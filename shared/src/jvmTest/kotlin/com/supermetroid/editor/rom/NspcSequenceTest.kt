@@ -336,7 +336,12 @@ class NspcSequenceTest {
         }
 
         assertThrows(IllegalStateException::class.java) {
-            NspcSequence.encode(song, 0, failOnOverflow = true)
+            NspcSequence.encode(song, 0, failOnOverflow = true, compact = false)
+        }
+
+        assertThrows(IllegalStateException::class.java) {
+            NspcSequence.encode(song, 5, failOnOverflow = true, conductorAddrOverride = 0x6000,
+                sequenceEndAddr = 0x6000 + NspcSequence.encodedSequenceSize(song) - 1)
         }
 
         val writes = NspcSequence.encode(song, 0)

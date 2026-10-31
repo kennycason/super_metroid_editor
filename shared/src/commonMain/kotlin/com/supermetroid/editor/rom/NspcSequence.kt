@@ -365,6 +365,8 @@ object NspcSequence {
     }
 
     /** Number of parameter bytes for each command 0xE0-0xFE. */
+    fun commandParameterCount(command: Int): Int? = COMMAND_PARAM_COUNT[command]
+
     private val COMMAND_PARAM_COUNT = mapOf(
         0xE0 to 1, // instrument
         0xE1 to 1, // pan
@@ -444,7 +446,8 @@ object NspcSequence {
         spcRam: ByteArray? = null,
         failOnOverflow: Boolean = false,
         conductorAddrOverride: Int? = null,
-        sequenceEndAddr: Int = SEQUENCE_DATA_MAX
+        sequenceEndAddr: Int = SEQUENCE_DATA_MAX,
+        compact: Boolean = true,
     ): Map<Int, ByteArray> {
         val writes = mutableMapOf<Int, ByteArray>()
         val maxDataAddr = if (conductorAddrOverride != null) {
@@ -512,6 +515,15 @@ object NspcSequence {
         // Channel data starts after block pointer table (8 channels * 2 bytes = 16 bytes)
         var dataAddr = blockTableAddr + 16
 
+        val flat = (0 until 8).map { ch -> if (isChannelActive(song.channels[ch])) encodeChannel(song, ch) else null }
+        var plan = if (compact) NspcPhrasePacking.pack(flat) else NspcPhrasePacking.flat(flat)
+        if (dataAddr + plan.size > maxDataAddr) {
+            if (failOnOverflow) error("Encoded sequence would overflow SPC allocation (${plan.size + 20} bytes required)")
+            // A truncated packed stream could call a missing body. Legacy truncation uses literals only.
+            plan = NspcPhrasePacking.flat(flat)
+        }
+        val channelStreams = plan.render(dataAddr)
+
         val channelAddrs = IntArray(8)
 
         for (ch in 0 until 8) {
@@ -522,7 +534,7 @@ object NspcSequence {
             }
 
             channelAddrs[ch] = dataAddr
-            val channelData = encodeChannel(song, ch)
+            val channelData = requireNotNull(channelStreams[ch])
             EditorLog.info("[NSPC-ENCODE]   Ch $ch: ${song.channels[ch].notes.size} notes, " +
                 "${song.channels[ch].commands.size} cmds -> ${channelData.size} bytes at 0x${dataAddr.toString(16)}")
             if (dataAddr + channelData.size > maxDataAddr) {
@@ -548,6 +560,11 @@ object NspcSequence {
             }
             writes[dataAddr] = channelData
             dataAddr += channelData.size
+        }
+
+        for (phrase in plan.phrases) {
+            writes[dataAddr] = phrase
+            dataAddr += phrase.size
         }
 
         // Write block pointer table
@@ -578,16 +595,18 @@ object NspcSequence {
         return writes
     }
 
-    fun encodedSequenceSize(song: Song): Int {
-        var size = 4 + 16 // conductor + one 8-channel block table
-        for (ch in 0 until 8) {
-            val channel = song.channels[ch]
-            if (isChannelActive(channel)) {
-                size += encodeChannel(song, ch).size
-            }
-        }
-        return size
+    data class EncodingStats(val bytes: Int, val literalBytes: Int, val phrases: Int, val calls: Int) {
+        val savedBytes get() = literalBytes - bytes
     }
+
+    fun encodingStats(song: Song): EncodingStats {
+        val channels = (0 until 8).map { ch -> if (isChannelActive(song.channels[ch])) encodeChannel(song, ch) else null }
+        val plan = NspcPhrasePacking.pack(channels)
+        return EncodingStats(20 + plan.size, 20 + plan.flatBytes, plan.phrases.size, plan.calls)
+    }
+
+    fun encodedSequenceSize(song: Song, compact: Boolean = true): Int = if (compact) encodingStats(song).bytes
+        else 20 + (0 until 8).sumOf { ch -> if (isChannelActive(song.channels[ch])) encodeChannel(song, ch).size else 0 }
 
     /** Encode one monophonic voice; ties preserve held notes across lengths and timed commands. */
     private fun encodeChannel(song: Song, channelIndex: Int): ByteArray {

@@ -146,16 +146,18 @@ class MusicEditExportTest {
         }
         val originalSong = NspcSequence.parse(spcRam, playIndex)
         val trackBudget = MusicSequenceBudget.trackBudgetForTrack(parser, songSet, playIndex)
-        val flattenedBytes = NspcSequence.encodedSequenceSize(originalSong)
+        val literalBytes = NspcSequence.encodedSequenceSize(originalSong, compact = false)
+        val packedBytes = NspcSequence.encodedSequenceSize(originalSong)
 
         assertEquals(
             MusicSequenceBudget.originalSequenceBytes(spcRam, playIndex),
             trackBudget.trackBytes
         )
         assertTrue(
-            flattenedBytes > trackBudget.trackBytes,
-            "phase-1 flattened edit size should expose pressure against the per-track budget"
+            literalBytes > trackBudget.trackBytes,
+            "The expanded arrangement is larger than the native ROM footprint"
         )
+        assertTrue(packedBytes < literalBytes, "Packing should recover space from repeated native phrases")
         assertTrue(
             trackBudget.relocationBytes >= trackBudget.trackBytes,
             "relocation budget is a separate larger export-placement pool"
@@ -246,16 +248,13 @@ class MusicEditExportTest {
 
         assertNotNull(exportedPath)
         val exportedParser = RomParser(File(exportedPath!!).readBytes())
-        assertNotEquals(
-            SpcData.readSongSetPointer(parser, songSet),
-            SpcData.readSongSetPointer(exportedParser, songSet),
-            "note edits should export through a relocated song-set transfer chain"
-        )
         val exportedRam = SpcData.buildInitialSpcRam(exportedParser).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exportedParser, songSet))
         }
         val exportedSong = NspcSequence.parse(exportedRam, playIndex)
         assertEquals(expectedNoteValue, exportedSong.channels[channelIndex].notes.first().noteValue)
+        assertEquals(editedSong.channels.map { it.notes }, exportedSong.channels.map { it.notes }, "Export must retain the complete arrangement")
+        assertEquals(NspcSequence.parse(spcRam, 5), NspcSequence.parse(exportedRam, 5), "The sibling title arrangement must remain intact")
     }
 
     @Test
@@ -328,7 +327,7 @@ class MusicEditExportTest {
     }
 
     @Test
-    fun `export trims tail to fit multiple relocated title edits`() {
+    fun `export retains multiple complete relocated title edits`() {
         val romBytes = TestRomHelper.loadRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")
         romBytes!!
