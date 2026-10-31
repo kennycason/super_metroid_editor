@@ -55,11 +55,12 @@ internal object PianoRollPlaybackTiming {
     }
 }
 
-class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()) {
+class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer(),
+    private val heldInstrumentPlayer: HeldSoundPlayer = HeldSoundPlayer()) {
     private val player = SoundPlayer()
     private var instrumentPreviewVersion = 0
     private data class InstrumentPreviewRequest(val parser: RomParser, val index: Int, val note: NspcSequence.Note,
-        val sampleSource: Int?, val trackId: Int, val original: Boolean)
+        val sampleSource: Int?, val trackId: Int, val original: Boolean, val held: Boolean = false)
     private var instrumentPreviewRequest: InstrumentPreviewRequest? = null
     var instrumentAuditionOriginal by mutableStateOf(false)
         private set
@@ -1349,27 +1350,40 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     }
 
     internal fun useWorkbenchSample(application: MusicSampleBanks.Application, parser: RomParser, editor: EditorState): Boolean {
-        val target = application.target
+        val changed = applySoundBank(application.target, application.bank, application.changed, "Use sample in sound", parser, editor)
+        if (changed) statusMessage = "Using sample in ${application.target.soundName} · ${application.remainingBytes} B sample memory available"
+        return changed
+    }
+
+    internal fun useSoundPreset(application: SoundPresets.Application, parser: RomParser, editor: EditorState): Boolean {
+        val changed = applySoundBank(application.target, application.bank, application.changed, "Apply sound preset", parser, editor)
+        if (changed) statusMessage = "Applied ${application.preset.name} to ${application.target.soundName} · ${application.remainingBytes} B sample memory available"
+        return changed
+    }
+
+    private fun applySoundBank(target: SampleBankPreview.Target, bank: MusicInstrumentBankEdit, changed: Boolean,
+        label: String, parser: RomParser, editor: EditorState): Boolean {
         val track = selectedTrack ?: error("Choose a track before using this sample")
         require(isPianoRollOpen && track.songSet == target.songSet && (target.trackId == null || track.id == target.trackId)) {
-            "The selected track changed. Reopen the sample workbench."
+            "The selected track changed. Reopen the sound library or sample workbench."
         }
         require(editor.project.projectId == target.project.projectId && editor.project.romPath == target.project.romPath &&
             editor.project.musicEdits == target.project.musicEdits && editor.project.musicInstrumentBanks == target.project.musicInstrumentBanks) {
-            "The sound bank changed. Reopen the sample workbench."
+            "The sound bank changed. Reopen the sound library or sample workbench."
         }
-        if (!application.changed) return false
+        if (!changed) return false
         require(instrumentBankProblem == null) { instrumentBankProblem.orEmpty() }
         val staged = MusicBankTransitions.snapshot(editor.project)
-        staged.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)] = requireNotNull(MusicInstrumentBanks.copy(application.bank))
+        val key = MusicInstrumentBanks.key(track.songSet)
+        if (bank.instruments.isEmpty() && bank.samples.isEmpty()) staged.musicInstrumentBanks.remove(key)
+        else staged.musicInstrumentBanks[key] = requireNotNull(MusicInstrumentBanks.copy(bank))
         MusicBankResolver.resolve(parser, staged, track.songSet)
-        recordPianoRollEdit("Use sample in sound")
+        recordPianoRollEdit(label)
         stopPlayback()
         instrumentAuditionOriginal = false
-        editor.setMusicInstrumentBank(track.songSet, application.bank)
+        editor.setMusicInstrumentBank(track.songSet, bank)
         refreshInstrumentBank(parser, editor)
         refreshOpenBankInstruments()
-        statusMessage = "Using sample in ${target.soundName} · ${application.remainingBytes} B sample memory available"
         return true
     }
 
@@ -1681,7 +1695,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
     /** Native single-note audition; its private RAM and player never replace the song or waveform. */
     suspend fun previewInstrument(romParser: RomParser, index: Int, note: NspcSequence.Note, sampleSource: Int? = null,
-        original: Boolean = false) {
+        original: Boolean = false, held: Boolean = false) {
         require(!original || sampleSource == null) { "Original audition uses the source bank's sample" }
         require(note.noteValue in NspcSequence.NOTE_MIN..NspcSequence.NOTE_MAX) { "Choose an audition pitch from C1 to B6" }
         val track = selectedTrack ?: return
@@ -1695,6 +1709,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         if (!nativeInstrumentPreviewAvailable) return
         stopTrackPlayback()
         playAllEnabled = false
+        if (held) instrumentPlayer.stop()
         val version = ++instrumentPreviewVersion
         val previewNote = note.copy(instrument = index)
         val tempo = editingSong?.tempo ?: InstrumentAudition.TEMPO
@@ -1709,12 +1724,12 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         instrumentPreviewIndex = index
         instrumentPreviewSample = sampleSource
         instrumentAuditionOriginal = original
-        instrumentPreviewRequest = InstrumentPreviewRequest(romParser, index, note.copy(), sampleSource, selectedTrackId, original)
+        instrumentPreviewRequest = InstrumentPreviewRequest(romParser, index, note.copy(), sampleSource, selectedTrackId, original, held)
         val loop = liveInstrumentPreview
         isInstrumentPreviewLoading = true
         instrumentPreviewMessage = "Preparing preview…"
         try {
-            val pcm = withContext(Dispatchers.Default) {
+            val preview = withContext(Dispatchers.Default) {
                 val ram = if (bankProject != null) MusicBankResolver.sourceRam(romParser, bankProject, track.songSet, includeOverrides = !original) else payload?.let {
                     ImportedMusicResolver.sourceRam(romParser, track.songSet, track.playIndex, it)
                 } ?: buildSpcRamForTrack(romParser, track.songSet).also {
@@ -1722,10 +1737,24 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                 }
                 val audition = if (original) NspcRenderer.readInstrumentTable(ram).firstOrNull { it.index == index }
                     ?.takeIf(InstrumentDescriptions::playable) ?: error("Original sound is unavailable in this bank") else instrument
-                InstrumentAudition.render(InstrumentAudition.build(ram, audition, previewNote, tempo))
+                InstrumentAudition.build(ram, audition, previewNote, tempo, held)
             }
             if (version != instrumentPreviewVersion) return
             val label = if (original) "Original · ${previewNote.name}" else if (sampleSource == null) previewNote.name else "${if (sampleSource >= 0x80) "noise rate ${sampleSource and 31}" else "sample #$sampleSource"} · ${previewNote.name}"
+            if (held) {
+                instrumentPlayer.stop()
+                heldInstrumentPlayer.play(preview) {
+                    if (version == instrumentPreviewVersion) {
+                        isInstrumentPreviewLoading = false
+                        instrumentPreviewMessage = "Holding · $label"
+                    }
+                }
+                if (version == instrumentPreviewVersion) stopInstrumentPreview()
+                return
+            }
+            val pcm = withContext(Dispatchers.Default) { InstrumentAudition.render(preview) }
+            if (version != instrumentPreviewVersion) return
+            heldInstrumentPlayer.stop()
             instrumentPreviewMessage = "Playing · $label"
             instrumentPlayer.onComplete = {
                 if (version == instrumentPreviewVersion) {
@@ -1770,10 +1799,23 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         instrumentPreviewRequest = null
         instrumentPlayer.onComplete = null
         instrumentPlayer.stop()
+        heldInstrumentPlayer.stop()
         instrumentPreviewIndex = null
         instrumentPreviewSample = null
         isInstrumentPreviewLoading = false
         instrumentPreviewMessage = ""
+    }
+
+    internal fun releaseInstrumentKey(index: Int, pitch: Int) {
+        val request = instrumentPreviewRequest ?: return
+        if (!request.held || request.index != index || request.note.noteValue != pitch) return
+        instrumentPreviewVersion++
+        instrumentPreviewRequest = null
+        instrumentPreviewIndex = null
+        instrumentPreviewSample = null
+        isInstrumentPreviewLoading = false
+        instrumentPreviewMessage = "Key released"
+        heldInstrumentPlayer.release()
     }
 
     fun setInstrumentPreviewLive(enabled: Boolean) {
@@ -1795,7 +1837,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
     private fun invalidateInstrumentPreview(refreshOriginal: Boolean = false) {
         val request = instrumentPreviewRequest ?: return
-        if (!liveInstrumentPreview || request.original && !refreshOriginal) return
+        if ((!liveInstrumentPreview && !request.held) || request.original && !refreshOriginal) return
         instrumentPreviewVersion++
         isInstrumentPreviewLoading = true
         instrumentPreviewRefreshVersion++
@@ -1804,7 +1846,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     internal suspend fun refreshInstrumentPreview() {
         val request = instrumentPreviewRequest ?: return
         if (request.trackId != selectedTrackId || !isPianoRollOpen) return
-        previewInstrument(request.parser, request.index, request.note, request.sampleSource, request.original)
+        previewInstrument(request.parser, request.index, request.note, request.sampleSource, request.original, request.held)
     }
 
     private fun relocatedSequencePatchForTrack(

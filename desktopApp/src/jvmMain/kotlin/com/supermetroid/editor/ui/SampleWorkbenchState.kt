@@ -27,6 +27,7 @@ internal class SampleWorkbenchState(private val player: SoundPlayer = SoundPlaye
     val auditionActive: Boolean get() = audition != null
 
     fun update(value: SampleDraft) {
+        if (value == draft) return
         if (!live) stop() else { audioVersion++; previewing = false }
         revision++
         draft = value

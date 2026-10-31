@@ -1,9 +1,7 @@
 package com.supermetroid.editor.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.VerticalScrollbar
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
@@ -12,7 +10,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
@@ -183,12 +180,13 @@ internal fun SampleWorkbenchContent(
                     }, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Drag up/down · Shift: fine · click, then scroll or use arrows", fontSize = fs.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SampleLoopJoin(draft, encoded, enabled && invalidFields.isEmpty() && SampleLoopEditing.validBounds(draft), state::update)
                 }
             }
             val sampleControls: @Composable () -> Unit = {
                 SynthModule(Modifier.fillMaxWidth().testTag("sample-preview-module")) {
                     Text("Sample", fontSize = fs.body, fontWeight = FontWeight.Medium)
-                    SampleEncodedWaveform(encoded)
+                    SampleLoopEditor(draft, enabled && invalidFields.isEmpty() && SampleLoopEditing.validBounds(draft), encoded, state::update)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(encoded?.let { "${"%.1f".format(it.pcm.size / 32.0)} ms · ${if (it.loopFrame == null) "one-shot" else "looped"} · ${it.brr.size} B" }
                             ?: "Encoding sample…", fontSize = fs.detail, modifier = Modifier.weight(1f))
@@ -240,7 +238,6 @@ internal fun SampleWorkbenchContent(
                         SampleFrameField("Loop start", draft.loopStart ?: draft.trimStart, enabled && draft.loopStart != null, draft.pcm,
                             { fieldValidity("Loop start", it) }) { state.update(draft.copy(loopStart = it)) }
                     }
-                    Text("Positions in frames · 16-frame boundaries", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -278,28 +275,6 @@ internal fun SampleWorkbenchContent(
                     "Use updates this shared sound · Save sample creates a separate file", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-    }
-}
-
-@Composable
-private fun SampleEncodedWaveform(encoded: SampleAuthoring.Encoded?) {
-    val waveColor = MaterialTheme.colorScheme.primary
-    val loopColor = MaterialTheme.colorScheme.tertiary
-    val gridColor = MaterialTheme.colorScheme.outlineVariant
-    Canvas(Modifier.fillMaxWidth().height(140.dp).background(MaterialTheme.colorScheme.surfaceVariant, SoundControlShape)
-        .testTag("sample-encoded-waveform")) {
-        drawLine(gridColor, Offset(0f, size.height / 2), Offset(size.width, size.height / 2))
-        val pcm = encoded?.pcm ?: return@Canvas
-        val bins = minOf(192, pcm.size)
-        for (bin in 0 until bins) {
-            val first = bin * pcm.size / bins
-            val last = (bin + 1) * pcm.size / bins
-            var low = 0; var high = 0
-            for (at in first until last) { low = minOf(low, pcm[at].toInt()); high = maxOf(high, pcm[at].toInt()) }
-            val x = (bin + 0.5f) * size.width / bins
-            drawLine(waveColor, Offset(x, size.height * (0.5f - high / 65536f)), Offset(x, size.height * (0.5f - low / 65536f)), 2f)
-        }
-        encoded.loopFrame?.let { val x = it.toFloat() * size.width / pcm.size; drawLine(loopColor, Offset(x, 0f), Offset(x, size.height), 2f) }
     }
 }
 

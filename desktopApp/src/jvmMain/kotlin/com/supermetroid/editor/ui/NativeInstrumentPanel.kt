@@ -213,7 +213,7 @@ private fun TuningControls(entry: InstrumentEntry, committed: InstrumentEntry, s
 }
 
 @Composable
-private fun EnvelopeGuide(entry: InstrumentEntry, modifier: Modifier = Modifier) {
+internal fun EnvelopeGuide(entry: InstrumentEntry, modifier: Modifier = Modifier) {
     val fs = LocalEditorTheme.current.fontSize.value
     val levels = remember(entry.adsr1, entry.adsr2, entry.gain) { NativeInstrumentSound.envelopeGuide(entry) }
     val line = MaterialTheme.colorScheme.primary

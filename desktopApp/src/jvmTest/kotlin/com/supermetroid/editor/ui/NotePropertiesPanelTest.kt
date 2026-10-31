@@ -46,6 +46,7 @@ class NotePropertiesPanelTest {
         val samplePreviews = mutableListOf<Triple<Int, Int, NspcSequence.Note>>()
         val sampleChoices = mutableListOf<Pair<Int, Int>>()
         val sampleTryouts = mutableListOf<NspcSequence.Note>()
+        val presetTargets = mutableListOf<NspcSequence.Note>()
         val history = mutableListOf<String>()
         var deleted = 0
         var closed = 0
@@ -61,6 +62,7 @@ class NotePropertiesPanelTest {
     }
     private suspend fun withPanel(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, height: Int = 900, captureSuffix: String = "", tryoutAvailable: Boolean = false,
         auditionAvailable: Boolean = false,
+        presetsAvailable: Boolean = false,
         check: suspend (ComposeScene, suspend () -> Unit, Fixture) -> Unit) {
         val fixture = Fixture()
         val scene = ComposeScene(coroutineContext = coroutineContext)
@@ -81,6 +83,7 @@ class NotePropertiesPanelTest {
                                 onPreviewSample = { index, srcn, note -> fixture.samplePreviews += Triple(index, srcn, note) },
                                 onChooseSample = { index, srcn -> fixture.sampleChoices += index to srcn },
                                 onTrySample = if (tryoutAvailable) { { fixture.sampleTryouts += it } } else null,
+                                onOpenPresets = if (presetsAvailable) { { fixture.presetTargets += it } } else null,
                                 instrumentBankLabel = "Lower Norfair sound bank", instrumentSourceLabel = "ROM bank",
                                 sharedInstrumentTracks = listOf("Lower Norfair"), sharedInstrumentEdits = emptySet(),
                                 onResetSharedInstrument = {}, instrumentEditingEnabled = true,
@@ -113,6 +116,17 @@ class NotePropertiesPanelTest {
                 surface.makeImageSnapshot().use { image -> image.encodeToData()!!.use { file.writeBytes(it.bytes) } }
             }
         } finally { scene.close(); surface.close() }
+    }
+
+    @Test fun `preset browser receives a detached selected note without history or sound edits`() = runBlocking {
+        withPanel(presetsAvailable = true) { scene, render, fixture ->
+            click(scene, "instrument-presets"); render()
+            val target = fixture.presetTargets.single()
+            assertEquals(fixture.note.value, target); assertNotSame(fixture.note.value, target)
+            target.instrument = 31
+            assertEquals(24, fixture.note.value.instrument)
+            assertTrue(fixture.history.isEmpty()); assertTrue(fixture.sampleChoices.isEmpty())
+        }
     }
 
     @Test fun `new recording tryout receives a detached selected note without history or source edits`() = runBlocking {

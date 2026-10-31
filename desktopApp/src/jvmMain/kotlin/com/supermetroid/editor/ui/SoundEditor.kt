@@ -409,6 +409,7 @@ fun SoundEditorCanvas(
     val scope = rememberCoroutineScope()
     val musicEditVersion = editorState.musicEditVersion
     var sampleTryout by remember(state.selectedTrackId) { mutableStateOf<SampleBankPreview.Target?>(null) }
+    var presetTarget by remember(state.selectedTrackId, state.isPianoRollOpen) { mutableStateOf<SampleBankPreview.Target?>(null) }
     DisposableEffect(state) { onDispose { state.stopInstrumentPreview(); state.sampleWorkbench.stop() } }
     LaunchedEffect(state.instrumentPreviewRefreshVersion) {
         kotlinx.coroutines.delay(90)
@@ -418,6 +419,11 @@ fun SoundEditorCanvas(
     sampleTryout?.let { target ->
         SampleWorkbench(state.sampleWorkbench, romParser, target,
             onUseSample = { application -> romParser?.let { state.useWorkbenchSample(application, it, editorState) } }) { sampleTryout = null }
+    }
+
+    presetTarget?.let { target ->
+        if (romParser != null) SoundPresetBrowser(romParser, target, state.editingSong?.tempo ?: InstrumentAudition.TEMPO,
+            onApply = { state.useSoundPreset(it, romParser, editorState) }, onClose = { presetTarget = null })
     }
 
     LaunchedEffect(state.selectedTrackId, state.sampleRate, editorState.musicEditVersion) {
@@ -547,6 +553,13 @@ fun SoundEditorCanvas(
                         state.pianoRollInstruments.getOrNull(note.instrument)?.let { InstrumentDescriptions.title(it, names) } ?: "Sound #${note.instrument}",
                         MusicBankTransitions.snapshot(editorState.project), track?.id)
                 } else null,
+                onOpenPresets = if (romParser != null && state.nativeInstrumentPreviewAvailable && state.instrumentBankProblem == null) { note ->
+                    state.stopPlayback()
+                    val names = editorState.musicInstrumentNames(state.currentSongSet)
+                    presetTarget = SampleBankPreview.Target(state.currentSongSet, note.copy(), track?.name ?: "Current bank",
+                        state.pianoRollInstruments.firstOrNull { it.index == note.instrument }?.let { InstrumentDescriptions.title(it, names) } ?: "Sound #${note.instrument}",
+                        MusicBankTransitions.snapshot(editorState.project), track?.id)
+                } else null,
                 instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
                 instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
                 instrumentSourceLabel = if (editorState.project.musicEdits.values.any {
@@ -570,6 +583,12 @@ fun SoundEditorCanvas(
                 onAuditionInstrument = { index, note ->
                     if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note, original = state.instrumentAuditionOriginal) }
                 },
+                onAuditionKeyDown = { index, note ->
+                    if (romParser != null) scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        state.previewInstrument(romParser, index, note, original = state.instrumentAuditionOriginal, held = true)
+                    }
+                },
+                onAuditionKeyUp = state::releaseInstrumentKey,
                 onPreviewInstrument = { index, note ->
                     if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note) }
                 },

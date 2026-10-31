@@ -194,33 +194,81 @@ the project or a loaded bank. Generate sine/triangle/pulse/saw/noise, or import 
 WAV (up to 1.024 seconds, converted to 32 kHz). Set level, trim and loop start on native
 16-frame boundaries. Oversize files are rejected instead of silently trimmed.
 
-The waveform shows the encoded BRR decode. **Play recording** auditions those bytes through the
-native SPC engine at recorded rate in disposable RAM. It is not generic PCM playback or
-a fallback synth. Loop entries reset predictor history for stable subsequent iterations.
+The waveform shows the encoded BRR decode. **Play sample** auditions those bytes through the
+native SPC engine at recorded rate in disposable RAM. **Live** repeats the audition and
+updates it when controls change, retaining the previous audio until the replacement is ready.
 
-From a note's **Edit sound → Try new recording**, open the same workbench with a detached
+From a note's **Edit sound → New sample**, open the same workbench with a detached
 snapshot of that bank. **Play as sound** uses the selected sound's actual envelope, gain,
-tuning, and note pitch/length/velocity/gate. Generate a recording or **Open draft** to try a
-saved asset. This changes neither the selected sound nor the arrangement; close the dialog
-to return. The draft remains standalone and still needs an explicit local save.
+tuning, and note pitch/length/velocity/gate. **Load sample / Save sample** preserve source
+PCM and authoring parameters in a versioned `.smedit-sample` file. **Export BRR** writes
+raw compressed data; keep the sample asset for its loop offset.
 
-The bank fit check finds contiguous BRR space without reclaiming any boot/bank uploads,
-padding, sibling imports, relocated arrangements, or directory-referenced start/loop data.
-Only gaps in `$582C..$6BFF` are candidates. Oversize recordings disable **Play as sound**
-with a trimming suggestion; **Play recording**, saving and raw BRR export remain available.
-For example, the original Wrecked Ship bank has only a 217-byte gap under this conservative
-policy, so the default 288-byte waveform does not fit. This is a data-space check, **not**
-proof of a free instrument/SRCN slot, ROM capacity, or safe bank transitions. A bank import
-that changes the boot SPC engine is refused for this tryout, not played through a fallback.
+**Use sample in sound** explicitly copies the encoded sample into project-owned bank data,
+preserving envelope/tuning and creating one shared-bank undo step. Identical authored samples
+reuse memory. Placement protects boot/bank uploads, padding, sibling imports, arrangements,
+and directory start/loop chains. Only contiguous gaps in `$582C..$6BFF` and proven available
+custom directory slots 40–63 are used. Oversize samples are rejected, never shortened.
+Standalone audition, saving and raw BRR export remain available when a bank cannot fit the sample.
+Project save/reopen and production ROM export retain applied samples and restore directory
+resources between bank loads. Merely opening or auditioning the workbench changes no project data.
 
-**Save draft / Open draft** preserve source PCM and all authoring parameters in a versioned
-`.smedit-sample` file. Save explicitly to keep work across app restarts; project save does
-not include standalone drafts. **Export BRR** writes headerless raw compressed data: keep
-the draft for its loop offset, which also appears in the workbench. Asset writes are atomic.
+## Reusable Sound Presets
 
-Adding a draft to a music bank is the next stage, not an enabled action. Sample-slot
-ownership, persistent SPC/ROM allocation and shared DIR/BRR lifetime checks still need implementation;
-the instrument-only continuation loader does not make arbitrary sample insertion safe.
+A note's **Presets** button opens a searchable sound library using the same envelope guide,
+piano, fonts and theme as the sound editor. **Save current sound as → Save to library**
+captures the current sample, envelope, gain and native tuning. Noise presets retain their
+native rate/settings. Files live in `~/.smedit/sound-presets/<id>.smedit-sound` and are
+available across projects. Opening the library never creates or rewrites files; malformed
+files are reported individually without hiding valid presets.
+
+Click a piano key to audition the selected **Preset**, or switch to **Current** to compare
+at the same pitch, duration, velocity and gate. **Live** repeats playback; switching presets
+or comparison retains the prior clip until the replacement is ready. **Stop** and closing
+the browser invalidate pending renders. Auditioning and saving presets create no project edits.
+
+**Use preset in sound** replaces the selected shared sound's source and settings in one
+undo step. It reuses a matching destination sample, preferring the current slot, or copies
+portable BRR data through the bank's checked sample allocator. The destination sound number,
+name, other sounds and arrangement stay intact. An unchanged preset creates no edit; stale
+plans and insufficient space cannot mutate the project. The footer reports reuse or added
+sample bytes. Applied sounds remain self-contained after the library preset is deleted.
+
+Native sample capture preserves BRR bytes, including linked intro/tail predictor history,
+without lossy re-encoding. Private sampled-preset audition uses a disposable single-voice
+bank and can play even when the destination lacks room. Noise comparison preserves the
+destination's sample directory because DSP end flags still affect noise voices. Portable
+samples are bounded to 37,368 BRR bytes; unsupported engines, invalid chains and larger
+captures are explicitly rejected.
+
+## Held Piano Audition and Loop Editing
+
+In **Edit sound** and **Presets**, hold a piano key with the mouse, or focus a key and hold
+**Enter / Space**, to sustain a native voice. Releasing the key runs the stock engine's
+key-off/release; Escape, focus loss, window blur, closing the view, changing tracks, and
+Stop clean up held playback. Assistive click actions and the Play buttons retain their
+normal timed auditions. Preview pitches and full held-note gates never change track notes.
+
+Held playback streams 10 ms buffers from one running SPC/DSP/filter timeline. A private
+N-SPC tied phrase sustains the note without repeating its attack or looping a recorded PCM
+clip. The small output buffer paces emulation. Quick releases cancel pending startup;
+late releases from another pitch cannot stop a newer held note. Live parameter refresh and
+Original/Edited or Preset/Current comparison retain held-mode requests.
+
+The sample workbench waveform now shows the full source with faded trimmed regions,
+encoded audio inside the selection, draggable **Start / Loop start / End** markers and a
+tinted loop span. End is both trim end and loop end. Markers snap to native 16-frame blocks;
+arrow keys and **−16 / +16** nudge the selected marker, with Shift-arrows moving 128 frames.
+Dragging Start or End keeps at least one complete block and moves an excluded loop start
+back inside the selection. Exact frame fields remain available.
+
+**Loop join · end → start** shows the last and first encoded loop frames with their amplitude
+difference. **Find nearby join** searches aligned candidates within 128 source frames using
+PCM amplitude/slope continuity and prefers the nearest equally good candidate. It preserves
+source PCM and trim boundaries; it is an aid, not a guarantee of a click-free BRR loop.
+The workbench's existing Live preview follows valid changes. Unchanged snapped positions
+retain the current encoding/playback. Save, bank allocation, Undo and ROM export use the
+same sample format and checked paths as before.
 
 ## Track Import/Export Formats
 

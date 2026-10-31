@@ -32,6 +32,8 @@ class SoundAuditionKeyboardTest {
         var original by mutableStateOf(false)
         val played = mutableListOf<Int>()
         val compared = mutableListOf<Boolean>()
+        val pressed = mutableListOf<Int>()
+        val released = mutableListOf<Int>()
     }
     private fun nodes(scene: ComposeScene): List<SemanticsNode> {
         fun walk(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::walk)
@@ -40,7 +42,7 @@ class SoundAuditionKeyboardTest {
     private fun tag(scene: ComposeScene, name: String) = nodes(scene).single { it.config.getOrNull(SemanticsProperties.TestTag) == name }
     private fun click(scene: ComposeScene, name: String) { assertTrue(tag(scene, name).config[SemanticsActions.OnClick].action!!.invoke()) }
     private suspend fun keyboard(font: FontSize = FontSize.MEDIUM, theme: EditorTheme = EditorTheme.DARK, width: Int = 680,
-        enabled: Boolean = true, originalAvailable: Boolean = true, editedAvailable: Boolean = true,
+        enabled: Boolean = true, originalAvailable: Boolean = true, editedAvailable: Boolean = true, hold: Boolean = false,
         check: suspend (ComposeScene, Fixture, suspend () -> Unit) -> Unit) {
         val fixture = Fixture()
         val scene = ComposeScene(coroutineContext = coroutineContext)
@@ -55,7 +57,9 @@ class SoundAuditionKeyboardTest {
                             SoundAuditionKeyboard(fixture.pitch, NspcSequence.nameToNote("C4"), fixture.original,
                                 originalAvailable, enabled, editedAvailable,
                                 onPitch = { fixture.pitch = it; fixture.played += it },
-                                onOriginal = { fixture.original = it; fixture.compared += it })
+                                onOriginal = { fixture.original = it; fixture.compared += it },
+                                onKeyDown = if (hold) { { fixture.pitch = it; fixture.pressed += it } } else null,
+                                onKeyUp = if (hold) { { fixture.released += it } } else null)
                         }
                     }
                 }
@@ -107,6 +111,33 @@ class SoundAuditionKeyboardTest {
             click(scene, "audition-note-pitch"); render()
             assertEquals(c, fixture.played.last())
         }
+    }
+
+    @Test fun `held pointer and keyboard notes release on keyup focus loss and disposal without duplicate clicks`() = runBlocking {
+        lateinit var disposed: Fixture
+        keyboard(hold = true) { scene, fixture, render ->
+            disposed = fixture
+            val c = NspcSequence.nameToNote("C4")
+            val center = tag(scene, "audition-key-$c").boundsInRoot.center
+            scene.sendPointerEvent(PointerEventType.Press, center, button = PointerButton.Primary); render()
+            assertEquals(listOf(c), fixture.pressed); assertTrue(fixture.released.isEmpty())
+            scene.sendPointerEvent(PointerEventType.Release, center, button = PointerButton.Primary); render()
+            assertEquals(listOf(c), fixture.released); assertTrue(fixture.played.isEmpty())
+            tag(scene, "audition-key-$c").config[SemanticsActions.RequestFocus].action!!.invoke(); render()
+            fun key(type: Int) = scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), type, 0L, 0, AwtKeyEvent.VK_ENTER, AwtKeyEvent.CHAR_UNDEFINED)))
+            key(AwtKeyEvent.KEY_PRESSED); key(AwtKeyEvent.KEY_PRESSED); render()
+            assertEquals(listOf(c, c), fixture.pressed, "Auto-repeat cannot retrigger a held note")
+            key(AwtKeyEvent.KEY_RELEASED); render(); assertEquals(listOf(c, c), fixture.released)
+            key(AwtKeyEvent.KEY_PRESSED); render()
+            tag(scene, "audition-key-${c + 2}").config[SemanticsActions.RequestFocus].action!!.invoke(); render()
+            assertEquals(listOf(c, c, c), fixture.released)
+            // Assistive click remains a normal note audition.
+            click(scene, "audition-key-${c + 2}"); render(); assertEquals(listOf(c + 2), fixture.played)
+            val next = tag(scene, "audition-key-${c + 2}").boundsInRoot.center
+            scene.sendPointerEvent(PointerEventType.Press, next, button = PointerButton.Primary); render()
+            assertEquals(c + 2, fixture.pressed.last())
+        }
+        assertEquals(disposed.pressed, disposed.released, "Closing a keyboard must release its active pointer note")
     }
 
     @Test fun `octave navigation is silent and pitches stay within native C1 through B6`() = runBlocking {

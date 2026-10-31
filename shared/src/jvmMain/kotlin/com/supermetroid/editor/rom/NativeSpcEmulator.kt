@@ -248,11 +248,15 @@ class NativeSpcEmulator : AutoCloseable {
      * @param seconds Duration to render
      * @return Stereo PCM samples at 32000 Hz
      */
-    fun renderStereo(seconds: Int): ShortArray {
+    fun renderStereo(seconds: Int): ShortArray = renderStereoFrames(Math.multiplyExact(seconds, SAMPLE_RATE))
+
+    /** Continue the same engine/DSP timeline in small audio-output buffers. */
+    fun renderStereoFrames(frames: Int): ShortArray {
+        require(frames >= 0)
         val library = lib ?: throw IllegalStateException("libspc not available")
         val spcPtr = spc ?: throw IllegalStateException("Emulator not loaded")
 
-        val totalStereo = SAMPLE_RATE * seconds * 2
+        val totalStereo = Math.multiplyExact(frames, 2)
         val output = ShortArray(totalStereo)
         val filterPtr = filter
         val chunkSize = 4096
@@ -279,8 +283,10 @@ class NativeSpcEmulator : AutoCloseable {
     /**
      * Render and downmix to mono PCM at 32000 Hz.
      */
-    fun renderMono(seconds: Int): ShortArray {
-        val stereo = renderStereo(seconds)
+    fun renderMono(seconds: Int): ShortArray = renderMonoFrames(Math.multiplyExact(seconds, SAMPLE_RATE))
+
+    fun renderMonoFrames(frames: Int): ShortArray {
+        val stereo = renderStereoFrames(frames)
         val mono = ShortArray(stereo.size / 2)
         for (i in mono.indices) {
             val l = stereo[i * 2].toInt()
@@ -288,6 +294,12 @@ class NativeSpcEmulator : AutoCloseable {
             mono[i] = ((l + r) / 2).coerceIn(-32768, 32767).toShort()
         }
         return mono
+    }
+
+    /** Stock N-SPC music stop command; lets its normal key-off/release run. */
+    fun stopMusic() {
+        val library = lib ?: throw IllegalStateException("libspc not available")
+        library.spc_write_port(spc ?: error("Emulator not loaded"), 0, 0, 0)
     }
 
     override fun close() {

@@ -122,6 +122,9 @@ internal fun NoteInstrumentSelector(
     originalAuditionIds: Set<Int> = emptySet(),
     onAuditionOriginalChanged: ((Boolean) -> Unit)? = null,
     onAuditionPitch: ((Int, Int) -> Unit)? = null,
+    onOpenPresets: (() -> Unit)? = null,
+    onAuditionKeyDown: ((Int, Int) -> Unit)? = null,
+    onAuditionKeyUp: ((Int, Int) -> Unit)? = null,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val info = instruments.firstOrNull { it.index == note.instrument }
@@ -171,6 +174,10 @@ internal fun NoteInstrumentSelector(
                     enabled = instrumentEditingEnabled && info != null, modifier = Modifier.testTag("instrument-edit-sound")) {
                     Text(if (editing) "Close editor" else "Edit sound", fontSize = fs.body)
                 }
+                if (onOpenPresets != null) OutlinedButton(onClick = onOpenPresets, shape = SoundControlShape,
+                    enabled = instrumentEditingEnabled && info != null, modifier = Modifier.testTag("instrument-presets")) {
+                    Text("Presets", fontSize = fs.body)
+                }
             }
             if (sharedTracks.isNotEmpty()) SharedInstrumentScope(sharedTracks, sharedInstrumentEdited, onResetSharedInstrument, instrumentEditingEnabled, note.instrument < 24)
             if (renaming) {
@@ -213,7 +220,9 @@ internal fun NoteInstrumentSelector(
                     pitch = auditionPitch, notePitch = note.noteValue, original = auditionOriginal,
                     originalAvailable = note.instrument in originalAuditionIds, enabled = nativePreviewAvailable,
                     editedAvailable = info?.let(InstrumentDescriptions::playable) == true,
-                    onPitch = { auditionPitch = it; onAuditionPitch(note.instrument, it) }, onOriginal = onAuditionOriginalChanged)
+                    onPitch = { auditionPitch = it; onAuditionPitch(note.instrument, it) }, onOriginal = onAuditionOriginalChanged,
+                    onKeyDown = onAuditionKeyDown?.let { play -> { auditionPitch = it; play(note.instrument, it) } },
+                    onKeyUp = onAuditionKeyUp?.let { release -> { release(note.instrument, it) } })
                 soundContent()
                 bankContent()
             }
