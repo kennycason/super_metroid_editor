@@ -156,6 +156,20 @@ CPU-side queue functions in bank `$80`:
 Sound effects can be **song-independent** (use their own BRR data) or **song-dependent**
 (borrow a BGM instrument — these sound different depending on which song set is loaded).
 
+The Sound workspace's **Effects** tab lists all 240 identities (66 / 127 / 47) with search
+and library filters. **Play** runs the native engine; **Samples** chooses the music
+bank used for bank-dependent sounds. **Live** repeats the audition and refreshes it after
+edits without requiring another Play. Choose a voice and program step to adjust native
+sound slot, level, pan, pitch, length, slide, ADSR or repeat operands. Shared programs affect
+every effect using those bytes. Undo/Redo/Reset and project save/reopen retain the edits;
+desktop ROM export applies them to the affected native uploads transactionally.
+
+The program reader checks the supported stock engine and bounded data regions. New
+instructions, pointers, programs and arbitrary SPC engines are not editable here.
+Names/voice counts are sourced from [PJBoy/SM-SPC, revision
+17b0c1ee46eed2f97909fbb6141a5ee6a693c45a](https://github.com/PJBoy/SM-SPC/tree/17b0c1ee46eed2f97909fbb6141a5ee6a693c45a/vanilla),
+including the Dachora effects that share voice programs between libraries.
+
 ## CPU-SPC Transfer Protocol (`$80:8024`)
 
 Handshake sequence:
@@ -262,15 +276,55 @@ arrow keys and **−16 / +16** nudge the selected marker, with Shift-arrows movi
 Dragging Start or End keeps at least one complete block and moves an excluded loop start
 back inside the selection. Exact frame fields remain available.
 
-**Loop join · end → start** shows the last and first encoded loop frames with their amplitude
-difference. **Find nearby join** searches aligned candidates within 128 source frames using
-PCM amplitude/slope continuity and prefers the nearest equally good candidate. It preserves
-source PCM and trim boundaries; it is an aid, not a guarantee of a click-free BRR loop.
-The workbench's existing Live preview follows valid changes. Unchanged snapped positions
-retain the current encoding/playback. Save, bank allocation, Undo and ROM export use the
-same sample format and checked paths as before.
+**Snap near zero** moves the selected Start, Loop start or End marker to a nearby native
+16-frame boundary. It prefers an actual sign crossing, then quieter adjacent samples and
+proximity, within 128 source frames. It keeps trim/loop bounds valid; it never silently
+moves a marker between BRR blocks. **Find nearby join** remains a separate end-to-start
+amplitude/slope matching aid.
+
+The **Crossfade** knob blends both sides of the loop join with a raised-cosine taper.
+It defaults to Off, preserves the original PCM, loop length, native pointer and pitch, and
+is baked into the encoded BRR used for audition, bank application, presets and export.
+It supports up to 256 frames (8 ms) on each side, limited automatically to half the loop
+in 16-frame steps. One-block loops and one-shots disable the knob. The requested setting
+is retained when the loop shrinks or is disabled, and restored when it fits again. Dial
+back to Off to recover the original encoding. Sample files persist the setting; existing
+files default to Off. Generator and period changes retain the chosen crossfade preference.
+
+**Loop joins · 3 passes** displays three consecutive encoded end-to-start joins. Inspection
+decodes the intro and repeated BRR stream continuously, preserving predictor history,
+instead of copying the first waveform. The footer reports the largest join jump and
+whether decoded repeats match. Work happens with background encoding and stores only
+small join windows for drawing. These are decoded sample comparisons, before DSP Gaussian
+interpolation and envelope/gain processing; native audition remains the listening check.
+
+The workbench's existing Live preview follows valid edits, keeping the old audio until
+the new encoding/render is ready. Unchanged snapped positions retain the current encoding.
+The wide layout fits all editor font sizes without scrolling. Save, bank allocation,
+Undo and ROM export use the same checked paths as before.
 
 ## Track Import/Export Formats
+
+**Expression** in Edit Track opens a native control-event lane with an exact tick field,
+timeline and knobs. It supports channel/master volume, pan, tempo and their fades,
+vibrato/tremolo, pitch envelopes/slides/fine tuning and echo. Pan is 0 right, 10 center,
+20 left; editing pan preserves the native phase flags. Echo delay stays within the
+reserved buffer. Other source commands are retained read-only. Operand-only edits preserve
+native calls/loops when their bytes are not shared with sibling tracks; structural edits
+use checked sequence allocation and can require additional SPC RAM.
+
+**Sound bank** opens the current bank's resource manager. It shows free bytes, largest
+gap, project sample users and verified empty sound slots. **New sound** creates a sine in
+an unused all-zero slot. **Copy into slot** replaces a chosen slot's sound settings.
+**Remove** deletes only an unreferenced project-owned sample. Native music branches,
+subroutines, common tracks, effect references and all 42 sound-table slots are included in
+the inventory. Each operation has one Undo step and uses the checked bank/export path.
+Existing ROM recordings and nonzero sound slots are not automatically reclaimed.
+
+MIDI import retains sustain (CC64), volume (CC7), pan (CC10), note/sound-off controllers
+and tempo changes while assigning notes to the eight SNES voices. Export includes tempo
+changes and direct volume/pan controllers. Native DSP effects and volume/pan fades are
+not fully represented in MIDI; N-SPC/SPC retains the native commands.
 
 SMEDIT exposes import/export from the main track page next to **Export WAV**, and from the
 piano-roll editor toolbar `Import` and `Export` dropdowns:
@@ -281,7 +335,7 @@ piano-roll editor toolbar `Import` and `Export` dropdowns:
 | Impulse Tracker | `.it` | Import | Tracker module import path used by mITroid-style workflows | The importer parses IT headers, instrument keyboard maps, sample metadata, orders, packed patterns, speed-adjusted note timing, tempo commands, note stops, and all 64 IT pattern channels, then deduplicates/voice-packs them into Super Metroid's 8 music voices. For modules with embedded mono uncompressed PCM samples that fit in SPC RAM, it converts samples to BRR and stores a native payload containing N-SPC sequence data, mITroid-style C5-derived instrument pitch bytes, instrument table bytes, sample directory entries, and BRR sample blocks. IT-compressed samples, stereo samples, invalid instrument headers, over-budget sample payloads, and most tracker effects are reported and fall back to editable sequence import without a custom BRR payload. |
 | SPC snapshot | `.spc` | Import/export | Native SNES SPC-700 snapshot for playback/testing | Export is a playable snapshot of the current editable song and retained imported samples when native `libspc` is available, or a static ARAM image fallback. Import is sequence-only: compatible N-SPC data must be found in SPC RAM, and its custom sample bank is not retained. Arbitrary SPC dumps may not map back to piano-roll data. |
 | SMEDIT N-SPC bundle / raw transfer payload | `.nspc` | Import/export | Lossless editable bundle for SMEDIT track round-trips, or raw transfer blocks when a preserved native payload exists | The normal `.nspc` export is SMEDIT's native editable track bundle, not a universal SNES music standard. Raw N-SPC and supported IT imports retain their source sample/instrument blocks after note/instrument edits and project save/reopen. Their `.nspc` export combines retained blocks with the latest edits as raw transfer blocks. |
-| BRR sample | `.brr` inside ROM sample data | ROM patch path | Native compressed sample payload used by the SPC engine | Current WAV replacement still rewrites/trims the existing BRR footprint in place. Relocating BRR data and patching DIR entries remains future work. |
+| BRR sample | `.brr` | Import/export and ROM patch path | Native compressed sample payload used by the SPC engine | The sample workbench imports, generates and exports BRR. **Use sample** allocates project-owned BRR/DIR resources through the checked bank path; the older direct waveform replacement still rewrites/trims an existing footprint. |
 
 Track imports are staged as a preview before replacing the current piano-roll song. The
 preview reports note count, active channel count, total ticks, tempo, encoded N-SPC byte
@@ -373,14 +427,14 @@ Current piano-roll editing behavior:
 - The note property panel is a bottom overlay, so right-clicking a note does not push the piano roll down.
 - The note inspector shows a sound card with **Play**, **Choose sound**, **Rename**, and **Edit sound**. Its searchable browser reports the filtered/available sound counts, used count, and source (**ROM bank** or **ROM + import**, including sibling imports). These are the instruments loaded into the current bank, not General MIDI presets. Zero-filled instrument slots and unavailable samples are excluded; the current sound and sounds used by the track come first. A scrollbar exposes the rest of the list. Generic descriptions such as “Short one-shot” describe sample/envelope metadata, not curated instrument names. Browsing and audition do not edit the arrangement; **Use sound** changes only the selected note and uses the existing undo history.
 - Browser pitch choices are **This note (F1)** (using the selected note's actual pitch) and **Middle C (C4)** (a common comparison pitch); they are not sound IDs. The note inspector and raw fields follow the editor font setting and theme. Sound buttons use 6 dp corners to match the main navigation. An expanded inspector scrolls when the window is short.
-- **Edit sound** opens a recording/noise source summary and compact native controls: Envelope/Gain modes, an envelope guide, Attack, Decay, Sustain level, Sustain fade, and source-relative Transpose/Fine tuning. **Change source** replaces the numeric sample-selection workflow with the current bank's sample chooser. **Advanced** is nested inside this editor and retains table address, read-only `SRCN`, sample pointers, BRR length/loop flag, ADSR1/ADSR2/GAIN bytes, and raw tuning. Choosing sounds and editing them are mutually exclusive views. A sound combines its sample, envelope, and tuning; its settings are shared across the bank, including sibling tracks.
+- **Edit sound** opens a recording/noise source summary and compact native controls: Envelope/Gain modes, an envelope guide, Attack, Decay, Sustain level, Sustain fade, and source-relative Transpose/Fine tuning. **Change source** replaces the numeric sample-selection workflow with the current bank's sample chooser. The always-visible **Sound values** module retains table address, read-only `SRCN`, sample pointers, BRR length/loop flag, ADSR1/ADSR2/GAIN bytes, and raw tuning. Choosing sounds and editing them are mutually exclusive views. A sound combines its sample, envelope, and tuning; its settings are shared across the bank, including sibling tracks.
 - The sample chooser has recordings/noise tabs, names/source/ID search, a used-in-track filter, current/used-first ordering, waveform/loop guides, recorded length, shared/bank-ROM versus imported origin, import filenames, and known bank-instrument users (not proof a resource is unused by effects). Noise is generated rather than a recording; note/reference pitch chips are disabled there because its rate determines pitch. Waveforms describe a bounded decode, not the sustained note's duration or a loop's steady-state filter history. Unknown timbres keep factual one-shot/loop descriptions; source renaming is explicit, not a guessed instrument-name catalog.
 - Recording labels live in display-only `musicSampleNames`, keyed by song set plus SHA-256 identity of encoded content and effective loop, not just a reusable sample number/address. Identical aliases in one bank share a label; changed recordings/loops do not inherit old names. Old resource labels remain available when undo restores their source. Names also appear in sound-card/browser descriptions and search without creating arrangement edits, bank overrides, ROM writes, or audio-version changes.
 - Catalog reading uses the native `$6D00` directory's 40 slots, supports sparse entries and linked intro/loop or one-shot-tail chains, and excludes incomplete/invalid engine/table sources. The detached bank snapshot includes sibling native imports and provenance for directory/intro/loop uploads. Background decode is versioned/cancellable; instrument-only edits reuse the catalog. Previews render the candidate source through the selected sound's native envelope/tuning on private RAM, with fixed-size preview status/icons. Only **Use sample**/**Use noise** commits one shared-bank undo step; envelope/tuning and notes remain unchanged. Existing common-resource export restrictions still apply.
 - The envelope uses native discrete rates: Sustain fade acts while a note is held, rate zero holds the level, and key-off release is fixed (no Release knob). Gain supports fixed level, linear/bent rise, and linear/exponential fall. Inactive envelope/gain bytes are preserved; inactive controls are hidden, and full sustain disables the irrelevant decay control. Falling gain and zero-rate rising gain start silent on a new note and disclose that fact. The graph is an isolated two-second key-on guide with fixed release, not a waveform or an exact sample/sequence/DSP-phase simulation.
 - The instrument editor now uses a compact synth layout: a larger envelope guide, **Attack / Decay / Sustain / Held fade** knobs, and a separate **Transpose / Fine** module. Time knobs turn clockwise for longer times; underlying native rate bytes remain unchanged in meaning. **Shape → Pluck / Soft / Hold** applies native envelope starting points only, retaining the recording, tuning and inactive gain byte. Noise sources expose a rate knob and identify the shared noise clock rather than offering musical transpose controls. All shapes/knobs use the existing shared-bank persistence and undo history.
-- Knobs use relative vertical dragging (no click-to-jump), Shift for finer motion, discrete keyboard arrows/Home/End, and accessible progress actions with readable units. Wheel input changes a knob only after it is focused and groups one burst into one edit; ordinary inspector scrolling does not alter unfocused controls. Pointer cancellation restores the draft, click jitter/return-to-start gestures create no edits, and focus loss finishes pending keyboard/wheel input. Narrow/short layouts scroll while preserving full-size targets. Late callbacks from a closed or different track cannot write to the newly selected bank. Explicit **Play** remains the audition action; the curve is a guide, not automatic live audio.
-- Tuning offsets use the current ROM/imported bank **before** manual overrides, including sibling imports. They remain stable through save/reopen, import undo/redo, and track reset. Native 8.8 pitch quantizes/clamps the result; **Reset tuning** restores only the source tuning. Noise and missing/zero source tuning do not get a guessed musical reference. Control drafts update the guide locally and commit one undoable shared-bank edit on release; the explicit Play button renders the committed settings. Merely opening the editor creates no edits.
+- Knobs use relative vertical dragging (no click-to-jump), Shift for finer motion, discrete keyboard arrows/Home/End, and accessible progress actions with readable units. Wheel input changes a knob only after it is focused and groups one burst into one edit; ordinary inspector scrolling does not alter unfocused controls. Pointer cancellation restores the draft, click jitter/return-to-start gestures create no edits, and focus loss finishes pending keyboard/wheel input. Narrow/short layouts scroll while preserving full-size targets. Late callbacks from a closed or different track cannot write to the newly selected bank. **Play** starts audition; **Live** refreshes an active audition after committed edits. The curve remains an envelope guide.
+- Tuning offsets use the current ROM/imported bank **before** manual overrides, including sibling imports. They remain stable through save/reopen, import undo/redo, and track reset. Native 8.8 pitch quantizes/clamps the result; **Reset tuning** restores only the source tuning. Noise and missing/zero source tuning do not get a guessed musical reference. Control drafts update the guide locally and commit one undoable shared-bank edit on release; Play and active Live audition render the committed settings. Merely opening the editor creates no edits.
 - The compact scope row separates note-local sound choice from bank-wide sound editing. Its dropdown lists known tracks loading that bank; it is not proof that every track/effect uses the selected slot. `BANK` badges indicate shared changes without an explicit arrangement edit.
 - Common instrument slots 0–23 are not reloaded by vanilla music-bank transfers (which begin at slot 24 / `$6C90`). Their edits can carry into later banks at runtime. Export derives compact instrument reloads for both common settings and bank-local slots 24–41, including rain/voice banks which upload fewer entries. The derived resets do not become project edits or change another bank's authored settings. Unrestored sample-directory/BRR/engine changes remain blocked; effect dependency analysis remains future work.
 - `MusicSampleRestoration` is a detached **prototype** for future bank-owned recordings. It derives complete DIR-entry and touched BRR-block reloads, closes over secondary write footprints across other banks, and rejects incomplete recordings, engine writes and oversized plans. Isolated CPU/APU fixtures verify generated recordings, all 24 native destinations, reentry, soft reset, independent effect audio and an unmodified-loader leak control. Their unrestricted serializer is test-only: production export remains instrument-only for derived restoration, and no sample slot is claimed or **Add to bank** action enabled. Saved bank resources, slot/dependency ownership and atomic production integration are still required.

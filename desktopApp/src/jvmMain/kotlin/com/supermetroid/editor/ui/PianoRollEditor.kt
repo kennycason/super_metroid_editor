@@ -250,6 +250,7 @@ fun PianoRollEditor(
     onRenameSample: (String, String) -> Unit = { _, _ -> },
     onTrySample: ((Note) -> Unit)? = null,
     onOpenPresets: ((Note) -> Unit)? = null,
+    onOpenBank: (() -> Unit)? = null,
     instrumentNames: Map<Int, String> = emptyMap(),
     instrumentBankLabel: String = "Current sound bank",
     instrumentSourceLabel: String = "ROM bank",
@@ -328,6 +329,7 @@ fun PianoRollEditor(
     var selectedChannel by remember { mutableStateOf(activeChannel) }
     var showAllChannels by remember { mutableStateOf(true) }
     var showNoteProperties by remember { mutableStateOf(false) }
+    var showExpression by remember { mutableStateOf(false) }
     var dragState by remember { mutableStateOf<PianoRollDragState?>(null) }
     var selectionBox by remember { mutableStateOf<PianoRollSelectionBox?>(null) }
     var clipboardNotes by remember { mutableStateOf<List<PianoRollEditLogic.ClipboardNote>>(emptyList()) }
@@ -723,6 +725,14 @@ fun PianoRollEditor(
                 }
             }
 
+            OutlinedButton(onClick = { showExpression = !showExpression }, shape = SoundControlShape,
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("expression-toggle")) {
+                Text(if (showExpression) "Close expression" else "Expression", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+            }
+            if (onOpenBank != null) OutlinedButton(onClick = onOpenBank, shape = SoundControlShape,
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("sound-bank-manager")) {
+                Text("Sound bank", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -778,6 +788,15 @@ fun PianoRollEditor(
                     scrollTo(cursorX - viewportWidth * 0.25f)
                 }
             }
+        }
+
+        if (showExpression) MusicExpressionPanel(song, activeChannel) { updated, label ->
+            onRecordUndo(label)
+            for (channel in 0 until 8) {
+                song.channels[channel].commands.clear()
+                song.channels[channel].commands.addAll(updated.channels[channel].commands)
+            }
+            song.isModified = true; editVersion++; onSongChanged(song)
         }
 
         Box(modifier = Modifier.fillMaxSize()) {

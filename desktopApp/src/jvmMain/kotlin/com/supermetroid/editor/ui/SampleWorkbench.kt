@@ -161,17 +161,22 @@ internal fun SampleWorkbenchContent(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         for (value in SampleAuthoring.Shape.entries) FilterChip(shape == value, enabled = enabled,
                             shape = SoundControlShape,
-                            onClick = { state.update(SampleAuthoring.generate(value, period).copy(gainPercent = draft.gainPercent)) },
+                            onClick = { state.update(SampleAuthoring.generate(value, period).copy(gainPercent = draft.gainPercent, crossfadeFrames = draft.crossfadeFrames)) },
                             modifier = Modifier.testTag("sample-generate-${value.name}"),
                             label = { Text(value.name.lowercase().replaceFirstChar(Char::uppercase), fontSize = fs.detail) })
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                         SynthKnob("Period", period / 16, 2..32, "$period frames", "sample-period", { value ->
                             if (value * 16 != period && shape != null) state.update(SampleAuthoring.generate(shape, value * 16)
-                                .copy(name = draft.name, gainPercent = draft.gainPercent))
+                                .copy(name = draft.name, gainPercent = draft.gainPercent, crossfadeFrames = draft.crossfadeFrames))
                         }, {}, enabled && shape != null && shape != SampleAuthoring.Shape.NOISE)
                         SynthKnob("Level", draft.gainPercent, 0..100, "${draft.gainPercent}%", "sample-level",
                             { state.update(draft.copy(gainPercent = it)) }, {}, enabled)
+                        val fade = SampleLoopPolish.crossfadeFrames(draft)
+                        val maxFade = SampleLoopPolish.maxCrossfade(draft)
+                        SynthKnob("Crossfade", fade / 16, 0..maxOf(1, maxFade / 16), if (fade == 0) "Off" else "${"%.1f".format(fade / 32.0)} ms",
+                            "sample-crossfade", { state.update(draft.copy(crossfadeFrames = it * 16)) }, {},
+                            enabled && invalidFields.isEmpty() && SampleLoopEditing.validBounds(draft) && maxFade >= 16)
                     }
                     Text(when (shape) {
                         null -> "Imported recording · ${draft.pcm.size} frames"

@@ -47,7 +47,7 @@ internal fun SoundPresetBrowser(parser: RomParser, target: SampleBankPreview.Tar
             audition.select(presets.firstOrNull())
             if (loaded.problems.isNotEmpty()) problem = "${loaded.problems.size} preset(s) could not load: ${loaded.problems.first()}"
             capture = withContext(Dispatchers.Default) {
-                SoundPresets.capture(parser, MusicBankResolver.sourceRam(parser, target.project, target.songSet), target.note.instrument, target.soundName.take(80))
+                SoundPresets.capture(parser, MusicBankResolver.sourceRam(parser, target.project, target.songSet), target.note.instrument, target.soundName.take(80), SoundEffects.bootRam(parser, target.project))
             }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) { problem = error.message ?: "Cannot open the sound library" }

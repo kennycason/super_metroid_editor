@@ -51,6 +51,7 @@ internal object MusicBankTransitions {
     fun snapshot(project: SmEditProject): SmEditProject = project.copy(
         musicEdits = project.musicEdits.mapValues { (_, edit) -> MusicEditConversion.copyProjectEdit(edit) }.toMutableMap(),
         musicInstrumentBanks = project.musicInstrumentBanks.mapValues { (_, bank) -> requireNotNull(MusicInstrumentBanks.copy(bank)) }.toMutableMap(),
+        soundEffectEdits = project.soundEffectEdits.toMutableMap(),
     )
 
     fun inspect(
@@ -61,7 +62,7 @@ internal object MusicBankTransitions {
         },
     ): Report {
         if (resolved.isEmpty()) return Report(emptyList(), 0)
-        val initial = SpcData.buildInitialSpcRam(parser)
+        val initial = SoundEffects.bootRam(parser, project)
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
         val songSets = (SpcData.TRANSFER_SONG_SETS.filter { it > 0 } + resolved.keys).distinct().sorted()
         val banks = songSets.associateWith { songSet ->

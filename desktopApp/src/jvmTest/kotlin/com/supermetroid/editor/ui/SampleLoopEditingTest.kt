@@ -110,6 +110,8 @@ class SampleLoopEditingTest {
                 assertTrue(join.height > 0 && join.bottom <= 440)
                 tag(scene, "sample-marker-back").config[SemanticsActions.OnClick].action!!.invoke(); render()
                 assertEquals(176, draft.loopStart)
+                tag(scene, "sample-near-zero").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                assertTrue(draft.loopStart!! % 16 == 0); SampleAuthoring.validate(draft)
             } finally { scene.close(); surface.close() }
         }
     }

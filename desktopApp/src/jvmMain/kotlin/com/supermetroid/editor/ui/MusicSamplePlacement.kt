@@ -106,7 +106,7 @@ internal class SampleBankPreview private constructor(
             require(target.songSet in SpcData.TRANSFER_SONG_SETS && target.songSet > 0) { "Choose a native music bank" }
             require(target.note.instrument in 0 until 42) { "Choose an available sound" }
             val resolved = MusicBankResolver.resolve(parser, target.project, target.songSet)
-            val boot = SpcData.buildInitialSpcRam(parser)
+            val boot = SoundEffects.bootRam(parser, target.project)
             require((0x1500 until 0x5800).all { resolved.ram[it] == boot[it] }) {
                 "Bank tryout requires the original SPC engine"
             }

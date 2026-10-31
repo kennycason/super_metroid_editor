@@ -425,6 +425,7 @@ class SmeditBuildService(
             }
             if (project.customAsm.isNotEmpty()) unsupportedRomEdits.add("custom ASM")
             if (project.musicEdits.isNotEmpty()) unsupportedRomEdits.add("music edits")
+            if (project.soundEffectEdits.isNotEmpty()) unsupportedRomEdits.add("sound effect edits")
             if (unsupportedRomEdits.isNotEmpty()) {
                 throw IllegalArgumentException(
                     "Headless ROM build cannot safely export ${unsupportedRomEdits.distinct().joinToString()}; " +
@@ -455,6 +456,7 @@ class SmeditBuildService(
         }
         if (project.customAsm.isNotEmpty()) ignored.add("custom ASM entries: ${project.customAsm.size}")
         if (project.musicEdits.isNotEmpty()) ignored.add("music edits: ${project.musicEdits.size}")
+        if (project.soundEffectEdits.isNotEmpty()) ignored.add("sound effect edits: ${project.soundEffectEdits.size}")
 
         if (ignored.isNotEmpty()) {
             context.warnings.add("Headless build v1 ignored unsupported project data: ${ignored.joinToString()}.")

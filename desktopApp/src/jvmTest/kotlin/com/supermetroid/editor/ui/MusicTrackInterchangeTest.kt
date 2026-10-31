@@ -111,7 +111,7 @@ class MusicTrackInterchangeTest {
         val sequence = Sequence(Sequence.PPQ, 480)
         val track = sequence.createTrack()
         track.add(MidiEvent(short(ShortMessage.PROGRAM_CHANGE, 9, 12, 0), 0))
-        track.add(MidiEvent(short(ShortMessage.CONTROL_CHANGE, 0, 7, 100), 0))
+        track.add(MidiEvent(short(ShortMessage.CONTROL_CHANGE, 0, 74, 100), 0))
         track.add(MidiEvent(meta(0x01, "ignored metadata"), 0))
         track.add(MidiEvent(short(ShortMessage.NOTE_ON, 9, 120, 80), 0))
         track.add(MidiEvent(short(ShortMessage.NOTE_OFF, 9, 120, 0), 480))

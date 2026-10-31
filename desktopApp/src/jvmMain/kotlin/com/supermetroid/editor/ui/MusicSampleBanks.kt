@@ -40,7 +40,7 @@ internal object MusicSampleBanks {
     fun writes(parser: RomParser, project: SmEditProject, songSet: Int, source: ByteArray, sources: Map<Int, ByteArray>): Map<Int, ByteArray> {
         val samples = project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.samples.orEmpty()
         if (samples.isEmpty()) return emptyMap()
-        val boot = SpcData.buildInitialSpcRam(parser)
+        val boot = SoundEffects.bootRam(parser, project)
         require((0x1500 until 0x5800).all { source[it] == boot[it] }) { "Custom samples require the original SPC engine" }
         val uploads = retainedUploads(parser, project, songSet, sources)
         val layout = MusicSamplePlacement.inspect(source, uploads)
@@ -98,7 +98,7 @@ internal object MusicSampleBanks {
     }
 
     internal fun retainedUploads(parser: RomParser, project: SmEditProject, songSet: Int, sources: Map<Int, ByteArray> = emptyMap()): List<SpcData.TransferBlock> {
-        val boot = SpcData.buildInitialSpcRam(parser)
+        val boot = SoundEffects.bootRam(parser, project)
         return SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000)) +
             SpcData.findSongSetTransferData(parser, songSet) +
             sources.map { (at, data) -> SpcData.TransferBlock(at, data) } +

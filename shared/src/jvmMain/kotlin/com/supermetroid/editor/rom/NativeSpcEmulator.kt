@@ -302,6 +302,12 @@ class NativeSpcEmulator : AutoCloseable {
         library.spc_write_port(spc ?: error("Emulator not loaded"), 0, 0, 0)
     }
 
+    fun playSoundEffect(library: Int, id: Int) {
+        require(library in 1..3 && id in 1..255)
+        val api = lib ?: error("libspc not available")
+        api.spc_write_port(spc ?: error("Emulator not loaded"), 0, library, id)
+    }
+
     override fun close() {
         val library = lib ?: return
         filter?.let { library.spc_filter_delete(it) }

@@ -849,6 +849,10 @@ data class MusicCommandEdit(
     val params: List<Int> = emptyList(),
 )
 
+/** One typed sound-effect operand in the common SPC program, with an explicit base-byte guard. */
+@Serializable
+data class SoundEffectByteEdit(val expected: Int, val value: Int)
+
 /**
  * One editable N-SPC channel in a saved music track edit.
  */
@@ -1033,6 +1037,7 @@ data class SmEditProject(
     val musicInstrumentNames: MutableMap<String, String> = mutableMapOf(),
     /** Recording labels keyed by song set + content/loop identity, never just a reusable SRCN. */
     val musicSampleNames: MutableMap<String, String> = mutableMapOf(),
+    val soundEffectEdits: MutableMap<String, SoundEffectByteEdit> = mutableMapOf(),
     val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),
     val asmWorkspace: ProjectAsmWorkspaceSettings = ProjectAsmWorkspaceSettings(),
     var versionMajor: Int = 1,

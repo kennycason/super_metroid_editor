@@ -1,0 +1,1442 @@
+[
+  {
+    "library": 1,
+    "id": 1,
+    "name": "Power bomb explosion",
+    "voices": 4
+  },
+  {
+    "library": 1,
+    "id": 2,
+    "name": "Silence",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 3,
+    "name": "Missile",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 4,
+    "name": "Super missile",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 5,
+    "name": "Grapple start",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 6,
+    "name": "Grappling",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 7,
+    "name": "Grapple end",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 8,
+    "name": "Charging beam",
+    "voices": 2
+  },
+  {
+    "library": 1,
+    "id": 9,
+    "name": "X-ray",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 10,
+    "name": "X-ray end",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 11,
+    "name": "Uncharged power beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 12,
+    "name": "Uncharged ice beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 13,
+    "name": "Uncharged wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 14,
+    "name": "Uncharged ice + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 15,
+    "name": "Uncharged spazer beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 16,
+    "name": "Uncharged spazer + ice beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 17,
+    "name": "Uncharged spazer + ice + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 18,
+    "name": "Uncharged spazer + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 19,
+    "name": "Uncharged plasma beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 20,
+    "name": "Uncharged plasma + ice beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 21,
+    "name": "Uncharged plasma + ice + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 22,
+    "name": "Uncharged plasma + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 23,
+    "name": "Charged power beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 24,
+    "name": "Charged ice beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 25,
+    "name": "Charged wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 26,
+    "name": "Charged ice + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 27,
+    "name": "Charged spazer beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 28,
+    "name": "Charged spazer + ice beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 29,
+    "name": "Charged spazer + ice + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 30,
+    "name": "Charged spazer + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 31,
+    "name": "Charged plasma beam / hyper beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 32,
+    "name": "Charged plasma + ice beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 33,
+    "name": "Charged plasma + ice + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 34,
+    "name": "Charged plasma + wave beam",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 35,
+    "name": "Ice SBA",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 36,
+    "name": "Ice SBA end",
+    "voices": 2
+  },
+  {
+    "library": 1,
+    "id": 37,
+    "name": "Spazer SBA",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 38,
+    "name": "Spazer SBA end",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 39,
+    "name": "Plasma SBA",
+    "voices": 2
+  },
+  {
+    "library": 1,
+    "id": 40,
+    "name": "Wave SBA",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 41,
+    "name": "Wave SBA end",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 42,
+    "name": "Selected save file",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 43,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 44,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 45,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 46,
+    "name": "Saving",
+    "voices": 4
+  },
+  {
+    "library": 1,
+    "id": 47,
+    "name": "Underwater space jump (without gravity suit)",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 48,
+    "name": "Resumed spin jump",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 49,
+    "name": "Spin jump",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 50,
+    "name": "Spin jump end",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 51,
+    "name": "Screw attack",
+    "voices": 2
+  },
+  {
+    "library": 1,
+    "id": 52,
+    "name": "Screw attack end",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 53,
+    "name": "Samus damaged",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 54,
+    "name": "Scrolling map",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 55,
+    "name": "Toggle reserve mode / moved cursor",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 56,
+    "name": "Pause menu transition / toggled equipment",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 57,
+    "name": "Switch HUD item",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 58,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 59,
+    "name": "Hexagon map -> square map transition",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 60,
+    "name": "Square map -> hexagon map transition",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 61,
+    "name": "Dud shot",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 62,
+    "name": "Space jump",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 63,
+    "name": "Resumed space jump",
+    "voices": 1
+  },
+  {
+    "library": 1,
+    "id": 64,
+    "name": "Mother Brain's rainbow beam",
+    "voices": 3
+  },
+  {
+    "library": 1,
+    "id": 65,
+    "name": "Resume charging beam",
+    "voices": 2
+  },
+  {
+    "library": 1,
+    "id": 66,
+    "name": ".sound42",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 1,
+    "name": "Collected small health drop",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 2,
+    "name": "Collected big health drop",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 3,
+    "name": "Collected missile drop",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 4,
+    "name": "Collected super missile drop",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 5,
+    "name": "Collected power bomb drop",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 6,
+    "name": "Block destroyed by contact damage",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 7,
+    "name": "(Super) missile hit wall",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 8,
+    "name": "Bomb explosion",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 9,
+    "name": "Enemy killed",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 10,
+    "name": "Block crumbled or destroyed by shot",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 11,
+    "name": "Enemy killed by contact damage",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 12,
+    "name": "Beam hit wall",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 13,
+    "name": "Splashed into water",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 14,
+    "name": "Splashed out of water",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 15,
+    "name": "Low pitched air bubbles",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 16,
+    "name": "Lava/acid damaging Samus",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 17,
+    "name": "High pitched air bubbles",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 18,
+    "name": "Plays at random in heated rooms",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 19,
+    "name": "Plays at random in heated rooms",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 20,
+    "name": "Plays at random in heated rooms",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 21,
+    "name": "Maridia elevatube",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 22,
+    "name": ".sound16",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 23,
+    "name": "Morph ball eye's ray",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 24,
+    "name": "Beacon",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 25,
+    "name": ".sound19",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 26,
+    "name": "n00b tube shattering",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 27,
+    "name": ".sound1B",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 28,
+    "name": ".sound1C",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 29,
+    "name": "Dachora cry",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 30,
+    "name": ".sound1E",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 31,
+    "name": ".sound1F",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 32,
+    "name": "Shot fly",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 33,
+    "name": "Shot skree / wall/ninja space pirate",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 34,
+    "name": "Shot pipe bug / high-rising slow-falling enemy",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 35,
+    "name": "Shot slug / sidehopper / zoomer",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 36,
+    "name": "Small explosion (enemy death)",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 37,
+    "name": "Ceres door explosion (also used by Mother Brain)",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 38,
+    "name": ".sound26",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 39,
+    "name": "Shot torizo",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 40,
+    "name": ".sound28",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 41,
+    "name": "Mother Brain rising into phase 2",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 42,
+    "name": ".sound2A",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 43,
+    "name": "Ridley's fireball hit surface",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 44,
+    "name": "Shot Spore Spawn",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 45,
+    "name": ".sound2D",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 46,
+    "name": ".sound2E",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 47,
+    "name": "Yapping maw",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 48,
+    "name": "Shot super-desgeega",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 49,
+    "name": "Brinstar plant chewing",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 50,
+    "name": "Etecoon wall-jump",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 51,
+    "name": "Etecoon cry",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 52,
+    "name": "Spike shooting plant spikes",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 53,
+    "name": "Etecoon's theme",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 54,
+    "name": "Shot rio / Norfair lava-jumping enemy / lava seahorse",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 55,
+    "name": "Refill/map station engaged",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 56,
+    "name": "Refill/map station disengaged",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 57,
+    "name": "Dachora speed booster",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 58,
+    "name": ".sound3A",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 59,
+    "name": "Dachora shinespark",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 60,
+    "name": "Dachora shinespark ended",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 61,
+    "name": "Dachora stored shinespark",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 62,
+    "name": "Shot Maridia spikey shells / Norfair erratic fireball / ripped / kamer / Maridia snail / yapping maw / Wrecked Ship orbs",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 63,
+    "name": ".sound3F",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 64,
+    "name": ".sound40",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 65,
+    "name": ".sound41",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 66,
+    "name": ".sound42",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 67,
+    "name": ".sound43",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 68,
+    "name": ".sound44",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 69,
+    "name": "Typewriter stroke - Ceres self destruct sequence",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 70,
+    "name": ".sound46",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 71,
+    "name": "Shot waver",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 72,
+    "name": ".sound48",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 73,
+    "name": "Shot fish / crab / Maridia refill candy",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 74,
+    "name": "Shot mini-Draygon",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 75,
+    "name": ".sound4B",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 76,
+    "name": "Ki-hunter / eye door acid spit",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 77,
+    "name": "Gunship hover",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 78,
+    "name": "Ceres Ridley getaway",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 79,
+    "name": ".sound4F",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 80,
+    "name": ".sound50",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 81,
+    "name": "Shot Wrecked Ship ghost",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 82,
+    "name": ".sound52",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 83,
+    "name": "Shot mini-Crocomire",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 84,
+    "name": ".sound54",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 85,
+    "name": "Shot beetom",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 86,
+    "name": "Acquired suit",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 87,
+    "name": "Shot door/gate with dud shot / shot reflec",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 88,
+    "name": "Shot mochtroid",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 89,
+    "name": "Ridley's roar",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 90,
+    "name": "Shot metroid",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 91,
+    "name": "Skree launches attack",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 92,
+    "name": "Skree hits the ground",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 93,
+    "name": "Sidehopper jumped",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 94,
+    "name": "Sidehopper landed",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 95,
+    "name": "Shot Lower Norfair rio / desgeega / Norfair slow fireball / walking lava seahorse / Botwoon",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 96,
+    "name": ".sound60",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 97,
+    "name": ".sound61",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 98,
+    "name": ".sound62",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 99,
+    "name": "Mother Brain's ketchup beam",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 100,
+    "name": ".sound64",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 101,
+    "name": ".sound65",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 102,
+    "name": "Shot ki-hunter / walking space pirate",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 103,
+    "name": "Space pirate / Mother Brain laser",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 104,
+    "name": "Shot Wrecked Ship robot",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 105,
+    "name": "Shot Shaktool",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 106,
+    "name": "Shot Maridia floater",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 107,
+    "name": ".sound6B",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 108,
+    "name": ".sound6C",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 109,
+    "name": "Ceres tiles falling from ceiling",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 110,
+    "name": "Shot Mother Brain phase 1",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 111,
+    "name": "Mother Brain's cry - low pitch",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 112,
+    "name": ".sound70",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 113,
+    "name": "Silence",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 114,
+    "name": ".sound72",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 115,
+    "name": ".sound73",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 116,
+    "name": ".sound74",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 117,
+    "name": ".sound75",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 118,
+    "name": ".sound76",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 119,
+    "name": ".sound77",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 120,
+    "name": ".sound78",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 121,
+    "name": ".sound79",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 122,
+    "name": ".sound7A",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 123,
+    "name": ".sound7B",
+    "voices": 2
+  },
+  {
+    "library": 2,
+    "id": 124,
+    "name": ".sound7C",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 125,
+    "name": ".sound7D",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 126,
+    "name": "Mother Brain's cry - high pitch",
+    "voices": 1
+  },
+  {
+    "library": 2,
+    "id": 127,
+    "name": "Mother Brain charging her rainbow",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 1,
+    "name": "Silence",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 2,
+    "name": "Low health beep",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 3,
+    "name": "Speed booster",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 4,
+    "name": "Samus landed hard",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 5,
+    "name": "Samus landed / wall-jumped",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 6,
+    "name": "Samus' footsteps",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 7,
+    "name": "Door opened",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 8,
+    "name": "Door closed",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 9,
+    "name": "Missile door shot with missile",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 10,
+    "name": "Enemy frozen",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 11,
+    "name": "Elevator",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 12,
+    "name": "Stored shinespark",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 13,
+    "name": "Typewriter stroke - intro",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 14,
+    "name": "Gate opening/closing",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 15,
+    "name": "Shinespark",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 16,
+    "name": "Shinespark ended",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 17,
+    "name": ".sound11",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 18,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 19,
+    "name": "Mother Brain's projectile hits surface",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 20,
+    "name": "Gunship elevator activated",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 21,
+    "name": "Gunship elevator deactivated",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 22,
+    "name": ".sound16",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 23,
+    "name": "Mother Brain's blue rings",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 24,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 25,
+    "name": ".sound19",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 26,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 27,
+    "name": ".sound1B",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 28,
+    "name": ".sound1C",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 29,
+    "name": ".sound1D",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 30,
+    "name": "Earthquake (Kraid)",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 31,
+    "name": ".sound1F",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 32,
+    "name": "(Empty)",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 33,
+    "name": "Ridley whips its tail",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 34,
+    "name": ".sound22",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 35,
+    "name": "Baby metroid cry 1",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 36,
+    "name": "Baby metroid cry - Ceres",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 37,
+    "name": "Silence (clear speed booster / elevator sound)",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 38,
+    "name": "Baby metroid cry 2",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 39,
+    "name": "Baby metroid cry 3",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 40,
+    "name": ".sound28",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 41,
+    "name": "Phantoon related",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 42,
+    "name": "Pause menu ambient beep",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 43,
+    "name": ".sound2B",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 44,
+    "name": "Ceres door opening",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 45,
+    "name": "Gaining/losing incremental health",
+    "voices": 1
+  },
+  {
+    "library": 3,
+    "id": 46,
+    "name": "Mother Brain's glass shattering",
+    "voices": 2
+  },
+  {
+    "library": 3,
+    "id": 47,
+    "name": "(Empty)",
+    "voices": 1
+  }
+]

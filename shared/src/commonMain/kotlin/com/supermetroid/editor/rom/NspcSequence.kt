@@ -67,7 +67,8 @@ object NspcSequence {
     data class ControlCommand(
         var tick: Int,
         var command: Int,           // 0xE0-0xFE
-        var params: IntArray = IntArray(0)
+        var params: IntArray = IntArray(0),
+        val sourceAddress: Int = -1,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -281,7 +282,7 @@ object NspcSequence {
                                 song.channels[ch].commands.add(ControlCommand(
                                     tick = globalTickOffset + blockTick,
                                     command = b,
-                                    params = intArrayOf(inst)
+                                    params = intArrayOf(inst), sourceAddress = st.ptr - 2
                                 ))
                             }
                         }
@@ -297,7 +298,7 @@ object NspcSequence {
                                 song.channels[ch].commands.add(ControlCommand(
                                     tick = globalTickOffset + blockTick,
                                     command = b,
-                                    params = intArrayOf(transpose and 0xFF)
+                                    params = intArrayOf(transpose and 0xFF), sourceAddress = st.ptr - 2
                                 ))
                             }
                         }
@@ -321,7 +322,7 @@ object NspcSequence {
                             song.channels[ch].commands.add(ControlCommand(
                                 tick = globalTickOffset + blockTick,
                                 command = b,
-                                params = params
+                                params = params, sourceAddress = st.ptr - 1
                             ))
                             st.ptr = cmd
                         }

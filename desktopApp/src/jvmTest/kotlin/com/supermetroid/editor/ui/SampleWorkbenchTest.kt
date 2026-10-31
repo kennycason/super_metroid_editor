@@ -84,7 +84,7 @@ class SampleWorkbenchTest {
             val preview = tag(scene, "sample-preview-module").boundsInRoot
             assertEquals(source.top, preview.top)
             assertTrue(source.right < preview.left)
-            for (key in listOf("sample-import-wav", "sample-level", "sample-period", "sample-encoded-waveform",
+            for (key in listOf("sample-import-wav", "sample-level", "sample-period", "sample-crossfade", "sample-encoded-waveform", "sample-near-zero", "sample-loop-inspection",
                 "sample-frame-Loop start", "sample-play-in-bank", "sample-save-draft", "sample-export-brr")) {
                 val bounds = tag(scene, key).boundsInRoot
                 assertTrue(bounds.width > 0 && bounds.height > 0 && bounds.left >= 0 && bounds.right <= 1120 && bounds.top >= 0 && bounds.bottom <= 760,
@@ -103,6 +103,30 @@ class SampleWorkbenchTest {
             assertFalse(state.live)
             assertFalse(tag(scene, "sample-live").config[SemanticsProperties.Selected])
             assertEquals(draft, state.draft)
+        }
+    }
+
+    @Test fun `crossfade knob is reversible follows source changes and disables for one shots or one block loops`() = runBlocking {
+        for (theme in EditorTheme.entries) for (width in listOf(420, 1120)) panel(FontSize.LARGER, theme, width) { scene, state, render ->
+            val source = state.draft.pcm
+            assertTrue(tag(scene, "sample-crossfade").config[SemanticsActions.SetProgress].action!!.invoke(2f)); render()
+            assertEquals(32, state.draft.crossfadeFrames); assertSame(source, state.draft.pcm)
+            state.prepare(); render()
+            assertEquals(0, state.encoded!!.loopInspection!!.maxRepeatDifference)
+            assertTrue(tag(scene, "sample-loop-inspection").config[SemanticsProperties.Text].any { "repeats match" in it.text })
+            tag(scene, "sample-generate-TRIANGLE").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(32, state.draft.crossfadeFrames)
+            tag(scene, "sample-loop-enabled").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertNull(state.draft.loopStart)
+            assertTrue(tag(scene, "sample-crossfade").config.contains(SemanticsProperties.Disabled))
+            assertEquals(32, state.draft.crossfadeFrames, "Turning Loop off preserves its reversible blend preference")
+            tag(scene, "sample-loop-enabled").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertFalse(tag(scene, "sample-crossfade").config.contains(SemanticsProperties.Disabled))
+            assertTrue(tag(scene, "sample-crossfade").config[SemanticsActions.SetProgress].action!!.invoke(0f)); render()
+            assertEquals(0, state.draft.crossfadeFrames)
+            state.update(SampleDraft("One block", List(16) { 500 }, loopStart = 0, crossfadeFrames = 32)); state.prepare(); render()
+            assertTrue(tag(scene, "sample-crossfade").config.contains(SemanticsProperties.Disabled))
+            assertNotNull(state.encoded); assertNull(state.problem)
         }
     }
 

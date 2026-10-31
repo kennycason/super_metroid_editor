@@ -2730,6 +2730,13 @@ class EditorState(
     var musicInstrumentNameVersion by mutableStateOf(0)
         private set
 
+    internal fun setSoundEffectEdits(edits: Map<String, com.supermetroid.editor.data.SoundEffectByteEdit>) {
+        if (project.soundEffectEdits == edits) return
+        project.soundEffectEdits.clear(); project.soundEffectEdits.putAll(edits)
+        musicEditVersion++
+        markDirty()
+    }
+
     fun musicInstrumentNames(songSet: Int): Map<Int, String> {
         // Read the version so Compose observes metadata updates without re-rendering song audio.
         musicInstrumentNameVersion

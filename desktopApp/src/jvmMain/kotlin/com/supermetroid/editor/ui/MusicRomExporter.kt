@@ -20,6 +20,16 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
     )
 
     internal fun applyMusicEditsToRom(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null): Int {
+        if (project.soundEffectEdits.isEmpty()) return applyMusicOnly(romData, freeSpaceAllocator)
+        val patches = SoundEffects.exportWrites(RomParser(romData), project)
+        val staged = romData.copyOf()
+        patches.forEach { (at, value) -> staged[at] = value }
+        val count = MusicRomExporter(project.copy(soundEffectEdits = mutableMapOf()), onLog).applyMusicOnly(staged, freeSpaceAllocator)
+        staged.copyInto(romData)
+        return count + project.soundEffectEdits.size
+    }
+
+    private fun applyMusicOnly(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null): Int {
         val parser = RomParser(romData)
         val songSets = MusicBankTransitions.editedSongSets(project)
         val installed = SpcTransferStream.installedCodePointer(parser)

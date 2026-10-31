@@ -58,6 +58,23 @@ internal object SampleLoopEditing {
         val best = candidates.minWithOrNull(compareBy<Int> { score(it) }.thenBy { abs(it - current) }) ?: current
         return draft.copy(loopStart = best)
     }
+
+    /** Keep BRR alignment: prefer a crossing, then quiet adjacent samples, then proximity. */
+    fun nearZero(draft: SampleDraft, marker: Marker): SampleDraft {
+        require(validBounds(draft)) { "Choose valid trim and loop boundaries first" }
+        val current = position(draft, marker)
+        val limits = when (marker) {
+            Marker.START -> 0..draft.trimEnd - 16
+            Marker.LOOP -> draft.trimStart..draft.trimEnd - 16
+            Marker.END -> draft.trimStart + 16..draft.pcm.size
+        }
+        val candidates = maxOf(limits.first, current - 128)..minOf(limits.last, current + 128) step 16
+        fun adjacent(at: Int) = draft.pcm[(at - 1).coerceAtLeast(0)] to draft.pcm[at.coerceAtMost(draft.pcm.lastIndex)]
+        fun crosses(at: Int): Boolean { val (a, b) = adjacent(at); return a <= 0 && b >= 0 || a >= 0 && b <= 0 }
+        val best = candidates.minWithOrNull(compareBy<Int> { if (crosses(it)) 0 else 1 }
+            .thenBy { val (a, b) = adjacent(it); maxOf(abs(a), abs(b)) }.thenBy { abs(it - current) }) ?: current
+        return move(draft, marker, best)
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
@@ -83,6 +100,8 @@ internal fun SampleLoopEditor(draft: SampleDraft, enabled: Boolean, encoded: Sam
             contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("sample-marker-back")) { Text("−16", fontSize = fs.detail) }
         OutlinedButton(onClick = { move(active, SampleLoopEditing.position(draft, active) + 16) }, enabled = enabled, shape = SoundControlShape,
             contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("sample-marker-forward")) { Text("+16", fontSize = fs.detail) }
+        OutlinedButton(onClick = { onChange(SampleLoopEditing.nearZero(draft, active)) }, enabled = enabled, shape = SoundControlShape,
+            contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("sample-near-zero")) { Text("Snap near zero", fontSize = fs.detail) }
     }
     Canvas(Modifier.fillMaxWidth().height(100.dp).background(MaterialTheme.colorScheme.surfaceVariant, SoundControlShape)
         .testTag("sample-encoded-waveform").semantics {
@@ -147,26 +166,33 @@ internal fun SampleLoopJoin(draft: SampleDraft, encoded: SampleAuthoring.Encoded
     val loopColor = MaterialTheme.colorScheme.tertiary
     val grid = MaterialTheme.colorScheme.outlineVariant
     if (draft.loopStart != null) {
-        val pcm = encoded?.pcm
-        val loop = encoded?.loopFrame
-        val jump = if (pcm != null && loop != null && pcm.isNotEmpty()) abs(pcm.last().toInt() - pcm[loop].toInt()) / 655.36 else null
+        val inspection = encoded?.loopInspection
+        val joins = inspection?.joins.orEmpty()
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Loop join · end → start", fontSize = fs.detail)
+            Text("Loop joins · 3 passes", fontSize = fs.detail)
             TextButton(onClick = { onChange(SampleLoopEditing.nearbyJoin(draft)) }, enabled = enabled, shape = SoundControlShape,
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.height(24.dp).testTag("sample-nearby-join")) { Text("Find nearby join", fontSize = fs.detail) }
         }
-        Canvas(Modifier.fillMaxWidth().height(52.dp).background(MaterialTheme.colorScheme.surfaceVariant, SoundControlShape).testTag("sample-loop-join")) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+            for (label in listOf("1st", "2nd", "3rd")) Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Canvas(Modifier.fillMaxWidth().height(52.dp).background(MaterialTheme.colorScheme.surfaceVariant, SoundControlShape)
+            .testTag("sample-loop-join").semantics { contentDescription = "Three consecutive encoded loop joins, end to start" }) {
             drawLine(grid, Offset(0f, size.height / 2), Offset(size.width, size.height / 2))
-            drawLine(loopColor.copy(alpha = 0.5f), Offset(size.width / 2, 0f), Offset(size.width / 2, size.height))
-            if (pcm != null && loop != null) {
-                val frames = minOf(32, pcm.size, pcm.size - loop)
-                val joined = pcm.takeLast(frames) + pcm.drop(loop).take(frames)
-                for (at in 1 until joined.size) drawLine(if (at < frames) wave else loopColor,
-                    Offset((at - 1f) / (joined.size - 1) * size.width, size.height * (0.5f - joined[at - 1] / 65536f)),
-                    Offset(at.toFloat() / (joined.size - 1) * size.width, size.height * (0.5f - joined[at] / 65536f)), 2f)
+            val width = size.width / 3
+            for (pass in 0 until 3) {
+                val left = width * pass
+                if (pass > 0) drawLine(grid, Offset(left, 0f), Offset(left, size.height))
+                drawLine(loopColor.copy(alpha = 0.5f), Offset(left + width / 2, 0f), Offset(left + width / 2, size.height))
+                val pcm = joins.getOrNull(pass)?.pcm ?: continue
+                for (at in 1 until pcm.size) drawLine(if (at < pcm.size / 2) wave else loopColor,
+                    Offset(left + (at - 1f) / (pcm.size - 1) * width, size.height * (0.5f - pcm[at - 1] / 65536f)),
+                    Offset(left + at.toFloat() / (pcm.size - 1) * width, size.height * (0.5f - pcm[at] / 65536f)), 2f)
             }
         }
-        Text(jump?.let { "Encoded join · ${"%.1f".format(it)}% full-scale difference" } ?: "Encoding loop join…", fontSize = fs.detail,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val jump = joins.maxOfOrNull { it.jump }?.div(655.36)
+        Text(if (inspection == null || jump == null) "Inspecting encoded repeats…" else
+            "Join ${"%.1f".format(jump)}% · ${if (inspection.maxRepeatDifference == 0) "repeats match" else "repeat change ${"%.1f".format(inspection.maxRepeatDifference / 655.36)}%"}",
+            fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("sample-loop-inspection"))
     }
 }

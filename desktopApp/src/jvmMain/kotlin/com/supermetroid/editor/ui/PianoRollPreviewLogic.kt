@@ -44,6 +44,8 @@ internal object PianoRollPreviewLogic {
         original: NspcSequence.Song?
     ): DeltaOverlayPlan? {
         original ?: return null
+        // A note-only overlay cannot represent tempo or native controller changes.
+        if (song.tempo != original.tempo || song.channels.indices.any { song.channels[it].commands != original.channels[it].commands }) return null
         val addEvents = mutableListOf<NspcRenderer.NoteEvent>()
         val removeEvents = mutableListOf<NspcRenderer.NoteEvent>()
 

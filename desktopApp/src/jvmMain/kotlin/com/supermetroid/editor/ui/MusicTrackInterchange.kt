@@ -74,6 +74,7 @@ internal object MusicTrackInterchange {
         val metaTrack = sequence.createTrack()
         metaTrack.add(MidiEvent(trackNameMessage(song.title.ifBlank { file.nameWithoutExtension }), 0))
         metaTrack.add(MidiEvent(tempoMessage(song.tempo), 0))
+        for ((tick, tempo) in MusicExpression.Timing(song).tempoChanges) metaTrack.add(MidiEvent(tempoMessage(tempo), tick.toLong()))
         val programMap = buildMidiProgramMap(song, instruments)
 
         for (channelIndex in 0 until 8) {
@@ -81,6 +82,11 @@ internal object MusicTrackInterchange {
             if (channel.notes.isEmpty()) continue
             val track = sequence.createTrack()
             track.add(MidiEvent(trackNameMessage("Channel ${channelIndex + 1}"), 0))
+            for (command in channel.commands.sortedBy { it.tick }) {
+                val value = command.params.firstOrNull() ?: continue
+                if (command.command == 0xED) track.add(MidiEvent(short(ShortMessage.CONTROL_CHANGE, channelIndex, 7, (value * 127.0 / 255).roundToInt()), command.tick.toLong()))
+                if (command.command == 0xE1) track.add(MidiEvent(short(ShortMessage.CONTROL_CHANGE, channelIndex, 10, ((20 - (value and 31)) * 127.0 / 20).roundToInt().coerceIn(0, 127)), command.tick.toLong()))
+            }
             var lastInstrument = -1
             for (note in channel.notes.sortedBy { it.tick }) {
                 val mapping = programMap[note.instrument] ?: midiProgramForInstrument(note.instrument, null, null)
@@ -120,6 +126,10 @@ internal object MusicTrackInterchange {
         // Pair by original channel and unclamped pitch: neither folded channels nor
         // two out-of-range pitches may consume one another's note-off events.
         val active = mutableMapOf<Pair<Int, Int>, ArrayDeque<ActiveNote>>()
+        val pedal = BooleanArray(16)
+        val deferred = mutableListOf<Pair<Pair<Int, Int>, ActiveNote>>()
+        data class MidiControl(val channel: Int, val tick: Int, val command: Int, val value: Int)
+        val controls = mutableListOf<MidiControl>()
         val completed = mutableListOf<Pair<Int, NspcSequence.Note>>()
         val candidates = instruments.filter { it.index in 0 until 42 && InstrumentDescriptions.playable(it) }
         require(instruments.isEmpty() || candidates.isNotEmpty()) { "No playable sounds in the selected bank" }
@@ -143,17 +153,30 @@ internal object MusicTrackInterchange {
                 kotlin.math.abs(midiProgramForInstrument(it.index, it, null).gmProgram - programs[channel])
             }.thenBy { it.index })?.index ?: 0
         }
-        fun finish(key: Pair<Int, Int>, tick: Int) {
-            val pending = active[key] ?: return
-            val note = pending.removeFirstOrNull() ?: return
+        fun complete(key: Pair<Int, Int>, note: ActiveNote, tick: Int) {
             completed += key.first to NspcSequence.Note(note.startTick, (tick - note.startTick).coerceAtLeast(1),
                 midiToNspc(key.second), note.velocity, instrument = note.instrument)
+        }
+        fun finish(key: Pair<Int, Int>, tick: Int, force: Boolean = false) {
+            val pending = active[key] ?: return
+            val note = pending.removeFirstOrNull() ?: return
+            if (pedal[key.first] && !force) deferred += key to note else complete(key, note, tick)
             if (pending.isEmpty()) active.remove(key)
+        }
+        fun releasePedal(channel: Int, tick: Int) {
+            val released = deferred.filter { it.first.first == channel }
+            deferred.removeAll(released.toSet())
+            for ((key, note) in released) complete(key, note, tick)
         }
         val events = sequence.tracks.flatMap { track -> (0 until track.size()).map { track.get(it) } }.sortedBy { it.tick }
         for (event in events) {
             val meta = event.message as? MetaMessage
             if (meta != null) {
+                if (meta.type == 0x51 && meta.data.size >= 3) {
+                    val micros = ((meta.data[0].toInt() and 255) shl 16) or ((meta.data[1].toInt() and 255) shl 8) or (meta.data[2].toInt() and 255)
+                    if (micros > 0) song.channels[0].commands += NspcSequence.ControlCommand(midiTickToNspc(event.tick, tickScale), 0xE7,
+                        intArrayOf((512000.0 * MIDI_PPQ / micros).roundToInt().coerceIn(1, 255)))
+                }
                 if (meta.type !in listOf(0x03, 0x2F, 0x51) && parseSmeditInstrumentMeta(meta) == null) ignoredMetadata++
                 continue
             }
@@ -171,15 +194,29 @@ internal object MusicTrackInterchange {
                         (message.data2 * 15 / 127).coerceIn(1, 15), slot(message.channel)))
                 }
                 ShortMessage.NOTE_OFF -> finish(key, tick)
+                ShortMessage.CONTROL_CHANGE -> when (message.data1) {
+                    64 -> { val wasDown = pedal[message.channel]; pedal[message.channel] = message.data2 >= 64
+                        if (wasDown && !pedal[message.channel]) releasePedal(message.channel, tick) }
+                    7 -> controls += MidiControl(message.channel, tick, 0xED, (message.data2 * 255 / 127))
+                    10 -> controls += MidiControl(message.channel, tick, 0xE1, 20 - (message.data2 * 20.0 / 127).roundToInt())
+                    120, 123 -> {
+                        for (activeKey in active.keys.filter { it.first == message.channel }.toList())
+                            while (active[activeKey]?.isNotEmpty() == true) finish(activeKey, tick, force = message.data1 == 120)
+                        if (message.data1 == 120) releasePedal(message.channel, tick)
+                    }
+                    else -> ignoredEvents++
+                }
                 else -> ignoredEvents++
             }
         }
         val end = midiTickToNspc(sequence.tickLength, tickScale)
+        for (channel in 0 until 16) { pedal[channel] = false; releasePedal(channel, end) }
         for ((key, pending) in active.toMap()) while (pending.isNotEmpty()) {
             unterminated++
             finish(key, maxOf(end, pending.first().startTick + 1))
         }
         val freeAt = IntArray(8)
+        val assignments = mutableListOf<Triple<Int, Int, NspcSequence.Note>>()
         for ((source, note) in completed.sortedWith(compareBy<Pair<Int, NspcSequence.Note>> { it.second.tick }
             .thenByDescending { it.second.velocity }.thenBy { it.first }.thenBy { it.second.noteValue })) {
             val preferred = source % 8
@@ -187,7 +224,23 @@ internal object MusicTrackInterchange {
             if (target == null) { dropped++; continue }
             if (target != source) repacked++
             song.channels[target].notes += note
+            assignments += Triple(source, target, note)
             freeAt[target] = note.endTick
+        }
+        if (controls.isNotEmpty()) for (target in 0 until 8) {
+            val last = mutableMapOf(0xED to 255, 0xE1 to 10)
+            for ((source, _, note) in assignments.filter { it.second == target }) {
+                for (command in listOf(0xED, 0xE1)) {
+                    val value = controls.lastOrNull { it.channel == source && it.command == command && it.tick <= note.tick }?.value
+                        ?: if (command == 0xED) 255 else 10
+                    if (last[command] != value) { song.channels[target].commands += NspcSequence.ControlCommand(note.tick, command, intArrayOf(value)); last[command] = value }
+                }
+                for (control in controls.filter { it.channel == source && it.tick > note.tick && it.tick < note.endTick }) {
+                    if (last[control.command] != control.value) {
+                        song.channels[target].commands += NspcSequence.ControlCommand(control.tick, control.command, intArrayOf(control.value)); last[control.command] = control.value
+                    }
+                }
+            }
         }
         sortSong(song)
         require(song.channels.any { it.notes.isNotEmpty() }) { "MIDI file contains no note events" }
@@ -200,8 +253,7 @@ internal object MusicTrackInterchange {
             if (unterminated > 0) add("$unterminated note(s) without note-off were ended at the file boundary.")
             if (ignoredEvents > 0) add("$ignoredEvents unsupported MIDI event(s) were ignored.")
             if (ignoredMetadata > 0) add("$ignoredMetadata unsupported MIDI metadata event(s) were ignored.")
-            val tempos = events.count { (it.message as? MetaMessage)?.type == 0x51 }
-            if (tempos > 1) add("Only the initial MIDI tempo is imported; tempo changes were not retained.")
+
         }
         return MidiReadResult(song, reportForSong("MIDI", file.name, song, warnings))
     }

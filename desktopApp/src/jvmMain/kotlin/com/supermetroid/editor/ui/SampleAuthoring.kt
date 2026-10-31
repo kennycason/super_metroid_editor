@@ -24,13 +24,14 @@ internal data class SampleDraft(
     val version: Int = 1,
     val generator: String? = null,
     val periodFrames: Int = 128,
+    val crossfadeFrames: Int = 0,
 )
 
 internal object SampleAuthoring {
     const val RATE = 32000
     const val MAX_FRAMES = 32768
     enum class Shape { SINE, TRIANGLE, PULSE, SAW, NOISE }
-    data class Encoded(val brr: ByteArray, val pcm: ShortArray, val loopFrame: Int?) {
+    data class Encoded(val brr: ByteArray, val pcm: ShortArray, val loopFrame: Int?, val loopInspection: SampleLoopPolish.Inspection? = null) {
         val loopByteOffset get() = loopFrame?.let { it / 16 * 9 }
     }
     private val json = Json { prettyPrint = true; encodeDefaults = true }
@@ -67,6 +68,7 @@ internal object SampleAuthoring {
         require(draft.gainPercent in 0..100) { "Level must be 0–100%" }
         require(draft.generator == null || Shape.entries.any { it.name == draft.generator }) { "Unknown waveform generator" }
         require(draft.periodFrames in 32..512 && draft.periodFrames % 16 == 0) { "Invalid waveform period" }
+        require(draft.crossfadeFrames in 0..SampleLoopPolish.MAX_CROSSFADE && draft.crossfadeFrames % 16 == 0) { "Crossfade must be 0–256 frames in 16-frame blocks" }
     }
 
     fun encode(draft: SampleDraft): Encoded {
@@ -74,12 +76,14 @@ internal object SampleAuthoring {
         // The existing BRR codec works in the DSP's signed 15-bit predictor domain.
         // Convert 16-bit WAV/generator PCM before encoding, then restore the scale
         // for the display decode. Feeding full-scale PCM here wraps/clips harmonics.
-        val pcm = ShortArray(draft.trimEnd - draft.trimStart) { (draft.pcm[draft.trimStart + it] * draft.gainPercent / 200).toShort() }
+        val shaped = SampleLoopPolish.pcm(draft)
+        val pcm = ShortArray(shaped.size) { (shaped[it].toInt() * draft.gainPercent / 200).toShort() }
         val loopFrame = draft.loopStart?.minus(draft.trimStart)
         val loopBlock = loopFrame?.div(16) ?: -1
         val brr = SpcData.encodeBrr(pcm, loopBlock, setOf(0, loopBlock))
         val decoded = SpcData.decodeBrr(brr, 0, pcm.size).map { (it.toInt() * 2).toShort() }.toShortArray()
-        return Encoded(brr, decoded, loopFrame)
+        val encoded = Encoded(brr, decoded, loopFrame)
+        return encoded.copy(loopInspection = SampleLoopPolish.inspect(encoded))
     }
 
     /** Bounded conversion; long files are refused, never silently shortened to the memory limit. */

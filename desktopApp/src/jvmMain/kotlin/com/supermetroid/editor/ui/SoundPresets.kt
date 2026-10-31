@@ -62,8 +62,8 @@ internal object SoundPresets {
     fun encode(preset: SoundPreset): String { bytes(preset); return json.encodeToString(preset) }
     fun decode(text: String): SoundPreset = json.decodeFromString<SoundPreset>(text).also { bytes(it) }
 
-    fun capture(parser: RomParser, ram: ByteArray, index: Int, name: String): SoundPreset {
-        requireOriginalEngine(parser, ram)
+    fun capture(parser: RomParser, ram: ByteArray, index: Int, name: String, boot: ByteArray = SpcData.buildInitialSpcRam(parser)): SoundPreset {
+        requireOriginalEngine(boot, ram)
         val entry = NspcRenderer.readInstrumentTable(ram).firstOrNull { it.index == index } ?: error("Choose an available sound")
         val sample = if (entry.srcn < 0x80) sample(ram, entry.srcn) else null
         return SoundPreset(UUID.randomUUID().toString(), name.trim(), entry.adsr1, entry.adsr2, entry.gain, entry.pitchAdj,
@@ -157,8 +157,7 @@ internal object SoundPresets {
             project.musicInstrumentBanks[key] != bank.takeIf { it.instruments.isNotEmpty() || it.samples.isNotEmpty() })
     }
 
-    private fun requireOriginalEngine(parser: RomParser, ram: ByteArray) {
-        val boot = SpcData.buildInitialSpcRam(parser)
+    private fun requireOriginalEngine(boot: ByteArray, ram: ByteArray) {
         require(ram.size == 65536 && (0x1500 until 0x5800).all { ram[it] == boot[it] }) { "Sound presets require the original SPC engine" }
     }
 }

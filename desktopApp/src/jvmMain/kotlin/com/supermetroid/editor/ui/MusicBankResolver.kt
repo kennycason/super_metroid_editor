@@ -12,7 +12,7 @@ internal object MusicBankResolver {
     }
 
     fun sourceRam(parser: RomParser, project: SmEditProject, songSet: Int, includeOverrides: Boolean = true): ByteArray {
-        val ram = SpcData.buildInitialSpcRam(parser).also {
+        val ram = SoundEffects.bootRam(parser, project).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
         }
         val sources = sourceWrites(project, songSet)
@@ -30,7 +30,7 @@ internal object MusicBankResolver {
         val edits = project.musicEdits.toSortedMap().filterValues { it.songSet == songSet }
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
         val songBlocks = SpcData.findSongSetTransferData(parser, songSet)
-        val original = SpcData.buildInitialSpcRam(parser).also { SpcData.applyTransferBlocks(it, songBlocks) }
+        val original = SoundEffects.bootRam(parser, project).also { SpcData.applyTransferBlocks(it, songBlocks) }
         val retainedSources = sourceWrites(project, songSet)
         val retained = original.copyOf().also { ram -> retainedSources.forEach { (at, data) -> data.copyInto(ram, at) } }
         val samples = MusicSampleBanks.writes(parser, project, songSet, retained, retainedSources)
@@ -53,7 +53,9 @@ internal object MusicBankResolver {
             } else {
                 val song = MusicEditConversion.toSong(edit)
                 if (song == NspcSequence.parse(source, edit.playIndex)) continue
-                MusicSequenceBudget.encodeRelocated(song, edit.playIndex, source, occupied, key).also { patch ->
+                val siblings = NativeSoundUsage.inspect(source, (known + setOf(1, 2, 3, 4) - edit.playIndex).toList())
+                val operands = if (siblings.complete) NativeCommandPatches.plan(source, edit.playIndex, song, siblings.sequenceBytes) else null
+                operands ?: MusicSequenceBudget.encodeRelocated(song, edit.playIndex, source, occupied, key).also { patch ->
                     require(!patch.fit.trimmed) {
                         "Music edit '$key' (${edit.trackName}) exceeds safe SPC RAM: export would discard ${patch.fit.removedNotes} note(s) and ${patch.fit.removedCommands} command(s). Shorten the arrangement before exporting."
                     }

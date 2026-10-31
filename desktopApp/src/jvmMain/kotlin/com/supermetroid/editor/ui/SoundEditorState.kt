@@ -49,7 +49,7 @@ internal object PianoRollPlaybackTiming {
     }
 
     fun previewSeconds(song: NspcSequence.Song): Int {
-        val durationSeconds = song.totalTicks * tickMillis(song.tempo) / 1000.0
+        val durationSeconds = MusicExpression.Timing(song).millis(Int.MAX_VALUE) / 1000.0
         return ceil(durationSeconds + PREVIEW_PAD_SECONDS).toInt()
             .coerceIn(5, MAX_PREVIEW_SECONDS)
     }
@@ -57,6 +57,14 @@ internal object PianoRollPlaybackTiming {
 
 class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer(),
     private val heldInstrumentPlayer: HeldSoundPlayer = HeldSoundPlayer()) {
+    internal val effects = SoundEffectEditorState()
+    var soundSection by mutableStateOf(0)
+        private set
+    fun selectSoundSection(section: Int) {
+        if (section == soundSection) return
+        require(section in 0..2)
+        stopPlayback(); sampleWorkbench.stop(); effects.stop(); soundSection = section
+    }
     private val player = SoundPlayer()
     private var instrumentPreviewVersion = 0
     private data class InstrumentPreviewRequest(val parser: RomParser, val index: Int, val note: NspcSequence.Note,
@@ -1043,6 +1051,16 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         statusMessage = if (approximate) "Approximate preview · native playback unavailable" else "Playing edit preview..."
     }
 
+    private var tempoTimingKey = emptyList<Int>()
+    private var tempoTiming: MusicExpression.Timing? = null
+    private fun tempoTiming(song: NspcSequence.Song): MusicExpression.Timing {
+        val key = listOf(song.tempo, song.totalTicks, song.channels.maxOf { it.commands.maxOfOrNull { cmd -> cmd.tick } ?: 0 }) +
+            song.channels.flatMapIndexed { channel, voice -> voice.commands.filter { it.command in listOf(0xE7, 0xE8) }
+                .flatMap { listOf(channel, it.tick, it.command) + it.params.toList() } }
+        if (key != tempoTimingKey || tempoTiming == null) { tempoTiming = MusicExpression.Timing(song); tempoTimingKey = key }
+        return requireNotNull(tempoTiming)
+    }
+
     /** Update piano roll playback tick based on elapsed time. */
     fun updatePianoRollTick() {
         if (!isPlaying || pianoRollPlaybackTick < 0) return
@@ -1054,12 +1072,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         if (pianoRollTickMs <= 0.0) {
             pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
         }
-        val maxTick = song.totalTicks
-        pianoRollPlaybackTick = PianoRollPlaybackTiming.playbackTickAtMillis(
-            positionMillis = player.positionMillis(),
-            tempo = song.tempo,
-            maxTick = maxTick
-        )
+        pianoRollPlaybackTick = tempoTiming(song).tick(player.positionMillis())
     }
 
     fun seekPianoRollToTick(tick: Int) {
@@ -1071,7 +1084,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
         }
         val clampedTick = tick.coerceIn(0, song.totalTicks.coerceAtLeast(0))
-        val seekMs = PianoRollPlaybackTiming.tickToMillis(clampedTick, song.tempo)
+        val seekMs = tempoTiming(song).millis(clampedTick)
         pianoRollPlaybackTick = clampedTick
         pianoRollPlayStartMs = System.currentTimeMillis() - seekMs
         if (player.isActive()) {
@@ -1361,6 +1374,13 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         return changed
     }
 
+    internal fun manageSoundBank(target: SampleBankPreview.Target, bank: MusicInstrumentBankEdit, label: String, parser: RomParser, editor: EditorState): Boolean {
+        val changed = editor.project.musicInstrumentBanks[MusicInstrumentBanks.key(target.songSet)] != bank.takeIf { it.instruments.isNotEmpty() || it.samples.isNotEmpty() }
+        val result = applySoundBank(target, bank, changed, label, parser, editor)
+        if (result) statusMessage = "$label · Undo available"
+        return result
+    }
+
     private fun applySoundBank(target: SampleBankPreview.Target, bank: MusicInstrumentBankEdit, changed: Boolean,
         label: String, parser: RomParser, editor: EditorState): Boolean {
         val track = selectedTrack ?: error("Choose a track before using this sample")
@@ -1368,7 +1388,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             "The selected track changed. Reopen the sound library or sample workbench."
         }
         require(editor.project.projectId == target.project.projectId && editor.project.romPath == target.project.romPath &&
-            editor.project.musicEdits == target.project.musicEdits && editor.project.musicInstrumentBanks == target.project.musicInstrumentBanks) {
+            editor.project.musicEdits == target.project.musicEdits && editor.project.musicInstrumentBanks == target.project.musicInstrumentBanks &&
+            editor.project.soundEffectEdits == target.project.soundEffectEdits) {
             "The sound bank changed. Reopen the sound library or sample workbench."
         }
         if (!changed) return false
@@ -1918,6 +1939,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     )
 
     fun selectTrack(track: SpcData.TrackInfo) {
+        soundSection = 0
+        effects.stop()
         instrumentAuditionOriginal = false
         stopInstrumentPreview()
         if (track.songSet != sampleCatalogSongSet) {
@@ -1958,6 +1981,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     }
 
     suspend fun selectSample(sample: DecodedSample) {
+        soundSection = 1
+        effects.stop()
         stopInstrumentPreview()
         val extended = withContext(Dispatchers.Default) {
             extendWithLoop(sample.pcmData, sample.loopStart, sampleRate, 4.0)
