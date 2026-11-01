@@ -6,6 +6,21 @@ Super Metroid music loads a song set into SPC RAM with transfer blocks stored in
 
 The editor persists music edits in `.smedit` and can preview them in the sound editor. ROM export reuses existing bank-owned payload bytes when all requested uploads are already covered and no other bank shares those ROM bytes. New upload ranges require a relocated, merged transfer chain. Choosing safe SPC RAM addresses for edited sequences and restoring resources across bank changes are separate requirements.
 
+## New Track / New Bank Checkpoint — 2026-10-31
+
+- **Tracks → New track** creates a named blank arrangement or duplicates the selected editable arrangement. **New bank** copies the selected palette into an independent bank; **Existing bank** shares that bank's sound settings. The new track opens directly in Edit Track. Project rows carry a **PROJECT** badge and participate in keyboard navigation and Play All.
+- New track definitions save their own reset baseline, separate from later arrangement edits. Reset restores the blank/duplicated baseline, without deleting the track. New bank definitions retain a native source-bank identity and frozen imported palette-resource bytes; owned sample/settings maps and display labels are copied independently. Resetting or editing the source track does not remove the new palette's samples.
+- Track IDs are 5–127. Creation claims a song-table cell outside known native music graphs, palette samples and retained imports, then reserves that cell during sequence allocation. Existing native conductors, calls and loops are left intact. Banks with no proven free cell require **New bank**. Additional tracks in a project bank are re-encoded around all claimed cells.
+- New bank IDs are `$4B..$FC` in steps of three: up to 60 additional IDs, subject to memory and ROM space. Export extends the CPU pointer table with an `SMEDMUS1` header and 255 pointer bytes, patches only the two verified native table-load operands, and preserves all original table entries. The queue, SPC engine and uploader keep their existing behavior. Native tests exercise both bank `$FC` and track `$7F` through the actual CPU/APU queue.
+- Creation runs detached SPC/resource checks and a complete ROM-export dry run before enabling **Create track**. Changed inputs invalidate the ready plan immediately, and stale callbacks cannot create a track from an earlier name/palette. A source bank's native music rows are not copied as new track definitions; the palette and chosen arrangement are separate choices.
+- The sidebar's Undo/Redo actions use the editor history. Creation Undo requires later music/room changes to be undone first; it does not overwrite later work or leave a saved room assignment pointing at a removed track. Project save/reopen retains the bank, track, reset baseline, imported resources and room fields. Room music selectors show project track names and their real bank/track identities.
+- Export stages the expanded table and all allocations before publishing. Shared allocators retain table/header/queue/source ownership, including reopening an exported ROM without project edits. The exporter now copies its entire verified staged image back to its input, retaining allocated bodies when an outer transaction uses an allocator bound to the original ROM.
+- Existing limits still apply: each loaded SPC bank has 64KB shared with samples and engine state; sound tables remain 42 slots; merged relocated upload chains currently have a 32KiB single-ROM-bank limit. Creation reports allocation/upload failures before changing the project. Headless builds continue to reject unsupported authored audio explicitly.
+
+Validation: **531 desktop/shared tests passed**, with three optional external IT fixtures skipped. Coverage includes native CPU/APU playback and bank reentry, maximum IDs, independent owned/imported samples, source reset, baseline reset, save/reopen, creation Undo/Redo, exported room music bytes, native-arrangement preservation, allocation failure without ROM mutation, table ownership after reopening, and both-theme/all-font creation layouts and room choices.
+
+Next sound expansion: independent effect-program creation and step insertion/removal. Larger upload-chain serialization and richer MIDI controller export remain separate improvements.
+
 ## Compact Encoding Checkpoint — 2026-10-31
 
 - Structural edits now factor repeated, complete native instruction sequences into `EF` subroutine calls. Bodies can be shared across voices, adjacent repetitions use native counts 1–255, and longer runs split into multiple calls. Calls never nest: the engine has one return address per voice. Length/quantize/velocity prefixes stay attached to their notes; opcode operands and END bytes are never mistaken for instructions.
@@ -17,7 +32,7 @@ The editor persists music edits in `.smedit` and can preview them in the sound e
 
 Relocation has two distinct limits: ROM chains can move into available cartridge space, while each loaded SPC bank must still fit its engine, recordings, directory, sounds and arrangements into 64KB. Moving data in ROM does not create SPC RAM. Repacking and existing free RAM gaps help; a dedicated new music bank can separate arrangements but still needs its own sample/instrument allocation and room-trigger integration.
 
-New compositions can already replace existing track slots through Edit Track or import. The browser still uses the known native track catalog. Additional song IDs, track records and new bank creation do not yet have an **Add track** workflow.
+New compositions can replace existing track slots through Edit Track or import, or use **New track** to create an additional ID. See the New Track / New Bank checkpoint above for independent palettes and room assignment.
 
 Checkpoint validation: **477 regressions passed** across desktop/shared, with three optional external IT fixtures skipped. This includes lossless byte expansion, native PCM comparison, exact size/allocation boundaries, complete-track failure, native CPU/APU packed exports and reentry, existing sample/ownership/import/export checks, and Compose layouts. The full run exposed an old test assumption that every note edit must move its conductor; the updated test verifies the entire edited arrangement and untouched sibling instead, allowing safe reuse of the original gap and ROM chain. Its focused rerun passed.
 
@@ -284,7 +299,7 @@ Sound roadmap completion checkpoint — 2026-10-31:
 - **Sound bank** in Edit Track shows free memory, largest gap, project-owned samples/users and verified empty slots. **New sound** creates a sine only in an all-zero, unreferenced native slot; **Copy into slot** explicitly replaces an existing sound's settings. **Remove** is limited to unreferenced project-owned samples. Resource inventory follows native finite conductor branches and subroutine calls without a playback tick cutoff, includes common music and effects, and scans every native sound-table slot before cleanup. Each action uses the existing bank transaction, one Undo step and checked production export.
 - The native table remains 42 sounds; no slot expansion or arbitrary-engine support is claimed. Desktop export supports these edits. The headless build service continues to reject unsupported audio edits explicitly rather than dropping them. Common ROM recordings are not deletable project resources.
 
-The planned desktop sound workflow is implemented. Compact structural-edit encoding is covered by the later checkpoint at the top of this document. Further sound work includes new track/bank creation, new effect-program allocation, additional native engines, native-table expansion, richer MIDI DSP approximation, and headless audio export.
+The planned desktop sound workflow is implemented. Compact encoding and track/bank creation are covered by the later checkpoints at the top of this document. Further sound work includes new effect-program allocation, additional native engines, native sound-table expansion, richer MIDI DSP approximation, and headless audio export.
 
 Checkpoint verification: **469 tests passed**, with three optional external IT fixtures skipped. Native SPC and required CPU/APU exported-ROM tests ran without skips. Compose captures cover both themes and all editor font sizes for effects, expression and bank management, including narrow bank/expression layouts. This includes existing sample/preset/held-audition, MIDI, bank-transition, persistence and ROM-export regressions. The runtime harness verifies the uploader, queue and soft-reset paths; it is not exhaustive gameplay coverage.
 
@@ -305,6 +320,7 @@ SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --off
   --tests '*SoundEffectsTest' --tests '*MusicExpressionTest' --tests '*NativeCommandPatchesTest' \
   --tests '*SoundBankManagementTest' --tests '*SoundRoadmapUiTest' \
   --tests '*CompactMusicEncodingTest' \
+  --tests '*MusicCreationTest' \
   --tests '*SampleAuthoringTest' --tests '*SampleWorkbenchTest' --tests '*MusicSamplePlacementTest' \
   --tests '*MusicSampleRestorationTest' --tests '*NativeSampleRestorationTest' \
   --tests '*ImpulseTrackerImportTest' --tests '*PianoRollEditLogicTest' --tests '*PianoRollEditorTest' \

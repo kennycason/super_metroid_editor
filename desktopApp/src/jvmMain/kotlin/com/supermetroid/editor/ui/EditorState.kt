@@ -2702,6 +2702,42 @@ class EditorState(
     val favoritePatchIds: Set<String>
         get() = patchFavoriteStore.favoriteIds
 
+    private val musicCreationHistory = java.util.IdentityHashMap<EditOperation, Pair<SmEditProject, SmEditProject>>()
+    internal val canUndoMusicCreation get() = undoVersion.let { undoStack.lastOrNull()?.let { it in musicCreationHistory } == true }
+    internal val canRedoMusicCreation get() = undoVersion.let { redoStack.lastOrNull()?.let { it in musicCreationHistory } == true }
+
+    internal fun applyMusicCreation(plan: MusicCreation.Plan) {
+        require(MusicCreation.sameMusic(project, plan.before)) { "Music changed while creating the track. Reopen New track." }
+        musicCreationHistory.keys.retainAll(undoStack + redoStack)
+        val operation = EditOperation("Create track ${plan.track.name}")
+        musicCreationHistory[operation] = plan.before to plan.after
+        restoreMusicCatalog(plan.after)
+        undoStack.add(operation); redoStack.clear(); undoVersion++
+    }
+
+    private fun restoreMusicCatalog(saved: SmEditProject) {
+        val copy = MusicBankTransitions.snapshot(saved)
+        project.musicBanks.clear(); project.musicBanks.putAll(copy.musicBanks)
+        project.musicTracks.clear(); project.musicTracks.putAll(copy.musicTracks)
+        project.musicEdits.clear(); project.musicEdits.putAll(copy.musicEdits)
+        project.musicInstrumentBanks.clear(); project.musicInstrumentBanks.putAll(copy.musicInstrumentBanks)
+        project.musicInstrumentNames.clear(); project.musicInstrumentNames.putAll(copy.musicInstrumentNames)
+        project.musicSampleNames.clear(); project.musicSampleNames.putAll(copy.musicSampleNames)
+        musicEditVersion++; musicInstrumentNameVersion++; musicSampleNameVersion++; dirty = true
+    }
+
+    private fun restoreMusicCreation(operation: EditOperation, undo: Boolean): Boolean {
+        val (before, after) = musicCreationHistory.getValue(operation)
+        return try {
+            require(MusicCreation.sameMusic(project, if (undo) after else before)) { "Undo later music edits before changing track creation history." }
+            if (undo) MusicCreation.requireUnusedByRooms(project, after.musicTracks.keys - before.musicTracks.keys)
+            restoreMusicCatalog(if (undo) before else after)
+            if (undo) { undoStack.removeAt(undoStack.lastIndex); redoStack.add(operation) }
+            else { redoStack.removeAt(redoStack.lastIndex); undoStack.add(operation) }
+            undoVersion++; true
+        } catch (error: IllegalArgumentException) { postStatus(error.message ?: "Cannot change track creation history"); false }
+    }
+
     /** Compose-observable version counter for saved music edits. */
     var musicEditVersion by mutableStateOf(0)
         private set
@@ -2709,7 +2745,7 @@ class EditorState(
     fun musicEditKey(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
 
     fun hasMusicEdit(songSet: Int, playIndex: Int): Boolean =
-        project.musicEdits.containsKey(musicEditKey(songSet, playIndex)) ||
+        project.musicEdits.containsKey(musicEditKey(songSet, playIndex)) || project.musicTracks.containsKey(musicEditKey(songSet, playIndex)) ||
             project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.let { it.instruments.isNotEmpty() || it.samples.isNotEmpty() } == true ||
             project.musicEdits.values.any { it.songSet == songSet && it.nativePayload != null }
 
@@ -10682,6 +10718,7 @@ class EditorState(
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         val pending = undoStack.last()
+        if (pending in musicCreationHistory) return restoreMusicCreation(pending, true)
         if (hasManagedLayouts() && pending.edits.isNotEmpty() && pending !in managedPlmUndo) {
             postStatus("Undo the layout source adoption in ASM before undoing older GUI tile edits."); return false
         }
@@ -10777,6 +10814,7 @@ class EditorState(
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
         val pending = redoStack.last()
+        if (pending in musicCreationHistory) return restoreMusicCreation(pending, false)
         if (hasManagedEnemies() && (pending.enemyAdds.isNotEmpty() || pending.enemyRemoves.isNotEmpty() || pending.enemyUpdates.isNotEmpty())) {
             postStatus("Enemy edit blocked: older ROM enemy edits cannot overwrite authored population source."); return false
         }

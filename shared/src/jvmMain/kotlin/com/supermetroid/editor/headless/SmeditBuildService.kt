@@ -424,7 +424,7 @@ class SmeditBuildService(
                 unsupportedRomEdits.add("room name overrides")
             }
             if (project.customAsm.isNotEmpty()) unsupportedRomEdits.add("custom ASM")
-            if (project.musicEdits.isNotEmpty()) unsupportedRomEdits.add("music edits")
+            if (project.musicEdits.isNotEmpty() || project.musicTracks.isNotEmpty() || project.musicBanks.isNotEmpty()) unsupportedRomEdits.add("music edits and authored tracks/banks")
             if (project.soundEffectEdits.isNotEmpty()) unsupportedRomEdits.add("sound effect edits")
             if (unsupportedRomEdits.isNotEmpty()) {
                 throw IllegalArgumentException(
@@ -455,7 +455,7 @@ class SmeditBuildService(
             ignored.add("room name overrides: ${project.roomNameOverrides.size}")
         }
         if (project.customAsm.isNotEmpty()) ignored.add("custom ASM entries: ${project.customAsm.size}")
-        if (project.musicEdits.isNotEmpty()) ignored.add("music edits: ${project.musicEdits.size}")
+        if (project.musicEdits.isNotEmpty() || project.musicTracks.isNotEmpty() || project.musicBanks.isNotEmpty()) ignored.add("music edits/tracks/banks: ${project.musicEdits.size}/${project.musicTracks.size}/${project.musicBanks.size}")
         if (project.soundEffectEdits.isNotEmpty()) ignored.add("sound effect edits: ${project.soundEffectEdits.size}")
 
         if (ignored.isNotEmpty()) {

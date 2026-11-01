@@ -189,9 +189,9 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                 "songSet=0x${track.songSet.toString(16)} playIndex=${track.playIndex}"
         }
         val ram = buildSpcRamForTrack(romParser, track.songSet)
-        val originalSong = NspcSequence.parse(ram, track.playIndex)
+        val originalSong = editorState?.project?.let { MusicCatalog.baseline(it, track.songSet, track.playIndex) } ?: NspcSequence.parse(ram, track.playIndex)
         val originalInstruments = NspcRenderer.readInstrumentTable(ram)
-        val trackBudget = MusicSequenceBudget.trackBudgetForTrack(romParser, track.songSet, track.playIndex)
+        val trackBudget = if (instrumentBankProblem == null) MusicSequenceBudget.trackBudgetForTrack(romParser, track.songSet, track.playIndex, (editorState ?: editorStateRef)?.project) else MusicSequenceBudget.TrackBudget(0, 0)
         pianoRollExportBudgetBytes = trackBudget.trackBytes
         pianoRollRelocationBudgetBytes = trackBudget.relocationBytes
         pianoRollOriginalSequenceBytes = trackBudget.trackBytes
@@ -281,9 +281,9 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         editingSong = null
         refreshInstrumentBank(romParser, editorState ?: editorStateRef)
         val ram = buildSpcRamForTrack(romParser, track.songSet)
-        val song = NspcSequence.parse(ram, track.playIndex)
+        val song = (editorState ?: editorStateRef)?.project?.let { MusicCatalog.baseline(it, track.songSet, track.playIndex) } ?: NspcSequence.parse(ram, track.playIndex)
         pianoRollInstruments = NspcRenderer.readInstrumentTable(ram)
-        val trackBudget = MusicSequenceBudget.trackBudgetForTrack(romParser, track.songSet, track.playIndex)
+        val trackBudget = if (instrumentBankProblem == null) MusicSequenceBudget.trackBudgetForTrack(romParser, track.songSet, track.playIndex, (editorState ?: editorStateRef)?.project) else MusicSequenceBudget.TrackBudget(0, 0)
         pianoRollExportBudgetBytes = trackBudget.trackBytes
         pianoRollRelocationBudgetBytes = trackBudget.relocationBytes
         pianoRollOriginalSequenceBytes = trackBudget.trackBytes
@@ -961,7 +961,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         }
         return try {
             val ram = buildSpcRamForTrack(romParser, track.songSet)
-            val originalSong = NspcSequence.parse(ram, track.playIndex).also {
+            val originalSong = ((editorState ?: editorStateRef)?.project?.let { MusicCatalog.baseline(it, track.songSet, track.playIndex) } ?: NspcSequence.parse(ram, track.playIndex)).also {
                 it.title = track.name
             }
             val originalInstruments = NspcRenderer.readInstrumentTable(ram)
@@ -1263,7 +1263,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     private fun refreshInstrumentBank(parser: RomParser, editor: EditorState?) {
         val track = selectedTrack ?: return
         instrumentBankProblem = null
-        instrumentBankTracks = (SpcData.KNOWN_TRACKS.filter { it.songSet == track.songSet }.map { it.name } +
+        instrumentBankTracks = ((editorStateRef?.project?.let(MusicCatalog::tracks) ?: SpcData.KNOWN_TRACKS).filter { it.songSet == track.songSet }.map { it.name } +
             editor?.project?.musicEdits?.values.orEmpty().filter { it.songSet == track.songSet }.map { it.trackName }).distinct()
         if (editor == null) return
         try {
@@ -2118,7 +2118,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             val savedEdit = editorStateRef?.getMusicEdit(track.songSet, track.playIndex)
 
             val bankProject = editorStateRef?.project
-            val sharedEdited = bankProject != null && (savedEdit != null ||
+            val sharedEdited = bankProject != null && (savedEdit != null || bankProject.musicTracks.containsKey(com.supermetroid.editor.data.MusicTrackEdit.key(track.songSet, track.playIndex)) ||
                 bankProject.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)]?.let { it.instruments.isNotEmpty() || it.samples.isNotEmpty() } == true ||
                 bankProject.musicEdits.values.any { it.songSet == track.songSet && it.nativePayload != null })
             if (sharedEdited) {
@@ -2262,7 +2262,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         // Invalid or overlapping source data must not substitute a different bank or stock song.
         val ram = bank?.ram ?: MusicBankResolver.sourceRam(parser, project, track.songSet)
         val song = project.musicEdits[MusicEditConversion.key(track.songSet, track.playIndex)]?.let { MusicEditConversion.toSong(it) }
-            ?: NspcSequence.parse(ram, track.playIndex)
+            ?: MusicCatalog.baseline(project, track.songSet, track.playIndex) ?: NspcSequence.parse(ram, track.playIndex)
         val events = song.channels.flatMapIndexed { ch, channel -> channel.notes.map { PianoRollPreviewLogic.noteEvent(ch, it) } }
         return NspcRenderer.renderToWav(events, ram, tempo = song.tempo, sampleRate = rate, maxSeconds = 120.0)
     }
@@ -2389,7 +2389,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
     fun checkPendingAdvance() {
         if (!pendingNextTrack) return
         pendingNextTrack = false
-        val tracks = SpcData.KNOWN_TRACKS
+        val tracks = editorStateRef?.project?.let(MusicCatalog::tracks) ?: SpcData.KNOWN_TRACKS
         val currentIdx = tracks.indexOfFirst { it.id == selectedTrackId }
         if (currentIdx >= 0 && currentIdx + 1 < tracks.size) {
             val next = tracks[currentIdx + 1]

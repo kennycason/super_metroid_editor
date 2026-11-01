@@ -48,7 +48,21 @@ internal object MusicSequenceBudget {
         return trackBudgetForTrack(romParser, songSet, playIndex).trackBytes
     }
 
-    fun trackBudgetForTrack(romParser: RomParser, songSet: Int, playIndex: Int): TrackBudget {
+    fun trackBudgetForTrack(romParser: RomParser, songSet: Int, playIndex: Int, project: com.supermetroid.editor.data.SmEditProject? = null): TrackBudget {
+        if (project != null) {
+            val key = com.supermetroid.editor.data.MusicTrackEdit.key(songSet, playIndex)
+            val others = project.copy(musicTracks = project.musicTracks.toMutableMap().also { it.remove(key) },
+                musicEdits = project.musicEdits.toMutableMap().also { it.remove(key) })
+            val resolved = MusicBankResolver.resolve(romParser, others, songSet)
+            val protected = MusicCatalog.tracks(project).filter { it.songSet == songSet && it.playIndex != playIndex }.map { it.playIndex }.toSet()
+            val occupied = buildProtectedSpcOccupancy(SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000)),
+                MusicCatalog.blocks(romParser, project, songSet), resolved.ram, protected) + sampleRanges(resolved.ram) +
+                resolved.writes.map { (at, bytes) -> SpcRange(at, at + bytes.size) } +
+                project.musicTracks.values.filter { it.songSet == songSet }.map { SpcRange(0x581E + it.playIndex * 2, 0x5820 + it.playIndex * 2) }
+            val original = MusicCatalog.baseline(project, songSet, playIndex)?.let(NspcSequence::encodedSequenceSize)
+                ?: originalSequenceBytes(resolved.ram, playIndex)
+            return TrackBudget(original, largestAvailableRange(occupied)?.size ?: 0)
+        }
         val baseBlocks = SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000))
         val songBlocks = SpcData.findSongSetTransferData(romParser, songSet)
         val spcRam = SpcData.buildInitialSpcRam(romParser).also {

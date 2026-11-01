@@ -49,8 +49,13 @@ internal object MusicBankTransitions {
 
     /** Detach mutable sound containers before background UI validation. No save migrations. */
     fun snapshot(project: SmEditProject): SmEditProject = project.copy(
+        musicBanks = project.musicBanks.mapValues { (_, bank) -> bank.copy(sourceBlocks = bank.sourceBlocks.map { it.copy() }.toMutableList()) }.toMutableMap(),
+        musicTracks = project.musicTracks.mapValues { (_, track) -> track.copy(baseline = track.baseline.copy(channels = MusicEditConversion.copyProjectEdit(
+            com.supermetroid.editor.data.MusicTrackEdit(track.songSet, track.playIndex, track.name, track.baseline.tempo, track.baseline.channels)).channels)) }.toMutableMap(),
         musicEdits = project.musicEdits.mapValues { (_, edit) -> MusicEditConversion.copyProjectEdit(edit) }.toMutableMap(),
         musicInstrumentBanks = project.musicInstrumentBanks.mapValues { (_, bank) -> requireNotNull(MusicInstrumentBanks.copy(bank)) }.toMutableMap(),
+        musicInstrumentNames = project.musicInstrumentNames.toMutableMap(),
+        musicSampleNames = project.musicSampleNames.toMutableMap(),
         soundEffectEdits = project.soundEffectEdits.toMutableMap(),
     )
 
@@ -64,9 +69,9 @@ internal object MusicBankTransitions {
         if (resolved.isEmpty()) return Report(emptyList(), 0)
         val initial = SoundEffects.bootRam(parser, project)
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
-        val songSets = (SpcData.TRANSFER_SONG_SETS.filter { it > 0 } + resolved.keys).distinct().sorted()
+        val songSets = ((SpcData.TRANSFER_SONG_SETS + com.supermetroid.editor.rom.SpcMusicBankTable.songSets(parser)).filter { it > 0 } + resolved.keys).distinct().sorted()
         val banks = songSets.associateWith { songSet ->
-            val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
+            val originalBlocks = MusicCatalog.blocks(parser, project, songSet)
             require(originalBlocks.isNotEmpty()) { "No music transfer data for bank ${MusicInstrumentBanks.key(songSet)}" }
             val original = initial.copyOf().also { SpcData.applyTransferBlocks(it, originalBlocks) }
             val edit = resolved[songSet]
@@ -95,7 +100,10 @@ internal object MusicBankTransitions {
             // Check incoming loads too: a newly selected SRCN can expose a sample
             // the destination never uploads, even when no other bank was edited.
             val dependencies = BooleanArray(65536)
-            val tracks = project.musicEdits.values.filter { it.songSet == songSet }
+            val tracks = project.musicTracks.values.filter { it.songSet == songSet }.map { definition ->
+                project.musicEdits[com.supermetroid.editor.data.MusicTrackEdit.key(songSet, definition.playIndex)] ?: MusicEditConversion.toProjectEdit(
+                    SpcData.TrackInfo(songSet, definition.playIndex, definition.name, "Project"), MusicCatalog.baseline(project, songSet, definition.playIndex)!!)
+            } + project.musicEdits.values.filter { it.songSet == songSet }
             val slots = project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.instruments?.keys.orEmpty().toMutableSet()
             slots += tracks.flatMap { it.channels.flatMap { channel -> channel.notes.map { note -> note.instrument } } }
             slots += tracks.flatMap { it.channels.flatMap { channel ->
@@ -172,7 +180,8 @@ internal object MusicBankTransitions {
     }
 
     fun editedSongSets(project: SmEditProject): List<Int> =
-        (project.musicEdits.values.map { it.songSet } + project.musicInstrumentBanks.keys.map { it.toInt(16) }).distinct().sorted()
+        (project.musicEdits.values.map { it.songSet } + project.musicInstrumentBanks.keys.map { it.toInt(16) } +
+            project.musicTracks.values.map { it.songSet } + project.musicBanks.values.map { it.songSet }).distinct().sorted()
 
     private data class Bank(val ram: ByteArray, val loaded: BooleanArray, val protected: IntArray, val changed: List<Int>, val dependencies: List<Int>)
 }

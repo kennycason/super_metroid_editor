@@ -769,6 +769,7 @@ fun RoomPropertiesPanel(
 
         EditableIntRow("Tileset", editTileset, 0, 29) { editTileset = it; syncStateDataToState() }
         MusicDropdown(
+            tracks = editorState.musicEditVersion.let { MusicCatalog.tracks(editorState.project) },
             musicData = editMusicData,
             musicTrack = editMusicTrack,
             onMusicChange = { data, track ->

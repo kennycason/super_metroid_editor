@@ -103,7 +103,7 @@ internal class SampleBankPreview private constructor(
 
     companion object {
         fun load(parser: RomParser, target: Target): SampleBankPreview {
-            require(target.songSet in SpcData.TRANSFER_SONG_SETS && target.songSet > 0) { "Choose a native music bank" }
+            require((target.songSet in SpcData.TRANSFER_SONG_SETS || MusicInstrumentBanks.key(target.songSet) in target.project.musicBanks) && target.songSet > 0) { "Choose a native music bank" }
             require(target.note.instrument in 0 until 42) { "Choose an available sound" }
             val resolved = MusicBankResolver.resolve(parser, target.project, target.songSet)
             val boot = SoundEffects.bootRam(parser, target.project)
@@ -111,7 +111,7 @@ internal class SampleBankPreview private constructor(
                 "Bank tryout requires the original SPC engine"
             }
             val uploads = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000)) +
-                SpcData.findSongSetTransferData(parser, target.songSet) + resolved.blocks +
+                MusicCatalog.blocks(parser, target.project, target.songSet) + resolved.blocks +
                 target.project.musicEdits.values.filter { it.songSet == target.songSet }.flatMap { edit ->
                     edit.nativePayload?.let(MusicEditConversion::toTransferBlocks).orEmpty()
                 }

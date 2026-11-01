@@ -37,7 +37,7 @@ private data class BankCheck(val report: MusicBankTransitions.Report? = null, va
 /** Background, debounced preflight; never edits the project or runs a native audio render. */
 @Composable
 internal fun MusicBankExportCheck(parser: RomParser, project: SmEditProject, editVersion: Int) {
-    if (project.musicEdits.isEmpty() && project.musicInstrumentBanks.isEmpty()) return
+    if (project.musicEdits.isEmpty() && project.musicInstrumentBanks.isEmpty() && project.musicTracks.isEmpty() && project.musicBanks.isEmpty()) return
     val input = remember(parser, project, editVersion) { MusicBankTransitions.snapshot(project) }
     var result by remember(parser, project, editVersion) { mutableStateOf<BankCheck?>(null) }
     LaunchedEffect(parser, project, editVersion) {

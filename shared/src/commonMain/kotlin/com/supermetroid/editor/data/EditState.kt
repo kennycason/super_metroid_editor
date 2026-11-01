@@ -935,6 +935,24 @@ data class MusicTrackEdit(
     }
 }
 
+/** Independent palette based on one native bank, with retained imported source bytes. */
+@Serializable
+data class MusicBankDefinition(
+    val songSet: Int,
+    val name: String,
+    val sourceSongSet: Int,
+    val sourceBlocks: MutableList<MusicTransferBlockEdit> = mutableListOf(),
+)
+
+/** The reset baseline of an authored track. Arrangement edits live in musicEdits. */
+@Serializable
+data class MusicTrackDefinition(
+    val songSet: Int,
+    val playIndex: Int,
+    val name: String,
+    val baseline: MusicNativeBaselineEdit,
+)
+
 @Serializable
 enum class PatchSortOrder {
     NAME_ASCENDING,
@@ -1031,6 +1049,8 @@ data class SmEditProject(
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
+    val musicBanks: MutableMap<String, MusicBankDefinition> = mutableMapOf(),
+    val musicTracks: MutableMap<String, MusicTrackDefinition> = mutableMapOf(),
     /** The sole owner of instrument overrides, keyed by hexadecimal song set. */
     val musicInstrumentBanks: MutableMap<String, MusicInstrumentBankEdit> = mutableMapOf(),
     /** Display-only instrument names, keyed by song set and instrument slot. Never changes ROM bytes. */

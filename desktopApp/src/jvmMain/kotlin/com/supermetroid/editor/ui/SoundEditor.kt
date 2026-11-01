@@ -182,17 +182,18 @@ fun SoundListPanel(
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val selectedTab = soundEditorState.soundSection
+    val tracks = editorState.musicEditVersion.let { MusicCatalog.tracks(editorState.project) }
     val scope = rememberCoroutineScope()
     val currentSamples = soundEditorState.samples
     val isPianoRollEditing = selectedTab == 0 && soundEditorState.isPianoRollOpen && soundEditorState.editingSong != null
     val navigationItemCount = when (selectedTab) {
-        0 -> if (romParser != null) SpcData.KNOWN_TRACKS.size else 0
+        0 -> if (romParser != null) tracks.size else 0
         1 -> currentSamples.size
         2 -> soundEditorState.effects.visible.size
         else -> 0
     }
     val navigationSelectedIndex = when (selectedTab) {
-        0 -> SpcData.KNOWN_TRACKS.indexOfFirst { it.id == soundEditorState.selectedTrackId }
+        0 -> tracks.indexOfFirst { it.id == soundEditorState.selectedTrackId }
         1 -> currentSamples.indexOfFirst { it.dirEntry.index == soundEditorState.selectedSampleIndex }
         2 -> soundEditorState.effects.visible.indexOfFirst { it.identity.key == soundEditorState.effects.selectedKey }
         else -> -1
@@ -200,7 +201,7 @@ fun SoundListPanel(
 
     fun selectSoundIndex(index: Int) {
         when (selectedTab) {
-            0 -> SpcData.KNOWN_TRACKS.getOrNull(index)?.let { track ->
+            0 -> tracks.getOrNull(index)?.let { track ->
                 if (track.id != soundEditorState.selectedTrackId) onTrackWillSelect(track)
                 soundEditorState.selectTrack(track)
             }
@@ -269,6 +270,7 @@ fun SoundListPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TrackListContent(
     romParser: RomParser?,
@@ -279,12 +281,27 @@ private fun TrackListContent(
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val musicEditVersion = editorState.musicEditVersion
-    Column(modifier = modifier.verticalScroll(rememberScrollState())) {
+    var creating by remember { mutableStateOf(false) }
+    if (creating && romParser != null) MusicCreationDialog(romParser, editorState, state.selectedTrack,
+        onCreated = { track -> creating = false; state.selectTrack(track); state.openPianoRoll(romParser, editorState) }, onClose = { creating = false })
+    val tracks = musicEditVersion.let { MusicCatalog.tracks(editorState.project) }
+    Column(modifier) {
+        if (romParser != null) SoundToolbar(Modifier.padding(6.dp)) {
+            SoundToolbarButton("New track", { creating = true }, Modifier.testTag("music-new-track"), primary = true)
+            SoundToolbarButton("Undo", {
+                if (editorState.undo()) { state.closePianoRoll(); state.selectTrack(MusicCatalog.tracks(editorState.project).first()) }
+            }, Modifier.testTag("music-undo-creation"), enabled = editorState.canUndoMusicCreation)
+            SoundToolbarButton("Redo", {
+                val before = MusicCatalog.tracks(editorState.project).map { it.id }.toSet()
+                if (editorState.redo()) MusicCatalog.tracks(editorState.project).firstOrNull { it.id !in before }?.let { state.selectTrack(it); state.openPianoRoll(romParser, editorState) }
+            }, Modifier.testTag("music-redo-creation"), enabled = editorState.canRedoMusicCreation)
+        }
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
         if (romParser == null) {
             Text("Load a ROM to browse tracks", fontSize = fs.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
         } else {
-            for (track in SpcData.KNOWN_TRACKS) {
+            for (track in tracks) {
                 val isSel = state.selectedTrackId == track.id
                 val isEdited = musicEditVersion.let { editorState.hasMusicEdit(track.songSet, track.playIndex) }
                 Surface(
@@ -305,7 +322,7 @@ private fun TrackListContent(
                                     modifier = Modifier.weight(1f, fill = false))
                                 if (isEdited) {
                                     Spacer(Modifier.width(4.dp))
-                                    EditedMusicBadge(if (editorState.getMusicEdit(track.songSet, track.playIndex) == null) "BANK" else "EDITED")
+                                    EditedMusicBadge(if (editorState.project.musicTracks.containsKey(com.supermetroid.editor.data.MusicTrackEdit.key(track.songSet, track.playIndex))) "PROJECT" else if (editorState.getMusicEdit(track.songSet, track.playIndex) == null) "BANK" else "EDITED")
                                 }
                             }
                             Text("${track.area}  0x${track.songSet.toString(16).uppercase().padStart(2, '0')}:${track.playIndex.toString(16).uppercase().padStart(2, '0')}",
@@ -315,6 +332,7 @@ private fun TrackListContent(
                 }
             }
         }
+    }
     }
 }
 
@@ -418,6 +436,12 @@ fun SoundEditorCanvas(
     val state = soundEditorState
     val scope = rememberCoroutineScope()
     val musicEditVersion = editorState.musicEditVersion
+    LaunchedEffect(editorState.project.projectId, musicEditVersion) {
+        if (state.selectedTrack != null && MusicCatalog.tracks(editorState.project).none { it.id == state.selectedTrackId }) {
+            state.closePianoRoll(); state.selectTrack(MusicCatalog.tracks(editorState.project).first())
+        }
+    }
+
     if (state.soundSection == 2) {
         SoundEffectsView(romParser, editorState, state.effects, modifier)
         return

@@ -69,7 +69,7 @@ internal fun SoundEffectsToolbar(parser: RomParser?, editor: EditorState, state:
                 { banks = true }, Modifier.testTag("effect-bank"))
             DropdownMenu(banks, { banks = false }) {
                 DropdownMenuItem({ Text("Common samples") }, { state.selectBank(0); banks = false })
-                for (track in SpcData.KNOWN_TRACKS.distinctBy { it.songSet }) DropdownMenuItem({ Text(track.name) }, { state.selectBank(track.songSet); banks = false })
+                for (set in MusicCatalog.banks(editor.project)) DropdownMenuItem({ Text(MusicCatalog.bankName(editor.project, set)) }, { state.selectBank(set); banks = false })
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

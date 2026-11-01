@@ -33,11 +33,12 @@ internal object ImportedMusicResolver {
         occupiedRanges: List<MusicSequenceBudget.SpcRange> = emptyList(),
         protectedPlayIndexes: Set<Int> = SpcData.KNOWN_TRACKS.filter { it.songSet == edit.songSet && it.playIndex != edit.playIndex }
             .mapTo(mutableSetOf()) { it.playIndex },
+        project: com.supermetroid.editor.data.SmEditProject? = null,
     ): Resolved {
         val payload = requireNotNull(edit.nativePayload) { "No retained native import" }
         val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
-        val songBlocks = SpcData.findSongSetTransferData(parser, edit.songSet)
-        val original = SpcData.buildInitialSpcRam(parser).also { SpcData.applyTransferBlocks(it, songBlocks) }
+        val songBlocks = project?.let { MusicCatalog.blocks(parser, it, edit.songSet) } ?: SpcData.findSongSetTransferData(parser, edit.songSet)
+        val original = (project?.let { SoundEffects.bootRam(parser, it) } ?: SpcData.buildInitialSpcRam(parser)).also { SpcData.applyTransferBlocks(it, songBlocks); project?.let { p -> apply(it, MusicCatalog.paletteWrites(p, edit.songSet)) } }
         val sourceWrites = MusicTransferChainBudget.compactedNativePayloadWrites(payload, edit.playIndex)
         val sourceBlocks = sourceWrites.map { (at, data) -> SpcData.TransferBlock(at, data) }
         val ram = original.copyOf().also { apply(it, sourceWrites) }

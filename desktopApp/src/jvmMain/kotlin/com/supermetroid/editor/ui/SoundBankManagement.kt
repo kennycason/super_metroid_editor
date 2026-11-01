@@ -17,7 +17,8 @@ internal object SoundBankManagement {
         val referenced = mutableSetOf<Int>()
         val plays = (SpcData.KNOWN_TRACKS.filter { it.songSet == target.songSet }.map { it.playIndex } +
             project.musicEdits.values.filter { it.songSet == target.songSet }.map { it.playIndex } + listOf(1, 2, 3, 4)).distinct()
-        val usage = listOf(base, resolved).map { NativeSoundUsage.inspect(it, plays) }
+        val added = project.musicTracks.values.filter { it.songSet == target.songSet }.map { it.playIndex }
+        val usage = listOf(NativeSoundUsage.inspect(base, plays - added.toSet()), NativeSoundUsage.inspect(resolved, (plays + added).distinct()))
         for (result in usage) referenced += result.instruments
         if (usage.any { !it.complete }) referenced += 24..41
         fun music(ram: ByteArray, play: Int) {
@@ -27,7 +28,8 @@ internal object SoundBankManagement {
         }
         for (play in (SpcData.KNOWN_TRACKS.filter { it.songSet == target.songSet }.map { it.playIndex } +
             project.musicEdits.values.filter { it.songSet == target.songSet }.map { it.playIndex }).distinct()) {
-            music(base, play); music(resolved, play)
+            if (project.musicTracks.values.none { it.songSet == target.songSet && it.playIndex == play }) music(base, play)
+            music(resolved, play)
         }
         for (ram in listOf(SpcData.buildInitialSpcRam(parser), SoundEffects.bootRam(parser, project))) {
             referenced += SoundEffects.catalog(ram).flatMap { it.voices }.flatMap { it.steps }.flatMap { it.operands }

@@ -37,10 +37,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.matches
+
+private val MUSIC_OPTIONS by lazy { musicOptions(SpcData.KNOWN_TRACKS) }
 
 // ── Music Dropdown ────────────────────────────────────────────────
 
@@ -50,17 +53,17 @@ private data class MusicOption(
     val label: String
 )
 
-private val MUSIC_OPTIONS: List<MusicOption> by lazy {
+private fun musicOptions(tracks: List<SpcData.TrackInfo>): List<MusicOption> {
     val options = mutableListOf(
         MusicOption(0x00, 0x00, "No change"),
         MusicOption(0x00, 0x03, "No music (silence)"),
     )
-    for (track in SpcData.KNOWN_TRACKS) {
+    for (track in tracks) {
         val hexLabel = String.format("%02X:%02X", track.songSet, track.playIndex)
         val area = if (track.area.isNotEmpty()) " [${track.area}]" else ""
         options.add(MusicOption(track.songSet, track.playIndex, "${track.name}$area ($hexLabel)"))
     }
-    options
+    return options
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,10 +71,12 @@ private val MUSIC_OPTIONS: List<MusicOption> by lazy {
 internal fun MusicDropdown(
     musicData: Int,
     musicTrack: Int,
-    onMusicChange: (Int, Int) -> Unit
+    onMusicChange: (Int, Int) -> Unit,
+    tracks: List<SpcData.TrackInfo> = SpcData.KNOWN_TRACKS,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val current = MUSIC_OPTIONS.firstOrNull { it.songSet == musicData && it.playIndex == musicTrack }
+    val options = musicOptions(tracks)
+    val current = options.firstOrNull { it.songSet == musicData && it.playIndex == musicTrack }
     val displayText = current?.label ?: String.format("Custom (%02X:%02X)", musicData, musicTrack)
 
     Row(
@@ -89,6 +94,7 @@ internal fun MusicDropdown(
                 modifier = Modifier
                     .fillMaxWidth()
                     .menuAnchor()
+                    .testTag("room-music-selector")
                     .clickable { expanded = true },
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = MaterialTheme.shapes.extraSmall
@@ -112,7 +118,7 @@ internal fun MusicDropdown(
                 onDismissRequest = { expanded = false },
                 modifier = Modifier.requiredSizeIn(maxHeight = 400.dp)
             ) {
-                for (option in MUSIC_OPTIONS) {
+                for (option in options) {
                     val isSelected = option.songSet == musicData && option.playIndex == musicTrack
                     DropdownMenuItem(
                         text = {
@@ -128,7 +134,7 @@ internal fun MusicDropdown(
                             expanded = false
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(28.dp)
+                        modifier = Modifier.height(28.dp).testTag("room-music-${option.songSet}-${option.playIndex}")
                     )
                 }
             }

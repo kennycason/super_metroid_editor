@@ -100,7 +100,7 @@ internal object MusicSampleBanks {
     internal fun retainedUploads(parser: RomParser, project: SmEditProject, songSet: Int, sources: Map<Int, ByteArray> = emptyMap()): List<SpcData.TransferBlock> {
         val boot = SoundEffects.bootRam(parser, project)
         return SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000)) +
-            SpcData.findSongSetTransferData(parser, songSet) +
+            MusicCatalog.blocks(parser, project, songSet) +
             sources.map { (at, data) -> SpcData.TransferBlock(at, data) } +
             project.musicEdits.values.filter { it.songSet == songSet }.flatMap { it.nativePayload?.let(MusicEditConversion::toTransferBlocks).orEmpty() } +
             MusicSequenceBudget.sampleRanges(boot).map { SpcData.TransferBlock(it.start, boot.copyOfRange(it.start, it.endExclusive)) }

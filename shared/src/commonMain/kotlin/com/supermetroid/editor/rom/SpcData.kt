@@ -497,6 +497,13 @@ object SpcData {
      */
     fun readSongSetPointer(romParser: RomParser, songSet: Int): Int {
         val rom = romParser.romData
+        if (songSet !in 0..0xFC || songSet % 3 != 0) return 0
+        if (songSet > 0x48 && runCatching { SpcMusicBankTable.read(romParser).expanded }.getOrDefault(false).not()) return 0
+        val owned = runCatching { SpcMusicBankTable.read(romParser) }.getOrNull()?.takeIf { it.expanded }
+        if (owned != null) {
+            val ptr = readPointerAt(rom, owned.pc + songSet)
+            return if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) ptr else 0
+        }
 
         // If the loader has been repointed, prefer the table it actually reads.
         val tableAddr = findRelocatedTable(rom, romParser)
@@ -506,6 +513,8 @@ object SpcData {
                 return relocPtr
             }
         }
+
+        if (songSet > 0x48) return 0
 
         // Try vanilla table location for unmodified ROMs.
         val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
@@ -523,6 +532,7 @@ object SpcData {
      * Song set values are direct byte offsets into the packed table.
      */
     fun findSongSetPointerEntryPc(romParser: RomParser, songSet: Int): Int {
+        if (songSet > 0x48 && readSongSetPointer(romParser, songSet) == 0) return -1
         val rom = romParser.romData
 
         val tableAddr = findRelocatedTable(rom, romParser)
@@ -550,7 +560,7 @@ object SpcData {
      */
     fun findSongSetPointerTable(romParser: RomParser): Map<Int, Int> {
         val result = mutableMapOf<Int, Int>()
-        val knownSets = TRANSFER_SONG_SETS
+        val knownSets = SpcMusicBankTable.songSets(romParser)
         for (ss in knownSets) {
             val ptr = readSongSetPointer(romParser, ss)
             if (ptr > 0) result[ss] = ptr

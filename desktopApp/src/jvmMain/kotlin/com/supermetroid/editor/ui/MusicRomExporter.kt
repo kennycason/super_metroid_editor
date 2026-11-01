@@ -6,6 +6,7 @@ import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.SpcTransferStream
+import com.supermetroid.editor.rom.SpcMusicBankTable
 import java.io.ByteArrayOutputStream
 
 /** Reserve, serialize and validate the complete transaction before changing the caller's ROM. */
@@ -20,23 +21,28 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
     )
 
     internal fun applyMusicEditsToRom(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null): Int {
-        if (project.soundEffectEdits.isEmpty()) return applyMusicOnly(romData, freeSpaceAllocator)
+        if (project.soundEffectEdits.isEmpty() && project.musicBanks.isEmpty()) return applyMusicOnly(romData, freeSpaceAllocator)
+        val original = RomParser(romData)
+        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, original::snesToPc, original::pcToSnes, guardBytes = 2)
         val patches = SoundEffects.exportWrites(RomParser(romData), project)
         val staged = romData.copyOf()
         patches.forEach { (at, value) -> staged[at] = value }
-        val count = MusicRomExporter(project.copy(soundEffectEdits = mutableMapOf()), onLog).applyMusicOnly(staged, freeSpaceAllocator)
+        val setup = MusicBankRomSetup.prepare(RomParser(staged), project, allocator)
+        setup.writes.forEach { (at, value) -> value.copyInto(staged, at) }
+        val count = MusicRomExporter(project.copy(soundEffectEdits = mutableMapOf()), onLog).applyMusicOnly(staged, allocator, setup.allocation)
         staged.copyInto(romData)
         return count + project.soundEffectEdits.size
     }
 
-    private fun applyMusicOnly(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null): Int {
+    private fun applyMusicOnly(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null, ownedTable: RomAllocation? = null): Int {
         val parser = RomParser(romData)
         val songSets = MusicBankTransitions.editedSongSets(project)
         val installed = SpcTransferStream.installedCodePointer(parser)
-        if (songSets.isEmpty() && installed == null) return 0
+        val expandedTable = runCatching { SpcMusicBankTable.read(parser).expanded }.getOrDefault(false)
+        if (songSets.isEmpty() && installed == null && !expandedTable) return 0
         require(songSets.all { it in 3..255 && it % 3 == 0 }) { "Music edits require a non-setup native song set" }
         // Inventory every native bank, including setup and unused $48, before reserving space.
-        val pointers = (SpcData.TRANSFER_SONG_SETS + songSets).distinct().associateWith {
+        val pointers = (SpcData.TRANSFER_SONG_SETS + SpcMusicBankTable.songSets(parser) + songSets).distinct().associateWith {
             SpcData.readSongSetPointer(parser, it).also { pointer ->
                 require(pointer > 0) { "No music transfer pointer for bank ${MusicInstrumentBanks.key(it)}" }
             }
@@ -46,7 +52,9 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         val tableCells = pointers.keys.associateWith {
             SpcData.findSongSetPointerEntryPc(parser, it).also { pc -> require(pc >= 0) { "No writable music pointer entry" } }
         }
-        val metadata = tableCells.values.map { it until it + 3 } + listOf(parser.snesToPc(0x808024) until parser.snesToPc(0x808111)) +
+        val table = runCatching { SpcMusicBankTable.read(parser) }.getOrNull()
+        val tableRanges = if (table?.expanded == true && ownedTable == null) listOf(table.pc - SpcMusicBankTable.HEADER_BYTES until table.pc + SpcMusicBankTable.TABLE_BYTES) else emptyList()
+        val metadata = tableRanges + tableCells.values.filter { ownedTable == null || it !in ownedTable.pcOffset until ownedTable.pcOffset + ownedTable.size }.map { it until it + 3 } + listOf(parser.snesToPc(0x808024) until parser.snesToPc(0x808111), parser.snesToPc(0x808F72) until parser.snesToPc(0x808F7E)) +
             listOfNotNull(installed?.let { parser.snesToPc(it) until parser.snesToPc(it) + MusicTransferLoader.code.size })
         val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, parser::snesToPc, parser::pcToSnes, guardBytes = 2)
         allocator.protectRanges(sourceRanges + metadata)
@@ -173,7 +181,7 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         // Commit only after every stream, bank, transition and allocation has passed.
         for ((allocation, data) in allocated) allocator.validateWrite(allocation, data)
         for ((allocation, data) in allocated) allocator.write(allocation, data)
-        for ((at, data) in writes) data.copyInto(romData, at)
+        staged.copyInto(romData)
         for (plan in plans) onLog("[EXPORT] Bank ${MusicInstrumentBanks.key(plan.songSet)}: " + when {
             plan.prefix.isNotEmpty() -> "resource prefix (${plan.prefix.size} entries) + retained music"
             plan.relocated != null -> "relocated SPC transfer chain (${plan.relocated.size} bytes)"

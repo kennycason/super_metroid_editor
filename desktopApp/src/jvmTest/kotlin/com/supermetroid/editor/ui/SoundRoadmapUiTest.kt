@@ -189,4 +189,46 @@ class SoundRoadmapUiTest {
             }
         }
     }
+
+    @Test fun `new track form exposes checked creation and room selection includes authored track identities`() = runBlocking {
+        val parser = TestRomHelper.requireRomParser()
+        val initial = SmEditProject(romPath = "test.sfc")
+        val plan = MusicCreation.plan(parser, initial, "My room theme", 3, "My palette", null)
+        val banks = MusicCatalog.banks(initial).map { it to MusicCatalog.bankName(initial, it) }
+        for (font in FontSize.entries) for (theme in EditorTheme.entries) for (width in listOf(420, 720)) {
+            val draft = MusicCreationDraft(3)
+            var created = 0
+            var checking by mutableStateOf(false)
+            panel("music-create", font, theme, width, {
+                MusicCreationForm(draft, SpcData.KNOWN_TRACKS.first(), banks, plan.takeUnless { checking }, checking, null, { created++ }, {})
+            }) { scene, render ->
+                fits(scene, width, "new-track-name", "new-track-palette", "new-track-bank-name", "new-track-create", "new-track-status")
+                tag(scene, "new-track-name").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("My room theme")); render()
+                assertEquals("My room theme", draft.name)
+                tag(scene, "new-track-create").config[SemanticsActions.OnClick].action!!.invoke(); assertEquals(1, created)
+                checking = true; render()
+                assertTrue(tag(scene, "new-track-create").config.contains(SemanticsProperties.Disabled))
+                tag(scene, "new-track-existing-bank").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                assertFalse(draft.newBank)
+                assertTrue(nodes(scene).none { it.config.getOrNull(SemanticsProperties.TestTag) == "new-track-bank-name" })
+                tag(scene, "new-track-new-bank").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                assertTrue(draft.newBank)
+            }
+        }
+        var set by mutableStateOf(plan.track.songSet)
+        var play by mutableStateOf(plan.track.playIndex)
+        panel("music-room-choice", FontSize.LARGER, EditorTheme.DARK, 720, {
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                MusicDropdown(set, play, { bank, track -> set = bank; play = track }, MusicCatalog.tracks(plan.after))
+            }
+        }) { scene, render ->
+            assertTrue(nodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> plan.track.name in text.text } })
+            tag(scene, "room-music-selector").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            tag(scene, "room-music-0-3").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(0, set); assertEquals(3, play)
+            tag(scene, "room-music-selector").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            tag(scene, "room-music-${plan.track.songSet}-${plan.track.playIndex}").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(plan.track.songSet, set); assertEquals(plan.track.playIndex, play)
+        }
+    }
 }

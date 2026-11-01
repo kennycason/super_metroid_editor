@@ -322,8 +322,24 @@ sequences and samples. Export rejects a complete arrangement that cannot fit; it
 automatically removes notes or shortens their duration. **Apply Fitted** remains an
 explicit staged-import action.
 
-You can compose or import new music into an existing track slot. Creating additional
-track IDs or new banks is not yet exposed as an **Add track** action.
+Use **Tracks → New track** to create a named blank arrangement or duplicate the selected
+editable track. Choose **Existing bank** to share a palette, or **New bank** to copy a
+palette independently. Creation checks a safe song-table cell, SPC memory, resource
+transitions and ROM export before enabling **Create track**, then opens Edit Track.
+If an existing bank has no proven free cell, choose New bank. New banks copy sounds,
+samples and imported palette resources; they do not add the source bank's music rows.
+
+Project tracks appear in the room music selector by name. Reset returns a created track
+to its creation baseline; save/reopen retains that baseline and subsequent edits.
+Sidebar Undo/Redo handles creation, after later music/room assignments have been undone.
+
+The supported native queue accepts track IDs 5–127 and additional bank IDs `$4B..$FC`
+in steps of three. Export extends the verified CPU table without changing queue behavior.
+Each loaded bank remains limited to 64KB of SPC RAM, with 42 sound slots. Relocated
+merged upload chains currently must fit one 32KiB ROM bank; creation reports an upload
+or allocation failure without changing the project. ROM export and standalone audio
+export support these desktop-authored tracks; the headless builder rejects unsupported
+audio changes explicitly.
 
 **Sound bank** opens the current bank's resource manager. It shows free bytes, largest
 gap, project sample users and verified empty sound slots. **New sound** creates a sine in
