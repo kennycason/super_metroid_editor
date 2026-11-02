@@ -2,11 +2,14 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -73,23 +76,41 @@ internal fun SoundBankManagerContent(bankName: String, initialSource: Int, overv
                             Button(onCreate, enabled = !busy && info.emptySounds.isNotEmpty(), shape = SoundControlShape,
                                 modifier = Modifier.testTag("bank-new-sound")) { Text(info.emptySounds.firstOrNull()?.let { "New sound · #$it" } ?: "No empty sound slots", fontSize = fs.body) }
                             Box {
-                                OutlinedButton({ choosingSource = true }, enabled = !busy, shape = SoundControlShape) { Text("Copy from #$source", fontSize = fs.body) }
-                                DropdownMenu(choosingSource, { choosingSource = false }) {
-                                    for (entry in info.instruments.filter(InstrumentDescriptions::playable)) DropdownMenuItem({ Text(InstrumentDescriptions.title(entry, emptyMap())) },
-                                        { source = entry.index; choosingSource = false })
+                                OutlinedButton({ choosingSource = true }, enabled = !busy, shape = SoundControlShape) {
+                                    Text("Copy from #$source", fontSize = fs.body)
+                                    Icon(Icons.Default.ArrowDropDown, null, Modifier.size(18.dp))
+                                }
+                                DropdownMenu(choosingSource, { choosingSource = false }, modifier = Modifier.widthIn(min = 280.dp, max = 420.dp).heightIn(max = 360.dp)) {
+                                    Text("Copy settings from · scroll for more", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                                    for (entry in info.instruments.filter(InstrumentDescriptions::playable)) DropdownMenuItem(text = {
+                                        Column {
+                                            Text("#${entry.index} · ${InstrumentDescriptions.title(entry, info.soundNames)}", fontSize = fs.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(InstrumentDescriptions.detail(entry), fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }, onClick = { source = entry.index; choosingSource = false })
                                 }
                             }
                             Box {
-                                OutlinedButton({ choosingDestination = true }, enabled = !busy, shape = SoundControlShape) { Text(destination?.let { "Replace #$it" } ?: "Choose destination", fontSize = fs.body) }
-                                DropdownMenu(choosingDestination, { choosingDestination = false }) {
-                                    for (entry in info.instruments.filter { it.index != source }) DropdownMenuItem({ Text("#${entry.index} · ${if (entry.index in info.emptySounds) "Empty slot" else InstrumentDescriptions.title(entry, emptyMap())}") },
-                                        { destination = entry.index; choosingDestination = false })
+                                OutlinedButton({ choosingDestination = true }, enabled = !busy, shape = SoundControlShape) {
+                                    Text(destination?.let { "Replace #$it" } ?: "Choose destination", fontSize = fs.body)
+                                    Icon(Icons.Default.ArrowDropDown, null, Modifier.size(18.dp))
+                                }
+                                DropdownMenu(choosingDestination, { choosingDestination = false }, modifier = Modifier.widthIn(min = 280.dp, max = 420.dp).heightIn(max = 360.dp)) {
+                                    Text("Replace slot · scroll for more", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                                    for (entry in info.instruments.filter { it.index != source }) DropdownMenuItem(text = {
+                                        Column {
+                                            Text("#${entry.index} · ${if (entry.index in info.emptySounds) "Empty slot" else InstrumentDescriptions.title(entry, info.soundNames)}", fontSize = fs.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(if (InstrumentDescriptions.empty(entry)) "No sample assigned" else InstrumentDescriptions.detail(entry), fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }, onClick = { destination = entry.index; choosingDestination = false })
                                 }
                             }
                             Button({ destination?.let { onCopy(source, it) } },
                                 enabled = !busy && destination != null && source != destination, shape = SoundControlShape, modifier = Modifier.testTag("bank-copy-sound")) { Text("Copy into slot", fontSize = fs.body) }
                         }
-                        Text("New creates a sine in a verified empty slot. Copy replaces the chosen slot's sound settings. Each action has one Undo step.", fontSize = fs.detail,
+                        Text("New sound creates a sine in an empty slot. Copy from → destination copies sound settings; the source stays unchanged.", fontSize = fs.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     val scroll = rememberScrollState()

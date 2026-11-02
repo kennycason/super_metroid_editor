@@ -191,4 +191,29 @@ class PianoRollEditorTest {
             }
         }
     }
+    @Test fun `expression selection edits the actual track with one undo while keeping the piano grid usable`() = runBlocking {
+        val initial = song().also { it.channels[0].commands += NspcSequence.ControlCommand(24, 0xE1, intArrayOf(10)) }
+        editor(initial) { scene, fixture, render ->
+            click(scene, "expression-toggle"); render()
+            assertTrue(tag(scene, "piano-roll-grid").boundsInRoot.height > 120)
+            val bounds = tag(scene, "expression-timeline").boundsInRoot
+            val at = Offset(bounds.left + 8 + 24f / 192 * (bounds.width - 16), bounds.top + bounds.height * 1.5f / 4)
+            scene.sendPointerEvent(PointerEventType.Press, at, button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, at, button = PointerButton.Primary); render()
+            assertEquals("24", tag(scene, "expression-tick").config[SemanticsProperties.EditableText].text)
+            assertEquals(0, fixture.history.undoDepth)
+            tag(scene, "expression-value-0").config[SemanticsActions.SetProgress].action!!.invoke(14f); render()
+            click(scene, "expression-apply"); render()
+            assertEquals(NspcSequence.ControlCommand(24, 0xE1, intArrayOf(14)), fixture.song.value.channels[0].commands.single())
+            assertEquals(1, fixture.history.undoDepth); assertEquals(1, fixture.changes)
+            assertTrue(tag(scene, "piano-roll-grid").boundsInRoot.height > 120)
+            click(scene, "piano-roll-undo"); render()
+            assertEquals(initial.channels[0].notes, fixture.song.value.channels[0].notes)
+            assertEquals(10, fixture.song.value.channels[0].commands.single().params[0])
+            click(scene, "expression-event-0"); render()
+            assertEquals(10f, tag(scene, "expression-value-0").config[SemanticsProperties.ProgressBarRangeInfo].current)
+            assertTrue(fixture.errors.isEmpty(), fixture.errors.joinToString { it.message.orEmpty() })
+        }
+    }
+
 }

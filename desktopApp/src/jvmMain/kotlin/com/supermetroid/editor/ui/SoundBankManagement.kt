@@ -1,12 +1,14 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.MusicInstrumentBankEdit
+import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.rom.*
 
 /** Project-owned resource management. Never treats an existing nonzero sound as spare. */
 internal object SoundBankManagement {
     data class Sample(val srcn: Int, val name: String, val bytes: Int, val users: List<Int>)
-    data class Overview(val freeBytes: Int, val largestGap: Int, val samples: List<Sample>, val emptySounds: List<Int>, val instruments: List<NspcRenderer.InstrumentEntry>, val creationProblem: String? = null)
+    data class Overview(val freeBytes: Int, val largestGap: Int, val samples: List<Sample>, val emptySounds: List<Int>, val instruments: List<NspcRenderer.InstrumentEntry>, val creationProblem: String? = null,
+        val soundNames: Map<Int, String> = emptyMap())
 
     fun inspect(parser: RomParser, target: SampleBankPreview.Target): Overview {
         val context = SampleBankPreview.load(parser, target)
@@ -42,7 +44,8 @@ internal object SoundBankManagement {
         }
         val empty = instruments.filter { it.index >= 24 && it.index !in referenced && PianoRollPreviewLogic.instrumentBytes(it).all { b -> b == 0.toByte() } }.map { it.index }
         return Overview(context.layout.totalBytes, context.layout.largestBytes, samples, empty, instruments,
-            if (usage.any { !it.complete }) "New sound is unavailable because native resource use could not be fully resolved." else null)
+            if (usage.any { !it.complete }) "New sound is unavailable because native resource use could not be fully resolved." else null,
+            instruments.mapNotNull { entry -> project.musicInstrumentNames[MusicTrackEdit.key(target.songSet, entry.index)]?.let { entry.index to it } }.toMap())
     }
     fun duplicate(parser: RomParser, target: SampleBankPreview.Target, source: Int, destination: Int): MusicInstrumentBankEdit {
         val overview = inspect(parser, target)

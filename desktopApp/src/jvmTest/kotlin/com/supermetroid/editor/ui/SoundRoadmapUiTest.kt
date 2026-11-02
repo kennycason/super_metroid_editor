@@ -5,7 +5,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.*
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.*
@@ -282,6 +285,124 @@ class SoundRoadmapUiTest {
         }) { scene, _ ->
             fits(scene, 720, "effect-copy-target", "effect-copy-apply")
             assertEquals(!duplicate, tag(scene, "effect-copy-apply").config.contains(SemanticsProperties.Disabled))
+        }
+    }
+
+    private suspend fun tapExpression(scene: ComposeScene, tick: Int, extent: Int, lane: Int, render: suspend () -> Unit) {
+        val bounds = tag(scene, "expression-timeline").boundsInRoot
+        val at = Offset(bounds.left + 8 + tick.toFloat() / extent * (bounds.width - 16), bounds.top + (lane + 0.5f) * bounds.height / 4)
+        scene.sendPointerEvent(PointerEventType.Press, at, button = PointerButton.Primary)
+        scene.sendPointerEvent(PointerEventType.Release, at, button = PointerButton.Primary); render()
+    }
+    private fun text(scene: ComposeScene, key: String): String {
+        fun read(node: SemanticsNode): List<String> = node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } + node.children.flatMap(::read)
+        return read(tag(scene, key)).joinToString(" ")
+    }
+
+    @Test fun `expression markers select existing events and additions remain editable during in place song updates`() = runBlocking {
+        var song by mutableStateOf(NspcSequence.Song().apply {
+            channels[0].notes += NspcSequence.Note(0, 192, 0xA4, instrument = 24)
+            channels[0].commands += NspcSequence.ControlCommand(0, 0xE0, intArrayOf(24))
+            channels[0].commands += NspcSequence.ControlCommand(48, 0xE1, intArrayOf(0xCA))
+            channels[0].commands += NspcSequence.ControlCommand(96, 0xED, intArrayOf(128))
+        }, neverEqualPolicy())
+        val original = PianoRollPreviewLogic.deepCopySong(song)
+        var edits = 0
+        panel("expression-select", FontSize.LARGER, EditorTheme.DARK, 1040, {
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                MusicExpressionPanel(song, 0) { updated, _ ->
+                    for (channel in 0..7) { song.channels[channel].commands.clear(); song.channels[channel].commands.addAll(updated.channels[channel].commands) }
+                    song = song; edits++
+                }
+            }
+        }) { scene, render ->
+            tapExpression(scene, 48, 192, 1, render)
+            assertTrue(tag(scene, "expression-event-1").config[SemanticsProperties.Selected])
+            assertTrue(text(scene, "expression-selection").contains("Pan"))
+            assertTrue(text(scene, "expression-description").contains("center"))
+            assertEquals("48", tag(scene, "expression-tick").config[SemanticsProperties.EditableText].text)
+            assertEquals(10f, tag(scene, "expression-value-0").config[SemanticsProperties.ProgressBarRangeInfo].current)
+            assertEquals(0, edits); assertEquals(original, song)
+            tag(scene, "expression-value-0").config[SemanticsActions.SetProgress].action!!.invoke(4f); render()
+            tag(scene, "expression-apply").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(1, edits); assertEquals(48, song.channels[0].commands[1].tick)
+            assertEquals(0xC4, song.channels[0].commands[1].params[0]); assertEquals(3, song.channels[0].commands.size)
+            tapExpression(scene, 144, 192, 1, render)
+            assertTrue(text(scene, "expression-selection").startsWith("New"))
+            assertEquals(1, edits)
+            tag(scene, "expression-apply").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(2, edits); assertEquals(4, song.channels[0].commands.size)
+            assertEquals(NspcSequence.ControlCommand(144, 0xE1, intArrayOf(10)), song.channels[0].commands[3])
+            assertTrue(tag(scene, "expression-event-3").config[SemanticsProperties.Selected])
+            tag(scene, "expression-apply").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(2, edits, "Saving an unchanged selected event does not create history or another event")
+            tag(scene, "expression-value-0").config[SemanticsActions.SetProgress].action!!.invoke(18f); render()
+            tag(scene, "expression-apply").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(4, song.channels[0].commands.size); assertEquals(18, song.channels[0].commands[3].params[0])
+            tapExpression(scene, 96, 192, 0, render)
+            assertTrue(text(scene, "expression-selection").contains("Volume"))
+            assertEquals(128f, tag(scene, "expression-value-0").config[SemanticsProperties.ProgressBarRangeInfo].current)
+            tag(scene, "expression-type").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            tag(scene, "expression-kind-e1").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            tag(scene, "expression-apply").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(4, song.channels[0].commands.size)
+            assertEquals(NspcSequence.ControlCommand(96, 0xE1, intArrayOf(10)), song.channels[0].commands[2])
+            tag(scene, "expression-delete").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertEquals(3, song.channels[0].commands.size); assertTrue(song.channels[0].commands.none { it.command == 0xED })
+            tapExpression(scene, 0, 192, 3, render)
+            assertTrue(text(scene, "expression-selection").contains("Sound change"))
+            assertTrue(tag(scene, "expression-apply").config.contains(SemanticsProperties.Disabled))
+            assertEquals(original.channels[0].notes, song.channels[0].notes)
+        }
+    }
+
+    @Test fun `dense expression events can be searched by type and position and selected values are inspectable`() = runBlocking {
+        for (width in listOf(420, 1040)) {
+            var song by mutableStateOf(NspcSequence.Song().apply {
+                channels[0].notes += NspcSequence.Note(0, 4800, 0xA4, instrument = 24)
+                repeat(120) { channels[0].commands += NspcSequence.ControlCommand(it * 24, 0xE1, intArrayOf(it % 21)) }
+            })
+            var edits = 0
+            panel("expression-dense", FontSize.LARGER, EditorTheme.DARK, width, {
+                Column(Modifier.fillMaxSize().padding(12.dp)) { MusicExpressionPanel(song, 0) { updated, _ -> song = updated; edits++ } }
+            }) { scene, render ->
+                fits(scene, width, "expression-event-list", "expression-search", "expression-value-0", "expression-apply")
+                tag(scene, "expression-search").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("Pan 696")); render()
+                assertTrue(text(scene, "expression-event-29").contains("696"))
+                tag(scene, "expression-event-29").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                assertEquals("696", tag(scene, "expression-tick").config[SemanticsProperties.EditableText].text)
+                assertEquals(8f, tag(scene, "expression-value-0").config[SemanticsProperties.ProgressBarRangeInfo].current)
+                assertEquals(0, edits)
+                tag(scene, "expression-value-0").config[SemanticsActions.SetProgress].action!!.invoke(12f); render()
+                tag(scene, "expression-apply").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                assertEquals(1, edits); assertEquals(12, song.channels[0].commands[29].params[0])
+                assertEquals(120, song.channels[0].commands.size)
+            }
+        }
+    }
+
+    @Test fun `coincident expression markers cycle selection and external undo cannot redirect an edit to another event`() = runBlocking {
+        var song by mutableStateOf(NspcSequence.Song().apply {
+            channels[0].notes += NspcSequence.Note(0, 192, 0xA4, instrument = 24)
+            channels[0].commands += NspcSequence.ControlCommand(48, 0xED, intArrayOf(128))
+            channels[0].commands += NspcSequence.ControlCommand(48, 0xE5, intArrayOf(192))
+        })
+        var edits = 0
+        panel("expression-stale", FontSize.MEDIUM, EditorTheme.LIGHT, 1040, {
+            Column(Modifier.fillMaxSize().padding(12.dp)) { MusicExpressionPanel(song, 0) { updated, _ -> song = updated; edits++ } }
+        }) { scene, render ->
+            tapExpression(scene, 48, 192, 0, render)
+            assertTrue(tag(scene, "expression-event-0").config[SemanticsProperties.Selected])
+            tapExpression(scene, 48, 192, 0, render)
+            assertTrue(tag(scene, "expression-event-1").config[SemanticsProperties.Selected])
+            assertTrue(text(scene, "expression-description").contains("whole track"))
+            song = PianoRollPreviewLogic.deepCopySong(song).also { it.channels[0].commands.removeAt(0) }; render()
+            assertTrue(tag(scene, "expression-apply").config.contains(SemanticsProperties.Disabled))
+            assertTrue(tag(scene, "expression-delete").config.contains(SemanticsProperties.Disabled))
+            assertTrue(text(scene, "expression-problem").contains("Select an event again"))
+            assertEquals(0, edits)
+            tag(scene, "expression-event-0").config[SemanticsActions.OnClick].action!!.invoke(); render()
+            assertFalse(tag(scene, "expression-apply").config.contains(SemanticsProperties.Disabled))
         }
     }
 

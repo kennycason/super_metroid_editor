@@ -36,6 +36,66 @@ internal object MusicExpression {
         Kind("Echo settings", 0xF7, listOf(p("Delay pages", 0..2, 1), p("Feedback", -128..127, 32, true), p("Filter", 0..3, 0))),
         Kind("Echo fade", 0xF8, listOf(p("Ticks", 1..255, 24), p("Left", -128..127, 32, true), p("Right", -128..127, 32, true)))
     )
+    fun name(opcode: Int): String = kinds.firstOrNull { it.opcode == opcode }?.name ?: when (opcode) {
+        0xE0 -> "Sound change"
+        0xE9 -> "Global transpose"
+        0xEA -> "Channel transpose"
+        0xEF -> "Native phrase call"
+        0xFA -> "Percussion base"
+        else -> "Native ${opcode.toString(16).uppercase()}"
+    }
+    fun description(opcode: Int): String = when (opcode) {
+        0xED -> "Sets this channel's volume from this point onward."
+        0xEE -> "Fades this channel's volume to the target over the chosen number of ticks."
+        0xE1 -> "Places this channel between right (0), center (10), and left (20)."
+        0xE2 -> "Moves this channel's stereo position gradually towards the target."
+        0xE7 -> "Changes the tempo of the whole track at this point."
+        0xE8 -> "Changes the whole track's tempo gradually over the chosen number of ticks."
+        0xE5 -> "Sets the master volume for the whole track."
+        0xE6 -> "Fades the whole track's master volume towards the target."
+        0xE3 -> "Adds a repeating pitch variation to this channel's notes."
+        0xE4 -> "Turns off this channel's vibrato."
+        0xF0 -> "Fades in this channel's vibrato over the chosen number of ticks."
+        0xEB -> "Adds a repeating volume variation to this channel's notes."
+        0xEC -> "Turns off this channel's tremolo."
+        0xF1, 0xF2 -> "Shapes note pitch using a delay, duration, and semitone offset."
+        0xF3 -> "Turns off this channel's pitch envelope."
+        0xF4 -> "Adjusts this channel's pitch by a fraction of a semitone."
+        0xF9 -> "Slides the pitch towards the target note after the chosen delay."
+        0xF5 -> "Enables echo for the selected voices and sets its left and right levels."
+        0xF6 -> "Turns off echo."
+        0xF7 -> "Sets the shared echo delay, feedback, and filter within its reserved memory."
+        0xF8 -> "Fades the shared echo's left and right levels towards their targets."
+        0xE0 -> "Selects a sound for following notes; use the note's sound selector to change it."
+        else -> "This native source command is shown for reference and retained unchanged."
+    }
+    fun readout(kind: Kind, parameter: Parameter, raw: Int): String {
+        val value = parameter.value(raw)
+        return when {
+            "R to L" in parameter.label -> when {
+                value == 10 -> "Center"
+                value < 10 -> "${(10 - value) * 10}% right"
+                else -> "${(value - 10) * 10}% left"
+            }
+            parameter.label == "Target pitch" -> NspcSequence.noteToName(value)
+            kind.opcode in listOf(0xED, 0xEE, 0xE5, 0xE6) && parameter.label in listOf("Level", "Target") -> "${value * 100 / 255}%"
+            else -> value.toString()
+        }
+    }
+    fun summary(event: NspcSequence.ControlCommand): String {
+        val kind = kinds.firstOrNull { it.opcode == event.command }
+        if (event.command == 0xE0) return "Sound #${event.params.firstOrNull() ?: "?"} · source event"
+        if (kind == null) return "Source · " + event.params.joinToString(" ") { "0x${it.toString(16).uppercase().padStart(2, '0')}" }
+        return kind.parameters.mapIndexed { index, parameter ->
+            "${parameter.label.substringBefore(" · ")}: ${event.params.getOrNull(index)?.let { readout(kind, parameter, it) } ?: "?"}"
+        }.joinToString(" · ").ifEmpty { "${kind.name} at this position" }
+    }
+    fun lane(opcode: Int) = when (opcode) {
+        0xE5, 0xE6, 0xEB, 0xEC, 0xED, 0xEE -> 0
+        0xE1, 0xE2 -> 1
+        0xE3, 0xE4, 0xE9, 0xEA, 0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF9 -> 2
+        else -> 3
+    }
     fun validate(event: NspcSequence.ControlCommand) {
         require(event.tick in 0..65535) { "Event tick must be 0–65535" }
         val kind = kinds.firstOrNull { it.opcode == event.command } ?: error("This source command is retained as native data")

@@ -712,11 +712,11 @@ fun PianoRollEditor(
             }
 
             OutlinedButton(onClick = { showExpression = !showExpression }, shape = SoundControlShape,
-                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("expression-toggle")) {
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(28.dp).testTag("expression-toggle")) {
                 Text(if (showExpression) "Close expression" else "Expression", fontSize = LocalEditorTheme.current.fontSize.value.detail)
             }
             if (onOpenBank != null) OutlinedButton(onClick = onOpenBank, shape = SoundControlShape,
-                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.testTag("sound-bank-manager")) {
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(28.dp).testTag("sound-bank-manager")) {
                 Text("Sound bank", fontSize = LocalEditorTheme.current.fontSize.value.detail)
             }
             Row(
