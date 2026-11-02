@@ -16,6 +16,42 @@ class AsmProjectCompilerTest {
     lateinit var tempDirectory: File
 
     @Test
+    fun `managed Asar cleanup removes read only git packs and preserves sibling installations`() {
+        val parent = File(tempDirectory, "asm").apply { mkdirs() }
+        val staging = File(parent, "asar.installing-test")
+        val packs = File(staging, ".git/objects/pack").apply { mkdirs() }
+        val readOnlyFiles = listOf("pack", "idx", "rev").map { extension ->
+            File(packs, "pack-test.$extension").apply {
+                writeText("synthetic git pack")
+                assertTrue(setReadOnly(), "Could not mark $name read-only")
+            }
+        }
+        val installed = File(parent, "asar/keep.txt").apply { parentFile.mkdirs(); writeText("installed toolchain") }
+        try {
+            val toolchain = AsmToolchain()
+            toolchain.deleteManagedTree(parent, staging)
+            assertFalse(staging.exists())
+            assertEquals("installed toolchain", installed.readText())
+            toolchain.deleteManagedTree(parent, staging)
+        } finally {
+            readOnlyFiles.filter(File::exists).forEach { it.setWritable(true) }
+        }
+    }
+
+    @Test
+    fun `managed Asar cleanup refuses its parent and paths outside it`() {
+        val parent = File(tempDirectory, "asm").apply { mkdirs() }
+        val outside = File(tempDirectory, "unrelated").apply { mkdirs() }
+        val sentinel = File(outside, "keep.txt").apply { writeText("unrelated data") }
+        val toolchain = AsmToolchain()
+        for (target in listOf(parent, outside)) {
+            assertFailsWith<IllegalArgumentException> { toolchain.deleteManagedTree(parent, target) }
+        }
+        assertTrue(parent.isDirectory)
+        assertEquals("unrelated data", sentinel.readText())
+    }
+
+    @Test
     fun `source ownership ranges are contiguous minimal and deterministic`() {
         val reference = byteArrayOf(0, 1, 2, 3, 4, 5, 6, 7)
         val project = byteArrayOf(9, 1, 8, 8, 4, 5, 0, 7)

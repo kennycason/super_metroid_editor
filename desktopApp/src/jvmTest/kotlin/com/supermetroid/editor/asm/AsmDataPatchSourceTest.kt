@@ -510,12 +510,12 @@ class AsmDataPatchSourceTest {
             fun nodes(): List<SemanticsNode> { fun walk(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::walk)
                 return scene.roots.flatMap { walk(it.semanticsOwner.unmergedRootSemanticsNode) } }
             fun tag(value: String) = nodes().single { it.config.getOrNull(SemanticsProperties.TestTag) == value }
-            fun click(value: String) { assertTrue(tag(value).config[SemanticsActions.OnClick].action!!.invoke()) }
-            fun input(key: String, value: String) { assertTrue(tag("native-patch-$key").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value))) }
+            fun click(value: String) { assertTrue(tag(value).config[SemanticsActions.OnClick].action!!.invoke(), "Click rejected: $value; ${f.editor.statusMessage}") }
+            fun input(key: String, value: String) { assertTrue(tag("native-patch-$key").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value)), "Input rejected: $key=$value; ${f.editor.statusMessage}") }
             render(); val before = Json.encodeToString(SmEditProject.serializer(), f.project); val revision = f.workspace.sourceBufferRevision
             input("seconds", ""); render(); input("seconds", "9"); render()
             assertEquals(revision, f.workspace.sourceBufferRevision); assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
-            input("seconds", "95"); render(); assertTrue(timer.enabled); assertEquals(95, f.bridge.view(timer.configType!!, "seconds").value)
+            input("seconds", "95"); render(); assertTrue(timer.enabled, "Editing the timer should enable it: ${f.editor.statusMessage}"); assertEquals(95, f.bridge.view(timer.configType!!, "seconds").value)
             click("native-patch-asm-seconds"); render()
             assertEquals("bank_80.asm", f.workspace.selectedFileId)
             click("patch-header-toggle"); render(); click("patch-disable-cancel"); render(); assertTrue(timer.enabled)

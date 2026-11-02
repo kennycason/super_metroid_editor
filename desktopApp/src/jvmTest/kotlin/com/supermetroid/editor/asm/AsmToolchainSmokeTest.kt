@@ -83,7 +83,9 @@ class AsmToolchainSmokeTest {
                 "user.dir" to tempDirectory.absolutePath,
             ),
         )
-        val resolved = toolchain.resolve(File(tempDirectory, "reference"))
+        val resolved = toolchain.resolve(File(tempDirectory, "reference")) { progress ->
+            error("Packaged Asar must resolve without a source download or build: $progress")
+        }
 
         assertNotEquals(packaged.canonicalPath, resolved.canonicalPath)
         assertTrue(resolved.canonicalPath.startsWith(File(testHome, ".smedit").canonicalPath))

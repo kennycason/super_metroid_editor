@@ -61,6 +61,8 @@ kotlin {
         jvmToolchain(17)
         withJava()
         testRuns["test"].executionTask.configure {
+            dependsOn("copyAsarToAppResources")
+            systemProperty("compose.application.resources.dir", platformAppResourcesDirectory.get().asFile.absolutePath)
             useJUnitPlatform {
                 excludeTags("community-samus-rom", "asm-reference-network", "asm-toolchain", "asm-symbol-coverage")
             }

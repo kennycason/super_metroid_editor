@@ -10,6 +10,7 @@ tasks.wrapper {
 // Tests must never read or write the developer's real ~/.smedit state.
 subprojects {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         val isolatedTestHome = temporaryDir.resolve("user-home")
         systemProperty("user.home", isolatedTestHome.absolutePath)
         systemProperty("smedit.repositoryRoot", rootProject.projectDir.absolutePath)

@@ -1,9 +1,12 @@
 package com.supermetroid.editor.asm
 
 import java.io.File
+import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.DosFileAttributeView
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -890,7 +893,7 @@ internal class AsmToolchain(
             )
             requireSuccessful(
                 runProcess(
-                    listOf("cmake", "--build", "build", "--target", "asar-standalone", "--parallel"),
+                    listOf("cmake", "--build", "build", "--target", "asar-standalone", "--config", "Release", "--parallel"),
                     staging,
                     10,
                 ),
@@ -932,7 +935,7 @@ internal class AsmToolchain(
         }
     }
 
-    private fun deleteManagedTree(parent: File, target: File) {
+    internal fun deleteManagedTree(parent: File, target: File) {
         if (!target.exists()) return
         val parentPath = parent.canonicalFile.toPath()
         val targetPath = target.canonicalFile.toPath()
@@ -940,7 +943,17 @@ internal class AsmToolchain(
             "Refusing to remove unmanaged Asar path: $target"
         }
         Files.walk(targetPath).use { paths ->
-            paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            paths.sorted(Comparator.reverseOrder()).forEach { path ->
+                try {
+                    Files.deleteIfExists(path)
+                } catch (problem: AccessDeniedException) {
+                    // Git pack files are read-only on Windows, which prevents deletion.
+                    val attributes = Files.getFileAttributeView(path, DosFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS)
+                    if (attributes == null || !attributes.readAttributes().isReadOnly) throw problem
+                    attributes.setReadOnly(false)
+                    Files.deleteIfExists(path)
+                }
+            }
         }
     }
 
