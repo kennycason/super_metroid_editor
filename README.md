@@ -148,9 +148,15 @@ Prime Series Samus by Mattroid and Kirby by Wandering Spider, from the community
 
 ### Sound
 
+<img src="screenshots/smedit_sound_editor.png" width="100%" alt="Music track browser, piano roll, and sound export controls" />
+
 <p>
-  <img src="screenshots/smedit_sound_editor.png" width="49%" alt="Music track browser and preview controls" />
-  <img src="screenshots/smedit_sound.png" width="49%" alt="SPC music playback" />
+  <img src="screenshots/smedit_sound_note_editor.png" width="49%" alt="Note sound editor with piano audition, envelope knobs, and tuning controls" />
+  <img src="screenshots/smedit_sound_sample_editor.png" width="49%" alt="Sample workbench with waveform generation, trimming, loop editing, and crossfade controls" />
+</p>
+<p>
+  <img src="screenshots/smedit_sound_event_editor.png" width="49%" alt="Expression event timeline and editor for timed sound changes" />
+  <img src="screenshots/smedit_sound_effect_editor.png" width="49%" alt="Sound effect browser with native audition and editable program steps" />
 </p>
 
 ## Building from Source
