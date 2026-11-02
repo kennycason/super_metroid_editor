@@ -10,7 +10,7 @@ internal object MusicCreation {
 
     fun sameMusic(a: SmEditProject, b: SmEditProject) = a.projectId == b.projectId && a.romPath == b.romPath &&
         a.musicBanks == b.musicBanks && a.musicTracks == b.musicTracks && a.musicEdits == b.musicEdits &&
-        a.musicInstrumentBanks == b.musicInstrumentBanks && a.soundEffectEdits == b.soundEffectEdits &&
+        a.musicInstrumentBanks == b.musicInstrumentBanks && a.soundEffectEdits == b.soundEffectEdits && a.soundEffectPrograms == b.soundEffectPrograms &&
         a.musicInstrumentNames == b.musicInstrumentNames && a.musicSampleNames == b.musicSampleNames
 
     fun plan(parser: RomParser, input: SmEditProject, name: String, palette: Int, newBankName: String?, duplicate: SpcData.TrackInfo?): Plan {
@@ -60,7 +60,7 @@ internal object MusicCreation {
         val bytes = NspcSequence.encodedSequenceSize(song)
         return Plan(before, after, track, newBankName != null, bytes,
             MusicSequenceBudget.largestAvailableRange(resolved.writes.map { (at, value) -> MusicSequenceBudget.SpcRange(at, at + value.size) } +
-                MusicSequenceBudget.buildProtectedSpcOccupancy(SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000)),
+                MusicSequenceBudget.buildProtectedSpcOccupancy(com.supermetroid.editor.rom.SpcTransferStream.read(parser, 0xCF8000).blocks,
                     MusicCatalog.blocks(parser, after, set), resolved.ram, MusicCatalog.tracks(after).filter { it.songSet == set }.map { it.playIndex }.toSet()))?.size ?: 0)
     }
 

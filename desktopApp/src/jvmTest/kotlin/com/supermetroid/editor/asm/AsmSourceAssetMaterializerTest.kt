@@ -88,6 +88,25 @@ class AsmSourceAssetMaterializerTest {
         }
     }
 
+    @Test fun `sound assets stay with their loader pointer and allocation transaction after compilation`() {
+        val root = Files.createTempDirectory("smedit-audio-materializer-test-")
+        try {
+            root.resolve("SPCEngine.bin").writeBytes(ByteArray(32))
+            root.resolve("graphics.bin").writeBytes(ByteArray(8))
+            val writes = report(
+                RomWriteIntent("music:project", "Boot continuation", 0x100, listOf(255, 255, 0, 128, 184), RomWriteKind.MUSIC),
+                RomWriteIntent("music:project", "CPU loader", 0x400, listOf(34, 0, 128, 184), RomWriteKind.MUSIC),
+                RomWriteIntent("music:project", "Upload body", 0x500, List(8) { 1 }, RomWriteKind.ALLOCATION),
+                RomWriteIntent("graphics:example", "Palette", 0x200, listOf(3, 4), RomWriteKind.GRAPHICS),
+            )
+            val result = AsmSourceAssetMaterializer(assetRanges = listOf(
+                AsmAssetRange("SPCEngine.bin", 0x100, 32), AsmAssetRange("graphics.bin", 0x200, 8),
+            )).materializeDataRoot(root.toFile(), writes)
+            assertEquals(setOf("graphics.bin"), result.assetOverrides.keys)
+            assertEquals(listOf("graphics.bin"), result.claims.map { it.assetPath })
+        } finally { root.toFile().deleteRecursively() }
+    }
+
     private fun report(vararg writes: RomWriteIntent) = RomWritePlanReport(
         writes = writes.toList(),
         resources = emptyList(),

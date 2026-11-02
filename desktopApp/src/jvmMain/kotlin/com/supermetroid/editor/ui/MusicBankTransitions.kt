@@ -57,6 +57,7 @@ internal object MusicBankTransitions {
         musicInstrumentNames = project.musicInstrumentNames.toMutableMap(),
         musicSampleNames = project.musicSampleNames.toMutableMap(),
         soundEffectEdits = project.soundEffectEdits.toMutableMap(),
+        soundEffectPrograms = SoundEffectPrograms.copyMap(project.soundEffectPrograms),
     )
 
     fun inspect(
@@ -68,7 +69,7 @@ internal object MusicBankTransitions {
     ): Report {
         if (resolved.isEmpty()) return Report(emptyList(), 0)
         val initial = SoundEffects.bootRam(parser, project)
-        val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
+        val baseBlocks = com.supermetroid.editor.rom.SpcTransferStream.read(parser, 0xCF8000).blocks
         val songSets = ((SpcData.TRANSFER_SONG_SETS + com.supermetroid.editor.rom.SpcMusicBankTable.songSets(parser)).filter { it > 0 } + resolved.keys).distinct().sorted()
         val banks = songSets.associateWith { songSet ->
             val originalBlocks = MusicCatalog.blocks(parser, project, songSet)
@@ -88,6 +89,7 @@ internal object MusicBankTransitions {
             protect(0x6C00, 0x6C90, Resource.COMMON_INSTRUMENT)
             protect(0x6C90, 0x6CFC, Resource.INSTRUMENT)
             protect(0x6D00, SpcData.SAMPLE_DIRECTORY_END, Resource.DIRECTORY)
+            for (range in SoundEffectPrograms.occupied(initial)) protect(range.start, range.endExclusive, Resource.ENGINE)
             for (range in MusicSequenceBudget.sampleRanges(initial) + MusicSequenceBudget.sampleRanges(ram)) {
                 protect(range.start, range.endExclusive, Resource.SAMPLE)
             }

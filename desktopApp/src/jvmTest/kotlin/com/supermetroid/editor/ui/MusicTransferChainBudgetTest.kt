@@ -13,7 +13,7 @@ import java.util.Base64
 
 class MusicTransferChainBudgetTest {
     @Test
-    fun `native payload assessment blocks transfer chains larger than one LoROM bank`() {
+    fun `native payload assessment plans complete uploads larger than one LoROM bank`() {
         val payload = nativePayload(
             sourcePlayIndex = 1,
             0x0100 to ByteArray(0x8100) { 0x55 },
@@ -25,9 +25,8 @@ class MusicTransferChainBudgetTest {
             targetPlayIndex = 5
         )
 
-        assertFalse(assessment.canExportToRom)
         assertTrue(assessment.relocatedChainBytes > MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES)
-        assertTrue(assessment.overByBytes > 0)
+        assertTrue(assessment.segmentCount > 1)
     }
 
     @Test
@@ -52,12 +51,12 @@ class MusicTransferChainBudgetTest {
         val original = listOf(SpcData.TransferBlock(0x1500, ByteArray(0x4000)))
         val assessment = MusicTransferChainBudget.assessNativePayloadRomExport(original, payload, 5)
         assertTrue(assessment.payloadChainBytes < MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES)
-        assertFalse(assessment.canExportToRom, "Original sibling assets must not be dropped to make an import fit")
+        assertTrue(assessment.segmentCount > 1, "Original sibling assets must not be dropped to make an import fit")
 
         val overlapping = listOf(SpcData.TransferBlock(0x8000, ByteArray(0x4000)))
         val union = MusicTransferChainBudget.assessNativePayloadRomExport(overlapping, payload, 5)
-        assertTrue(union.canExportToRom)
-        assertEquals(union.payloadChainBytes, union.relocatedChainBytes, "Overlapping sample data is counted once")
+        val expected = MusicTransferChainLayout.plan(MusicTransferChainBudget.compactedNativePayloadWrites(payload, 5).map { (at, bytes) -> SpcData.TransferBlock(at, bytes) }, 0x1500)
+        assertEquals(expected.size, union.relocatedChainBytes, "Overlapping sample data is counted once, with continuation overhead")
     }
 
     @Test

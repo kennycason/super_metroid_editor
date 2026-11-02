@@ -29,7 +29,7 @@ internal object MusicSampleRestoration {
     ): Plan {
         if (resolved.isEmpty()) return Plan(emptyMap())
         val initial = SpcData.buildInitialSpcRam(parser)
-        val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
+        val baseBlocks = com.supermetroid.editor.rom.SpcTransferStream.read(parser, 0xCF8000).blocks
         val banks = (SpcData.TRANSFER_SONG_SETS.filter { it > 0 } + resolved.keys).distinct().associateWith { set ->
             val native = SpcData.findSongSetTransferData(parser, set)
             val edited = resolved[set]

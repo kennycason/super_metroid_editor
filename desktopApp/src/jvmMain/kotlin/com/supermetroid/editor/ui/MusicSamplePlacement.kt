@@ -38,6 +38,7 @@ internal object MusicSamplePlacement {
         fun protect(start: Int, end: Int) {
             for (at in maxOf(START, start) until minOf(END, end)) occupied[at - START] = true
         }
+        for (range in SoundEffectPrograms.occupied(ram)) protect(range.start, range.endExclusive)
         for (block in uploads) {
             require(block.destAddr in 0..65535 && block.data.size <= 65536 - block.destAddr) { "Sound upload exceeds SPC RAM" }
             protect(block.destAddr, block.destAddr + block.data.size)
@@ -110,7 +111,7 @@ internal class SampleBankPreview private constructor(
             require((0x1500 until 0x5800).all { resolved.ram[it] == boot[it] }) {
                 "Bank tryout requires the original SPC engine"
             }
-            val uploads = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000)) +
+            val uploads = com.supermetroid.editor.rom.SpcTransferStream.read(parser, 0xCF8000).blocks +
                 MusicCatalog.blocks(parser, target.project, target.songSet) + resolved.blocks +
                 target.project.musicEdits.values.filter { it.songSet == target.songSet }.flatMap { edit ->
                     edit.nativePayload?.let(MusicEditConversion::toTransferBlocks).orEmpty()

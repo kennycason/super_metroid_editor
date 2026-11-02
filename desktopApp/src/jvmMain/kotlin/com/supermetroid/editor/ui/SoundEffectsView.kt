@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
@@ -40,7 +41,7 @@ internal fun SoundEffectsList(state: SoundEffectEditorState, modifier: Modifier 
                         color = if (state.selectedKey == effect.identity.key) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant) {
                         Column(Modifier.padding(8.dp)) {
                             Text(effect.identity.name, fontSize = fs.body, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("${effect.identity.key} · ${effect.identity.voices} voices", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${effect.identity.key} · ${effect.identity.voices} voices${if (effect.identity.key in state.programs) " · Custom" else ""}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -65,8 +66,8 @@ internal fun SoundEffectsToolbar(parser: RomParser?, editor: EditorState, state:
         SoundToolbarButton("Redo", { state.redo(editor) }, Modifier.testTag("effect-redo"), enabled = state.redoDepth > 0)
         SoundToolbarButton("Reset effect", { state.reset(editor) }, Modifier.testTag("effect-reset"), enabled = effect != null)
         Box {
-            SoundToolbarButton(if (state.bank == 0) "Samples · Common" else "Samples · Bank ${state.bank.toString(16).uppercase()}",
-                { banks = true }, Modifier.testTag("effect-bank"))
+            SoundToolbarButton(if (state.bank == 0) "Preview · Common" else "Preview · Bank ${state.bank.toString(16).uppercase()}",
+                { banks = true }, Modifier.testTag("effect-bank"), icon = Icons.Default.ArrowDropDown)
             DropdownMenu(banks, { banks = false }) {
                 DropdownMenuItem({ Text("Common samples") }, { state.selectBank(0); banks = false })
                 for (set in MusicCatalog.banks(editor.project)) DropdownMenuItem({ Text(MusicCatalog.bankName(editor.project, set)) }, { state.selectBank(set); banks = false })
@@ -89,14 +90,14 @@ internal fun SoundEffectsView(parser: RomParser?, editor: EditorState, state: So
     val effect = state.selected
     var voiceIndex by remember(state.selectedKey) { mutableStateOf(0) }
     var stepIndex by remember(state.selectedKey, voiceIndex) { mutableStateOf(0) }
-    Column(modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(effect?.identity?.name ?: "Sound effects", fontSize = fs.heading, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
         SoundEffectsToolbar(parser, editor, state)
         SynthModule(Modifier.fillMaxWidth()) {
             Text("Native effect audition", fontSize = fs.body, fontWeight = FontWeight.Medium)
             val wave = state.waveform
             val ink = MaterialTheme.colorScheme.primary
-            Canvas(Modifier.fillMaxWidth().height(90.dp).testTag("effect-waveform")) {
+            Canvas(Modifier.fillMaxWidth().height(64.dp).testTag("effect-waveform")) {
                 drawLine(ink.copy(alpha = 0.3f), Offset(0f, size.height / 2), Offset(size.width, size.height / 2))
                 if (wave != null && wave.isNotEmpty()) for (bin in 0 until minOf(512, wave.size)) {
                     val bins = minOf(512, wave.size); var low = 0; var high = 0
@@ -119,7 +120,8 @@ internal fun SoundEffectsView(parser: RomParser?, editor: EditorState, state: So
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     SynthModule(Modifier.fillMaxWidth()) {
-                        Text("Program steps · shared by effects using the same program", fontSize = fs.body, fontWeight = FontWeight.Medium)
+                        EffectProgramActions(parser, editor, state)
+                        if (state.owned != null) EffectStepActions(parser, editor, state, voiceIndex, stepIndex, steps.size) { stepIndex = it }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             for ((index, step) in steps.withIndex()) FilterChip(stepIndex == index, { stepIndex = index }, shape = SoundControlShape,
                                 modifier = Modifier.testTag("effect-step-$index"), label = { Text("${index + 1} · ${step.label}", fontSize = fs.detail) })
@@ -127,18 +129,26 @@ internal fun SoundEffectsView(parser: RomParser?, editor: EditorState, state: So
                     }
                     steps.getOrNull(stepIndex)?.let { step ->
                         SynthModule(Modifier.fillMaxWidth()) {
-                            Text(step.label, fontSize = fs.body, fontWeight = FontWeight.Medium)
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(step.label, fontSize = fs.body, fontWeight = FontWeight.Medium)
+                                if (state.owned != null) step.operands.firstOrNull { it.field == SoundEffects.Field.PITCH }?.let { pitch ->
+                                    FilterChip(pitch.value == 0xF6, { parser?.let { state.apply(it, editor, effect.identity.key, pitch, if (pitch.value == 0xF6) 0xA4 else 0xF6, voiceIndex) } },
+                                        label = { Text("Hold previous pitch", fontSize = fs.detail) }, shape = SoundControlShape, enabled = !state.loading,
+                                        modifier = Modifier.testTag("effect-hold-pitch"))
+                                }
+                            }
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 for (operand in step.operands) key(operand.address) {
                                     var value by remember(operand.value) { mutableStateOf(operand.value) }
                                     val readout = when (operand.field) {
                                         SoundEffects.Field.PITCH, SoundEffects.Field.TARGET -> if (value == 0xF6) "Tie" else NspcSequence.noteToName(value)
                                         SoundEffects.Field.LEVEL -> "${value * 100 / 255}%"
+                                        SoundEffects.Field.LENGTH -> "${if (value == 0) 256 else value} ticks"
                                         SoundEffects.Field.PAN -> if (value == 10) "Center" else if (value < 10) "R ${(10 - value) * 10}%" else "L ${(value - 10) * 10}%"
                                         else -> value.toString()
                                     }
                                     SynthKnob(operand.field.label, value.coerceIn(operand.field.range), operand.field.range, readout,
-                                        "effect-field-${operand.field.name}", { value = it }, { parser?.let { state.apply(it, editor, effect.identity.key, operand, value) } },
+                                        "effect-field-${operand.field.name}", { value = it }, { parser?.let { if (!state.apply(it, editor, effect.identity.key, operand, value, voiceIndex)) value = operand.value } },
                                         enabled = !state.loading && operand.value in operand.field.range)
                                 }
                             }

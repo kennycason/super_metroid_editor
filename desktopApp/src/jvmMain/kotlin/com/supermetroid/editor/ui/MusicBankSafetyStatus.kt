@@ -37,14 +37,16 @@ private data class BankCheck(val report: MusicBankTransitions.Report? = null, va
 /** Background, debounced preflight; never edits the project or runs a native audio render. */
 @Composable
 internal fun MusicBankExportCheck(parser: RomParser, project: SmEditProject, editVersion: Int) {
-    if (project.musicEdits.isEmpty() && project.musicInstrumentBanks.isEmpty() && project.musicTracks.isEmpty() && project.musicBanks.isEmpty()) return
+    if (project.musicEdits.isEmpty() && project.musicInstrumentBanks.isEmpty() && project.musicTracks.isEmpty() && project.musicBanks.isEmpty() && project.soundEffectEdits.isEmpty() && project.soundEffectPrograms.isEmpty()) return
     val input = remember(parser, project, editVersion) { MusicBankTransitions.snapshot(project) }
     var result by remember(parser, project, editVersion) { mutableStateOf<BankCheck?>(null) }
     LaunchedEffect(parser, project, editVersion) {
         delay(150)
         result = withContext(Dispatchers.Default) {
             try {
-                BankCheck(report = MusicBankTransitions.inspect(parser, input))
+                val report = MusicBankTransitions.inspect(parser, input)
+                if (report.canExport) MusicRomExporter(input, {}).applyMusicEditsToRom(parser.copyRomData())
+                BankCheck(report = report)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -67,16 +69,16 @@ internal fun MusicBankSafetyStatus(report: MusicBankTransitions.Report?, problem
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             modifier = Modifier.testTag("music-bank-check")) {
             Text(when {
-                checking -> "Checking bank loads…"
+                checking -> "Checking sound export…"
                 blocked -> "ROM export blocked · details ▾"
-                else -> "Bank-load check passed ▾"
+                else -> "Sound export check passed ▾"
             }, fontSize = fs.detail, color = color)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
             modifier = Modifier.widthIn(min = 280.dp, max = 480.dp).heightIn(max = 440.dp).testTag("music-bank-check-details")) {
             Column(Modifier.padding(12.dp).heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("ROM export · bank loads", fontSize = fs.body, fontWeight = FontWeight.Medium)
+                Text("ROM export · sound", fontSize = fs.body, fontWeight = FontWeight.Medium)
                 when {
                     problem != null -> Text(problem, fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
                     report?.canExport == true -> {
@@ -115,7 +117,7 @@ internal fun MusicBankSafetyStatus(report: MusicBankTransitions.Report?, problem
                         Text("Audition and SPC/N-SPC export still work.", fontSize = fs.detail)
                     }
                 }
-                Text("Resource check only · not a ROM-space or effect-usage guarantee", fontSize = fs.detail,
+                Text("Checks sound memory, ROM allocation and bank loads. Other project edits and gameplay still need the full build and playtesting.", fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(shape = SoundControlShape, onClick = { expanded = false }, modifier = Modifier.testTag("music-bank-check-close")) {

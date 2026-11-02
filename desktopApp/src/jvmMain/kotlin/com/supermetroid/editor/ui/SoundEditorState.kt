@@ -445,18 +445,10 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
 
         try {
             val track = selectedTrack ?: return
-            val originalBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
-            val maxNativePayloadChainBytes = if (originalBlocks.isNotEmpty()) {
-                MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES -
-                    MusicTransferChainBudget.serializedTransferChainSize(originalBlocks) + 2
-            } else {
-                null
-            }
             val imported = ImpulseTrackerImport.read(
                 file = file,
                 targetPlayIndex = track.playIndex,
-                baseInstruments = originalPianoRollInstruments,
-                maxNativePayloadChainBytes = maxNativePayloadChainBytes
+                baseInstruments = originalPianoRollInstruments
             )
             val nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it, imported.song) }
             stagePendingTrackImport(
@@ -467,9 +459,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                 song = imported.song,
                 instruments = imported.instruments,
                 report = imported.report,
-                nativePayload = nativePayload,
-                editableFallbackSong = imported.editableFallbackSong,
-                editableFallbackInstruments = imported.editableFallbackInstruments
+                nativePayload = nativePayload
             )
             statusMessage = "Review IT import report for ${file.name}"
             soundEditorLog.info {
@@ -612,9 +602,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         song: NspcSequence.Song,
         instruments: List<NspcRenderer.InstrumentEntry>,
         report: MusicTrackInterchange.InterchangeReport,
-        nativePayload: MusicNativePayloadEdit? = null,
-        editableFallbackSong: NspcSequence.Song? = null,
-        editableFallbackInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
+        nativePayload: MusicNativePayloadEdit? = null
     ) {
         val importDecision = buildPendingImportDecision(
             romParser = romParser,
@@ -622,9 +610,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
             label = label,
             song = song,
             instruments = instruments,
-            nativePayload = nativePayload,
-            editableFallbackSong = editableFallbackSong,
-            editableFallbackInstruments = editableFallbackInstruments
+            nativePayload = nativePayload
         )
         val reportLines = buildImportReportLines(report).toMutableList()
         val safetyLines = buildList {
@@ -663,9 +649,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         label: String,
         song: NspcSequence.Song,
         instruments: List<NspcRenderer.InstrumentEntry>,
-        nativePayload: MusicNativePayloadEdit?,
-        editableFallbackSong: NspcSequence.Song?,
-        editableFallbackInstruments: List<NspcRenderer.InstrumentEntry>
+        nativePayload: MusicNativePayloadEdit?
     ): PendingImportDecision {
         if (instrumentBankProblem != null) {
             return PendingImportDecision(blockReason = instrumentBankProblem)
@@ -688,36 +672,8 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
                     payload = nativePayload,
                     targetPlayIndex = track.playIndex
                 )
-                val nativeBudgetLine = if (assessment.canExportToRom) {
-                    "Native payload ROM chain ${assessment.relocatedChainBytes}/${assessment.maxChainBytes} B; " +
-                        "${assessment.maxChainBytes - assessment.relocatedChainBytes} B free."
-                } else {
-                    "Native payload ROM chain ${assessment.relocatedChainBytes}/${assessment.maxChainBytes} B."
-                }
-                if (!assessment.canExportToRom) {
-                    val fallbackInstruments = editableFallbackInstruments.ifEmpty {
-                        originalPianoRollInstruments
-                    }
-                    val fallback = editableFallbackSong?.let {
-                        buildFittedEditableImport(
-                            song = it,
-                            instruments = fallbackInstruments,
-                            label = "$label stock fit",
-                            includeNativeDropWarning = true
-                        )
-                    }
-                    val reason = "native/custom-sample payload is ${assessment.overByBytes} B over the one-bank ROM export limit " +
-                        "(${assessment.relocatedChainBytes}/${assessment.maxChainBytes} B)"
-                    return PendingImportDecision(
-                        blockReason = if (fallback != null) {
-                            reason
-                        } else {
-                            "$reason; no editable fitted fallback is available"
-                        },
-                        fittedImport = fallback,
-                        reportLines = listOf(nativeBudgetLine)
-                    )
-                }
+                val nativeBudgetLine = "Relocated ROM upload: ${assessment.relocatedChainBytes} B in ${assessment.segmentCount} segment(s). " +
+                    "Free ROM space and bank loads are checked on export."
                 return PendingImportDecision(reportLines = listOf(nativeBudgetLine))
             }
         }
@@ -1384,7 +1340,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         }
         require(editor.project.projectId == target.project.projectId && editor.project.romPath == target.project.romPath &&
             editor.project.musicEdits == target.project.musicEdits && editor.project.musicInstrumentBanks == target.project.musicInstrumentBanks &&
-            editor.project.soundEffectEdits == target.project.soundEffectEdits) {
+            editor.project.soundEffectEdits == target.project.soundEffectEdits && editor.project.soundEffectPrograms == target.project.soundEffectPrograms) {
             "The sound bank changed. Reopen the sound library or sample workbench."
         }
         if (!changed) return false
@@ -1872,7 +1828,7 @@ class SoundEditorState(private val instrumentPlayer: SoundPlayer = SoundPlayer()
         track: SpcData.TrackInfo,
         song: NspcSequence.Song
     ): MusicSequenceBudget.RelocatedSequencePatch {
-        val baseBlocks = SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000))
+        val baseBlocks = com.supermetroid.editor.rom.SpcTransferStream.read(romParser, 0xCF8000).blocks
         val knownPlayIndexes = SpcData.KNOWN_TRACKS
             .filter { it.songSet == track.songSet }
             .mapTo(mutableSetOf()) { it.playIndex }

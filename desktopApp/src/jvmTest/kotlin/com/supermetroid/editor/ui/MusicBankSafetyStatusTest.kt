@@ -62,17 +62,17 @@ class MusicBankSafetyStatusTest {
         } finally { scene.close(); surface.close() }
     }
 
-    @Test fun `checking is non actionable and a passed resource check is not presented as a full export guarantee`() = runBlocking {
+    @Test fun `checking is non actionable and a passed sound check explains its build scope`() = runBlocking {
         withStatus(null) { scene, _ ->
-            assertTrue(hasText(scene, "Checking bank loads"))
+            assertTrue(hasText(scene, "Checking sound export"))
             assertTrue(tagged(scene, "music-bank-check").config.contains(SemanticsProperties.Disabled))
         }
         withStatus(MusicBankTransitions.Report(emptyList(), 22, mapOf(6 to emptyMap()))) { scene, render ->
-            assertTrue(hasText(scene, "Bank-load check passed"))
+            assertTrue(hasText(scene, "Sound export check passed"))
             tagged(scene, "music-bank-check").config[SemanticsActions.OnClick].action!!.invoke(); render()
             assertTrue(hasText(scene, "22 bank transitions checked"))
             assertTrue(hasText(scene, "1 bank will reload instrument settings"))
-            assertTrue(hasText(scene, "not a ROM-space or effect-usage guarantee"))
+            assertTrue(hasText(scene, "Other project edits and gameplay"))
         }
     }
 

@@ -55,7 +55,7 @@ internal object MusicSequenceBudget {
                 musicEdits = project.musicEdits.toMutableMap().also { it.remove(key) })
             val resolved = MusicBankResolver.resolve(romParser, others, songSet)
             val protected = MusicCatalog.tracks(project).filter { it.songSet == songSet && it.playIndex != playIndex }.map { it.playIndex }.toSet()
-            val occupied = buildProtectedSpcOccupancy(SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000)),
+            val occupied = buildProtectedSpcOccupancy(com.supermetroid.editor.rom.SpcTransferStream.read(romParser, 0xCF8000).blocks,
                 MusicCatalog.blocks(romParser, project, songSet), resolved.ram, protected) + sampleRanges(resolved.ram) +
                 resolved.writes.map { (at, bytes) -> SpcRange(at, at + bytes.size) } +
                 project.musicTracks.values.filter { it.songSet == songSet }.map { SpcRange(0x581E + it.playIndex * 2, 0x5820 + it.playIndex * 2) }
@@ -63,7 +63,7 @@ internal object MusicSequenceBudget {
                 ?: originalSequenceBytes(resolved.ram, playIndex)
             return TrackBudget(original, largestAvailableRange(occupied)?.size ?: 0)
         }
-        val baseBlocks = SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000))
+        val baseBlocks = com.supermetroid.editor.rom.SpcTransferStream.read(romParser, 0xCF8000).blocks
         val songBlocks = SpcData.findSongSetTransferData(romParser, songSet)
         val spcRam = SpcData.buildInitialSpcRam(romParser).also {
             SpcData.applyTransferBlocks(it, songBlocks)
@@ -92,6 +92,7 @@ internal object MusicSequenceBudget {
         protectedPlayIndexes: Set<Int>
     ): List<SpcRange> {
         val ranges = mutableListOf<SpcRange>()
+        ranges += SoundEffectPrograms.occupied(spcRam)
         ranges += baseBlocks.flatMap { protectedSongBlockRanges(it) }
         ranges += songBlocks.flatMap { protectedSongBlockRanges(it) }
         ranges += buildOriginalSequenceOccupancy(spcRam, protectedPlayIndexes)

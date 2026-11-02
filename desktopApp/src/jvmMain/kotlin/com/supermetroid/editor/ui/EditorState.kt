@@ -2773,6 +2773,13 @@ class EditorState(
         markDirty()
     }
 
+    internal fun setSoundEffectState(edits: Map<String, com.supermetroid.editor.data.SoundEffectByteEdit>, programs: Map<String, com.supermetroid.editor.data.SoundEffectProgram>) {
+        if (project.soundEffectEdits == edits && project.soundEffectPrograms == programs) return
+        project.soundEffectEdits.clear(); project.soundEffectEdits.putAll(edits)
+        project.soundEffectPrograms.clear(); project.soundEffectPrograms.putAll(SoundEffectPrograms.copyMap(programs))
+        musicEditVersion++; markDirty()
+    }
+
     fun musicInstrumentNames(songSet: Int): Map<Int, String> {
         // Read the version so Compose observes metadata updates without re-rendering song audio.
         musicInstrumentNameVersion

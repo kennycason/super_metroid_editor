@@ -10,11 +10,8 @@ internal object MusicTransferChainBudget {
         val originalChainBytes: Int,
         val payloadChainBytes: Int,
         val relocatedChainBytes: Int,
-        val maxChainBytes: Int = MAX_SINGLE_LOROM_BANK_BYTES
-    ) {
-        val canExportToRom: Boolean get() = relocatedChainBytes <= maxChainBytes
-        val overByBytes: Int get() = (relocatedChainBytes - maxChainBytes).coerceAtLeast(0)
-    }
+        val segmentCount: Int,
+    )
 
     fun assessNativePayloadRomExport(
         originalBlocks: List<SpcData.TransferBlock>,
@@ -26,10 +23,12 @@ internal object MusicTransferChainBudget {
         val payloadChainBytes = serializedTransferChainSize(
             payloadWrites.map { (addr, data) -> SpcData.TransferBlock(addr, data) }
         )
+        val layout = MusicTransferChainLayout.plan(mergeBlocks(originalBlocks, payloadWrites), 0x1500)
         return NativePayloadAssessment(
             originalChainBytes = originalChainBytes,
             payloadChainBytes = payloadChainBytes,
-            relocatedChainBytes = serializedTransferChainSize(mergeBlocks(originalBlocks, payloadWrites))
+            relocatedChainBytes = layout.size,
+            segmentCount = layout.segments.size,
         )
     }
 

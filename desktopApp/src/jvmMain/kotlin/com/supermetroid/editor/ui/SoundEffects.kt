@@ -13,7 +13,7 @@ internal object SoundEffects {
         val key get() = "$library:${id.toString(16).uppercase().padStart(2, '0')}"
     }
     enum class Field(val label: String, val range: IntRange) {
-        SOUND("Sound", 0..41), LEVEL("Level", 0..255), PAN("Pan", 0..20), PITCH("Pitch", 0x80..0xC7), LENGTH("Length", 1..255),
+        SOUND("Sound", 0..41), LEVEL("Level", 0..255), PAN("Pan", 0..20), PITCH("Pitch", 0x80..0xC7), LENGTH("Length", 0..255),
         RATE("Slide rate", 0..255), TARGET("Target pitch", 0x80..0xC7), ADSR1("ADSR1", 0..255), ADSR2("ADSR2", 0..255), REPEATS("Repeats", 0..255)
     }
     data class Operand(val address: Int, val field: Field, val value: Int)
@@ -30,13 +30,17 @@ internal object SoundEffects {
         Triple(0x3154, 0x39B3, "507c71641309ef14bdfd1cf19b98f06f2774c8725d50e7c00142c3fc8e850bbd"),
         Triple(0x4703, 0x4E8F, "1710c43fbaf56d2ae63b03116a00a332eec7d26c6b683ab7f6bc7989fcaea526"))
     fun requireEngine(ram: ByteArray) {
+        val normalized = SoundEffectPrograms.normalized(ram)
         require(ram.size == 65536 && code.all { (start, end, hash) ->
-            MessageDigest.getInstance("SHA-256").digest(ram.copyOfRange(start, end)).joinToString("") { "%02x".format(it) } == hash
+            MessageDigest.getInstance("SHA-256").digest(normalized.copyOfRange(start, end)).joinToString("") { "%02x".format(it) } == hash
         }) { "Effects editing requires the supported Super Metroid SPC engine" }
     }
-    fun catalog(ram: ByteArray): List<Effect> {
+    fun catalog(ram: ByteArray, project: SmEditProject? = null): List<Effect> {
         requireEngine(ram)
-        return identities.map { identity ->
+        val extra = SoundEffectPrograms.installed(ram)?.entries.orEmpty().filter { it.id > SoundEffectPrograms.count(it.library) }
+            .map { Identity(it.library, it.id, "Custom effect ${it.key}", it.voices) }
+        return (identities + extra).map { original ->
+            val identity = original.copy(name = project?.soundEffectPrograms?.get(original.key)?.name ?: original.name)
             try { read(ram, identity) } catch (error: Exception) { Effect(identity, emptyList(), error.message ?: "Invalid effect program") }
         }
     }
@@ -45,11 +49,13 @@ internal object SoundEffects {
         val end = ends.getValue(identity.library)
         fun byte(at: Int) = ram[at].toInt() and 255
         fun word(at: Int): Int { require(at >= table && at + 1 < end); return byte(at) or (byte(at + 1) shl 8) }
-        val set = word(table + (identity.id - 1) * 2)
+        val owned = SoundEffectPrograms.installed(ram)?.entries?.firstOrNull { it.key == identity.key }
+        val set = owned?.pointers ?: word(table + (identity.id - 1) * 2)
         val voices = (0 until identity.voices).map { voice ->
-            val start = word(set + voice * 2)
+            val pointer = set + voice * 2
+            val start = if (owned == null) word(pointer) else byte(pointer) or (byte(pointer + 1) shl 8)
             // Dachora's library-2 effects deliberately share library-3 voice programs.
-            val voiceEnd = listOf(0x2B71 until 0x3154, 0x3AB1 until 0x4703, 0x4EED until 0x5310)
+            val voiceEnd = (listOf(0x2B71 until 0x3154, 0x3AB1 until 0x4703, 0x4EED until 0x5310) + if (owned != null) SoundEffectPrograms.arenas else emptyList())
                 .firstOrNull { start in it }?.let { it.last + 1 } ?: error("Effect voice points outside program data")
             var at = start
             var ended = false
@@ -97,15 +103,18 @@ internal object SoundEffects {
             at to edit
         }.toMap()
     }
-    fun bootRam(parser: RomParser, project: SmEditProject): ByteArray = SpcData.buildInitialSpcRam(parser).also { ram ->
+    fun bootRam(parser: RomParser, project: SmEditProject): ByteArray {
+        val ram = SpcData.buildInitialSpcRam(parser)
         for ((at, edit) in changes(parser, project)) ram[at] = edit.value.toByte()
+        if (project.soundEffectPrograms.isNotEmpty() || SoundEffectPrograms.installed(ram) != null) SoundEffectPrograms.requireStorage(parser, project)
+        return SoundEffectPrograms.compile(ram, project.soundEffectPrograms).ram
     }
 
     fun exportWrites(parser: RomParser, project: SmEditProject): Map<Int, Byte> {
         val edits = changes(parser, project)
         if (edits.isEmpty()) return emptyMap()
         val writes = mutableMapOf<Int, Byte>()
-        for (pointer in (listOf(0xCF8000) + SpcData.TRANSFER_SONG_SETS.map { SpcData.readSongSetPointer(parser, it) }).distinct()) {
+        for (pointer in (listOf(0xCF8000) + (SpcData.TRANSFER_SONG_SETS + SpcMusicBankTable.songSets(parser)).distinct().map { SpcData.readSongSetPointer(parser, it) }).distinct()) {
             val chain = SpcTransferStream.read(parser, pointer)
             for ((at, edit) in edits) {
                 val source = chain.sourceBlocks.lastOrNull { at in it.destAddr until it.destAddr + it.data.size } ?: continue

@@ -231,4 +231,58 @@ class SoundRoadmapUiTest {
             assertEquals(plan.track.songSet, set); assertEquals(plan.track.playIndex, play)
         }
     }
+    @Test fun `independent effect controls hold pitch structural actions and copy forms work across fonts and themes`() = runBlocking {
+        val file = File(directory, "effects-source.sfc").apply { writeBytes(TestRomHelper.requireRomBytes()) }
+        val parser = RomParser(file.readBytes())
+        for (font in FontSize.entries) for (theme in EditorTheme.entries) {
+            val editor = EditorState().apply { testMode = true; initForRom(file.path) }
+            val state = SoundEffectEditorState(); state.load(parser, editor)
+            try {
+                panel("effect-authoring", font, theme, 1120, {
+                    Row(Modifier.fillMaxSize()) {
+                        SoundEffectsList(state, Modifier.width(260.dp).fillMaxHeight())
+                        SoundEffectsView(parser, editor, state, Modifier.weight(1f))
+                    }
+                }) { scene, render ->
+                    while (state.loading) { delay(10); render() }
+                    tag(scene, "effect-independent").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                    while (state.loading) { delay(10); render() }
+                    assertEquals(1, editor.project.soundEffectPrograms.size)
+                    fits(scene, 1120, "effect-step-add", "effect-step-earlier", "effect-step-later", "effect-step-remove", "effect-field-LEVEL")
+                    tag(scene, "effect-hold-pitch").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                    while (state.loading) { delay(10); render() }
+                    assertTrue(tag(scene, "effect-hold-pitch").config[SemanticsProperties.Selected])
+                    assertEquals(0xF6, state.owned!!.voices[0].steps.first { it.opcode in 0..41 }.params[2])
+                    tag(scene, "effect-undo").config[SemanticsActions.OnClick].action!!.invoke(); render()
+                    while (state.loading) { delay(10); render() }
+                    assertFalse(tag(scene, "effect-hold-pitch").config[SemanticsProperties.Selected])
+                }
+                for (width in listOf(420, 720)) for (duplicate in listOf(true, false)) {
+                    var name by mutableStateOf("My new effect")
+                    var submitted = 0
+                    panel("effect-${if (duplicate) "copy" else "cue"}", font, theme, width, {
+                        EffectAuthoringForm(duplicate, name, { name = it }, 2, {}, "2:02", {}, state.selected!!, null, { submitted++ }, {})
+                    }) { scene, render ->
+                        fits(scene, width, "effect-copy-target", "effect-copy-apply")
+                        tag(scene, "effect-copy-apply").config[SemanticsActions.OnClick].action!!.invoke(); assertEquals(1, submitted)
+                        if (duplicate) {
+                            tag(scene, "effect-copy-name").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("")); render()
+                            assertTrue(tag(scene, "effect-copy-apply").config.contains(SemanticsProperties.Disabled))
+                        }
+                    }
+                }
+            } finally { state.stop() }
+        }
+    }
+
+    @Test fun `the sole three voice cue has no alternate assignment and remains duplicable`() = runBlocking {
+        val effect = SoundEffects.catalog(SpcData.buildInitialSpcRam(TestRomHelper.requireRomParser())).single { it.voices.size == 3 }
+        for (duplicate in listOf(false, true)) panel("effect-three-voice-$duplicate", FontSize.LARGE, EditorTheme.DARK, 720, {
+            EffectAuthoringForm(duplicate, "Rainbow copy", {}, 1, {}, "", {}, effect, null, {}, {})
+        }) { scene, _ ->
+            fits(scene, 720, "effect-copy-target", "effect-copy-apply")
+            assertEquals(!duplicate, tag(scene, "effect-copy-apply").config.contains(SemanticsProperties.Disabled))
+        }
+    }
+
 }

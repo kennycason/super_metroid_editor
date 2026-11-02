@@ -34,7 +34,7 @@ internal object MusicBankResolver {
                 map[key] = MusicEditConversion.toProjectEdit(SpcData.TrackInfo(songSet, definition.playIndex, definition.name, "Project"), MusicCatalog.baseline(project, songSet, definition.playIndex)!!)
             }
         }.toSortedMap().filterValues { it.songSet == songSet }
-        val baseBlocks = SpcData.parseTransferBlocks(parser.getRomData(), parser.snesToPc(0xCF8000))
+        val baseBlocks = com.supermetroid.editor.rom.SpcTransferStream.read(parser, 0xCF8000).blocks
         val songBlocks = MusicCatalog.blocks(parser, project, songSet)
         val original = SoundEffects.bootRam(parser, project).also { SpcData.applyTransferBlocks(it, songBlocks) }
         val retainedSources = sourceWrites(project, songSet)

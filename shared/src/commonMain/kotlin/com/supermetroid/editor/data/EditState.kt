@@ -853,6 +853,23 @@ data class MusicCommandEdit(
 @Serializable
 data class SoundEffectByteEdit(val expected: Int, val value: Int)
 
+@Serializable
+data class SoundEffectInstruction(val opcode: Int, val params: MutableList<Int> = mutableListOf())
+
+@Serializable
+data class SoundEffectVoiceProgram(val steps: MutableList<SoundEffectInstruction> = mutableListOf())
+
+/** One independent program. Routing remains a verified native configuration in its library. */
+@Serializable
+data class SoundEffectProgram(
+    val library: Int,
+    val id: Int,
+    val name: String,
+    val routingId: Int,
+    val voices: MutableList<SoundEffectVoiceProgram>,
+    val baseline: MutableList<SoundEffectVoiceProgram>,
+)
+
 /**
  * One editable N-SPC channel in a saved music track edit.
  */
@@ -1058,6 +1075,7 @@ data class SmEditProject(
     /** Recording labels keyed by song set + content/loop identity, never just a reusable SRCN. */
     val musicSampleNames: MutableMap<String, String> = mutableMapOf(),
     val soundEffectEdits: MutableMap<String, SoundEffectByteEdit> = mutableMapOf(),
+    val soundEffectPrograms: MutableMap<String, SoundEffectProgram> = mutableMapOf(),
     val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),
     val asmWorkspace: ProjectAsmWorkspaceSettings = ProjectAsmWorkspaceSettings(),
     var versionMajor: Int = 1,

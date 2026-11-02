@@ -425,7 +425,8 @@ class SmeditBuildService(
             }
             if (project.customAsm.isNotEmpty()) unsupportedRomEdits.add("custom ASM")
             if (project.musicEdits.isNotEmpty() || project.musicTracks.isNotEmpty() || project.musicBanks.isNotEmpty()) unsupportedRomEdits.add("music edits and authored tracks/banks")
-            if (project.soundEffectEdits.isNotEmpty()) unsupportedRomEdits.add("sound effect edits")
+            if (project.soundEffectEdits.isNotEmpty() || project.soundEffectPrograms.isNotEmpty()) unsupportedRomEdits.add("sound effect edits")
+            if (project.musicInstrumentBanks.values.any { it.instruments.isNotEmpty() || it.samples.isNotEmpty() }) unsupportedRomEdits.add("sound settings and custom samples")
             if (unsupportedRomEdits.isNotEmpty()) {
                 throw IllegalArgumentException(
                     "Headless ROM build cannot safely export ${unsupportedRomEdits.distinct().joinToString()}; " +
@@ -456,7 +457,8 @@ class SmeditBuildService(
         }
         if (project.customAsm.isNotEmpty()) ignored.add("custom ASM entries: ${project.customAsm.size}")
         if (project.musicEdits.isNotEmpty() || project.musicTracks.isNotEmpty() || project.musicBanks.isNotEmpty()) ignored.add("music edits/tracks/banks: ${project.musicEdits.size}/${project.musicTracks.size}/${project.musicBanks.size}")
-        if (project.soundEffectEdits.isNotEmpty()) ignored.add("sound effect edits: ${project.soundEffectEdits.size}")
+        if (project.soundEffectEdits.isNotEmpty() || project.soundEffectPrograms.isNotEmpty()) ignored.add("sound effect edits: ${project.soundEffectEdits.size} operands, ${project.soundEffectPrograms.size} programs")
+        if (project.musicInstrumentBanks.values.any { it.instruments.isNotEmpty() || it.samples.isNotEmpty() }) ignored.add("sound settings/custom samples: ${project.musicInstrumentBanks.size} bank(s)")
 
         if (ignored.isNotEmpty()) {
             context.warnings.add("Headless build v1 ignored unsupported project data: ${ignored.joinToString()}.")
