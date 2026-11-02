@@ -85,7 +85,8 @@ fun StatNumberInput(
     onChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
     maxDigits: Int = 5,
-    maxValue: Int = 65535
+    maxValue: Int = 65535,
+    fontSize: TextUnit = 13.sp,
 ) {
     var text by remember(value) { mutableStateOf(value.toString()) }
     BasicTextField(
@@ -97,7 +98,7 @@ fun StatNumberInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = fontSize,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -105,7 +106,7 @@ fun StatNumberInput(
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         modifier = modifier
-            .height(28.dp)
+            .height((fontSize.value * 1.3f + 8f).coerceAtLeast(28f).dp)
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 4.dp)
     )

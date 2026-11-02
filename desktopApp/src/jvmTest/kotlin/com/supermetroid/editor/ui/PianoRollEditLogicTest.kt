@@ -2,13 +2,67 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.NspcRenderer
+import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import kotlin.test.assertFailsWith
 
 class PianoRollEditLogicTest {
+
+    @Test
+    fun `Lower Norfair measures normally and an overlapping draft is reversible without changing native notes`() {
+        val parser = TestRomHelper.requireRomParser()
+        val ram = SpcData.buildInitialSpcRam(parser).also { SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, 0x18)) }
+        val song = NspcSequence.parse(ram, 5)
+        val before = PianoRollPreviewLogic.deepCopySong(song)
+        val valid = PianoRollEditLogic.checkEncoding(song)
+        assertTrue(valid.canEncode)
+        val first = song.channels[0].notes.first()
+        val added = first.copy(noteValue = if (first.noteValue == NspcSequence.NOTE_MAX) first.noteValue - 1 else first.noteValue + 1)
+        song.channels[0].notes += added
+        assertFalse(PianoRollEditLogic.checkEncoding(song).canEncode)
+        song.channels[0].notes.remove(added)
+        assertEquals(before, song)
+        assertEquals(valid.bytes, PianoRollEditLogic.checkEncoding(song).bytes)
+    }
+
+    @Test
+    fun `encoding check preserves invalid drafts and never represents a conflict as zero byte usage`() {
+        val first = note(0, 30, 0x94)
+        val second = note(12, 24, 0x98)
+        val song = songOf(0 to listOf(first, second))
+        val before = PianoRollPreviewLogic.deepCopySong(song)
+        val check = PianoRollEditLogic.checkEncoding(song)
+        assertFalse(check.canEncode)
+        assertNull(check.bytes)
+        assertTrue(check.problem.orEmpty().contains("Voice 1 has overlapping notes"))
+        assertEquals(before, song)
+        assertFailsWith<IllegalArgumentException> { NspcSequence.encode(song, 5) }
+        second.tick = 30
+        val repaired = PianoRollEditLogic.checkEncoding(song)
+        assertTrue(repaired.canEncode)
+        assertNull(repaired.problem)
+        assertEquals(NspcSequence.encodedSequenceSize(song), repaired.bytes)
+    }
+
+    @Test
+    fun `encoding check also reports invalid lengths and native transpose bounds without mutating them`() {
+        val note = note(0, 0, NspcSequence.NOTE_MIN)
+        val song = songOf(0 to listOf(note))
+        assertFalse(PianoRollEditLogic.checkEncoding(song).canEncode)
+        assertEquals(0, note.duration)
+        note.duration = 24
+        song.channels[0].commands += NspcSequence.ControlCommand(0, 0xEA, intArrayOf(12))
+        val check = PianoRollEditLogic.checkEncoding(song)
+        assertNull(check.bytes)
+        assertTrue(check.problem.orEmpty().contains("native pitch range"))
+        assertEquals(NspcSequence.NOTE_MIN, note.noteValue)
+    }
 
     @Test
     fun `selectNotesInRect selects overlapping notes in visible channels only`() {

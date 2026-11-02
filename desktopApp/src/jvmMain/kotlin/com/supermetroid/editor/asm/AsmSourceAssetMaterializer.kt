@@ -154,9 +154,10 @@ internal class AsmSourceAssetMaterializer(
 
     private companion object {
         const val COMMUNITY_SAMUS_OWNER = "graphics:community-samus"
+        // Sound uploads, pointers and loader code stay in one post-compile transaction;
+        // baking only asset-covered bytes would leave a broken SPC stream.
         val MATERIALIZABLE_KINDS = setOf(
             RomWriteKind.GRAPHICS,
-            RomWriteKind.MUSIC,
             RomWriteKind.TEXT,
             RomWriteKind.MINIMAP,
             RomWriteKind.ROOM,

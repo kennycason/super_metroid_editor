@@ -10,12 +10,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,10 +55,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -177,30 +181,34 @@ fun SoundListPanel(
     onTrackWillSelect: (SpcData.TrackInfo) -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
-    var selectedTab by remember { mutableStateOf(0) }
+    val selectedTab = soundEditorState.soundSection
+    val tracks = editorState.musicEditVersion.let { MusicCatalog.tracks(editorState.project) }
     val scope = rememberCoroutineScope()
     val currentSamples = soundEditorState.samples
-    val isPianoRollEditing = soundEditorState.isPianoRollOpen && soundEditorState.editingSong != null
+    val isPianoRollEditing = selectedTab == 0 && soundEditorState.isPianoRollOpen && soundEditorState.editingSong != null
     val navigationItemCount = when (selectedTab) {
-        0 -> if (romParser != null) SpcData.KNOWN_TRACKS.size else 0
+        0 -> if (romParser != null) tracks.size else 0
         1 -> currentSamples.size
+        2 -> soundEditorState.effects.visible.size
         else -> 0
     }
     val navigationSelectedIndex = when (selectedTab) {
-        0 -> SpcData.KNOWN_TRACKS.indexOfFirst { it.id == soundEditorState.selectedTrackId }
+        0 -> tracks.indexOfFirst { it.id == soundEditorState.selectedTrackId }
         1 -> currentSamples.indexOfFirst { it.dirEntry.index == soundEditorState.selectedSampleIndex }
+        2 -> soundEditorState.effects.visible.indexOfFirst { it.identity.key == soundEditorState.effects.selectedKey }
         else -> -1
     }
 
     fun selectSoundIndex(index: Int) {
         when (selectedTab) {
-            0 -> SpcData.KNOWN_TRACKS.getOrNull(index)?.let { track ->
+            0 -> tracks.getOrNull(index)?.let { track ->
                 if (track.id != soundEditorState.selectedTrackId) onTrackWillSelect(track)
                 soundEditorState.selectTrack(track)
             }
             1 -> currentSamples.getOrNull(index)?.let { sample ->
                 scope.launch { soundEditorState.selectSample(sample) }
             }
+            2 -> soundEditorState.effects.visible.getOrNull(index)?.let { soundEditorState.effects.select(it.identity.key) }
         }
     }
 
@@ -227,16 +235,19 @@ fun SoundListPanel(
     }
 
     Column(modifier = modifier) {
-        TabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth().height(32.dp)) {
+        TabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth().height(SoundToolbarHeight)) {
             Tab(selected = selectedTab == 0, onClick = {
-                selectedTab = 0
-            }, modifier = Modifier.height(32.dp)) {
+                soundEditorState.selectSoundSection(0)
+            }, modifier = Modifier.height(SoundToolbarHeight)) {
                 Text("Tracks", fontSize = fs.tabLabel)
             }
             Tab(selected = selectedTab == 1, onClick = {
-                selectedTab = 1
-            }, modifier = Modifier.height(32.dp)) {
+                soundEditorState.selectSoundSection(1)
+            }, modifier = Modifier.height(SoundToolbarHeight)) {
                 Text("Samples", fontSize = fs.tabLabel)
+            }
+            Tab(selected = selectedTab == 2, onClick = { soundEditorState.selectSoundSection(2) }, modifier = Modifier.height(SoundToolbarHeight)) {
+                Text("Effects", fontSize = fs.tabLabel)
             }
         }
         key(selectedTab) {
@@ -253,11 +264,13 @@ fun SoundListPanel(
                     soundEditorState,
                     Modifier.fillMaxSize(),
                 )
+                2 -> SoundEffectsList(soundEditorState.effects, Modifier.fillMaxSize())
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TrackListContent(
     romParser: RomParser?,
@@ -268,12 +281,27 @@ private fun TrackListContent(
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val musicEditVersion = editorState.musicEditVersion
-    Column(modifier = modifier.verticalScroll(rememberScrollState())) {
+    var creating by remember { mutableStateOf(false) }
+    if (creating && romParser != null) MusicCreationDialog(romParser, editorState, state.selectedTrack,
+        onCreated = { track -> creating = false; state.selectTrack(track); state.openPianoRoll(romParser, editorState) }, onClose = { creating = false })
+    val tracks = musicEditVersion.let { MusicCatalog.tracks(editorState.project) }
+    Column(modifier) {
+        if (romParser != null) SoundToolbar(Modifier.padding(6.dp)) {
+            SoundToolbarButton("New track", { creating = true }, Modifier.testTag("music-new-track"), primary = true)
+            SoundToolbarButton("Undo", {
+                if (editorState.undo()) { state.closePianoRoll(); state.selectTrack(MusicCatalog.tracks(editorState.project).first()) }
+            }, Modifier.testTag("music-undo-creation"), enabled = editorState.canUndoMusicCreation)
+            SoundToolbarButton("Redo", {
+                val before = MusicCatalog.tracks(editorState.project).map { it.id }.toSet()
+                if (editorState.redo()) MusicCatalog.tracks(editorState.project).firstOrNull { it.id !in before }?.let { state.selectTrack(it); state.openPianoRoll(romParser, editorState) }
+            }, Modifier.testTag("music-redo-creation"), enabled = editorState.canRedoMusicCreation)
+        }
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
         if (romParser == null) {
             Text("Load a ROM to browse tracks", fontSize = fs.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
         } else {
-            for (track in SpcData.KNOWN_TRACKS) {
+            for (track in tracks) {
                 val isSel = state.selectedTrackId == track.id
                 val isEdited = musicEditVersion.let { editorState.hasMusicEdit(track.songSet, track.playIndex) }
                 Surface(
@@ -283,7 +311,7 @@ private fun TrackListContent(
                     }
                         .padding(horizontal = 2.dp),
                     color = if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    shape = RoundedCornerShape(3.dp)
+                    shape = SoundControlShape
                 ) {
                     Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically) {
@@ -294,7 +322,7 @@ private fun TrackListContent(
                                     modifier = Modifier.weight(1f, fill = false))
                                 if (isEdited) {
                                     Spacer(Modifier.width(4.dp))
-                                    EditedMusicBadge()
+                                    EditedMusicBadge(if (editorState.project.musicTracks.containsKey(com.supermetroid.editor.data.MusicTrackEdit.key(track.songSet, track.playIndex))) "PROJECT" else if (editorState.getMusicEdit(track.songSet, track.playIndex) == null) "BANK" else "EDITED")
                                 }
                             }
                             Text("${track.area}  0x${track.songSet.toString(16).uppercase().padStart(2, '0')}:${track.playIndex.toString(16).uppercase().padStart(2, '0')}",
@@ -305,18 +333,19 @@ private fun TrackListContent(
             }
         }
     }
+    }
 }
 
 @Composable
-private fun EditedMusicBadge() {
+private fun EditedMusicBadge(label: String = "EDITED") {
     val fs = LocalEditorTheme.current.fontSize.value
     Surface(
         color = Color(0xFFFFB84D),
         contentColor = Color(0xFF2A1700),
-        shape = RoundedCornerShape(4.dp)
+        shape = SoundControlShape
     ) {
         Text(
-            "EDITED",
+            label,
             fontSize = fs.detail,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
@@ -346,8 +375,15 @@ private fun SampleListContent(
 
     val currentSamples = state.samples
     val loading = state.isLoadingSamples
+    var showWorkbench by remember { mutableStateOf(false) }
+    if (showWorkbench) SampleWorkbench(state.sampleWorkbench, romParser) { showWorkbench = false }
 
     Column(modifier = modifier.verticalScroll(rememberScrollState())) {
+        OutlinedButton(shape = SoundControlShape, onClick = {
+            state.stopPlayback()
+            state.stopInstrumentPreview()
+            showWorkbench = true
+        }, modifier = Modifier.padding(8.dp).testTag("sample-new")) { Text("New sample", fontSize = fs.body) }
         if (loading) {
             Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) {
                 Text("Loading samples...", fontSize = fs.body)
@@ -364,7 +400,7 @@ private fun SampleListContent(
                     }
                         .padding(horizontal = 2.dp),
                     color = if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    shape = RoundedCornerShape(3.dp)
+                    shape = SoundControlShape
                 ) {
                     Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically) {
@@ -400,6 +436,39 @@ fun SoundEditorCanvas(
     val state = soundEditorState
     val scope = rememberCoroutineScope()
     val musicEditVersion = editorState.musicEditVersion
+    LaunchedEffect(editorState.project.projectId, musicEditVersion) {
+        if (state.selectedTrack != null && MusicCatalog.tracks(editorState.project).none { it.id == state.selectedTrackId }) {
+            state.closePianoRoll(); state.selectTrack(MusicCatalog.tracks(editorState.project).first())
+        }
+    }
+
+    if (state.soundSection == 2) {
+        SoundEffectsView(romParser, editorState, state.effects, modifier)
+        return
+    }
+    var sampleTryout by remember(state.selectedTrackId) { mutableStateOf<SampleBankPreview.Target?>(null) }
+    var presetTarget by remember(state.selectedTrackId, state.isPianoRollOpen) { mutableStateOf<SampleBankPreview.Target?>(null) }
+    var bankTarget by remember(state.selectedTrackId, state.isPianoRollOpen) { mutableStateOf<SampleBankPreview.Target?>(null) }
+    DisposableEffect(state) { onDispose { state.stopInstrumentPreview(); state.sampleWorkbench.stop() } }
+    LaunchedEffect(state.instrumentPreviewRefreshVersion) {
+        kotlinx.coroutines.delay(90)
+        state.refreshInstrumentPreview()
+    }
+
+    sampleTryout?.let { target ->
+        SampleWorkbench(state.sampleWorkbench, romParser, target,
+            onUseSample = { application -> romParser?.let { state.useWorkbenchSample(application, it, editorState) } }) { sampleTryout = null }
+    }
+
+    presetTarget?.let { target ->
+        if (romParser != null) SoundPresetBrowser(romParser, target, state.editingSong?.tempo ?: InstrumentAudition.TEMPO,
+            onApply = { state.useSoundPreset(it, romParser, editorState) }, onClose = { presetTarget = null })
+    }
+
+    bankTarget?.let { target ->
+        if (romParser != null) SoundBankManager(romParser, target, onApply = { bank, label -> state.manageSoundBank(target, bank, label, romParser, editorState) },
+            onClose = { bankTarget = null })
+    }
 
     LaunchedEffect(state.selectedTrackId, state.sampleRate, editorState.musicEditVersion) {
         if (state.selectedTrack != null && romParser != null) {
@@ -437,18 +506,18 @@ fun SoundEditorCanvas(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("Sound", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text("Sound", fontWeight = FontWeight.Bold, fontSize = LocalEditorTheme.current.fontSize.value.body)
 
             if (track != null) {
-                Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
-                Text(track.name, fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                Text("│", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.outlineVariant)
+                Text(track.name, fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Medium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (musicEditVersion.let { editorState.hasMusicEdit(track.songSet, track.playIndex) }) {
                     Spacer(Modifier.width(4.dp))
-                    EditedMusicBadge()
+                    EditedMusicBadge(if (editorState.getMusicEdit(track.songSet, track.playIndex) == null) "BANK" else "EDITED")
                     Spacer(Modifier.width(4.dp))
                 }
-                Text(track.area, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(track.area, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (romParser != null && asmLink != null) {
                     val asmTargets = remember(romParser, track.songSet) {
                         buildList {
@@ -468,24 +537,27 @@ fun SoundEditorCanvas(
                     }
                 }
             } else if (sample != null) {
-                Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
-                Text("Sample #${sample.dirEntry.index}", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Text("│", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.outlineVariant)
+                Text("Sample #${sample.dirEntry.index}", fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Medium)
                 Text("${sample.pcmData.size} pcm" + if (sample.loopStart >= 0) " loop" else "",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(Modifier.weight(1f))
 
             if (status.isNotEmpty()) {
-                Text(status, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text(status, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
 
         Spacer(Modifier.height(4.dp))
 
+        if (romParser != null) MusicBankExportCheck(romParser, editorState.project, musicEditVersion)
+
         // Piano roll mode vs waveform mode
         if (state.isPianoRollOpen && state.editingSong != null) {
+            LaunchedEffect(state.pianoRollSampleVersion) { state.loadPianoRollSampleCatalog() }
             // Tick update loop for playback cursor
             LaunchedEffect(state.isPlaying) {
                 while (state.isPlaying && state.isPianoRollOpen) {
@@ -504,22 +576,86 @@ fun SoundEditorCanvas(
                 )
             }
 
+            state.instrumentBankProblem?.let { problem ->
+                Text(problem, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
             PianoRollEditor(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
                 instrumentInfos = state.pianoRollInstruments,
+                instrumentSourcePitches = state.pianoRollSourceInstruments.associate { it.index to it.nativePitch },
+                sampleBrowser = MusicSampleBrowserState(state.pianoRollSamples, editorState.musicSampleNames(state.currentSongSet),
+                    state.isLoadingPianoRollSamples, state.pianoRollSamplesProblem, state.instrumentPreviewSample, state.isInstrumentPreviewLoading),
+                onPreviewSample = { index, srcn, note -> if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note, srcn) } },
+                onChooseSample = { index, srcn -> state.choosePianoRollSample(index, srcn) },
+                onRenameSample = { resourceId, name -> editorState.renameMusicSample(state.currentSongSet, resourceId, name) },
+                onTrySample = if (romParser != null && state.instrumentBankProblem == null) { note ->
+                    state.stopPlayback()
+                    state.stopInstrumentPreview()
+                    val names = editorState.musicInstrumentNames(state.currentSongSet)
+                    sampleTryout = SampleBankPreview.Target(state.currentSongSet, note.copy(), track?.name ?: "Current bank",
+                        state.pianoRollInstruments.getOrNull(note.instrument)?.let { InstrumentDescriptions.title(it, names) } ?: "Sound #${note.instrument}",
+                        MusicBankTransitions.snapshot(editorState.project), track?.id)
+                } else null,
+                onOpenBank = if (romParser != null && state.instrumentBankProblem == null) { {
+                    state.stopPlayback()
+                    val note = state.editingSong?.channels?.getOrNull(state.pianoRollChannel)?.notes?.firstOrNull()?.copy()
+                        ?: NspcSequence.Note(0, 96, NspcSequence.nameToNote("C4"), instrument = state.pianoRollInstruments.firstOrNull(InstrumentDescriptions::playable)?.index ?: 24)
+                    bankTarget = SampleBankPreview.Target(state.currentSongSet, note, track?.name ?: "Current bank", "Sound bank",
+                        MusicBankTransitions.snapshot(editorState.project), track?.id)
+                } } else null,
+                onOpenPresets = if (romParser != null && state.nativeInstrumentPreviewAvailable && state.instrumentBankProblem == null) { note ->
+                    state.stopPlayback()
+                    val names = editorState.musicInstrumentNames(state.currentSongSet)
+                    presetTarget = SampleBankPreview.Target(state.currentSongSet, note.copy(), track?.name ?: "Current bank",
+                        state.pianoRollInstruments.firstOrNull { it.index == note.instrument }?.let { InstrumentDescriptions.title(it, names) } ?: "Sound #${note.instrument}",
+                        MusicBankTransitions.snapshot(editorState.project), track?.id)
+                } else null,
+                instrumentNames = editorState.musicInstrumentNames(state.currentSongSet),
+                instrumentBankLabel = "${track?.name.orEmpty()} sound bank",
+                instrumentSourceLabel = if (editorState.project.musicEdits.values.any {
+                    it.songSet == state.currentSongSet && it.nativePayload != null
+                }) "ROM + import" else "ROM bank",
+                sharedInstrumentTracks = state.instrumentBankTracks,
+                sharedInstrumentEdits = editorState.musicEditVersion.let {
+                    editorState.project.musicInstrumentBanks[MusicInstrumentBanks.key(state.currentSongSet)]?.instruments?.keys.orEmpty()
+                },
+                onResetSharedInstrument = state::resetSharedInstrument,
+                instrumentEditingEnabled = state.instrumentBankProblem == null,
+                nativeInstrumentPreviewAvailable = state.nativeInstrumentPreviewAvailable,
+                previewInstrument = state.instrumentPreviewIndex,
+                instrumentPreviewBusy = state.isInstrumentPreviewLoading,
+                instrumentPreviewMessage = state.instrumentPreviewMessage,
+                liveInstrumentPreview = state.liveInstrumentPreview,
+                onLiveInstrumentPreviewChanged = state::setInstrumentPreviewLive,
+                auditionOriginal = state.instrumentAuditionOriginal,
+                originalAuditionIds = state.pianoRollSourceInstruments.filter(InstrumentDescriptions::playable).mapTo(mutableSetOf()) { it.index },
+                onAuditionOriginalChanged = state::compareOriginalInstrument,
+                onAuditionInstrument = { index, note ->
+                    if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note, original = state.instrumentAuditionOriginal) }
+                },
+                onAuditionKeyDown = { index, note ->
+                    if (romParser != null) scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                        state.previewInstrument(romParser, index, note, original = state.instrumentAuditionOriginal, held = true)
+                    }
+                },
+                onAuditionKeyUp = state::releaseInstrumentKey,
+                onPreviewInstrument = { index, note ->
+                    if (romParser != null) scope.launch { state.previewInstrument(romParser, index, note) }
+                },
+                onStopInstrumentPreview = state::stopInstrumentPreview,
+                onRenameInstrument = { index, name ->
+                    editorState.renameMusicInstrument(state.currentSongSet, index, name)
+                },
                 canUndo = state.pianoRollUndoDepth > 0,
                 canRedo = state.pianoRollRedoDepth > 0,
-                exportBudgetBytes = state.pianoRollExportBudgetBytes,
                 relocationBudgetBytes = state.pianoRollRelocationBudgetBytes,
                 originalSequenceBytes = state.pianoRollOriginalSequenceBytes,
-                originalFlattenedBytes = state.pianoRollOriginalFlattenedBytes,
                 onRecordUndo = { label -> state.recordPianoRollEdit(label) },
                 onUndo = { state.undoPianoRollEdit(editorState) },
                 onRedo = { state.redoPianoRollEdit(editorState) },
                 onInstrumentChanged = {
-                    state.recordPianoRollEdit("Instrument edit")
-                    state.updatePianoRollInstrument(it, romParser, editorState)
+                    if (track != null) state.commitPianoRollInstrument(track.id, it, romParser, editorState)
                 },
                 onActiveChannelChanged = { state.pianoRollChannel = it },
                 onSongChanged = { state.notifySongChanged(it, editorState) },
@@ -536,7 +672,7 @@ fun SoundEditorCanvas(
                                     val fallbackWav = state.renderPianoRollFallbackPreview(romParser, song)
                                     val peak = if (fallbackWav.isNotEmpty()) fallbackWav.maxOf { kotlin.math.abs(it.toInt()) } else 0
                                     soundEditorUiLog.info { "[SPC-PIANO] Fallback preview render: ${fallbackWav.size} samples, peak=$peak" }
-                                    state.startPianoRollPlayback(fallbackWav)
+                                    state.startPianoRollPlayback(fallbackWav, approximate = true)
                                 }
                             }
                         }
@@ -586,10 +722,10 @@ fun SoundEditorCanvas(
                 } else {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Select a track or sample", fontSize = 13.sp,
+                            Text("Select a track or sample", fontSize = LocalEditorTheme.current.fontSize.value.heading,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(4.dp))
-                            Text("Browse tracks and BRR samples from the ROM", fontSize = 11.sp,
+                            Text("Browse tracks and BRR samples from the ROM", fontSize = LocalEditorTheme.current.fontSize.value.body,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                         }
                     }
@@ -617,7 +753,7 @@ private fun PendingTrackImportPanel(
         modifier = modifier,
         color = if (blocked) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
         contentColor = if (blocked) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-        shape = RoundedCornerShape(6.dp),
+        shape = SoundControlShape,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
     ) {
         Column(
@@ -626,7 +762,7 @@ private fun PendingTrackImportPanel(
         ) {
             Text(
                 "Import preview: ${pending.fileName}",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -634,7 +770,7 @@ private fun PendingTrackImportPanel(
             pending.reportLines.take(if (blocked) 5 else 3).forEach { line ->
                 Text(
                     line,
-                    fontSize = 9.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = reportTextColor
@@ -644,39 +780,90 @@ private fun PendingTrackImportPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
+                Button(shape = SoundControlShape,
                     onClick = onApply,
                     enabled = pending.canApply,
                     contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp)
+                    modifier = Modifier.heightIn(min = 32.dp)
                 ) {
-                    Text("Apply", fontSize = 10.sp)
+                    Text("Apply", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                 }
                 pending.fittedImport?.let {
-                    Button(
+                    Button(shape = SoundControlShape,
                         onClick = onApplyFitted,
                         contentPadding = PaddingValues(horizontal = 10.dp),
-                        modifier = Modifier.height(28.dp)
+                        modifier = Modifier.heightIn(min = 32.dp)
                     ) {
                         Text(
                             if (it.usesStockInstrumentFallback) "Apply Stock Fit" else "Apply Fitted",
-                            fontSize = 10.sp
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail
                         )
                     }
                 }
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = onCancel,
                     contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp)
+                    modifier = Modifier.heightIn(min = 32.dp)
                 ) {
-                    Text("Cancel", fontSize = 10.sp)
+                    Text("Cancel", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SoundTransportToolbar(
+    state: SoundEditorState, editorState: EditorState, romParser: RomParser?,
+    track: SpcData.TrackInfo?, sample: SoundEditorState.DecodedSample?, waveform: ShortArray?, loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    SoundToolbar(modifier.testTag("sound-toolbar")) {
+        SoundToolbarButton("Play", {
+            scope.launch {
+                if (sample != null) state.playSample(sample, loop = state.loopEnabled)
+                else state.playTrackPreview(state.playbackPosition)
+            }
+        }, Modifier.testTag("sound-play"), enabled = (sample != null || waveform != null) && !loading,
+            primary = true, icon = Icons.Default.PlayArrow)
+        SoundToolbarToggle("Play All", state.playAllEnabled, {
+            state.playAllEnabled = !state.playAllEnabled
+            if (state.playAllEnabled && !state.isPlaying) scope.launch { state.playTrackPreview() }
+        }, Modifier.testTag("sound-play-all"), icon = Icons.Default.QueueMusic)
+        SoundToolbarButton("Stop", { state.stopPlayback(); state.playAllEnabled = false },
+            Modifier.testTag("sound-stop"), icon = Icons.Default.Stop)
+        SoundToolbarToggle("Loop", state.loopEnabled, { state.loopEnabled = !state.loopEnabled },
+            Modifier.testTag("sound-loop"), icon = Icons.Default.Loop)
+        if (track != null && romParser != null) SoundToolbarButton("Edit Track", { state.openPianoRoll(romParser, editorState) },
+            Modifier.testTag("sound-edit-track"), primary = true, icon = Icons.Default.MusicNote)
+        SoundToolbarButton("Export WAV", { scope.launch { state.exportCurrentWav() } },
+            Modifier.testTag("sound-export-wav"), enabled = waveform != null && waveform.isNotEmpty() && !loading, icon = Icons.Default.SaveAlt)
+        if (track != null && romParser != null) {
+            SoundToolbarButton("Export MIDI", { state.exportSelectedTrackMidi(romParser, editorState) },
+                Modifier.testTag("sound-export-midi"), enabled = !loading, icon = Icons.Default.MusicNote)
+            SoundToolbarButton("Export SPC", { state.exportSelectedTrackNative(romParser, editorState) },
+                Modifier.testTag("sound-export-spc"), enabled = !loading, icon = Icons.Default.SaveAlt)
+        }
+        if (sample != null && romParser != null) {
+            SoundToolbarButton("Replace WAV", { state.replaceSampleInRom(romParser, editorState, sample.dirEntry.index) },
+                Modifier.testTag("sound-replace-wav"), primary = true, icon = Icons.Default.PublishedWithChanges,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError))
+            if (state.isSampleReplaced(editorState, sample.dirEntry.index)) SoundToolbarButton("Reset", {
+                state.resetSampleReplacement(editorState, sample.dirEntry.index)
+            }, Modifier.testTag("sound-reset-sample"), icon = Icons.Default.Undo)
+        }
+        Spacer(Modifier.weight(1f))
+        Row(Modifier.height(SoundToolbarHeight), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Rate:", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            for (rate in listOf(8000, 16000, 32000)) SoundToolbarToggle("${rate / 1000}k", state.sampleRate == rate,
+                { state.sampleRate = rate }, Modifier.testTag("sound-rate-$rate"), minWidth = 48.dp)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SoundEditorActiveContent(
     state: SoundEditorState,
@@ -697,173 +884,8 @@ private fun SoundEditorActiveContent(
         }
     }
 
-    Column(modifier = modifier) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(
-                onClick = {
-                    scope.launch {
-                        if (sample != null) state.playSample(sample, loop = state.loopEnabled)
-                        else state.playTrackPreview(state.playbackPosition)
-                    }
-                },
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp),
-                enabled = (sample != null || waveform != null) && !loading
-            ) {
-                Icon(Icons.Default.PlayArrow, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Play", fontSize = 10.sp)
-            }
-
-            val playAllOn = state.playAllEnabled
-            Surface(
-                modifier = Modifier.height(28.dp).clickable {
-                    state.playAllEnabled = !state.playAllEnabled
-                    if (state.playAllEnabled && !state.isPlaying) {
-                        scope.launch { state.playTrackPreview() }
-                    }
-                },
-                color = if (playAllOn) Color(0xFF2196F3) else Color.Transparent,
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(1.dp, if (playAllOn) Color(0xFF2196F3) else MaterialTheme.colorScheme.outline)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.QueueMusic, null, Modifier.size(14.dp),
-                        tint = if (playAllOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(3.dp))
-                    Text("Play All", fontSize = 10.sp,
-                        color = if (playAllOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            OutlinedButton(
-                onClick = { state.stopPlayback(); state.playAllEnabled = false },
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Stop, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Stop", fontSize = 10.sp)
-            }
-
-            val loopOn = state.loopEnabled
-            Surface(
-                modifier = Modifier.height(28.dp).clickable { state.loopEnabled = !state.loopEnabled },
-                color = if (loopOn) Color(0xFF7C4DFF) else Color.Transparent,
-                shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(1.dp, if (loopOn) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.outline)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Loop, null, Modifier.size(14.dp),
-                        tint = if (loopOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(3.dp))
-                    Text("Loop", fontSize = 10.sp,
-                        color = if (loopOn) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            // Edit Track — visible when a track is selected
-            if (track != null && romParser != null) {
-                Button(
-                    onClick = { state.openPianoRoll(romParser, editorState) },
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp)
-                ) {
-                    Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("Edit Track", fontSize = 10.sp)
-                }
-            }
-
-            OutlinedButton(
-                onClick = { scope.launch { state.exportCurrentWav() } },
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp),
-                enabled = waveform != null && waveform.isNotEmpty() && !loading
-            ) {
-                Icon(Icons.Default.SaveAlt, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Export WAV", fontSize = 10.sp)
-            }
-
-            if (track != null && romParser != null) {
-                OutlinedButton(
-                    onClick = { state.exportSelectedTrackMidi(romParser, editorState) },
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp),
-                    enabled = !loading
-                ) {
-                    Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("Export MIDI", fontSize = 10.sp)
-                }
-
-                OutlinedButton(
-                    onClick = { state.exportSelectedTrackNative(romParser, editorState) },
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp),
-                    enabled = !loading
-                ) {
-                    Icon(Icons.Default.SaveAlt, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("Export SPC", fontSize = 10.sp)
-                }
-            }
-
-            // Replace WAV — visible when a sample is selected
-            if (sample != null && romParser != null) {
-                Button(
-                    onClick = {
-                        state.replaceSampleInRom(romParser, editorState, sample.dirEntry.index)
-                    },
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFE05555)
-                    )
-                ) {
-                    Icon(Icons.Default.PublishedWithChanges, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("Replace WAV", fontSize = 10.sp)
-                }
-
-                // Reset — only if this sample has been replaced
-                if (state.isSampleReplaced(editorState, sample.dirEntry.index)) {
-                    OutlinedButton(
-                        onClick = {
-                            state.resetSampleReplacement(editorState, sample.dirEntry.index)
-                        },
-                        contentPadding = PaddingValues(horizontal = 10.dp),
-                        modifier = Modifier.height(28.dp)
-                    ) {
-                        Icon(Icons.Default.Undo, null, Modifier.size(14.dp))
-                        Spacer(Modifier.width(2.dp))
-                        Text("Reset", fontSize = 10.sp)
-                    }
-                }
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            Text("Rate:", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            for (rate in listOf(8000, 16000, 32000)) {
-                FilterChip(
-                    selected = state.sampleRate == rate,
-                    onClick = { state.sampleRate = rate },
-                    label = { Text("${rate / 1000}k", fontSize = 8.sp) },
-                    modifier = Modifier.height(22.dp)
-                )
-            }
-        }
+    SynthModule(modifier.fillMaxSize()) {
+        SoundTransportToolbar(state, editorState, romParser, track, sample, waveform, loading)
 
         Spacer(Modifier.height(4.dp))
 
@@ -873,8 +895,8 @@ private fun SoundEditorActiveContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .background(EditorColors.romBackground, RoundedCornerShape(6.dp))
-                .border(1.dp, Color(0xFF2A2A3A), RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surface, SoundControlShape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, SoundControlShape)
         ) {
             if (waveform != null && waveform.isNotEmpty()) {
                 val waveImg = remember(waveformKey, loopStart, pbPos) {
@@ -909,13 +931,13 @@ private fun SoundEditorActiveContent(
                         .background(Color(0x88000000)).padding(horizontal = 8.dp, vertical = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("${durationMs}ms", fontSize = 9.sp, color = Color(0xFFAABBCC))
-                    Text("${waveform.size} samples", fontSize = 9.sp, color = Color(0xFFAABBCC))
-                    Text("${state.sampleRate}Hz", fontSize = 9.sp, color = Color(0xFFAABBCC))
-                    Text("peak: $peak", fontSize = 9.sp, color = Color(0xFFAABBCC))
+                    Text("${durationMs}ms", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${waveform.size} samples", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${state.sampleRate}Hz", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("peak: $peak", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (loopStart >= 0) {
                         Spacer(Modifier.weight(1f))
-                        Text("loop @ $loopStart", fontSize = 9.sp, color = Color(0xFFFDCB6E))
+                        Text("loop @ $loopStart", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFFFDCB6E))
                     }
                 }
             } else if (loading) {
@@ -924,13 +946,13 @@ private fun SoundEditorActiveContent(
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.height(8.dp))
                         Text("Loading instruments...",
-                            color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+                            color = Color.White.copy(alpha = 0.5f), fontSize = LocalEditorTheme.current.fontSize.value.body)
                     }
                 }
             } else {
                 Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text("Select a track or sample to see waveform",
-                        color = Color.White.copy(alpha = 0.3f), fontSize = 11.sp)
+                        color = Color.White.copy(alpha = 0.3f), fontSize = LocalEditorTheme.current.fontSize.value.body)
                 }
             }
         }
@@ -940,22 +962,22 @@ private fun SoundEditorActiveContent(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier.padding(horizontal = 4.dp)) {
                 Text("Song Set: 0x${track.songSet.toString(16).uppercase().padStart(2, '0')}",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Play Index: 0x${track.playIndex.toString(16).uppercase().padStart(2, '0')}",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Area: ${track.area}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Area: ${track.area}", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else if (sample != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.padding(horizontal = 4.dp)) {
                 Text("SPC: 0x${sample.dirEntry.startAddr.toString(16).uppercase().padStart(4, '0')}",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (sample.loopStart >= 0) {
                     Text("Loop: 0x${sample.dirEntry.loopAddr.toString(16).uppercase().padStart(4, '0')}",
-                        fontSize = 9.sp, color = Color(0xFFFDCB6E))
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFFFDCB6E))
                 }
                 if (romParser != null && state.isSampleReplaced(editorState, sample.dirEntry.index)) {
-                    Text("REPLACED", fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                    Text("REPLACED", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Bold,
                         color = Color(0xFFE05555))
                 }
             }

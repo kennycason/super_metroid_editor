@@ -13,6 +13,11 @@ import com.supermetroid.editor.util.EditorLog
  * Transfer block format: [size:u16] [spcDest:u16] [data:size bytes]...  [0x0000 = end]
  */
 object SpcData {
+    const val STOCK_SAMPLE_COUNT = 40
+    const val SAMPLE_COUNT = 64 // Directory ends at $6E00, before common BRR data.
+    const val SAMPLE_DIRECTORY = 0x6D00
+    const val SAMPLE_DIRECTORY_END = SAMPLE_DIRECTORY + SAMPLE_COUNT * 4
+
 
     // ─── Known SM tracks (song set, play index) → name ──────────────
 
@@ -65,6 +70,9 @@ object SpcData {
     /** Unique song sets referenced by tracks. */
     val SONG_SETS: List<Int> get() = KNOWN_TRACKS.map { it.songSet }.distinct().sorted()
 
+    /** Native pointer-table entries, including setup and the unused Samus-theme bank. */
+    val TRANSFER_SONG_SETS: List<Int> = (0x00..0x48 step 3).toList()
+
     // ─── SPC transfer block parsing ─────────────────────────────────
 
     /**
@@ -114,8 +122,7 @@ object SpcData {
      */
     fun buildInitialSpcRam(romParser: RomParser): ByteArray {
         val spcRam = ByteArray(RomConstants.SPC_RAM_SIZE)
-        val startPc = romParser.snesToPc(0xCF8000)
-        val blocks = parseTransferBlocks(romParser.romData, startPc)
+        val blocks = SpcTransferStream.read(romParser, 0xCF8000).blocks
         applyTransferBlocks(spcRam, blocks)
         return spcRam
     }
@@ -137,8 +144,15 @@ object SpcData {
      * We try common DIR values used by SM's SPC engine.
      */
     fun findSampleDirectory(spcRam: ByteArray): List<SampleDirEntry> {
-        // SM typically uses DIR page at $6C (directory at $6C00)
-        // Also try other common values
+        val native = (0 until SAMPLE_COUNT).mapNotNull { index ->
+            val at = SAMPLE_DIRECTORY + index * 4
+            val start = (spcRam[at].toInt() and 255) or ((spcRam[at + 1].toInt() and 255) shl 8)
+            val loop = (spcRam[at + 2].toInt() and 255) or ((spcRam[at + 3].toInt() and 255) shl 8)
+            if (start < 0x5800 || start in 0x6C00 until SAMPLE_DIRECTORY_END || measureBrrSize(spcRam, start) <= 0) null
+            else SampleDirEntry(index, start, loop)
+        }
+        if (native.size >= 4) return native
+        // Other SPC engines may use another directory page.
         for (dirPage in listOf(0x6C, 0x6D, 0x04, 0x02, 0x1A)) {
             val dirAddr = dirPage * 0x100
             val entries = parseSampleDirectory(spcRam, dirAddr)
@@ -320,9 +334,10 @@ object SpcData {
      *
      * @param pcm Signed 16-bit PCM samples
      * @param loopBlock If >= 0, the block index where looping starts (sets loop flag)
+     * @param resetPredictorsAt Block indexes forced to filter 0 for history-independent entry
      * @return BRR encoded bytes
      */
-    fun encodeBrr(pcm: ShortArray, loopBlock: Int = -1): ByteArray {
+    fun encodeBrr(pcm: ShortArray, loopBlock: Int = -1, resetPredictorsAt: Set<Int> = emptySet()): ByteArray {
         val blockCount = (pcm.size + 15) / 16
         if (blockCount == 0) return ByteArray(0)
         val output = ByteArray(blockCount * 9)
@@ -345,7 +360,8 @@ object SpcData {
             var bestP1 = prev1
             var bestP2 = prev2
 
-            for (filter in 0..3) {
+            // A loop entry must decode independently of the predictor history at its tail.
+            for (filter in if (block in resetPredictorsAt) 0..0 else 0..3) {
                 for (shift in 0..12) {
                     var p1 = prev1
                     var p2 = prev2
@@ -472,9 +488,7 @@ object SpcData {
     ): List<TransferBlock> {
         val ptr = readSongSetPointer(romParser, songSet)
         if (ptr <= 0) return emptyList()
-        val pc = romParser.snesToPc(ptr)
-        if (pc < 0 || pc + 4 >= romParser.romData.size) return emptyList()
-        return parseTransferBlocks(romParser.romData, pc)
+        return SpcTransferStream.read(romParser, ptr).blocks
     }
 
     /**
@@ -483,6 +497,13 @@ object SpcData {
      */
     fun readSongSetPointer(romParser: RomParser, songSet: Int): Int {
         val rom = romParser.romData
+        if (songSet !in 0..0xFC || songSet % 3 != 0) return 0
+        if (songSet > 0x48 && runCatching { SpcMusicBankTable.read(romParser).expanded }.getOrDefault(false).not()) return 0
+        val owned = runCatching { SpcMusicBankTable.read(romParser) }.getOrNull()?.takeIf { it.expanded }
+        if (owned != null) {
+            val ptr = readPointerAt(rom, owned.pc + songSet)
+            return if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) ptr else 0
+        }
 
         // If the loader has been repointed, prefer the table it actually reads.
         val tableAddr = findRelocatedTable(rom, romParser)
@@ -492,6 +513,8 @@ object SpcData {
                 return relocPtr
             }
         }
+
+        if (songSet > 0x48) return 0
 
         // Try vanilla table location for unmodified ROMs.
         val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
@@ -509,6 +532,7 @@ object SpcData {
      * Song set values are direct byte offsets into the packed table.
      */
     fun findSongSetPointerEntryPc(romParser: RomParser, songSet: Int): Int {
+        if (songSet > 0x48 && readSongSetPointer(romParser, songSet) == 0) return -1
         val rom = romParser.romData
 
         val tableAddr = findRelocatedTable(rom, romParser)
@@ -536,9 +560,7 @@ object SpcData {
      */
     fun findSongSetPointerTable(romParser: RomParser): Map<Int, Int> {
         val result = mutableMapOf<Int, Int>()
-        val knownSets = listOf(0x00, 0x03, 0x06, 0x09, 0x0C, 0x0F, 0x12, 0x15,
-            0x18, 0x1B, 0x1E, 0x21, 0x24, 0x27, 0x2A, 0x2D,
-            0x30, 0x33, 0x36, 0x39, 0x3C, 0x3F, 0x42, 0x45)
+        val knownSets = SpcMusicBankTable.songSets(romParser)
         for (ss in knownSets) {
             val ptr = readSongSetPointer(romParser, ss)
             if (ptr > 0) result[ss] = ptr
@@ -568,6 +590,7 @@ object SpcData {
         if (pc < 0 || pc + 4 >= rom.size) return false
         val blkSize = (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8)
         val blkDest = (rom[pc + 2].toInt() and 0xFF) or ((rom[pc + 3].toInt() and 0xFF) shl 8)
+        if (blkSize == 0xFFFF) return pc + 5 <= rom.size // Strict reader verifies the hook and full reachable stream.
         return blkSize in 1..0xF000 && blkDest < RomConstants.SPC_RAM_SIZE && pc + 4 + blkSize <= rom.size
     }
 
@@ -666,23 +689,10 @@ object SpcData {
         fun romOffsetFor(spcAddr: Int): Int = dataStartPc + (spcAddr - destAddr)
     }
 
-    private fun parseTransferBlockRefs(romData: ByteArray, chainStartPc: Int): List<TransferBlockRef> {
-        val refs = mutableListOf<TransferBlockRef>()
-        var pos = chainStartPc
-        var order = 0
-        while (pos + 4 <= romData.size) {
-            val size = (romData[pos].toInt() and 0xFF) or
-                ((romData[pos + 1].toInt() and 0xFF) shl 8)
-            if (size == 0) break
-            val dest = (romData[pos + 2].toInt() and 0xFF) or
-                ((romData[pos + 3].toInt() and 0xFF) shl 8)
-            val dataStart = pos + 4
-            if (dataStart + size > romData.size) break
-            refs += TransferBlockRef(dest, size, dataStart, order++)
-            pos = dataStart + size
+    private fun parseTransferBlockRefs(parser: RomParser, pointer: Int): List<TransferBlockRef> =
+        SpcTransferStream.read(parser, pointer).sourceBlocks.mapIndexed { order, block ->
+            TransferBlockRef(block.destAddr, block.data.size, block.dataStartPc, order)
         }
-        return refs
-    }
 
     /**
      * Convert SPC RAM writes back into ROM PC writes inside a song-set transfer
@@ -702,18 +712,18 @@ object SpcData {
 
         val ptr = readSongSetPointer(romParser, songSet)
         require(ptr > 0) { "songSet 0x${songSet.toString(16)} has no valid transfer block pointer" }
-        val chainStartPc = romParser.snesToPc(ptr)
-        val refs = parseTransferBlockRefs(romParser.romData, chainStartPc)
+        val refs = parseTransferBlockRefs(romParser, ptr)
         require(refs.isNotEmpty()) { "songSet 0x${songSet.toString(16)} has no transfer blocks" }
         val fallbackRefs = if (fallbackToBaseSongSet && songSet != 0) {
             val basePtr = readSongSetPointer(romParser, 0)
-            if (basePtr > 0) parseTransferBlockRefs(romParser.romData, romParser.snesToPc(basePtr)) else emptyList()
+            if (basePtr > 0) parseTransferBlockRefs(romParser, basePtr) else emptyList()
         } else {
             emptyList()
         }
 
         val bytesByRomOffset = sortedMapOf<Int, Int>()
         for ((startAddr, data) in spcWrites) {
+            require(startAddr in 0 until 65536 && data.size <= 65536 - startAddr) { "SPC write exceeds RAM bounds" }
             for (i in data.indices) {
                 val spcAddr = (startAddr + i) and 0xFFFF
                 val ref = refs.lastOrNull { it.contains(spcAddr) }
@@ -742,7 +752,6 @@ object SpcData {
         dirEntry: SampleDirEntry,
         allDirEntries: List<SampleDirEntry>
     ): SampleRomLocation? {
-        val rom = romParser.romData
         val brrSize = measureBrrSize(spcRam, dirEntry.startAddr)
         if (brrSize == 0) return null
 
@@ -759,16 +768,16 @@ object SpcData {
         // Search song-set-specific chain first (it loads after base, so it wins)
         val songSetPtr = readSongSetPointer(romParser, songSet)
         if (songSetPtr > 0) {
-            val songSetPc = romParser.snesToPc(songSetPtr)
-            val romOffset = findRomOffsetForSpcAddr(rom, songSetPc, dirEntry.startAddr)
+            val romOffset = parseTransferBlockRefs(romParser, songSetPtr).lastOrNull { it.contains(dirEntry.startAddr) }
+                ?.romOffsetFor(dirEntry.startAddr) ?: -1
             if (romOffset >= 0) {
                 return SampleRomLocation(romOffset, brrSize, dirEntry.startAddr, maxBrrSize)
             }
         }
 
         // Search base chain ($CF:8000)
-        val basePc = romParser.snesToPc(0xCF8000)
-        val romOffset = findRomOffsetForSpcAddr(rom, basePc, dirEntry.startAddr)
+        val romOffset = parseTransferBlockRefs(romParser, 0xCF8000).lastOrNull { it.contains(dirEntry.startAddr) }
+            ?.romOffsetFor(dirEntry.startAddr) ?: -1
         if (romOffset >= 0) {
             return SampleRomLocation(romOffset, brrSize, dirEntry.startAddr, maxBrrSize)
         }

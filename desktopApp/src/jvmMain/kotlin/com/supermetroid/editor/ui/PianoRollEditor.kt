@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -78,7 +79,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -145,7 +148,7 @@ private fun ToolbarMenuButton(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        OutlinedButton(
+        OutlinedButton(shape = SoundControlShape,
             onClick = { expanded = true },
             contentPadding = PaddingValues(horizontal = 8.dp),
             modifier = Modifier.height(28.dp)
@@ -197,8 +200,9 @@ private data class PianoRollDragState(
     val currentTick: Int,
     val currentDuration: Int,
     val currentNoteValue: Int,
-    val changed: Boolean = false
-)
+) {
+    val changed get() = currentTick != startTick || currentDuration != startDuration || currentNoteValue != startNoteValue
+}
 
 private fun quantizeTick(tick: Int): Int =
     ((tick + NOTE_TICK_STEP / 2) / NOTE_TICK_STEP) * NOTE_TICK_STEP
@@ -239,12 +243,40 @@ fun PianoRollEditor(
     song: Song,
     activeChannel: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry> = emptyList(),
+    instrumentSourcePitches: Map<Int, Int> = emptyMap(),
+    sampleBrowser: MusicSampleBrowserState = MusicSampleBrowserState(),
+    onPreviewSample: (Int, Int, Note) -> Unit = { _, _, _ -> },
+    onChooseSample: (Int, Int) -> Unit = { _, _ -> },
+    onRenameSample: (String, String) -> Unit = { _, _ -> },
+    onTrySample: ((Note) -> Unit)? = null,
+    onOpenPresets: ((Note) -> Unit)? = null,
+    onOpenBank: (() -> Unit)? = null,
+    instrumentNames: Map<Int, String> = emptyMap(),
+    instrumentBankLabel: String = "Current sound bank",
+    instrumentSourceLabel: String = "ROM bank",
+    sharedInstrumentTracks: List<String> = emptyList(),
+    sharedInstrumentEdits: Set<Int> = emptySet(),
+    onResetSharedInstrument: (Int) -> Unit = {},
+    instrumentEditingEnabled: Boolean = true,
+    nativeInstrumentPreviewAvailable: Boolean = false,
+    previewInstrument: Int? = null,
+    instrumentPreviewBusy: Boolean = false,
+    instrumentPreviewMessage: String = "",
+    onPreviewInstrument: (Int, Note) -> Unit = { _, _ -> },
+    onStopInstrumentPreview: () -> Unit = {},
+    liveInstrumentPreview: Boolean = true,
+    onLiveInstrumentPreviewChanged: ((Boolean) -> Unit)? = null,
+    auditionOriginal: Boolean = false,
+    originalAuditionIds: Set<Int> = emptySet(),
+    onAuditionOriginalChanged: ((Boolean) -> Unit)? = null,
+    onAuditionInstrument: ((Int, Note) -> Unit)? = null,
+    onAuditionKeyDown: ((Int, Note) -> Unit)? = null,
+    onAuditionKeyUp: ((Int, Int) -> Unit)? = null,
+    onRenameInstrument: (Int, String) -> Unit = { _, _ -> },
     canUndo: Boolean = false,
     canRedo: Boolean = false,
-    exportBudgetBytes: Int = 0,
     relocationBudgetBytes: Int = 0,
     originalSequenceBytes: Int = 0,
-    originalFlattenedBytes: Int = 0,
     onRecordUndo: (String) -> Unit = {},
     onUndo: () -> Boolean = { false },
     onRedo: () -> Boolean = { false },
@@ -295,19 +327,11 @@ fun PianoRollEditor(
     var selectedChannel by remember { mutableStateOf(activeChannel) }
     var showAllChannels by remember { mutableStateOf(true) }
     var showNoteProperties by remember { mutableStateOf(false) }
+    var showExpression by remember { mutableStateOf(false) }
     var dragState by remember { mutableStateOf<PianoRollDragState?>(null) }
     var selectionBox by remember { mutableStateOf<PianoRollSelectionBox?>(null) }
     var clipboardNotes by remember { mutableStateOf<List<PianoRollEditLogic.ClipboardNote>>(emptyList()) }
-    val flattenedBytes = remember(song, editVersion) { NspcSequence.encodedSequenceSize(song) }
-    val originalFlatBytes = originalFlattenedBytes.takeIf { it > 0 } ?: flattenedBytes
-    val trackUsageBytes = (originalSequenceBytes + flattenedBytes - originalFlatBytes).coerceAtLeast(0)
-    val budgetFit = remember(song, editVersion, relocationBudgetBytes, flattenedBytes) {
-        if (song.isModified && relocationBudgetBytes > 0 && flattenedBytes > relocationBudgetBytes) {
-            runCatching { MusicSequenceBudget.fitSongToEncodedBudget(song, relocationBudgetBytes) }.getOrNull()
-        } else {
-            null
-        }
-    }
+    val encoding = remember(song, editVersion) { PianoRollEditLogic.checkEncoding(song) }
 
     fun scrollTo(x: Float) {
         hScrollPx = x.coerceIn(0f, maxHScroll)
@@ -489,18 +513,18 @@ fun PianoRollEditor(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(
+                Button(shape = SoundControlShape,
                     onClick = onPlay,
                     contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp),
-                    enabled = !isPlaying
+                    modifier = Modifier.height(28.dp).testTag("piano-roll-play"),
+                    enabled = !isPlaying && encoding.canEncode
                 ) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(14.dp))
                     Spacer(Modifier.width(2.dp))
                     Text("Play", fontSize = 10.sp)
                 }
 
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = onStop,
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier.height(28.dp)
@@ -515,7 +539,7 @@ fun PianoRollEditor(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = {
                         val removed = song.channels[activeChannel].notes.size
                         mutateSong(historyLabel = "Clear channel") {
@@ -532,7 +556,7 @@ fun PianoRollEditor(
                     Text("Clear Ch", fontSize = 10.sp)
                 }
 
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = onReset,
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier.height(28.dp)
@@ -568,18 +592,18 @@ fun PianoRollEditor(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = { undoMusicEdit() },
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(28.dp).testTag("piano-roll-undo"),
                     enabled = canUndo
                 ) {
                     Icon(Icons.Default.Undo, "Undo music edit", Modifier.size(15.dp))
                 }
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = { redoMusicEdit() },
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(28.dp).testTag("piano-roll-redo"),
                     enabled = canRedo
                 ) {
                     Icon(Icons.Default.Redo, "Redo music edit", Modifier.size(15.dp))
@@ -665,7 +689,7 @@ fun PianoRollEditor(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = { zoomIndex = (effectiveZoomIndex - 1).coerceAtLeast(0) },
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.size(24.dp),
@@ -677,7 +701,7 @@ fun PianoRollEditor(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(24.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                OutlinedButton(
+                OutlinedButton(shape = SoundControlShape,
                     onClick = { zoomIndex = (effectiveZoomIndex + 1).coerceAtMost(ZOOM_LEVELS.lastIndex) },
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.size(24.dp),
@@ -687,6 +711,14 @@ fun PianoRollEditor(
                 }
             }
 
+            OutlinedButton(onClick = { showExpression = !showExpression }, shape = SoundControlShape,
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(28.dp).testTag("expression-toggle")) {
+                Text(if (showExpression) "Close expression" else "Expression", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+            }
+            if (onOpenBank != null) OutlinedButton(onClick = onOpenBank, shape = SoundControlShape,
+                contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(28.dp).testTag("sound-bank-manager")) {
+                Text("Sound bank", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -694,7 +726,7 @@ fun PianoRollEditor(
                 Text("Tempo: ${song.tempo}", fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                Button(
+                Button(shape = SoundControlShape,
                     onClick = onDone,
                     contentPadding = PaddingValues(horizontal = 12.dp),
                     modifier = Modifier.height(28.dp)
@@ -707,13 +739,12 @@ fun PianoRollEditor(
         }
 
         PianoRollExportBudgetMeter(
-            trackUsageBytes = trackUsageBytes,
-            flattenedBytes = flattenedBytes,
-            budgetBytes = exportBudgetBytes,
+            encodedBytes = encoding.bytes,
+            savedBytes = encoding.savedBytes,
             relocationBudgetBytes = relocationBudgetBytes,
             originalSequenceBytes = originalSequenceBytes,
             isModified = song.isModified,
-            fitPreview = budgetFit,
+            problem = encoding.problem,
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
         )
 
@@ -741,6 +772,15 @@ fun PianoRollEditor(
                     scrollTo(cursorX - viewportWidth * 0.25f)
                 }
             }
+        }
+
+        if (showExpression) MusicExpressionPanel(song, activeChannel) { updated, label ->
+            onRecordUndo(label)
+            for (channel in 0 until 8) {
+                song.channels[channel].commands.clear()
+                song.channels[channel].commands.addAll(updated.channels[channel].commands)
+            }
+            song.isModified = true; editVersion++; onSongChanged(song)
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -1029,6 +1069,7 @@ fun PianoRollEditor(
                     ) {
                         Canvas(
                             modifier = Modifier
+                                .testTag("piano-roll-grid")
                                 .fillMaxWidth()
                                 .height(gridHeight.dp)
                                 .onPointerEvent(PointerEventType.Press) { event ->
@@ -1133,15 +1174,14 @@ fun PianoRollEditor(
                                                 currentTick = (state.startTick + dxTicks).coerceIn(0, maxStartTickForDuration(state.currentDuration)),
                                                 currentNoteValue = (state.startNoteValue + pitchDelta)
                                                     .coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX),
-                                                changed = true
                                             )
                                         }
                                         PianoRollDragMode.ResizeEnd -> {
-                                            val maxDuration = (totalTicks - state.startTick).coerceAtLeast(NOTE_TICK_STEP)
+                                            val maxDuration = (totalTicks - state.startTick).coerceAtLeast(1)
                                             state.copy(
-                                                currentDuration = quantizeTick(state.startDuration + dxTicks)
-                                                    .coerceIn(NOTE_TICK_STEP, maxDuration),
-                                                changed = true
+                                                // Snap the drag delta, not a native note's original length.
+                                                // A click/jitter must not turn e.g. 30 ticks into 36.
+                                                currentDuration = (state.startDuration + dxTicks).coerceIn(1, maxDuration),
                                             )
                                         }
                                     }
@@ -1261,10 +1301,35 @@ fun PianoRollEditor(
                     channel = selectedChannel,
                     totalTicks = totalTicks,
                     instrumentInfos = instrumentInfos,
+                    instrumentSourcePitches = instrumentSourcePitches,
+                    sampleBrowser = sampleBrowser, onPreviewSample = onPreviewSample,
+                    onChooseSample = onChooseSample, onRenameSample = onRenameSample,
+                    onTrySample = onTrySample,
+                    onOpenPresets = onOpenPresets,
+                    instrumentNames = instrumentNames,
+                    instrumentBankLabel = instrumentBankLabel,
+                    instrumentSourceLabel = instrumentSourceLabel,
+                    sharedInstrumentTracks = sharedInstrumentTracks,
+                    sharedInstrumentEdits = sharedInstrumentEdits,
+                    onResetSharedInstrument = onResetSharedInstrument,
+                    instrumentEditingEnabled = instrumentEditingEnabled,
+                    nativeInstrumentPreviewAvailable = nativeInstrumentPreviewAvailable,
+                    previewInstrument = previewInstrument,
+                    instrumentPreviewBusy = instrumentPreviewBusy,
+                    instrumentPreviewMessage = instrumentPreviewMessage,
+                    onPreviewInstrument = onPreviewInstrument,
+                    onStopInstrumentPreview = onStopInstrumentPreview,
+                    liveInstrumentPreview = liveInstrumentPreview,
+                    onLiveInstrumentPreviewChanged = onLiveInstrumentPreviewChanged,
+                    auditionOriginal = auditionOriginal, originalAuditionIds = originalAuditionIds,
+                    onAuditionOriginalChanged = onAuditionOriginalChanged, onAuditionInstrument = onAuditionInstrument,
+                    onAuditionKeyDown = onAuditionKeyDown, onAuditionKeyUp = onAuditionKeyUp,
+                    onRenameInstrument = onRenameInstrument,
                     usedInstrumentIds = song.channels.flatMap { it.notes.map { note -> note.instrument } }.toSet().sorted(),
                     onInstrumentChanged = onInstrumentChanged,
-                    onClose = { showNoteProperties = false },
+                    onClose = { onStopInstrumentPreview(); showNoteProperties = false },
                     onDelete = {
+                        onStopInstrumentPreview()
                         setSelection(listOf(PianoRollEditLogic.NoteRef(selectedChannel, noteForProperties)))
                         deleteSelection("properties")
                     },
@@ -1280,71 +1345,42 @@ fun PianoRollEditor(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PianoRollExportBudgetMeter(
-    trackUsageBytes: Int,
-    flattenedBytes: Int,
-    budgetBytes: Int,
-    relocationBudgetBytes: Int,
-    originalSequenceBytes: Int,
-    isModified: Boolean,
-    fitPreview: MusicSequenceBudget.FitResult?,
-    modifier: Modifier = Modifier
+    encodedBytes: Int?, savedBytes: Int, relocationBudgetBytes: Int, originalSequenceBytes: Int,
+    isModified: Boolean, problem: String? = null, modifier: Modifier = Modifier,
 ) {
-    val hasBudget = budgetBytes > 0
-    val ratio = if (hasBudget) trackUsageBytes.toFloat() / budgetBytes else 0f
-    val trackDelta = trackUsageBytes - originalSequenceBytes
-    val trackOver = trackUsageBytes - budgetBytes
-    val relocationText = when {
-        relocationBudgetBytes <= 0 -> "phase-1 flat export ${flattenedBytes} B"
-        flattenedBytes <= relocationBudgetBytes -> "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B"
-        fitPreview != null -> {
-            "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B trims after tick ${fitPreview.cutoffTick}"
+    val fs = LocalEditorTheme.current.fontSize.value
+    if (problem != null || encodedBytes == null) {
+        Surface(modifier, color = MaterialTheme.colorScheme.errorContainer, shape = SoundControlShape) {
+            Text("Track playback/export blocked · ${problem ?: "Cannot measure this arrangement"}",
+                fontSize = fs.detail, color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp).testTag("piano-roll-encoding-problem"))
         }
-        else -> "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B cannot fit"
+        return
     }
-    val color = when {
-        !hasBudget -> MaterialTheme.colorScheme.outline
-        trackUsageBytes <= budgetBytes -> Color(0xFF55D17A)
-        ratio <= 1.10f -> Color(0xFFE0B84F)
-        else -> Color(0xFFE06666)
+    val available = relocationBudgetBytes.takeIf { it > 0 }
+    val fits = available != null && encodedBytes <= available
+    val color = if (available != null && !fits && isModified) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val message = buildString {
+        append("Packed edit $encodedBytes B")
+        if (savedBytes > 0) append(" · saves $savedBytes B")
+        if (available != null) {
+            append(" · estimated space $available B")
+            if (!fits && isModified) append(" · complete track exceeds space by ${encodedBytes - available} B")
+        }
+        if (!isModified && originalSequenceBytes > 0) append(" · ROM footprint $originalSequenceBytes B")
     }
-    val message = when {
-        !hasBudget -> "Track budget unavailable; $relocationText"
-        !isModified -> {
-            "Track budget $trackUsageBytes/$budgetBytes B vanilla; $relocationText"
+    SynthModule(modifier.testTag("piano-roll-sequence-budget")) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Sequence memory", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(message, fontSize = fs.detail, color = color)
         }
-        trackUsageBytes <= budgetBytes -> {
-            val deltaLabel = if (trackDelta >= 0) "+$trackDelta" else trackDelta.toString()
-            "Track budget $trackUsageBytes/$budgetBytes B ($deltaLabel B); $relocationText"
-        }
-        relocationBudgetBytes > 0 && flattenedBytes <= relocationBudgetBytes -> {
-            "Track over by $trackOver B; $relocationText"
-        }
-        fitPreview != null -> "Track over by $trackOver B; $relocationText"
-        else -> "Track over by $trackOver B; $relocationText"
-    }
-
-    Surface(
-        modifier = modifier,
-        color = Color(0xFF171722),
-        shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.45f))
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp)
-        ) {
-            Text("Export budget", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LinearProgressIndicator(
-                progress = ratio.coerceIn(0f, 1f),
-                modifier = Modifier.width(160.dp).height(6.dp),
-                color = color,
-                trackColor = Color(0xFF2B2B38)
-            )
-            Text(message, fontSize = 9.sp, color = color, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-        }
+        if (available != null) LinearProgressIndicator(
+            progress = (encodedBytes.toFloat() / available).coerceIn(0f, 1f),
+            modifier = Modifier.fillMaxWidth().height(4.dp), color = color,
+            trackColor = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -1395,141 +1431,204 @@ private fun DrawScope.drawPianoGrid(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NotePropertiesPanel(
+internal fun NotePropertiesPanel(
     note: Note,
     channel: Int,
     totalTicks: Int,
     instrumentInfos: List<NspcRenderer.InstrumentEntry>,
+    instrumentSourcePitches: Map<Int, Int> = emptyMap(),
+    sampleBrowser: MusicSampleBrowserState = MusicSampleBrowserState(),
+    onPreviewSample: (Int, Int, Note) -> Unit = { _, _, _ -> },
+    onChooseSample: (Int, Int) -> Unit = { _, _ -> },
+    onRenameSample: (String, String) -> Unit = { _, _ -> },
+    onTrySample: ((Note) -> Unit)? = null,
+    onOpenPresets: ((Note) -> Unit)? = null,
+    instrumentNames: Map<Int, String>,
+    instrumentBankLabel: String,
+    instrumentSourceLabel: String,
+    sharedInstrumentTracks: List<String>,
+    sharedInstrumentEdits: Set<Int>,
+    onResetSharedInstrument: (Int) -> Unit,
+    instrumentEditingEnabled: Boolean,
+    nativeInstrumentPreviewAvailable: Boolean,
+    previewInstrument: Int?,
+    instrumentPreviewBusy: Boolean,
+    instrumentPreviewMessage: String,
+    onPreviewInstrument: (Int, Note) -> Unit,
+    onStopInstrumentPreview: () -> Unit,
+    onRenameInstrument: (Int, String) -> Unit,
     usedInstrumentIds: List<Int>,
     onInstrumentChanged: (NspcRenderer.InstrumentEntry) -> Unit,
     onClose: () -> Unit,
     onDelete: () -> Unit,
     onBeforeChange: (String) -> Unit,
     onChanged: () -> Unit,
+    liveInstrumentPreview: Boolean = true,
+    onLiveInstrumentPreviewChanged: ((Boolean) -> Unit)? = null,
+    auditionOriginal: Boolean = false,
+    originalAuditionIds: Set<Int> = emptySet(),
+    onAuditionOriginalChanged: ((Boolean) -> Unit)? = null,
+    onAuditionInstrument: ((Int, Note) -> Unit)? = null,
+    onAuditionKeyDown: ((Int, Note) -> Unit)? = null,
+    onAuditionKeyUp: ((Int, Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val maxInstrument = if (instrumentInfos.isNotEmpty()) instrumentInfos.lastIndex else 255
-
+    val fs = LocalEditorTheme.current.fontSize.value
+    var noteDetails by remember { mutableStateOf(false) }
     Surface(
-        modifier = modifier.clearAndSetSemantics { },
-        color = Color(0xFF151525),
+        modifier = modifier.testTag("note-properties"),
+        color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, Color(0xFF3A3A4A))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            modifier = Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 6.dp)
+                .testTag("note-properties-content"),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().testTag("note-properties-header"),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(modifier = Modifier.width(72.dp)) {
-                    Text("Ch ${channel + 1}", fontSize = 9.sp, color = CHANNEL_COLORS[channel])
-                    Text(note.name, fontSize = 13.sp, color = Color.White)
-                    Text("${hex(note.noteValue)} / ${note.noteValue}", fontSize = 8.sp, color = Color(0xFF8899AA))
-                }
-
-                NoteNumberProperty("Tick", note.tick, 6, 999999) {
-                    val old = note.tick
-                    val next = quantizeTick(it).coerceIn(0, (totalTicks - note.duration).coerceAtLeast(0))
-                    if (next != old) {
-                        onBeforeChange("Set note tick")
-                        note.tick = next
-                        logPianoEdit("SetTick", channel, note, "$old->${note.tick}")
-                        onChanged()
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(Modifier.size(6.dp).background(CHANNEL_COLORS[channel], RoundedCornerShape(2.dp)))
+                        Text("Channel ${channel + 1}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    Text("Note ${note.name}", fontSize = fs.heading, color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                NoteNumberProperty("Len", note.duration, 4, 9999) {
-                    val old = note.duration
-                    val maxDuration = (totalTicks - note.tick).coerceAtLeast(NOTE_TICK_STEP)
-                    val next = quantizeTick(it).coerceIn(NOTE_TICK_STEP, maxDuration)
-                    if (next != old) {
-                        onBeforeChange("Set note length")
-                        note.duration = next
-                        logPianoEdit("SetLen", channel, note, "$old->${note.duration}")
-                        onChanged()
-                    }
+                OutlinedButton(shape = SoundControlShape, onClick = { noteDetails = !noteDetails },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp).testTag("note-details-toggle")) {
+                    Text("Note details", fontSize = fs.body)
                 }
-                NoteNumberProperty("Pitch", note.noteValue, 3, NspcSequence.NOTE_MAX) {
-                    val old = note.noteValue
-                    val next = it.coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX)
-                    if (next != old) {
-                        onBeforeChange("Set note pitch")
-                        note.noteValue = next
-                        pianoRollLog.info {
-                            "[SPC-PIANO-EDIT] SetPitch ch=${channel + 1} " +
-                                "${NspcSequence.noteToName(old)}->${note.name} ${noteSummary(channel, note)}"
-                        }
-                        onChanged()
-                    }
+                OutlinedButton(shape = SoundControlShape, onClick = onDelete,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp).testTag("note-delete")) {
+                    Text("Delete", fontSize = fs.body)
                 }
-                NoteNumberProperty("Vel", note.velocity, 2, 15) {
-                    val old = note.velocity
-                    val next = it.coerceIn(0, 15)
-                    if (next != old) {
-                        onBeforeChange("Set note velocity")
-                        note.velocity = next
-                        logPianoEdit("SetVel", channel, note, "$old->${note.velocity}")
-                        onChanged()
-                    }
-                }
-                NoteNumberProperty("Q", note.quantize, 1, 7) {
-                    val old = note.quantize
-                    val next = it.coerceIn(0, 7)
-                    if (next != old) {
-                        onBeforeChange("Set note quantize")
-                        note.quantize = next
-                        logPianoEdit("SetQuantize", channel, note, "$old->${note.quantize}")
-                        onChanged()
-                    }
-                }
-                NoteNumberProperty("Inst", note.instrument, 3, maxInstrument) {
-                    val old = note.instrument
-                    val next = it.coerceIn(0, maxInstrument)
-                    if (next != old) {
-                        onBeforeChange("Set note instrument")
-                        note.instrument = next
-                        val oldInst = old.toString(16).uppercase().padStart(2, '0')
-                        val newInst = note.instrument.toString(16).uppercase().padStart(2, '0')
-                        logPianoEdit("SetInstrument", channel, note, "0x$oldInst->0x$newInst")
-                        onChanged()
-                    }
-                }
-
-                Spacer(Modifier.width(8.dp))
-
-                OutlinedButton(
-                    onClick = onDelete,
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    modifier = Modifier.height(26.dp)
-                ) {
-                    Text("Delete", fontSize = 9.sp)
-                }
-                OutlinedButton(
-                    onClick = onClose,
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    modifier = Modifier.height(26.dp)
-                ) {
-                    Text("Close", fontSize = 9.sp)
+                OutlinedButton(shape = SoundControlShape, onClick = onClose,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp).testTag("note-close")) {
+                    Text("Close", fontSize = fs.body)
                 }
             }
 
-            InstrumentInsightPanel(
-                note = note,
-                channel = channel,
-                instrumentInfos = instrumentInfos,
-                usedInstrumentIds = usedInstrumentIds,
-                onInstrumentChanged = onInstrumentChanged,
-                onInstrumentSelected = { inst ->
+            if (noteDetails) {
+                FlowRow(Modifier.fillMaxWidth().testTag("note-details"),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NoteNumberProperty("Start (ticks)", note.tick, 6, 999999) {
+                        val old = note.tick
+                        val next = quantizeTick(it).coerceIn(0, (totalTicks - note.duration).coerceAtLeast(0))
+                        if (next != old) {
+                            onBeforeChange("Set note tick")
+                            note.tick = next
+                            logPianoEdit("SetTick", channel, note, "$old->${note.tick}")
+                            onChanged()
+                        }
+                    }
+                    NoteNumberProperty("Length (ticks)", note.duration, 4, 9999) {
+                        val old = note.duration
+                        val maxDuration = (totalTicks - note.tick).coerceAtLeast(NOTE_TICK_STEP)
+                        val next = quantizeTick(it).coerceIn(NOTE_TICK_STEP, maxDuration)
+                        if (next != old) {
+                            onBeforeChange("Set note length")
+                            note.duration = next
+                            logPianoEdit("SetLen", channel, note, "$old->${note.duration}")
+                            onChanged()
+                        }
+                    }
+                    NotePitchProperty(note.noteValue) {
+                        val old = note.noteValue
+                        val next = it.coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX)
+                        if (next != old) {
+                            onBeforeChange("Set note pitch")
+                            note.noteValue = next
+                            pianoRollLog.info {
+                                "[SPC-PIANO-EDIT] SetPitch ch=${channel + 1} " +
+                                    "${NspcSequence.noteToName(old)}->${note.name} ${noteSummary(channel, note)}"
+                            }
+                            onChanged()
+                        }
+                    }
+                    NoteNumberProperty("Velocity (0–15)", note.velocity, 2, 15) {
+                        val old = note.velocity
+                        val next = it.coerceIn(0, 15)
+                        if (next != old) {
+                            onBeforeChange("Set note velocity")
+                            note.velocity = next
+                            logPianoEdit("SetVel", channel, note, "$old->${note.velocity}")
+                            onChanged()
+                        }
+                    }
+                    NoteNumberProperty("Gate", note.quantize, 1, 7) {
+                        val old = note.quantize
+                        val next = it.coerceIn(0, 7)
+                        if (next != old) {
+                            onBeforeChange("Set note quantize")
+                            note.quantize = next
+                            logPianoEdit("SetQuantize", channel, note, "$old->${note.quantize}")
+                            onChanged()
+                        }
+                    }
+                }
+                Text("Gate: 0 short · 7 full note length", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            NoteInstrumentSelector(
+                note = note, instruments = instrumentInfos, names = instrumentNames,
+                sampleNames = sampleBrowser.samples.mapNotNull { sample -> sampleBrowser.names[sample.resourceId]?.let { sample.srcn to it } }.toMap(),
+                usedIds = usedInstrumentIds.toSet(), bankLabel = instrumentBankLabel,
+                sourceLabel = instrumentSourceLabel,
+                sharedTracks = sharedInstrumentTracks, sharedInstrumentEdited = note.instrument in sharedInstrumentEdits,
+                onResetSharedInstrument = { onResetSharedInstrument(note.instrument) }, instrumentEditingEnabled = instrumentEditingEnabled,
+                nativePreviewAvailable = nativeInstrumentPreviewAvailable,
+                previewInstrument = previewInstrument, previewBusy = instrumentPreviewBusy,
+                previewMessage = instrumentPreviewMessage,
+                onPreview = { index, reference ->
+                    onPreviewInstrument(index, note.copy(noteValue = if (reference) NspcSequence.nameToNote("C4") else note.noteValue))
+                },
+                onStopPreview = onStopInstrumentPreview,
+                livePreview = liveInstrumentPreview,
+                onLivePreviewChanged = onLiveInstrumentPreviewChanged,
+                auditionOriginal = auditionOriginal, originalAuditionIds = originalAuditionIds,
+                onAuditionOriginalChanged = onAuditionOriginalChanged,
+                onAuditionPitch = onAuditionInstrument?.let { play -> { index, pitch -> play(index, note.copy(noteValue = pitch, instrument = index)) } },
+                onAuditionKeyDown = onAuditionKeyDown?.let { play -> { index, pitch -> play(index, note.copy(noteValue = pitch, instrument = index)) } },
+                onAuditionKeyUp = onAuditionKeyUp,
+                onOpenPresets = onOpenPresets?.let { action -> { action(note.copy()) } },
+                onRename = onRenameInstrument,
+                onChoose = { inst ->
                     val old = note.instrument
                     if (inst != old) {
                         onBeforeChange("Set note instrument")
                         note.instrument = inst
-                        logPianoEdit("SetInstrument", channel, note, "${hex(old)}->${hex(note.instrument)} via=used-chip")
+                        logPianoEdit("SetInstrument", channel, note, "${hex(old)}->${hex(note.instrument)} via=browser")
                         onChanged()
+                    }
+                },
+                soundContent = {
+                    instrumentInfos.firstOrNull { it.index == note.instrument }?.let { entry ->
+                        InstrumentRecordingEditor(entry, instrumentSourcePitches[note.instrument],
+                            sampleBrowser.copy(previewSource = sampleBrowser.previewSource.takeIf { previewInstrument == note.instrument }),
+                            instrumentInfos, instrumentNames, usedInstrumentIds.toSet(), note.name, nativeInstrumentPreviewAvailable,
+                            onPreview = { srcn, reference -> onPreviewSample(note.instrument, srcn,
+                                note.copy(noteValue = if (reference) NspcSequence.nameToNote("C4") else note.noteValue)) },
+                            onChoose = { onChooseSample(note.instrument, it) }, onRename = onRenameSample, onControlCommit = onInstrumentChanged,
+                            onTrySample = onTrySample?.let { action -> { action(note.copy()) } })
+                    }
+                },
+                bankContent = {
+                    InstrumentBankPanel(note, instrumentInfos, instrumentNames, usedInstrumentIds) { inst ->
+                        if (inst != note.instrument) {
+                            onBeforeChange("Set note instrument")
+                            note.instrument = inst
+                            onChanged()
+                        }
                     }
                 }
             )
@@ -1537,128 +1636,59 @@ private fun NotePropertiesPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun InstrumentInsightPanel(
+private fun InstrumentBankPanel(
     note: Note,
-    channel: Int,
-    instrumentInfos: List<NspcRenderer.InstrumentEntry>,
-    usedInstrumentIds: List<Int>,
-    onInstrumentChanged: (NspcRenderer.InstrumentEntry) -> Unit,
-    onInstrumentSelected: (Int) -> Unit
+    instruments: List<NspcRenderer.InstrumentEntry>,
+    names: Map<Int, String>,
+    usedIds: List<Int>,
+    onSelect: (Int) -> Unit,
 ) {
-    val info = instrumentInfos.getOrNull(note.instrument)
-    val validRange = if (instrumentInfos.isNotEmpty()) "0..${instrumentInfos.lastIndex}" else "unknown"
-
-    Surface(
-        color = Color(0xFF101020),
-        shape = RoundedCornerShape(5.dp),
-        border = BorderStroke(1.dp, Color(0xFF2A2A3A)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Instrument ${hex(note.instrument)} / ${note.instrument}", fontSize = 10.sp, color = Color.White)
-                Text("valid: $validRange", fontSize = 9.sp, color = Color(0xFF8899AA))
-                if (info == null) {
-                    Text("No table entry found for this song set", fontSize = 9.sp, color = Color(0xFFE0A055))
-                }
+    val fs = LocalEditorTheme.current.fontSize.value
+    val info = instruments.firstOrNull { it.index == note.instrument }
+    SynthModule(Modifier.fillMaxWidth().testTag("sound-bank-details")) {
+        Text("Bank sounds", fontSize = fs.body, fontWeight = FontWeight.Medium)
+        if (usedIds.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (id in usedIds) FilterChip(id == note.instrument, onClick = { onSelect(id) }, shape = SoundControlShape,
+                    modifier = Modifier.testTag("sound-bank-select-$id"),
+                    label = { Text(names[id]?.let { "$it · #$id" } ?: "Sound #$id", fontSize = fs.detail,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis) })
             }
-
-            if (info != null) {
-                Text(
-                    "Shared entry: SRCN selects a BRR sample; ADSR/GAIN/pitch adjust shape playback for every note using this Inst.",
-                    fontSize = 8.sp,
-                    color = Color(0xFF78889A),
-                    lineHeight = 11.sp
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    InstrumentNumberProperty("SRCN", info.srcn, 2, 39, "0..39") {
-                        onInstrumentChanged(info.copy(srcn = it))
-                    }
-                    InstrumentNumberProperty("ADSR1", info.adsr1, 3, 255, hex(info.adsr1)) {
-                        onInstrumentChanged(info.copy(adsr1 = it))
-                    }
-                    InstrumentNumberProperty("ADSR2", info.adsr2, 3, 255, hex(info.adsr2)) {
-                        onInstrumentChanged(info.copy(adsr2 = it))
-                    }
-                    InstrumentNumberProperty("GAIN", info.gain, 3, 255, hex(info.gain)) {
-                        onInstrumentChanged(info.copy(gain = it))
-                    }
-                    InstrumentNumberProperty("Tune", info.pitchAdj, 5, 0xFFFF, "${"%.3f".format(instrumentPitchMultiplier(info))}x") {
-                        onInstrumentChanged(info.copy(pitchAdj = it))
-                    }
-                    Text(
-                        instrumentSummary(info),
-                        fontSize = 9.sp,
-                        color = Color(0xFFAABBCC),
-                        lineHeight = 12.sp
-                    )
-                }
-            }
-
-            if (usedInstrumentIds.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Used in track:", fontSize = 9.sp, color = Color(0xFF8899AA))
-                    for (inst in usedInstrumentIds.take(12)) {
-                        val selected = inst == note.instrument
-                        Surface(
-                            modifier = Modifier.height(24.dp).clickable { onInstrumentSelected(inst) },
-                            color = if (selected) CHANNEL_COLORS[channel].copy(alpha = 0.65f) else Color(0xFF202033),
-                            shape = RoundedCornerShape(4.dp),
-                            border = BorderStroke(1.dp, if (selected) CHANNEL_COLORS[channel] else Color(0xFF3A3A4A))
-                        ) {
-                            Box(
-                                modifier = Modifier.fillMaxHeight().padding(horizontal = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    hex(inst),
-                                    fontSize = 8.sp,
-                                    lineHeight = 8.sp,
-                                    color = if (selected) Color.White else Color(0xFFAABBCC)
-                                )
-                            }
-                        }
-                    }
-                    if (usedInstrumentIds.size > 12) {
-                        Text("+${usedInstrumentIds.size - 12}", fontSize = 8.sp, color = Color(0xFF8899AA))
-                    }
-                }
+        }
+        if (info != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val facts = listOf(
+                "Source" to "#${info.srcn}",
+                "Sample data" to if (info.srcn >= 0x80) "Generated noise" else if (info.brrByteLength >= 0) "${info.brrByteLength} B BRR" else "Unavailable",
+                "Table" to hex(info.tableAddr, 4),
+                "Sample start" to hexOrUnknown(info.sampleStartAddr),
+                "Loop start" to if (info.brrLoops) hexOrUnknown(info.sampleLoopAddr) else "One-shot",
+            )
+            for ((label, value) in facts) Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(value, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
 }
 
-private fun instrumentSummary(info: NspcRenderer.InstrumentEntry): String {
-    val brrBytes = if (info.brrByteLength >= 0) "${info.brrByteLength}B (${info.brrByteLength / 9} blocks)" else "unknown"
-    val loop = if (info.brrLoops) "loop flag present" else "no loop flag seen"
-    val adsrMode = if ((info.adsr1 and 0x80) != 0) "ADSR" else "GAIN"
-    val attack = info.adsr1 and 0x0F
-    val decay = (info.adsr1 shr 4) and 0x07
-    val sustainLevel = (info.adsr2 shr 5) and 0x07
-    val sustainRate = info.adsr2 and 0x1F
-    return "table=${hex(info.tableAddr, 4)} entry=${hex(info.index)} sample=${hexOrUnknown(info.sampleStartAddr)} " +
-        "loopPtr=${hexOrUnknown(info.sampleLoopAddr)} BRR=$brrBytes, $loop\n" +
-        "mode=$adsrMode A=$attack D=$decay SL=$sustainLevel SR=$sustainRate tune=${"%.3f".format(instrumentPitchMultiplier(info))}x"
+@Composable
+private fun NotePitchProperty(value: Int, onChange: (Int) -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var text by remember(value) { mutableStateOf(NspcSequence.noteToName(value)) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Pitch", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AppTextInput(text, { raw ->
+            text = raw.uppercase().take(3)
+            val pitch = NspcSequence.nameToNote(text)
+            if (pitch in NspcSequence.NOTE_MIN..NspcSequence.NOTE_MAX) onChange(pitch)
+        }, modifier = Modifier.width(88.dp).testTag("note-pitch"), fontSize = fs.body,
+            height = (fs.body.value * 1.3f + 12f).coerceAtLeast(32f).dp, monospace = true,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Text("C1–B6", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
-
-private fun instrumentPitchMultiplier(info: NspcRenderer.InstrumentEntry): Double =
-    if (info.pitchAdj == 0) 1.0 else info.pitchAdj.toDouble() / 0x1000
 
 @Composable
 private fun NoteNumberProperty(
@@ -1668,36 +1698,16 @@ private fun NoteNumberProperty(
     maxValue: Int,
     onChange: (Int) -> Unit
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = 8.sp, color = Color(0xFFAABBCC))
+        Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         StatNumberInput(
             value = value,
             onChange = onChange,
             maxDigits = maxDigits,
             maxValue = maxValue,
-            modifier = Modifier.width(54.dp)
+            fontSize = fs.body,
+            modifier = Modifier.width(88.dp).testTag("note-number-$label")
         )
-    }
-}
-
-@Composable
-private fun InstrumentNumberProperty(
-    label: String,
-    value: Int,
-    maxDigits: Int,
-    maxValue: Int,
-    hint: String,
-    onChange: (Int) -> Unit
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = 8.sp, color = Color(0xFFAABBCC), lineHeight = 8.sp)
-        StatNumberInput(
-            value = value,
-            onChange = onChange,
-            maxDigits = maxDigits,
-            maxValue = maxValue,
-            modifier = Modifier.width(if (maxValue > 255) 68.dp else 46.dp)
-        )
-        Text(hint, fontSize = 7.sp, color = Color(0xFF78889A), lineHeight = 7.sp)
     }
 }

@@ -34,6 +34,35 @@ class SmeditBuildServiceTest {
         assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(SmeditBuildRequest(), project) }
     }
 
+    @Test fun `authored effect programs cannot be silently omitted by headless ROM export`() {
+        val project = SmEditProject("source.sfc").apply {
+            soundEffectPrograms["2:80"] = com.supermetroid.editor.data.SoundEffectProgram(2, 128, "Custom", 1, mutableListOf(), mutableListOf())
+        }
+        val original = TestRomHelper.requireRomBytes(); val before = original.copyOf()
+        val failure = assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(original, SmeditBuildRequest(), project) }
+        assertTrue(failure.message.orEmpty().contains("sound effect edits"))
+        assertContentEquals(before, original)
+        val patchOnly = SmeditBuildService().buildPatch(SmeditBuildRequest(), project)
+        assertTrue(patchOnly.report.warnings.any { it.contains("0 operands, 1 programs") })
+    }
+
+    @Test fun `sound setting and sample only projects cannot be silently omitted by headless ROM export`() {
+        val entry = com.supermetroid.editor.data.MusicInstrumentEdit(24, 0x6C90, 0, 0x8F, 0xE0, 127, 0x1000)
+        val sample = com.supermetroid.editor.data.MusicSampleEdit(48, 0x6500, Base64.getEncoder().encodeToString(byteArrayOf(1) + ByteArray(8)), name = "New sample")
+        for (bank in listOf(
+            com.supermetroid.editor.data.MusicInstrumentBankEdit(mutableMapOf(24 to entry)),
+            com.supermetroid.editor.data.MusicInstrumentBankEdit(samples = mutableMapOf(48 to sample))
+        )) {
+            val project = SmEditProject("source.sfc").apply { musicInstrumentBanks["03"] = bank }
+            val original = TestRomHelper.requireRomBytes(); val before = original.copyOf()
+            val failure = assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(original, SmeditBuildRequest(), project) }
+            assertTrue(failure.message.orEmpty().contains("sound settings and custom samples"))
+            assertContentEquals(before, original)
+            val patchOnly = SmeditBuildService().buildPatch(SmeditBuildRequest(), project)
+            assertTrue(patchOnly.report.warnings.any { it.contains("sound settings/custom samples: 1 bank(s)") })
+        }
+    }
+
     @Test fun `short charge aliases preserve custom timing header bytes and empty request values`() {
         val original = TestRomHelper.requireRomBytes()
         val pc = com.supermetroid.editor.rom.ShortChargePatch.pc(SHORT_CHARGE_INITIAL_TIMER_SNES)

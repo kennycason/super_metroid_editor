@@ -849,6 +849,27 @@ data class MusicCommandEdit(
     val params: List<Int> = emptyList(),
 )
 
+/** One typed sound-effect operand in the common SPC program, with an explicit base-byte guard. */
+@Serializable
+data class SoundEffectByteEdit(val expected: Int, val value: Int)
+
+@Serializable
+data class SoundEffectInstruction(val opcode: Int, val params: MutableList<Int> = mutableListOf())
+
+@Serializable
+data class SoundEffectVoiceProgram(val steps: MutableList<SoundEffectInstruction> = mutableListOf())
+
+/** One independent program. Routing remains a verified native configuration in its library. */
+@Serializable
+data class SoundEffectProgram(
+    val library: Int,
+    val id: Int,
+    val name: String,
+    val routingId: Int,
+    val voices: MutableList<SoundEffectVoiceProgram>,
+    val baseline: MutableList<SoundEffectVoiceProgram>,
+)
+
 /**
  * One editable N-SPC channel in a saved music track edit.
  */
@@ -873,10 +894,34 @@ data class MusicInstrumentEdit(
     val pitchAdj: Int,
 )
 
+/** Shared instrument overrides owned by one song set, independently of its arrangements. */
+@Serializable
+data class MusicInstrumentBankEdit(
+    val instruments: MutableMap<Int, MusicInstrumentEdit> = mutableMapOf(),
+    /** Project-owned BRR samples in explicitly reserved directory entries. */
+    val samples: MutableMap<Int, MusicSampleEdit> = mutableMapOf(),
+)
+
+@Serializable
+data class MusicSampleEdit(
+    val srcn: Int,
+    val startAddr: Int,
+    val brrBase64: String,
+    val loopByteOffset: Int? = null,
+    val name: String,
+)
+
 @Serializable
 data class MusicTransferBlockEdit(
     val destAddr: Int,
     val dataBase64: String,
+)
+
+/** Editable model at import time; retained native streams may contain additional control data. */
+@Serializable
+data class MusicNativeBaselineEdit(
+    val tempo: Int,
+    val channels: MutableList<MusicChannelEdit> = mutableListOf(),
 )
 
 @Serializable
@@ -885,6 +930,8 @@ data class MusicNativePayloadEdit(
     val sourceFileName: String = "",
     val sourcePlayIndex: Int = -1,
     val blocks: MutableList<MusicTransferBlockEdit> = mutableListOf(),
+    /** Editable import baseline. Source blocks and samples remain intact after later edits. */
+    val baseline: MusicNativeBaselineEdit,
 )
 
 /**
@@ -897,7 +944,6 @@ data class MusicTrackEdit(
     val trackName: String = "",
     val tempo: Int,
     val channels: MutableList<MusicChannelEdit> = mutableListOf(),
-    val instruments: MutableList<MusicInstrumentEdit> = mutableListOf(),
     val nativePayload: MusicNativePayloadEdit? = null,
 ) {
     companion object {
@@ -905,6 +951,24 @@ data class MusicTrackEdit(
             "${songSet.toString(16).uppercase().padStart(2, '0')}:${playIndex.toString(16).uppercase().padStart(2, '0')}"
     }
 }
+
+/** Independent palette based on one native bank, with retained imported source bytes. */
+@Serializable
+data class MusicBankDefinition(
+    val songSet: Int,
+    val name: String,
+    val sourceSongSet: Int,
+    val sourceBlocks: MutableList<MusicTransferBlockEdit> = mutableListOf(),
+)
+
+/** The reset baseline of an authored track. Arrangement edits live in musicEdits. */
+@Serializable
+data class MusicTrackDefinition(
+    val songSet: Int,
+    val playIndex: Int,
+    val name: String,
+    val baseline: MusicNativeBaselineEdit,
+)
 
 @Serializable
 enum class PatchSortOrder {
@@ -1002,6 +1066,16 @@ data class SmEditProject(
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
+    val musicBanks: MutableMap<String, MusicBankDefinition> = mutableMapOf(),
+    val musicTracks: MutableMap<String, MusicTrackDefinition> = mutableMapOf(),
+    /** The sole owner of instrument overrides, keyed by hexadecimal song set. */
+    val musicInstrumentBanks: MutableMap<String, MusicInstrumentBankEdit> = mutableMapOf(),
+    /** Display-only instrument names, keyed by song set and instrument slot. Never changes ROM bytes. */
+    val musicInstrumentNames: MutableMap<String, String> = mutableMapOf(),
+    /** Recording labels keyed by song set + content/loop identity, never just a reusable SRCN. */
+    val musicSampleNames: MutableMap<String, String> = mutableMapOf(),
+    val soundEffectEdits: MutableMap<String, SoundEffectByteEdit> = mutableMapOf(),
+    val soundEffectPrograms: MutableMap<String, SoundEffectProgram> = mutableMapOf(),
     val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),
     val asmWorkspace: ProjectAsmWorkspaceSettings = ProjectAsmWorkspaceSettings(),
     var versionMajor: Int = 1,

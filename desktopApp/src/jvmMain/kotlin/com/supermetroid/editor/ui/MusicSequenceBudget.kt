@@ -12,40 +12,6 @@ internal object MusicSequenceBudget {
     const val LOW_SEQUENCE_MAX = 0x6C00
     const val SEQUENCE_EXPORT_MAX = RomConstants.SPC_RAM_SIZE
 
-    private val COMMAND_PARAM_COUNT = mapOf(
-        0xE0 to 1,
-        0xE1 to 2,
-        0xE2 to 3,
-        0xE3 to 0,
-        0xE4 to 1,
-        0xE5 to 2,
-        0xE6 to 0,
-        0xE7 to 1,
-        0xE8 to 1,
-        0xE9 to 2,
-        0xEA to 1,
-        0xEB to 3,
-        0xEC to 0,
-        0xED to 1,
-        0xEE to 2,
-        0xEF to 3,
-        0xF0 to 1,
-        0xF1 to 3,
-        0xF2 to 3,
-        0xF3 to 0,
-        0xF4 to 1,
-        0xF5 to 3,
-        0xF6 to 0,
-        0xF7 to 3,
-        0xF8 to 3,
-        0xF9 to 3,
-        0xFA to 1,
-        0xFB to 2,
-        0xFC to 0,
-        0xFD to 0,
-        0xFE to 0,
-    )
-
     data class SpcRange(
         val start: Int,
         val endExclusive: Int
@@ -60,9 +26,10 @@ internal object MusicSequenceBudget {
         val budgetBytes: Int,
         val cutoffTick: Int,
         val removedNotes: Int,
-        val removedCommands: Int
+        val removedCommands: Int,
+        val removedTicks: Int = 0,
     ) {
-        val trimmed get() = removedNotes > 0 || removedCommands > 0
+        val trimmed get() = removedNotes > 0 || removedCommands > 0 || removedTicks > 0
     }
 
     data class TrackBudget(
@@ -81,8 +48,22 @@ internal object MusicSequenceBudget {
         return trackBudgetForTrack(romParser, songSet, playIndex).trackBytes
     }
 
-    fun trackBudgetForTrack(romParser: RomParser, songSet: Int, playIndex: Int): TrackBudget {
-        val baseBlocks = SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000))
+    fun trackBudgetForTrack(romParser: RomParser, songSet: Int, playIndex: Int, project: com.supermetroid.editor.data.SmEditProject? = null): TrackBudget {
+        if (project != null) {
+            val key = com.supermetroid.editor.data.MusicTrackEdit.key(songSet, playIndex)
+            val others = project.copy(musicTracks = project.musicTracks.toMutableMap().also { it.remove(key) },
+                musicEdits = project.musicEdits.toMutableMap().also { it.remove(key) })
+            val resolved = MusicBankResolver.resolve(romParser, others, songSet)
+            val protected = MusicCatalog.tracks(project).filter { it.songSet == songSet && it.playIndex != playIndex }.map { it.playIndex }.toSet()
+            val occupied = buildProtectedSpcOccupancy(com.supermetroid.editor.rom.SpcTransferStream.read(romParser, 0xCF8000).blocks,
+                MusicCatalog.blocks(romParser, project, songSet), resolved.ram, protected) + sampleRanges(resolved.ram) +
+                resolved.writes.map { (at, bytes) -> SpcRange(at, at + bytes.size) } +
+                project.musicTracks.values.filter { it.songSet == songSet }.map { SpcRange(0x581E + it.playIndex * 2, 0x5820 + it.playIndex * 2) }
+            val original = MusicCatalog.baseline(project, songSet, playIndex)?.let(NspcSequence::encodedSequenceSize)
+                ?: originalSequenceBytes(resolved.ram, playIndex)
+            return TrackBudget(original, largestAvailableRange(occupied)?.size ?: 0)
+        }
+        val baseBlocks = com.supermetroid.editor.rom.SpcTransferStream.read(romParser, 0xCF8000).blocks
         val songBlocks = SpcData.findSongSetTransferData(romParser, songSet)
         val spcRam = SpcData.buildInitialSpcRam(romParser).also {
             SpcData.applyTransferBlocks(it, songBlocks)
@@ -111,10 +92,25 @@ internal object MusicSequenceBudget {
         protectedPlayIndexes: Set<Int>
     ): List<SpcRange> {
         val ranges = mutableListOf<SpcRange>()
+        ranges += SoundEffectPrograms.occupied(spcRam)
         ranges += baseBlocks.flatMap { protectedSongBlockRanges(it) }
         ranges += songBlocks.flatMap { protectedSongBlockRanges(it) }
         ranges += buildOriginalSequenceOccupancy(spcRam, protectedPlayIndexes)
         return coalesceSpcRanges(ranges)
+    }
+
+    /** Imported BRR data can occupy otherwise allocatable lower sequence RAM. */
+    fun sampleRanges(ram: ByteArray): List<SpcRange> = buildList {
+        fun protect(at: Int) {
+            if (at < 0x1500 || at >= ram.size) return
+            val size = SpcData.measureBrrSize(ram, at)
+            if (size > 0) add(SpcRange(at, at + size))
+        }
+        for (slot in 0 until SpcData.SAMPLE_COUNT) {
+            val dir = 0x6D00 + slot * 4
+            protect((ram[dir].toInt() and 255) or ((ram[dir + 1].toInt() and 255) shl 8))
+            protect((ram[dir + 2].toInt() and 255) or ((ram[dir + 3].toInt() and 255) shl 8))
+        }
     }
 
     fun largestAvailableRange(occupiedRanges: List<SpcRange>): SpcRange? {
@@ -163,7 +159,12 @@ internal object MusicSequenceBudget {
     ): RelocatedSequencePatch {
         val availableRange = largestAvailableRange(occupiedRanges)
             ?: error("no free SPC sequence RAM for music edit $key")
-        val fit = fitSongToEncodedBudget(song, availableRange.size)
+        val encodedBytes = NspcSequence.encodedSequenceSize(song)
+        require(encodedBytes <= availableRange.size) {
+            "Music edit $key needs $encodedBytes B of SPC sequence RAM; the largest safe gap is ${availableRange.size} B. " +
+                "The complete arrangement cannot fit; no notes or commands were removed."
+        }
+        val fit = FitResult(song, encodedBytes, encodedBytes, availableRange.size, song.totalTicks, 0, 0)
         val allocation = allocateRange(
             occupiedRanges = occupiedRanges,
             size = fit.encodedBytes,
@@ -263,7 +264,8 @@ internal object MusicSequenceBudget {
             budgetBytes = budgetBytes,
             cutoffTick = bestCutoff,
             removedNotes = originalNoteCount - fittedNoteCount,
-            removedCommands = originalCommandCount - fittedCommandCount
+            removedCommands = originalCommandCount - fittedCommandCount,
+            removedTicks = (song.totalTicks - fitted.totalTicks).coerceAtLeast(0),
         )
     }
 
@@ -388,7 +390,7 @@ internal object MusicSequenceBudget {
                     ranges += collectChannelStreamRanges(spcRam, subroutineAddr, visited)
                 }
                 b >= 0xE0 -> {
-                    ptr += COMMAND_PARAM_COUNT[b] ?: 0
+                    ptr += NspcSequence.commandParameterCount(b) ?: 0
                 }
             }
         }

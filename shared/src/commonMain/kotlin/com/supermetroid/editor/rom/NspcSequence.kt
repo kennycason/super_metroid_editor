@@ -67,7 +67,8 @@ object NspcSequence {
     data class ControlCommand(
         var tick: Int,
         var command: Int,           // 0xE0-0xFE
-        var params: IntArray = IntArray(0)
+        var params: IntArray = IntArray(0),
+        val sourceAddress: Int = -1,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -113,7 +114,7 @@ object NspcSequence {
      * Parse a complete song from SPC RAM.
      * Uses the conductor at the given play index to find all blocks and channels.
      */
-    fun parse(spcRam: ByteArray, playIndex: Int, maxTicks: Int = 80000): Song {
+    fun parse(spcRam: ByteArray, playIndex: Int, maxTicks: Int = 80000, maxBlocks: Int = 4096): Song {
         val song = Song()
         val conductorAddr = readWord(spcRam, 0x581E + playIndex * 2)
         if (conductorAddr < 0x1500 || conductorAddr >= 0xFFF0) return song
@@ -124,9 +125,11 @@ object NspcSequence {
         var cPtr = conductorAddr
         var globalTick = 0
         var loopCount = 0
+        var blockCount = 0
+        val playback = PlaybackState()
         val visited = mutableSetOf<Int>()
 
-        while (globalTick < maxTicks) {
+        while (globalTick < maxTicks && blockCount < maxBlocks) {
             if (cPtr < 0x1500 || cPtr + 1 >= spcRam.size) break
             if (cPtr in visited && loopCount > 0) break
             visited.add(cPtr)
@@ -144,8 +147,9 @@ object NspcSequence {
                 }
                 else -> {
                     val channelAddrs = IntArray(8) { readWord(spcRam, word + it * 2) }
-                    val blockTicks = parseBlock(spcRam, channelAddrs, globalTick, song)
+                    val blockTicks = parseBlock(spcRam, channelAddrs, globalTick, song, playback, maxTicks - globalTick)
                     globalTick += blockTicks
+                    blockCount++
                 }
             }
         }
@@ -153,39 +157,54 @@ object NspcSequence {
         return song
     }
 
+    private class ChState {
+        var ptr = 0
+        var ticksRemaining = 0
+        var defaultDuration = 48
+        var quantize = 7
+        var velocity = 15
+        var instrument = 0
+        var finished = false
+        var currentTick = 0
+        var subroutineReturn = 0
+        var loopAddr = 0
+        var loopCount = 0
+        var transpose = 0
+    }
+
+    private class PlaybackState {
+        val channels = Array(8) { ChState() }
+        var percussionBase = 0
+        var transpose = 0
+    }
+
     private fun parseBlock(
         ram: ByteArray,
         channelAddrs: IntArray,
         globalTickOffset: Int,
-        song: Song
+        song: Song,
+        playback: PlaybackState,
+        maxTicks: Int,
     ): Int {
-        data class ChState(
-            var ptr: Int,
-            var ticksRemaining: Int = 0,
-            var defaultDuration: Int = 48,
-            var quantize: Int = 7,
-            var velocity: Int = 15,
-            var instrument: Int = 0,
-            var channelVolume: Float = 1.0f,
-            var finished: Boolean = false,
-            var currentTick: Int = 0,
-            var subroutineReturn: Int = 0,
-            var loopAddr: Int = 0,
-            var loopCount: Int = 0,
-            var transpose: Int = 0
-        )
-
-        val states = Array(8) { ch ->
+        // Native block changes reset pointers/timers, not instrument, length or pitch state.
+        val states = playback.channels
+        for (ch in states.indices) {
             val addr = channelAddrs[ch]
-            ChState(ptr = addr, finished = addr < 0x1500 || addr == 0)
+            states[ch].apply {
+                ptr = addr
+                finished = addr < 0x1500 || addr == 0
+                ticksRemaining = 0
+                loopCount = 0
+            }
         }
 
         var blockTick = 0
         var anyFinished = false
 
-        while (blockTick < 80000 && !anyFinished) {
+        while (blockTick < maxTicks && !anyFinished) {
             var anyActive = false
             for ((ch, st) in states.withIndex()) {
+                if (anyFinished) break
                 if (st.finished) continue
                 anyActive = true
                 if (st.ticksRemaining > 0) {
@@ -223,8 +242,10 @@ object NspcSequence {
                                 }
                             }
                         }
-                        b in 0x80..0xC7 -> {
-                            val noteVal = (b + st.transpose).coerceIn(0x80, 0xC7)
+                        b in 0x80..0xC7 || b in 0xCA..0xDF -> {
+                            if (b >= 0xCA) st.instrument = (b - 0xCA + playback.percussionBase) and 255
+                            val pitch = if (b >= 0xCA) 0xA4 else b
+                            val noteVal = (pitch + st.transpose + playback.transpose).coerceIn(0x80, 0xC7)
                             val dur = st.defaultDuration
                             song.channels[ch].notes.add(Note(
                                 tick = globalTickOffset + blockTick,
@@ -236,44 +257,48 @@ object NspcSequence {
                             ))
                             st.ticksRemaining = dur - 1
                             st.currentTick += dur
+                            break
                         }
                         b == 0xC8 -> { // tie
                             st.ticksRemaining = st.defaultDuration - 1
                             st.currentTick += st.defaultDuration
                             // Extend previous note's duration
                             val lastNote = song.channels[ch].notes.lastOrNull()
-                            if (lastNote != null) {
+                            if (lastNote != null && lastNote.endTick == globalTickOffset + blockTick) {
                                 lastNote.duration += st.defaultDuration
                             }
+                            break
                         }
                         b == 0xC9 -> { // rest
                             st.ticksRemaining = st.defaultDuration - 1
                             st.currentTick += st.defaultDuration
-                        }
-                        b in 0xCA..0xDF -> {
-                            st.instrument = b - 0xCA + 0x17
+                            break
                         }
                         b == 0xE0 -> {
                             if (st.ptr < ram.size) {
                                 val inst = ram[st.ptr].toInt() and 0xFF
                                 st.ptr++
-                                st.instrument = inst
+                                st.instrument = if (inst >= 0x80) (inst - 0xCA + playback.percussionBase) and 255 else inst
                                 song.channels[ch].commands.add(ControlCommand(
                                     tick = globalTickOffset + blockTick,
                                     command = b,
-                                    params = intArrayOf(inst)
+                                    params = intArrayOf(inst), sourceAddress = st.ptr - 2
                                 ))
                             }
                         }
-                        b == 0xEA -> {
+                        b == 0xEA || b == 0xE9 || b == 0xFA -> {
                             if (st.ptr < ram.size) {
                                 val transpose = ram[st.ptr].toInt().toByte().toInt()
                                 st.ptr++
-                                st.transpose = transpose
+                                when (b) {
+                                    0xEA -> st.transpose = transpose
+                                    0xE9 -> playback.transpose = transpose
+                                    0xFA -> playback.percussionBase = transpose and 255
+                                }
                                 song.channels[ch].commands.add(ControlCommand(
                                     tick = globalTickOffset + blockTick,
                                     command = b,
-                                    params = intArrayOf(transpose and 0xFF)
+                                    params = intArrayOf(transpose and 0xFF), sourceAddress = st.ptr - 2
                                 ))
                             }
                         }
@@ -293,21 +318,29 @@ object NspcSequence {
                             }
                         }
                         b >= 0xE0 -> {
-                            val (cmd, params) = parseControlCommand(ram, st.ptr - 1, b, st)
+                            val (cmd, params) = parseControlCommand(ram, st.ptr - 1, b)
                             song.channels[ch].commands.add(ControlCommand(
                                 tick = globalTickOffset + blockTick,
                                 command = b,
-                                params = params
+                                params = params, sourceAddress = st.ptr - 1
                             ))
                             st.ptr = cmd
                         }
                     }
                 }
             }
-            if (!anyActive) break
+            if (!anyActive || anyFinished) break
             blockTick++
         }
 
+        // A participating voice's end advances the entire native block. Do not let
+        // another voice's pending length overlap notes in the following block.
+        val end = globalTickOffset + blockTick
+        for (channel in song.channels) {
+            val note = channel.notes.lastOrNull() ?: continue
+            if (note.tick >= end) channel.notes.removeAt(channel.notes.lastIndex)
+            else if (note.endTick > end) note.duration = end - note.tick
+        }
         return blockTick
     }
 
@@ -316,7 +349,6 @@ object NspcSequence {
         ram: ByteArray,
         cmdAddr: Int,
         cmd: Int,
-        st: Any // using Any to avoid exposing ChState
     ): Pair<Int, IntArray> {
         var ptr = cmdAddr + 1 // skip command byte
         fun readByte(): Int {
@@ -328,29 +360,13 @@ object NspcSequence {
 
         val paramCount = COMMAND_PARAM_COUNT.getOrElse(cmd) { 0 }
 
-        // Special handling for commands that affect channel state
-        @Suppress("UNCHECKED_CAST")
-        when (cmd) {
-            0xE0 -> {
-                val inst = readByte()
-                if (st is MutableMap<*, *>) { /* won't match */ }
-                return Pair(ptr, intArrayOf(inst))
-            }
-            0xEF -> {
-                // Subroutine call: addr_lo, addr_hi, count
-                val lo = readByte()
-                val hi = readByte()
-                val count = readByte()
-                return Pair(ptr, intArrayOf(lo, hi, count))
-            }
-            else -> {
-                val params = IntArray(paramCount) { readByte() }
-                return Pair(ptr, params)
-            }
-        }
+        val params = IntArray(paramCount) { readByte() }
+        return Pair(ptr, params)
     }
 
     /** Number of parameter bytes for each command 0xE0-0xFE. */
+    fun commandParameterCount(command: Int): Int? = COMMAND_PARAM_COUNT[command]
+
     private val COMMAND_PARAM_COUNT = mapOf(
         0xE0 to 1, // instrument
         0xE1 to 1, // pan
@@ -430,7 +446,8 @@ object NspcSequence {
         spcRam: ByteArray? = null,
         failOnOverflow: Boolean = false,
         conductorAddrOverride: Int? = null,
-        sequenceEndAddr: Int = SEQUENCE_DATA_MAX
+        sequenceEndAddr: Int = SEQUENCE_DATA_MAX,
+        compact: Boolean = true,
     ): Map<Int, ByteArray> {
         val writes = mutableMapOf<Int, ByteArray>()
         val maxDataAddr = if (conductorAddrOverride != null) {
@@ -498,6 +515,15 @@ object NspcSequence {
         // Channel data starts after block pointer table (8 channels * 2 bytes = 16 bytes)
         var dataAddr = blockTableAddr + 16
 
+        val flat = (0 until 8).map { ch -> if (isChannelActive(song.channels[ch])) encodeChannel(song, ch) else null }
+        var plan = if (compact) NspcPhrasePacking.pack(flat) else NspcPhrasePacking.flat(flat)
+        if (dataAddr + plan.size > maxDataAddr) {
+            if (failOnOverflow) error("Encoded sequence would overflow SPC allocation (${plan.size + 20} bytes required)")
+            // A truncated packed stream could call a missing body. Legacy truncation uses literals only.
+            plan = NspcPhrasePacking.flat(flat)
+        }
+        val channelStreams = plan.render(dataAddr)
+
         val channelAddrs = IntArray(8)
 
         for (ch in 0 until 8) {
@@ -508,7 +534,7 @@ object NspcSequence {
             }
 
             channelAddrs[ch] = dataAddr
-            val channelData = encodeChannel(channel, song.tempo, ch == 0)
+            val channelData = requireNotNull(channelStreams[ch])
             EditorLog.info("[NSPC-ENCODE]   Ch $ch: ${song.channels[ch].notes.size} notes, " +
                 "${song.channels[ch].commands.size} cmds -> ${channelData.size} bytes at 0x${dataAddr.toString(16)}")
             if (dataAddr + channelData.size > maxDataAddr) {
@@ -534,6 +560,11 @@ object NspcSequence {
             }
             writes[dataAddr] = channelData
             dataAddr += channelData.size
+        }
+
+        for (phrase in plan.phrases) {
+            writes[dataAddr] = phrase
+            dataAddr += phrase.size
         }
 
         // Write block pointer table
@@ -564,123 +595,96 @@ object NspcSequence {
         return writes
     }
 
-    fun encodedSequenceSize(song: Song): Int {
-        var size = 4 + 16 // conductor + one 8-channel block table
-        for (ch in 0 until 8) {
-            val channel = song.channels[ch]
-            if (isChannelActive(channel)) {
-                size += encodeChannel(channel, song.tempo, ch == 0).size
-            }
-        }
-        return size
+    data class EncodingStats(val bytes: Int, val literalBytes: Int, val phrases: Int, val calls: Int) {
+        val savedBytes get() = literalBytes - bytes
     }
 
-    /** Encode a single channel's notes and commands to N-SPC binary. */
-    private fun encodeChannel(channel: Channel, tempo: Int, isFirstChannel: Boolean): ByteArray {
+    fun encodingStats(song: Song): EncodingStats {
+        val channels = (0 until 8).map { ch -> if (isChannelActive(song.channels[ch])) encodeChannel(song, ch) else null }
+        val plan = NspcPhrasePacking.pack(channels)
+        return EncodingStats(20 + plan.size, 20 + plan.flatBytes, plan.phrases.size, plan.calls)
+    }
+
+    fun encodedSequenceSize(song: Song, compact: Boolean = true): Int = if (compact) encodingStats(song).bytes
+        else 20 + (0 until 8).sumOf { ch -> if (isChannelActive(song.channels[ch])) encodeChannel(song, ch).size else 0 }
+
+    /** Encode one monophonic voice; ties preserve held notes across lengths and timed commands. */
+    private fun encodeChannel(song: Song, channelIndex: Int): ByteArray {
+        val channel = song.channels[channelIndex]
         val out = mutableListOf<Int>()
-
-        // Emit tempo on first channel
-        if (isFirstChannel) {
-            out.add(0xE7)
-            out.add(tempo.coerceIn(1, 255))
-        }
-
-        // Sort notes by tick
+        if (channelIndex == 0) out += listOf(0xE7, song.tempo.coerceIn(1, 255))
         val notes = channel.notes.sortedBy { it.tick }
-        // Sort commands by tick
-        val commands = channel.commands
-            .filterNot { isFlowControlCommand(it.command) }
-            .sortedBy { it.tick }
-
+        require(notes.all { it.tick >= 0 && it.duration > 0 && it.endTick > it.tick }) { "Notes need a positive length and non-negative start" }
+        require(notes.zipWithNext().all { (a, b) -> a.endTick <= b.tick }) {
+            "Voice ${channelIndex + 1} has overlapping notes. Move or shorten a note."
+        }
+        val commands = channel.commands.filterNot { isFlowControlCommand(it.command) }.sortedBy { it.tick }
+        require(commands.all { it.tick >= 0 }) { "Commands need a non-negative start" }
+        val globalTransposes = song.channels.flatMapIndexed { owner, voice ->
+            voice.commands.filter { it.command == 0xE9 && it.params.isNotEmpty() }.map { owner to it }
+        }.sortedWith(compareBy<Pair<Int, ControlCommand>> { it.second.tick }.thenBy { it.first })
         var currentTick = 0
+        var commandIndex = 0
         var lastDuration = -1
-        var lastQuantize = -1
-        var lastVelocity = -1
+        var lastQv = -1
         var lastInstrument = -1
-        var noteIdx = 0
-        var cmdIdx = 0
-
-        while (noteIdx < notes.size || cmdIdx < commands.size) {
-            // Find next event (note or command) by tick
-            val nextNoteTick = if (noteIdx < notes.size) notes[noteIdx].tick else Int.MAX_VALUE
-            val nextCmdTick = if (cmdIdx < commands.size) commands[cmdIdx].tick else Int.MAX_VALUE
-
-            if (nextCmdTick <= nextNoteTick && cmdIdx < commands.size) {
-                // Emit control command
-                val cmd = commands[cmdIdx]
-                // Insert rest if needed to advance to this tick
-                if (cmd.tick > currentTick) {
-                    lastDuration = emitRests(out, cmd.tick - currentTick, lastDuration)
-                    currentTick = cmd.tick
+        var transpose = 0
+        fun commandsNow() {
+            while (commandIndex < commands.size && commands[commandIndex].tick == currentTick) {
+                val command = commands[commandIndex++]
+                out += command.command
+                out.addAll(command.params.toList())
+                command.params.firstOrNull()?.let {
+                    if (command.command == 0xE0) lastInstrument = it
+                    if (command.command == 0xEA) transpose = it.toByte().toInt()
                 }
-                out.add(cmd.command)
-                for (p in cmd.params) out.add(p)
-                if (cmd.command == 0xE0 && cmd.params.isNotEmpty()) {
-                    lastInstrument = cmd.params[0]
-                }
-                cmdIdx++
-            } else if (noteIdx < notes.size) {
-                val note = notes[noteIdx]
-
-                // Insert rests to reach this note's tick
-                if (note.tick > currentTick) {
-                    val gap = note.tick - currentTick
-                    lastDuration = emitRests(out, gap, lastDuration)
-                    currentTick = note.tick
-                }
-
-                // Emit instrument change if needed
-                if (note.instrument != lastInstrument) {
-                    if (note.instrument in 0x17..0x33) {
-                        out.add(0xCA + note.instrument - 0x17)
-                    } else {
-                        out.add(0xE0)
-                        out.add(note.instrument)
-                    }
-                    lastInstrument = note.instrument
-                }
-
-                // Emit duration/quantize/velocity if changed
-                if (note.duration != lastDuration || note.quantize != lastQuantize || note.velocity != lastVelocity) {
-                    out.add(note.duration.coerceIn(1, 0x7F))
-                    val qv = ((note.quantize and 0x07) shl 4) or (note.velocity and 0x0F)
-                    out.add(qv)
-                    lastDuration = note.duration
-                    lastQuantize = note.quantize
-                    lastVelocity = note.velocity
-                }
-
-                // Emit note
-                out.add(note.noteValue.coerceIn(NOTE_MIN, NOTE_MAX))
-                currentTick += note.duration
-                noteIdx++
             }
         }
-
-        // End marker
-        out.add(CMD_END)
-
-        return ByteArray(out.size) { out[it].toByte() }
-    }
-
-    /** Emit rest commands to fill a gap. Returns the last duration emitted. */
-    private fun emitRests(out: MutableList<Int>, ticks: Int, lastDuration: Int): Int {
-        var remaining = ticks
-        var currentDuration = lastDuration
-        while (remaining > 0) {
-            val dur = remaining.coerceIn(1, 0x7F)
-            if (dur != currentDuration) {
-                out.add(dur)
-                currentDuration = dur
+        fun globalTranspose(tick: Int): Int = globalTransposes.lastOrNull { (owner, command) ->
+            command.tick < tick || command.tick == tick && owner <= channelIndex
+        }?.second?.params?.first()?.toByte()?.toInt() ?: 0
+        fun advance(target: Int, note: Note? = null) {
+            var first = true
+            // The model stores sounding pitch; preserve transpose commands without applying them twice.
+            val pitch = note?.let { it.noteValue - transpose - globalTranspose(it.tick) }
+            if (pitch != null) require(pitch in NOTE_MIN..NOTE_MAX) { "Transposed note cannot be encoded in the native pitch range" }
+            while (currentTick < target) {
+                commandsNow()
+                val nextCommand = commands.getOrNull(commandIndex)?.tick ?: Int.MAX_VALUE
+                val length = minOf(127, target - currentTick, nextCommand - currentTick)
+                check(length > 0) { "Cannot advance the native voice timeline" }
+                val qv = note?.let { ((it.quantize.coerceIn(0, 7)) shl 4) or it.velocity.coerceIn(0, 15) }
+                if (length != lastDuration || qv != null && qv != lastQv) {
+                    out += length
+                    if (qv != null) { out += qv; lastQv = qv }
+                    lastDuration = length
+                }
+                out += when { note == null -> NOTE_REST; first -> requireNotNull(pitch); else -> NOTE_TIE }
+                currentTick += length
+                first = false
             }
-            out.add(NOTE_REST)
-            remaining -= dur
         }
-        return currentDuration
+        for (note in notes) {
+            advance(note.tick)
+            commandsNow()
+            if (note.instrument != lastInstrument) {
+                out += listOf(0xE0, note.instrument)
+                lastInstrument = note.instrument
+            }
+            advance(note.endTick, note)
+        }
+        advance(sequenceEndTick(song))
+        commandsNow()
+        out += CMD_END
+        return out.map(Int::toByte).toByteArray()
     }
 
     private fun isFlowControlCommand(command: Int): Boolean =
         command == 0xEF
+
+    private fun sequenceEndTick(song: Song): Int = song.channels.maxOf { channel ->
+        maxOf(channel.totalTicks, channel.commands.maxOfOrNull { it.tick } ?: 0)
+    }
 
     private fun isChannelActive(channel: Channel): Boolean =
         channel.notes.isNotEmpty() || channel.commands.any { !isFlowControlCommand(it.command) }

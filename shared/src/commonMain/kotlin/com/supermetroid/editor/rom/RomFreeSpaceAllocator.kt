@@ -19,6 +19,8 @@ class RomFreeSpaceAllocator(
 ) {
     private class SessionState {
         val nextFreeByBank = mutableMapOf<Int, Int>()
+        val protectedRanges = mutableListOf<IntRange>()
+        val reservations = mutableListOf<RomAllocation>()
     }
 
     private var sessionState = SessionState()
@@ -57,6 +59,16 @@ class RomFreeSpaceAllocator(
             excludedRanges = excludedRanges,
         )
 
+    /** Protect live source bytes for this entire export session, including existing observer views. */
+    fun protectRanges(ranges: List<IntRange>) {
+        val live = ranges.filterNot { it.isEmpty() }
+        require(live.all { it.first >= 0 && it.last < romData.size }) { "Protected ROM range is outside ROM bounds" }
+        require(sessionState.reservations.none { allocation -> live.any {
+            allocation.pcOffset <= it.last && allocation.pcOffset + allocation.size > it.first
+        } }) { "Protected ROM range overlaps an existing allocation" }
+        sessionState.protectedRanges += live
+    }
+
     fun reserve(
         size: Int,
         banks: List<Int>,
@@ -85,6 +97,12 @@ class RomFreeSpaceAllocator(
     }
 
     fun write(allocation: RomAllocation, bytes: ByteArray) {
+        validateWrite(allocation, bytes)
+        bytes.copyInto(romData, allocation.pcOffset)
+    }
+
+    /** Read-only validation so a multi-allocation transaction can check every write before committing. */
+    fun validateWrite(allocation: RomAllocation, bytes: ByteArray) {
         require(bytes.size == allocation.size) {
             "allocation ${allocation.label} expects ${allocation.size} bytes, got ${bytes.size}"
         }
@@ -100,7 +118,6 @@ class RomFreeSpaceAllocator(
                 "allocation ${allocation.label} overlaps used ROM byte at PC ${allocation.pcOffset + i}"
             }
         }
-        bytes.copyInto(romData, allocation.pcOffset)
     }
 
     private fun reserveInBank(
@@ -121,10 +138,16 @@ class RomFreeSpaceAllocator(
         val rawCursor = sessionState.nextFreeByBank.getOrPut(bank) {
             scanTrailingFreeStart(bankStart, bankEndExclusive, freeFillByte)
         }
-        val cursor = alignUp(rawCursor, alignment)
+        // New protection may arrive after another exporter initialized this cursor.
+        // Keep its reservations, but move beyond all newly discovered live bytes.
+        val protectedEnd = (excludedRanges + sessionState.protectedRanges)
+            .filter { !it.isEmpty() && it.first < bankEndExclusive && it.last >= bankStart }
+            .maxOfOrNull { minOf(it.last + 1, bankEndExclusive) }
+        val cursor = alignUp(maxOf(rawCursor,
+            protectedEnd?.let { (it + guardBytes).coerceAtMost(bankEndExclusive) } ?: bankStart), alignment)
         if (cursor + size > bankEndExclusive) return null
         for (pc in cursor until cursor + size) {
-            if ((romData[pc].toInt() and 0xFF) != freeFillByte || excludedRanges.any { pc in it }) return null
+            if ((romData[pc].toInt() and 0xFF) != freeFillByte || isProtected(pc)) return null
         }
 
         sessionState.nextFreeByBank[bank] = cursor + size
@@ -134,7 +157,7 @@ class RomFreeSpaceAllocator(
             snesAddress = pcToSnes(cursor),
             size = size,
             label = label,
-        ).also(onReserve)
+        ).also { sessionState.reservations += it; onReserve(it) }
     }
 
     private fun scanTrailingFreeStart(bankStart: Int, bankEndExclusive: Int, freeFillByte: Int): Int {
@@ -142,12 +165,14 @@ class RomFreeSpaceAllocator(
         while (
             firstTrailingFree > bankStart &&
             (romData[firstTrailingFree - 1].toInt() and 0xFF) == freeFillByte
-            && excludedRanges.none { firstTrailingFree - 1 in it }
+            && !isProtected(firstTrailingFree - 1)
         ) {
             firstTrailingFree--
         }
         return (firstTrailingFree + guardBytes).coerceAtMost(bankEndExclusive)
     }
+
+    private fun isProtected(pc: Int) = excludedRanges.any { pc in it } || sessionState.protectedRanges.any { pc in it }
 
     private fun alignUp(value: Int, alignment: Int): Int {
         val remainder = value % alignment

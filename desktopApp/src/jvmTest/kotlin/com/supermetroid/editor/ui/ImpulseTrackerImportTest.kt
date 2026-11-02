@@ -4,6 +4,9 @@ import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.data.MusicInstrumentBankEdit
+import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -105,6 +108,30 @@ class ImpulseTrackerImportTest {
         assertTrue(sampleLoop >= sampleStart)
         val decoded = SpcData.decodeBrr(ram, sampleStart, maxSamples = 64)
         assertTrue(decoded.any { it.toInt() != 0 })
+    }
+
+    @Test
+    fun `generated IT samples remain available after note and gain edits`() {
+        val file = File(tempDir, "editable-sampled.it").apply { writeBytes(simpleItModule(withSampleHeader = true)) }
+        val imported = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+        val source = requireNotNull(imported.nativePayload)
+        val track = SpcData.KNOWN_TRACKS.first { it.songSet == 3 && it.playIndex == 6 }
+        val initial = MusicEditConversion.toProjectEdit(track, imported.song,
+            MusicEditConversion.toProjectNativePayload(source, imported.song))
+        val changed = MusicEditConversion.toSong(initial).also { it.channels[0].notes.single().noteValue = 0xA8 }
+        val edit = MusicEditConversion.toProjectEdit(track, changed, initial.nativePayload)
+        val project = SmEditProject(romPath = "test.sfc")
+        project.musicEdits[MusicEditConversion.key(track.songSet, track.playIndex)] = edit
+        project.musicInstrumentBanks[MusicInstrumentBanks.key(track.songSet)] = MusicInstrumentBankEdit(mutableMapOf(
+            0 to MusicInstrumentBanks.entry(imported.instruments.first { it.index == 0 }.copy(gain = 0x20))))
+        val resolved = MusicBankResolver.resolve(RomParser(TestRomHelper.requireRomBytes()), project, track.songSet)
+        assertEquals(0xA8, NspcSequence.parse(resolved.ram, 6).channels[0].notes.single().noteValue)
+        assertEquals(0x20, resolved.ram[0x6C03].toInt() and 255)
+        for (sampleBlock in source.blocks.filter { it.destAddr >= 0x6E00 }) {
+            org.junit.jupiter.api.Assertions.assertArrayEquals(sampleBlock.data,
+                resolved.ram.copyOfRange(sampleBlock.destAddr, sampleBlock.destAddr + sampleBlock.data.size))
+        }
+        assertTrue(SpcData.decodeBrr(resolved.ram, readU16(resolved.ram, 0x6D00), maxSamples = 64).any { it.toInt() != 0 })
     }
 
     @Test

@@ -111,7 +111,7 @@ class MusicTrackInterchangeTest {
         val sequence = Sequence(Sequence.PPQ, 480)
         val track = sequence.createTrack()
         track.add(MidiEvent(short(ShortMessage.PROGRAM_CHANGE, 9, 12, 0), 0))
-        track.add(MidiEvent(short(ShortMessage.CONTROL_CHANGE, 0, 7, 100), 0))
+        track.add(MidiEvent(short(ShortMessage.CONTROL_CHANGE, 0, 74, 100), 0))
         track.add(MidiEvent(meta(0x01, "ignored metadata"), 0))
         track.add(MidiEvent(short(ShortMessage.NOTE_ON, 9, 120, 80), 0))
         track.add(MidiEvent(short(ShortMessage.NOTE_OFF, 9, 120, 0), 480))
@@ -124,7 +124,7 @@ class MusicTrackInterchangeTest {
         assertEquals(96, result.song.channels[1].notes.single().duration)
         assertEquals(NspcSequence.NOTE_MAX, result.song.channels[1].notes.single().noteValue)
         assertTrue(result.report.hasWarnings)
-        assertTrue(result.report.warnings.any { it.contains("folded into the 8 SNES voices") })
+        assertTrue(result.report.warnings.any { it.contains("Voice packing moved") })
         assertTrue(result.report.warnings.any { it.contains("clamped") })
         assertTrue(result.report.warnings.any { it.contains("unsupported MIDI event") })
         assertTrue(result.report.warnings.any { it.contains("unsupported MIDI metadata") })
@@ -211,7 +211,7 @@ class MusicTrackInterchangeTest {
             playIndex = playIndex,
             spcRam = ram,
             failOnOverflow = true,
-            conductorAddrOverride = 0x5820,
+            conductorAddrOverride = 0x5830,
             sequenceEndAddr = 0x6000
         )
         for ((addr, data) in writes) data.copyInto(ram, addr)

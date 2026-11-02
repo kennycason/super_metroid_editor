@@ -2702,6 +2702,42 @@ class EditorState(
     val favoritePatchIds: Set<String>
         get() = patchFavoriteStore.favoriteIds
 
+    private val musicCreationHistory = java.util.IdentityHashMap<EditOperation, Pair<SmEditProject, SmEditProject>>()
+    internal val canUndoMusicCreation get() = undoVersion.let { undoStack.lastOrNull()?.let { it in musicCreationHistory } == true }
+    internal val canRedoMusicCreation get() = undoVersion.let { redoStack.lastOrNull()?.let { it in musicCreationHistory } == true }
+
+    internal fun applyMusicCreation(plan: MusicCreation.Plan) {
+        require(MusicCreation.sameMusic(project, plan.before)) { "Music changed while creating the track. Reopen New track." }
+        musicCreationHistory.keys.retainAll(undoStack + redoStack)
+        val operation = EditOperation("Create track ${plan.track.name}")
+        musicCreationHistory[operation] = plan.before to plan.after
+        restoreMusicCatalog(plan.after)
+        undoStack.add(operation); redoStack.clear(); undoVersion++
+    }
+
+    private fun restoreMusicCatalog(saved: SmEditProject) {
+        val copy = MusicBankTransitions.snapshot(saved)
+        project.musicBanks.clear(); project.musicBanks.putAll(copy.musicBanks)
+        project.musicTracks.clear(); project.musicTracks.putAll(copy.musicTracks)
+        project.musicEdits.clear(); project.musicEdits.putAll(copy.musicEdits)
+        project.musicInstrumentBanks.clear(); project.musicInstrumentBanks.putAll(copy.musicInstrumentBanks)
+        project.musicInstrumentNames.clear(); project.musicInstrumentNames.putAll(copy.musicInstrumentNames)
+        project.musicSampleNames.clear(); project.musicSampleNames.putAll(copy.musicSampleNames)
+        musicEditVersion++; musicInstrumentNameVersion++; musicSampleNameVersion++; dirty = true
+    }
+
+    private fun restoreMusicCreation(operation: EditOperation, undo: Boolean): Boolean {
+        val (before, after) = musicCreationHistory.getValue(operation)
+        return try {
+            require(MusicCreation.sameMusic(project, if (undo) after else before)) { "Undo later music edits before changing track creation history." }
+            if (undo) MusicCreation.requireUnusedByRooms(project, after.musicTracks.keys - before.musicTracks.keys)
+            restoreMusicCatalog(if (undo) before else after)
+            if (undo) { undoStack.removeAt(undoStack.lastIndex); redoStack.add(operation) }
+            else { redoStack.removeAt(redoStack.lastIndex); undoStack.add(operation) }
+            undoVersion++; true
+        } catch (error: IllegalArgumentException) { postStatus(error.message ?: "Cannot change track creation history"); false }
+    }
+
     /** Compose-observable version counter for saved music edits. */
     var musicEditVersion by mutableStateOf(0)
         private set
@@ -2709,10 +2745,81 @@ class EditorState(
     fun musicEditKey(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
 
     fun hasMusicEdit(songSet: Int, playIndex: Int): Boolean =
-        project.musicEdits.containsKey(musicEditKey(songSet, playIndex))
+        project.musicEdits.containsKey(musicEditKey(songSet, playIndex)) || project.musicTracks.containsKey(musicEditKey(songSet, playIndex)) ||
+            project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.let { it.instruments.isNotEmpty() || it.samples.isNotEmpty() } == true ||
+            project.musicEdits.values.any { it.songSet == songSet && it.nativePayload != null }
+
+    fun setMusicInstrumentBank(songSet: Int, bank: com.supermetroid.editor.data.MusicInstrumentBankEdit?) {
+        require(songSet >= 0 && songSet % 3 == 0)
+        val key = MusicInstrumentBanks.key(songSet)
+        val nonEmptyBank = bank?.takeIf { it.instruments.isNotEmpty() || it.samples.isNotEmpty() }
+        if (project.musicInstrumentBanks[key] == nonEmptyBank) return
+        if (nonEmptyBank == null) project.musicInstrumentBanks.remove(key)
+        else project.musicInstrumentBanks[key] = requireNotNull(MusicInstrumentBanks.copy(nonEmptyBank))
+        dirty = true
+        musicEditVersion++
+    }
 
     fun getMusicEdit(songSet: Int, playIndex: Int): MusicTrackEdit? =
         project.musicEdits[musicEditKey(songSet, playIndex)]
+
+    var musicInstrumentNameVersion by mutableStateOf(0)
+        private set
+
+    internal fun setSoundEffectEdits(edits: Map<String, com.supermetroid.editor.data.SoundEffectByteEdit>) {
+        if (project.soundEffectEdits == edits) return
+        project.soundEffectEdits.clear(); project.soundEffectEdits.putAll(edits)
+        musicEditVersion++
+        markDirty()
+    }
+
+    internal fun setSoundEffectState(edits: Map<String, com.supermetroid.editor.data.SoundEffectByteEdit>, programs: Map<String, com.supermetroid.editor.data.SoundEffectProgram>) {
+        if (project.soundEffectEdits == edits && project.soundEffectPrograms == programs) return
+        project.soundEffectEdits.clear(); project.soundEffectEdits.putAll(edits)
+        project.soundEffectPrograms.clear(); project.soundEffectPrograms.putAll(SoundEffectPrograms.copyMap(programs))
+        musicEditVersion++; markDirty()
+    }
+
+    fun musicInstrumentNames(songSet: Int): Map<Int, String> {
+        // Read the version so Compose observes metadata updates without re-rendering song audio.
+        musicInstrumentNameVersion
+        return (0 until 42).mapNotNull { index ->
+            project.musicInstrumentNames[MusicTrackEdit.key(songSet, index)]?.let { index to it }
+        }.toMap()
+    }
+
+    fun renameMusicInstrument(songSet: Int, index: Int, name: String) {
+        require(songSet >= 0 && songSet % 3 == 0 && index in 0 until 42)
+        val key = MusicTrackEdit.key(songSet, index)
+        val normalized = name.trim().take(64).takeIf { it.isNotEmpty() }
+        if (project.musicInstrumentNames[key] == normalized) return
+        if (normalized == null) project.musicInstrumentNames.remove(key)
+        else project.musicInstrumentNames[key] = normalized
+        musicInstrumentNameVersion++
+        dirty = true
+    }
+
+    var musicSampleNameVersion by mutableStateOf(0)
+        private set
+
+    fun musicSampleNames(songSet: Int): Map<String, String> {
+        musicSampleNameVersion
+        musicEditVersion
+        val prefix = "${MusicInstrumentBanks.key(songSet)}:"
+        val authored = project.musicInstrumentBanks[MusicInstrumentBanks.key(songSet)]?.samples.orEmpty().values.mapNotNull {
+            runCatching { MusicSampleBanks.resourceId(it) to it.name }.getOrNull()
+        }.toMap()
+        return authored + project.musicSampleNames.filterKeys { it.startsWith(prefix) }.mapKeys { it.key.removePrefix(prefix) }
+    }
+
+    fun renameMusicSample(songSet: Int, resourceId: String, name: String) {
+        val key = MusicSampleCatalog.nameKey(songSet, resourceId)
+        val normalized = name.trim().take(64).takeIf { it.isNotEmpty() }
+        if (project.musicSampleNames[key] == normalized) return
+        if (normalized == null) project.musicSampleNames.remove(key) else project.musicSampleNames[key] = normalized
+        musicSampleNameVersion++
+        dirty = true
+    }
 
     fun setMusicEdit(key: String, edit: MusicTrackEdit) {
         project.musicEdits[key] = edit
@@ -10618,6 +10725,7 @@ class EditorState(
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         val pending = undoStack.last()
+        if (pending in musicCreationHistory) return restoreMusicCreation(pending, true)
         if (hasManagedLayouts() && pending.edits.isNotEmpty() && pending !in managedPlmUndo) {
             postStatus("Undo the layout source adoption in ASM before undoing older GUI tile edits."); return false
         }
@@ -10713,6 +10821,7 @@ class EditorState(
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
         val pending = redoStack.last()
+        if (pending in musicCreationHistory) return restoreMusicCreation(pending, false)
         if (hasManagedEnemies() && (pending.enemyAdds.isNotEmpty() || pending.enemyRemoves.isNotEmpty() || pending.enemyUpdates.isNotEmpty())) {
             postStatus("Enemy edit blocked: older ROM enemy edits cannot overwrite authored population source."); return false
         }

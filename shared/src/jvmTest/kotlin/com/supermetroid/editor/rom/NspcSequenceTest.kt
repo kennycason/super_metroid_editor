@@ -8,6 +8,20 @@ class NspcSequenceTest {
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
+    fun `a short added voice waits for the arrangement instead of ending the synchronized block`() {
+        val song = NspcSequence.Song(tempo = 36)
+        song.channels[0].notes += NspcSequence.Note(0, 48, 0x94, instrument = 30)
+        song.channels[0].notes += NspcSequence.Note(96, 48, 0x98, instrument = 30)
+        song.channels[7].notes += NspcSequence.Note(0, 12, 0x9C, instrument = 30)
+        val ram = ByteArray(65536)
+        NspcSequence.encode(song, 5).forEach { (at, data) -> data.copyInto(ram, at) }
+        val parsed = NspcSequence.parse(ram, 5)
+        assertEquals(listOf(0, 96), parsed.channels[0].notes.map { it.tick })
+        assertEquals(144, parsed.totalTicks)
+        assertEquals(30, parsed.channels[7].notes.single().instrument)
+    }
+
+    @Test
     fun `parse Title Screen song has notes across multiple channels`() {
         val parser = loadTestRom() ?: return
         val baseRam = SpcData.buildInitialSpcRam(parser)
@@ -158,7 +172,7 @@ class NspcSequenceTest {
     }
 
     @Test
-    fun `encode ignores legacy EF flow-control commands`() {
+    fun `encode ignores expanded EF flow-control commands`() {
         val spcRam = ByteArray(65536)
         val subroutineAddr = 0x5900
         spcRam[subroutineAddr] = 0x9C.toByte()
@@ -306,10 +320,11 @@ class NspcSequenceTest {
     @Test
     fun `encode failOnOverflow rejects sequence data crossing instrument table`() {
         val song = NspcSequence.Song(tempo = 40)
+        var tick = 0
         repeat(3000) { i ->
             song.channels[0].notes.add(
                 NspcSequence.Note(
-                    tick = i * 24,
+                    tick = tick,
                     duration = 24 + (i % 48),
                     noteValue = 0x94,
                     velocity = 15,
@@ -317,10 +332,16 @@ class NspcSequenceTest {
                     instrument = 0x0B + (i % 20)
                 )
             )
+            tick += 24 + (i % 48)
         }
 
         assertThrows(IllegalStateException::class.java) {
-            NspcSequence.encode(song, 0, failOnOverflow = true)
+            NspcSequence.encode(song, 0, failOnOverflow = true, compact = false)
+        }
+
+        assertThrows(IllegalStateException::class.java) {
+            NspcSequence.encode(song, 5, failOnOverflow = true, conductorAddrOverride = 0x6000,
+                sequenceEndAddr = 0x6000 + NspcSequence.encodedSequenceSize(song) - 1)
         }
 
         val writes = NspcSequence.encode(song, 0)
@@ -354,14 +375,9 @@ class NspcSequenceTest {
 
         val song = NspcSequence.parse(spcRam, 5)
 
-        song.channels[0].notes += NspcSequence.Note(
-            tick = 84,
-            duration = 96,
-            noteValue = NspcSequence.nameToNote("G#1"),
-            velocity = 15,
-            quantize = 7,
-            instrument = 0x1B
-        )
+        // Edit an existing note. Adding another pitch on this busy voice is an overlap,
+        // which the encoder now rejects instead of silently shifting all later events.
+        song.channels[0].notes.first().noteValue = NspcSequence.nameToNote("G#1")
 
         val writes = NspcSequence.encode(song, 5, spcRam, failOnOverflow = true)
         assertTrue(

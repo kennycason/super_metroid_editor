@@ -4,11 +4,27 @@ import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence.Note
 import com.supermetroid.editor.rom.NspcSequence.Song
+import com.supermetroid.editor.data.MusicNativePayloadEdit
+import com.supermetroid.editor.data.MusicInstrumentBankEdit
 import java.util.Collections
 import java.util.IdentityHashMap
 
 internal object PianoRollEditLogic {
     const val HORIZONTAL_SCROLL_MULTIPLIER = 24f
+
+    data class EncodingCheck(val bytes: Int? = null, val problem: String? = null, val savedBytes: Int = 0) {
+        val canEncode get() = bytes != null
+    }
+
+    /** Drafts may temporarily violate native voice rules. Rendering the editor must not. */
+    fun checkEncoding(song: Song): EncodingCheck = try {
+        val stats = NspcSequence.encodingStats(song)
+        EncodingCheck(bytes = stats.bytes, savedBytes = stats.savedBytes)
+    } catch (error: IllegalArgumentException) {
+        EncodingCheck(problem = error.message ?: "Cannot encode these notes")
+    } catch (error: IllegalStateException) {
+        EncodingCheck(problem = error.message ?: "Cannot encode this timeline")
+    }
 
     data class NoteRef(val channel: Int, val note: Note)
 
@@ -25,7 +41,9 @@ internal object PianoRollEditLogic {
     data class EditSnapshot(
         val song: Song,
         val instruments: List<NspcRenderer.InstrumentEntry>,
-        val label: String
+        val label: String,
+        val nativePayload: MusicNativePayloadEdit? = null,
+        val instrumentBank: MusicInstrumentBankEdit? = null,
     )
 
     class EditHistory(private val maxDepth: Int = 100) {
@@ -40,35 +58,39 @@ internal object PianoRollEditLogic {
             redoStack.clear()
         }
 
-        fun record(song: Song, instruments: List<NspcRenderer.InstrumentEntry>, label: String) {
-            undoStack += snapshotOf(song, instruments, label)
+        fun record(song: Song, instruments: List<NspcRenderer.InstrumentEntry>, label: String, nativePayload: MusicNativePayloadEdit? = null, instrumentBank: MusicInstrumentBankEdit? = null) {
+            undoStack += snapshotOf(song, instruments, label, nativePayload, instrumentBank)
             while (undoStack.size > maxDepth) undoStack.removeAt(0)
             redoStack.clear()
         }
 
-        fun undo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>): EditSnapshot? {
+        fun undo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>, nativePayload: MusicNativePayloadEdit? = null, instrumentBank: MusicInstrumentBankEdit? = null): EditSnapshot? {
             if (undoStack.isEmpty()) return null
             val snapshot = undoStack.removeAt(undoStack.lastIndex)
-            redoStack += snapshotOf(currentSong, currentInstruments, "Redo ${snapshot.label}")
+            redoStack += snapshotOf(currentSong, currentInstruments, "Redo ${snapshot.label}", nativePayload, instrumentBank)
             return snapshot
         }
 
-        fun redo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>): EditSnapshot? {
+        fun redo(currentSong: Song, currentInstruments: List<NspcRenderer.InstrumentEntry>, nativePayload: MusicNativePayloadEdit? = null, instrumentBank: MusicInstrumentBankEdit? = null): EditSnapshot? {
             if (redoStack.isEmpty()) return null
             val snapshot = redoStack.removeAt(redoStack.lastIndex)
-            undoStack += snapshotOf(currentSong, currentInstruments, "Undo ${snapshot.label}")
+            undoStack += snapshotOf(currentSong, currentInstruments, "Undo ${snapshot.label}", nativePayload, instrumentBank)
             return snapshot
         }
 
         private fun snapshotOf(
             song: Song,
             instruments: List<NspcRenderer.InstrumentEntry>,
-            label: String
+            label: String,
+            nativePayload: MusicNativePayloadEdit?,
+            instrumentBank: MusicInstrumentBankEdit?
         ): EditSnapshot =
             EditSnapshot(
                 song = PianoRollPreviewLogic.deepCopySong(song),
                 instruments = instruments.map { it.copy() },
-                label = label
+                label = label,
+                nativePayload = MusicEditConversion.copyNativePayload(nativePayload),
+                instrumentBank = MusicInstrumentBanks.copy(instrumentBank)
             )
     }
 
