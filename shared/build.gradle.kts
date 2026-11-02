@@ -50,7 +50,7 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
     group = "build"
 
     if (spcMakefile.exists() && spcSourceFilesDir.exists()) {
-        inputs.dir(spcSourceFilesDir)
+        inputs.files(fileTree(spcSourceFilesDir) { include("**/*.cpp", "**/*.h") })
         inputs.file(spcMakefile)
     }
     // On macOS we output to both arch dirs (fat binary)
@@ -63,9 +63,8 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
     }
 
     doLast {
-        if (!spcMakefile.exists() || !spcSourceFilesDir.exists()) {
-            logger.warn("snes_spc submodule not checked out — skipping native build")
-            return@doLast
+        check(spcMakefile.isFile && spcSourceFilesDir.isDirectory) {
+            "Native SPC sources are missing. Run git submodule update --init tools/snes_spc before building."
         }
 
         val osName = System.getProperty("os.name").lowercase()
@@ -94,6 +93,8 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
             }
             if (osName.contains("win")) {
                 args.add("DYNLIB_PREFIX=")
+                // The installed application must work without MSYS2/MinGW on PATH.
+                args.add("CXX=g++ -static -static-libgcc -static-libstdc++")
             }
             commandLine(args)
         }
@@ -160,6 +161,17 @@ tasks.named("jvmProcessResources") {
 }
 
 val regularJvmTest = tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest")
+
+tasks.register<org.gradle.api.tasks.testing.Test>("spcRuntimeSmokeTest") {
+    group = "verification"
+    description = "Verify the packaged native SPC runtime without private ROM fixtures"
+    dependsOn(tasks.named("jvmTestClasses"))
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform()
+    filter { includeTestsMatching("com.supermetroid.editor.rom.NativeSpcRuntimeTest") }
+    outputs.upToDateWhen { false }
+}
 
 tasks.register<org.gradle.api.tasks.testing.Test>("spriteCoverageTest") {
     group = "verification"

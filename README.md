@@ -174,11 +174,19 @@ cd super_metroid_editor
 # Run tests
 ./gradlew :shared:jvmTest :desktopApp:jvmTest
 
+# Verify packaged native audio without a ROM fixture
+./gradlew :shared:spcRuntimeSmokeTest
+
 # Package for your platform
 ./gradlew :desktopApp:packageDistributionForCurrentOS
 ```
 
-Already cloned? Run `git submodule update --init --recursive` to fetch the native dependencies.
+Already cloned? Sync the dependency URLs before fetching the native sources:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive
+```
 
 Source-backed regression tests use private ROM fixtures. See the [parity setup](parity/README.md)
 and [validation matrix](docs/validation/README.md) for setup, focused checks, and reports.

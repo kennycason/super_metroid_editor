@@ -36,8 +36,8 @@ jobs:
           lfs: true
           submodules: false
 
-      - name: Checkout snes9x submodule
-        run: git submodule update --init --depth=1 tools/snes9x
+      - name: Checkout native audio and emulator submodules
+        run: git submodule update --init --depth=1 tools/snes_spc tools/snes9x
         shell: bash
 
       - name: Set up JDK 17
@@ -48,10 +48,20 @@ jobs:
 
       - name: Install build tools (Windows)
         if: runner.os == 'Windows'
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc make
+
+      - name: Expose native build tools (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          "$env:MSYS2_LOCATION\usr\bin" >> $env:GITHUB_PATH
+          "$env:MSYS2_LOCATION\mingw64\bin" >> $env:GITHUB_PATH
 
       - name: Install build tools (Linux)
         if: matrix.package_task == 'packageRpm'
@@ -70,6 +80,21 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Build and verify packaged SPC runtime
+        run: ./gradlew :shared:spcRuntimeSmokeTest
+        shell: bash
+        env:
+          JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
+
+      - name: Verify standalone SPC DLL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $imports = & objdump -p shared/src/jvmMain/resources/win32-x86-64/spc.dll
+          if ($LASTEXITCODE -ne 0) { throw "Could not inspect spc.dll dependencies" }
+          $runtimeImports = $imports | Select-String 'DLL Name:\s*(libgcc|libstdc\+\+|libwinpthread|msys-)'
+          if ($runtimeImports) { throw "spc.dll depends on unbundled compiler DLLs: $runtimeImports" }
+
       - name: Build and verify packaged Asar toolchain
         run: ./gradlew :desktopApp:asarToolchainSmokeTest
         shell: bash
@@ -81,6 +106,18 @@ jobs:
         shell: bash
         env:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
+
+      - name: Upload failed test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.artifact }}
+          path: |
+            shared/build/reports/tests/
+            shared/build/test-results/
+            desktopApp/build/reports/tests/
+            desktopApp/build/test-results/
+          if-no-files-found: ignore
 
       - name: Build application
         run: ./gradlew :desktopApp:${{ matrix.package_task }}
