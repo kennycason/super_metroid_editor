@@ -79,6 +79,7 @@ internal class AsmVisualEditorResolver(
                 AsmRoomSelectorsSource.targetAt(header, 0)?.let { it to "State selectors / branch order" },
                 AsmDoorSource.targetAt(header, 0)?.let { it to "Door connections" },
                 AsmDoorArrivalsSource.targetAt(header, 0)?.let { it to "Arrival ASM" },
+                AsmRoomObjectSource.targetAt(header, 0)?.let { it to "Room objects (PLMs)" },
                 AsmProjectRoomLabels.sourceTarget(header, 0)?.let { it to "Project room source" },
             ).map { (target, detail) -> AsmEditorLink("Edit room", detail, target) }
         }.takeIf { it.isNotEmpty() }?.let { return it }

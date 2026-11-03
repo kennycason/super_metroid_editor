@@ -23,15 +23,18 @@ class AsmEnemyRuntimeEnrichmentTest {
     @Test fun `v8 adds enemy scheduling and script notes without changing the exact frozen v7 recipe`() {
         val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-7.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
-        assertEquals("super-metroid-ntsc-8", current.revision)
-        assertEquals(previous, current.copy(revision = previous.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith("enemy-runtime.") },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith("enemy-runtime.") }))
-        assertEquals(23, current.documentation.count { it.id.startsWith("enemy-runtime.") })
-        assertEquals(17, groups.size)
-        assertEquals(302, groups.flatMap { it.lines }.count { it.comment != null })
-        val prose = current.documentation.filter { it.id.startsWith("enemy-runtime.") }.flatMap { it.paragraphs } +
-            groups.flatMap { it.lines }.mapNotNull { it.comment }
+        val v8 = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-8.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        assertEquals("super-metroid-ntsc-8", v8.revision)
+        assertEquals(previous, v8.copy(revision = previous.revision,
+            documentation = v8.documentation.filterNot { it.id.startsWith("enemy-runtime.") },
+            lineDocumentation = v8.lineDocumentation.filterNot { it.id.startsWith("enemy-runtime.") }))
+        assertEquals(23, v8.documentation.count { it.id.startsWith("enemy-runtime.") })
+        val v8Groups = v8.lineDocumentation.filter { it.id.startsWith("enemy-runtime.") }
+        assertEquals(17, v8Groups.size)
+        assertEquals(302, v8Groups.flatMap { it.lines }.count { it.comment != null })
+        val prose = v8.documentation.filter { it.id.startsWith("enemy-runtime.") }.flatMap { it.paragraphs } +
+            v8Groups.flatMap { it.lines }.mapNotNull { it.comment }
         assertTrue(prose.none { it.contains("SMEDIT", ignoreCase = true) || it.contains("GUI") })
     }
 

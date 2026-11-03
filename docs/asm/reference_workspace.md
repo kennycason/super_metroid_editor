@@ -63,8 +63,8 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-8`. It retains the
-Zoomer/crawler, Waver, core-loop, pause/door and room-loading documentation unchanged. Revision 5 added
+The current enrichment revision is `super-metroid-ntsc-9`. It retains the
+Zoomer/crawler, Waver, core-loop, pause/door, room-loading and enemy-runtime documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
 ordering, NMI request/lag paths and scanline IRQ dispatch. Revision 6 adds
 23 block explanations and 251 line comments across 19 guarded pause/unpause
@@ -72,8 +72,10 @@ and door-transition scopes, without introducing any symbol renames.
 Revision 7 adds 16 block explanations and 337 line comments across 13 room/state,
 callback and enemy-initialisation scopes, also without new symbol renames.
 Revision 8 adds 23 block explanations and 302 line comments across 17 enemy
-scheduling, AI dispatch, drawing and instruction-script scopes. Existing names,
-instructions and upstream comments remain intact.
+scheduling, AI dispatch, drawing and instruction-script scopes. Revision 9 adds
+10 block explanations and 103 line comments across nine guarded PLM runtime,
+interpreter and item-lifecycle scopes. Existing names, instructions and upstream
+comments remain intact.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -246,6 +248,52 @@ enemy tuning and the Objectives module with byte-identical complete ROM output.
 The test-only cross-bank stress recipe now also renames the main enemy routine
 and interpreter, checking dependent local-label references from other banks;
 Objectives and Fast Doors compile against this 18-rename baseline as well.
+
+### PLM runtime and item-lifecycle reading route
+
+In bank `$84`, start at `Spawn_Room_PLM`. A six-byte room population row contains
+a PLM header address, byte X/Y block coordinates and a word argument. The spawner
+scans forty word-indexed runtime slots from `$4E` down to zero, converts
+`Y * room width + X` into the level-data byte offset and initializes the parallel
+slot arrays. The PLM header's first word is setup code and its second word is the
+initial instruction list. Setup runs with X pointing at the header and Y holding
+the runtime slot. Exhaustion returns carry set; success explicitly clears carry.
+
+`PLM_Handler` runs only while bit 15 of `PLM_Flag` is set. It resets the shared
+draw-tilemap cursor once and processes occupied slots from high to low.
+`PLM_Index` preserves the current slot because dispatched code may reuse X.
+`Process_PLM` calls the pre-instruction every eligible pass, then pre-decrements
+the 16-bit instruction timer. Only a result of zero advances the list; an initial
+zero wraps to `$FFFF`.
+
+An instruction-list word with bit 15 set is a bank-`$84` command address.
+`PEA .loop-1` plus indirect near `JMP` gives the command an RTS return to the next
+fetch. `Instruction_PLM_Sleep` and `Instruction_PLM_Delete` instead remove that
+synthetic return, so their RTS exits `Process_PLM`; sleep parks the cursor on
+itself while delete clears the ID that owns slot liveness. A nonnegative list word
+is a frame duration followed by a draw-instruction pointer. It immediately updates
+level data, derives block coordinates and queues visible tilemap work. A zero
+duration also wraps on the next pre-decrement rather than advancing immediately.
+
+`Calculate_PLM_Block_Coordinates` halves the stored level-data byte offset, divides
+the linear block number by room width and publishes quotient Y plus remainder X.
+The six NOPs are the hardware divider's result latency, not arbitrary padding.
+
+For placed items, `Instruction_PLM_GotoY_ifRoomArg_ItemIsCollected` interprets the
+room argument as a global collected-item bit. A set bit follows the empty-item
+target; an unset or negative argument continues the visible pickup path.
+`Instruction_PLM_SetRoomArg_ItemCollected` sets that bit before the reward.
+`InstList_PLM_MissileTank_0` is the concrete reading route: test persistence,
+install the pickup continuation and wait-for-trigger pre-instruction, then set the
+bit, clear queued music and award five missiles.
+
+Independent contracts pin the PLM RAM arrays, forty-slot bound, compiled synthetic
+return bytes and the missile tank's six-word route. Complete-scope guards cover
+spawning, coordinate division, handler order, timer/command dispatch, terminating
+commands and item-bit reads/writes. Arithmetic tests cover slot enumeration,
+coordinate boundaries, timer wraparound and all 512 collected-item bits. These are
+source/compiler and arithmetic checks, not CPU emulation. Updating a frozen v8
+baseline preserves authored enemy tuning and modules with byte-identical ROM output.
 
 ### Applying an update
 

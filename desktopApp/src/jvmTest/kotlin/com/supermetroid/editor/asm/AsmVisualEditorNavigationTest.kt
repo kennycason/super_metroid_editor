@@ -74,6 +74,26 @@ class AsmVisualEditorNavigationTest {
             assertTrue(resolver.linksAt(3).isEmpty())
         }
     }
+    @Test fun `native room object placements resolve before compilation and stop at the macro end`() {
+        val source = source("""
+            macro SmeditObjects_91F8_List_1()
+                %PLMPopEntry(${'$'}EEDB, ${'$'}08, ${'$'}08, ${'$'}0000) ; PLM: Missile (Visible)
+                dw ${'$'}0000
+            endmacro
+            ; unrelated
+        """.trimIndent())
+        val resolver = AsmVisualEditorResolver(source, source.lines, null, emptyMap())
+        for (line in 0..3) assertEquals(listOf(AsmEditorTarget.Room(0x91F8)), resolver.linksAt(line).map { it.target })
+        assertEquals("Visual Editor", asmVisualEditorContextMenuItems(resolver.linksAt(1)) {}.single().label)
+        assertTrue(resolver.linksAt(4).isEmpty())
+    }
+    @Test fun `native room object state wrappers preserve their visual state identity`() {
+        val stateId = "state-1"
+        val encoded = stateId.toByteArray().joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        val source = source("macro SmeditObjects_91F8_State_${encoded}()\n    %SmeditObjects_91F8_List_1()\nendmacro")
+        val resolver = AsmVisualEditorResolver(source, source.lines, null, emptyMap())
+        assertEquals(AsmEditorTarget.Room(0x91F8, stateId = stateId), resolver.linksAt(1).single().target)
+    }
     @Test fun `context menu has one navigation action and preserves every shared destination`() {
         val opened = mutableListOf<List<AsmEditorLink>>()
         assertTrue(asmVisualEditorContextMenuItems(emptyList(), opened::add).isEmpty())

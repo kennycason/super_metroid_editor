@@ -485,6 +485,22 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         // Encode, do not sanitize: distinct state IDs must never become the same assembler identifier.
         fun stateMacro(roomId: Int, stateId: String, projectId: String? = null): String = prefix(roomId, projectId) + "State_" + stateId.toByteArray(Charsets.UTF_8)
             .joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        /** Source navigation must work before a build gives relocatable object lists an address. */
+        fun targetAt(lines: List<String>, line: Int): AsmEditorTarget.Room? {
+            for (index in line.coerceAtMost(lines.lastIndex) downTo 0) {
+                val code = asmCodeBeforeComment(lines[index]).trim()
+                if (code.startsWith("endmacro", ignoreCase = true) && index != line) return null
+                Regex("^macro\\s+SmeditObjects_([0-9A-F]{4})_([A-Za-z0-9_]+)\\(\\)", RegexOption.IGNORE_CASE).find(code)?.let { match ->
+                    val state = Regex("State_([0-9a-f]+)", RegexOption.IGNORE_CASE).matchEntire(match.groupValues[2])
+                        ?.groupValues?.get(1)?.takeIf { it.length % 2 == 0 }?.let { encoded ->
+                            runCatching { encoded.chunked(2).map { it.toInt(16).toByte() }.toByteArray().toString(Charsets.UTF_8) }.getOrNull()
+                        }
+                    return AsmEditorTarget.Room(match.groupValues[1].toInt(16), stateId = state)
+                }
+                if (code.startsWith("macro ", ignoreCase = true)) return null
+            }
+            return null
+        }
         fun renderEntry(entry: RomParser.PlmEntry, scrollReference: String? = null): String = "%PLMPopEntry(" +
             listOf(entry.id to 4, entry.x to 2, entry.y to 2, entry.param to 4)
                 .mapIndexed { index, (value, width) ->
