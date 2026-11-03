@@ -7,6 +7,7 @@ on:
 
 jobs:
   build-and-release:
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -102,13 +103,15 @@ jobs:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
 
       - name: Run tests
-        run: ./gradlew :shared:jvmTest :desktopApp:jvmTest
+        timeout-minutes: 45
+        run: ./gradlew :shared:jvmTest :desktopApp:jvmTest --console=plain
         shell: bash
         env:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
 
       - name: Upload failed test reports
-        if: failure()
+        if: failure() || cancelled()
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: test-reports-${{ matrix.artifact }}

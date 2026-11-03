@@ -11,6 +11,14 @@ tasks.wrapper {
 subprojects {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        if (name == "jvmTest" && providers.environmentVariable("CI").orNull.equals("true", ignoreCase = true)) {
+            testLogging.events("started", "passed", "skipped", "failed")
+            timeout.set(java.time.Duration.ofMinutes(45))
+            val junitTimeout = "junit.jupiter.execution.timeout.default"
+            systemProperty(junitTimeout, providers.systemProperty(junitTimeout).getOrElse("2 m"))
+            // Keep Compose tests on their original thread while allowing interruption.
+            systemProperty("junit.jupiter.execution.timeout.thread.mode.default", "SAME_THREAD")
+        }
         val isolatedTestHome = temporaryDir.resolve("user-home")
         systemProperty("user.home", isolatedTestHome.absolutePath)
         systemProperty("smedit.repositoryRoot", rootProject.projectDir.absolutePath)
