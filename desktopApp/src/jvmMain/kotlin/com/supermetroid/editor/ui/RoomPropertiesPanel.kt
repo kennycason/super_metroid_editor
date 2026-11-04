@@ -112,16 +112,17 @@ internal fun RoomStateActions(editable: Boolean, isDefault: Boolean, selectedInd
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RoomPropertiesPanel(
+internal fun RoomPropertiesPanel(
     room: Room,
     romParser: RomParser,
     editorState: EditorState,
     modifier: Modifier = Modifier,
+    runtimeSnapshot: RoomRuntimeSnapshot? = null,
+    runtimeNavigation: RoomRuntimeNavigation = RoomRuntimeNavigation(),
     onNavigateToMap: (() -> Unit)? = null,
     onNavigateToAsm: ((Int) -> Unit)? = null,
     onNavigateToInitialScrolls: (() -> Unit)? = null,
     onNavigateToLayoutSource: (() -> Unit)? = null,
-    onNavigateToRoomProperties: ((String?) -> Unit)? = null,
     onNavigateToSelectors: ((String?) -> Unit)? = null,
     onNavigateToFx: ((String, Int?, com.supermetroid.editor.data.ProjectSourceDoorReference?) -> Unit)? = null,
     onNavigateToEnemies: ((String, Boolean) -> Unit)? = null,
@@ -133,7 +134,6 @@ fun RoomPropertiesPanel(
     val asmLinkCallback = editorState.projectAsmNavigation(onNavigateToAsm)
     val initialScrollsLink = editorState.projectAsmNavigation(onNavigateToInitialScrolls)
     val layoutSourceLink = editorState.projectAsmNavigation(onNavigateToLayoutSource)
-    val propertiesSourceLink = editorState.projectAsmNavigation(onNavigateToRoomProperties)
     val selectorsSourceLink = editorState.projectAsmNavigation(onNavigateToSelectors)
     val fxLink = editorState.projectAsmNavigation(onNavigateToFx)
     val enemiesLink = editorState.projectAsmNavigation(onNavigateToEnemies)
@@ -391,9 +391,6 @@ fun RoomPropertiesPanel(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        PropertyRow("Header", "Room scalars", propertiesSourceLink?.let { open -> { open(null) } })
-        PropertyRow("State fields", "Tileset, music, BG scrolling", propertiesSourceLink?.let { open -> { open(selectedStateItem?.id) } })
-        PropertyRow("Selectors", "Conditions / branch order", selectorsSourceLink?.let { open -> { open(selectedStateItem?.id) } })
         editorState.selectorPreviewProblem?.let {
             Text((when (editorState.selectorProjectionStatus) {
                 com.supermetroid.editor.asm.AsmSelectorProjectionStatus.STALE -> "Showing last valid selector preview. "
@@ -1195,6 +1192,12 @@ fun RoomPropertiesPanel(
             }
         }
 
+        runtimeSnapshot?.takeIf { editorState.project.asmWorkspace.enabled }?.let {
+            Spacer(modifier = Modifier.height(4.dp))
+            SectionHeader("Data Ownership")
+            RoomRuntimeOverview(it, runtimeNavigation)
+        }
+
         // ── Space Usage ──
         val spaceUsage = remember(room.roomId, currentState?.stateDataPcOffset, editorState.editVersion) {
             romParser.readRoomSpaceUsage(room.roomId, currentState?.stateDataPcOffset)
@@ -1743,7 +1746,9 @@ private fun SpaceUsageBar(label: String, bytes: Int, detail: String) {
         Text(label, fontSize = ROOM_INFO_BODY_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(70.dp))
         Text("$bytes B", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium, modifier = Modifier.width(54.dp))
-        Text(detail, fontSize = ROOM_INFO_COMPACT_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            fontWeight = FontWeight.Medium, softWrap = false, maxLines = 1,
+            modifier = Modifier.width(72.dp))
+        Text(detail, fontSize = ROOM_INFO_COMPACT_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f))
     }
 }

@@ -132,7 +132,7 @@ private fun IssueRow(issue: RomValidator.Issue) {
             val rid = issue.roomId
             if (rid != null) {
                 Text(
-                    "${issue.roomName} (0x${rid.toString(16).uppercase()})",
+                    validationRoomLabel(rid, issue.roomName),
                     fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -145,4 +145,14 @@ private fun IssueRow(issue: RomValidator.Issue) {
             )
         }
     }
+}
+
+internal fun validationRoomLabel(roomId: Int, roomName: String): String {
+    val id = "0x${roomId.toString(16).uppercase().padStart(4, '0')}"
+    val name = roomName.trim()
+    val genericId = name
+        .takeIf { it.startsWith("Room 0x", ignoreCase = true) }
+        ?.drop(7)
+        ?.toIntOrNull(16)
+    return if (name.isEmpty() || genericId == roomId) "Room $id" else "Room $id · $name"
 }

@@ -1479,8 +1479,8 @@ private fun AsmSourceTree(
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val query = state.query.trim()
-    val results = remember(index, query) {
-        if (query.isEmpty()) emptyList() else sourceSearch(index, state.sourceTexts(), query)
+    val results = remember(index, query, state.sourceBufferRevision, state.roomSourceInspection) {
+        if (query.isEmpty()) emptyList() else sourceSearch(index, state.searchSourceTexts(), query)
     }
     val roomGroups = remember(state.roomDataSnapshot, roomNames, query) { state.roomDataSnapshot?.groups(roomNames, query).orEmpty() }
     val writeGroups = remember(state.generatedRoomInput, roomNames, query) { state.generatedRoomInput?.groups(roomNames, query).orEmpty() }
@@ -1562,7 +1562,7 @@ private fun AsmSourceTree(
                         Modifier.fillMaxWidth().clickable {
                             result.assetPath?.let(state::openAsset)
                                 ?: result.fileId?.let {
-                                    state.openSource(it, result.lineIndex, columnIndex = result.columnIndex)
+                                    state.openSourceSearchResult(it, result.lineIndex, result.columnIndex)
                                 }
                         }
                             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1921,6 +1921,10 @@ private fun AsmWorkspaceCanvasContent(
     val workspace = state.workspace
     val semanticIndex = remember(romParser) { romParser?.let(AsmSemanticBridge::buildIndex) }
     state.roomSourceInspection?.takeIf { it.automaticEdit == null }?.let { preview ->
+        val darkCodeTheme = isDarkCodeTheme()
+        val highlighted = remember(preview.text, darkCodeTheme) {
+            highlightAsmReadOnlySource(preview.text, darkCodeTheme)
+        }
         Column(modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("${preview.title} — read-only preview", fontWeight = FontWeight.SemiBold)
             Text("Inspecting does not change the project. Create editable source to adopt this data into project ASM; that step requires a build.")
@@ -1929,8 +1933,11 @@ private fun AsmWorkspaceCanvasContent(
                 TextButton(onClick = { onOpenInEditor(AsmEditorTarget.Room(preview.roomId, stateId = preview.stateId)) }) { Text("Edit room") }
             }
             androidx.compose.foundation.text.selection.SelectionContainer(Modifier.weight(1f).fillMaxWidth()
+                .background(codeBackground()).padding(10.dp)
                 .verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState())) {
-                Text(preview.text, fontFamily = FontFamily.Monospace, fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                Text(highlighted, fontFamily = FontFamily.Monospace,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, color = codeForeground(),
+                    modifier = Modifier.testTag("asm-room-readonly-source"))
             }
         }
         return
@@ -3703,15 +3710,7 @@ private fun AsmEditableSourcePane(
         unhoverColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.30f),
         hoverColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
     )
-    val syntaxColors = AsmEditSyntaxColors(
-        foreground = codeForeground(),
-        comment = if (isDarkCodeTheme()) Color(0xFF789879) else Color(0xFF4D7A50),
-        number = if (isDarkCodeTheme()) Color(0xFFFFB86C) else Color(0xFF9A4F00),
-        directive = if (isDarkCodeTheme()) Color(0xFFC792EA) else Color(0xFF7B1FA2),
-        string = if (isDarkCodeTheme()) Color(0xFFC3E88D) else Color(0xFF397B24),
-        definition = if (isDarkCodeTheme()) Color(0xFFFFCB6B) else Color(0xFF8A6100),
-        symbol = if (isDarkCodeTheme()) Color(0xFF82AAFF) else Color(0xFF1455A0),
-    )
+    val syntaxColors = asmEditSyntaxColors()
     val transformation = remember(presentation, syntaxColors, state.workspace?.index, source.id, page.startLine, page.prefix.length, find.open, find.matches, find.selectedIndex) {
         VisualTransformation { _ ->
             TransformedText(
@@ -5334,6 +5333,7 @@ internal fun asmAnnotatedLine(
         ?: Regex("^\\s*(\\.[A-Za-z0-9_]+)\\s+(?:skip|db|dw|dl|dd)\\b", RegexOption.IGNORE_CASE)
             .find(code)?.groupValues?.get(1)
         ?: Regex("^\\s*(![A-Za-z_][A-Za-z0-9_]*)\\s*(?:\\?=|#=|=)").find(code)?.groupValues?.get(1)
+    val localMacroDefinition = ASM_EDIT_MACRO_DEFINITION_REGEX.find(code)?.groupValues?.get(1)
     val macroDefinition = if (index != null && fileId != null) {
         index.macrosAt(fileId, lineIndex).firstOrNull()
     } else null
@@ -5355,8 +5355,9 @@ internal fun asmAnnotatedLine(
                     pop()
                     if (asset != null) pop()
                 }
-                token == macroDefinition?.name -> {
-                    pushStringAnnotation("macroDefinition", macroDefinition.name)
+                token == localMacroDefinition || token == macroDefinition?.name -> {
+                    val indexedDefinition = macroDefinition?.name == token
+                    if (indexedDefinition) pushStringAnnotation("macroDefinition", token)
                     pushStyle(
                         SpanStyle(
                             color = definitionColor,
@@ -5365,7 +5366,7 @@ internal fun asmAnnotatedLine(
                     )
                     append(token)
                     pop()
-                    pop()
+                    if (indexedDefinition) pop()
                 }
                 token == definition -> {
                     val navigableDefinition = index != null && fileId != null &&
@@ -5458,6 +5459,31 @@ private data class AsmEditSyntaxColors(
     val symbol: Color,
 )
 
+@Composable
+private fun asmEditSyntaxColors() = AsmEditSyntaxColors(
+    foreground = codeForeground(),
+    comment = if (isDarkCodeTheme()) Color(0xFF789879) else Color(0xFF4D7A50),
+    number = if (isDarkCodeTheme()) Color(0xFFFFB86C) else Color(0xFF9A4F00),
+    directive = if (isDarkCodeTheme()) Color(0xFFC792EA) else Color(0xFF7B1FA2),
+    string = if (isDarkCodeTheme()) Color(0xFFC3E88D) else Color(0xFF397B24),
+    definition = if (isDarkCodeTheme()) Color(0xFFFFCB6B) else Color(0xFF8A6100),
+    symbol = if (isDarkCodeTheme()) Color(0xFF82AAFF) else Color(0xFF1455A0),
+)
+
+internal fun highlightAsmReadOnlySource(text: String, darkTheme: Boolean): AnnotatedString =
+    asmEditableHighlight(
+        text,
+        AsmEditSyntaxColors(
+            foreground = if (darkTheme) Color(0xFFD8DEE9) else Color(0xFF262626),
+            comment = if (darkTheme) Color(0xFF789879) else Color(0xFF4D7A50),
+            number = if (darkTheme) Color(0xFFFFB86C) else Color(0xFF9A4F00),
+            directive = if (darkTheme) Color(0xFFC792EA) else Color(0xFF7B1FA2),
+            string = if (darkTheme) Color(0xFFC3E88D) else Color(0xFF397B24),
+            definition = if (darkTheme) Color(0xFFFFCB6B) else Color(0xFF8A6100),
+            symbol = if (darkTheme) Color(0xFF82AAFF) else Color(0xFF1455A0),
+        ),
+    )
+
 private fun asmEditableHighlight(
     text: String,
     colors: AsmEditSyntaxColors,
@@ -5474,6 +5500,7 @@ private fun asmEditableHighlight(
         val definition = ASM_EDIT_DEFINITION_REGEX.find(code)?.let { match ->
             match.groupValues[1].ifEmpty { match.groupValues[2] }
         }
+        val localMacroDefinition = ASM_EDIT_MACRO_DEFINITION_REGEX.find(code)?.groupValues?.get(1)
         val macroDefinition = if (index != null && fileId != null) {
             index.macrosAt(fileId, pageStartLine + lineIndex).firstOrNull()
         } else null
@@ -5498,7 +5525,7 @@ private fun asmEditableHighlight(
                         color = if (asset == null && includedFile == null) colors.string else colors.symbol,
                     )
                 }
-                token == definition || token == macroDefinition?.name -> SpanStyle(
+                token == definition || token == localMacroDefinition || token == macroDefinition?.name -> SpanStyle(
                     color = colors.definition,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -5551,6 +5578,8 @@ private val ASM_EDIT_TOKEN_REGEX =
     )
 private val ASM_EDIT_DEFINITION_REGEX =
     Regex("^\\s*([A-Za-z_][A-Za-z0-9_]*|\\.+[A-Za-z0-9_]+):|^\\s*(![A-Za-z_][A-Za-z0-9_]*)\\s*(?:\\?=|#=|=)")
+private val ASM_EDIT_MACRO_DEFINITION_REGEX =
+    Regex("^\\s*macro\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(", RegexOption.IGNORE_CASE)
 private val ASM_LABEL_ONLY_REGEX = Regex("(?:[A-Za-z_][A-Za-z0-9_.]*:|\\.+[A-Za-z0-9_]+:?)")
 
 private val ASM_SCROLLBAR_SIZE = 13.dp

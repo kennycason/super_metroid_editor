@@ -36,6 +36,19 @@ class RomValidatorTest {
     @Nested
     inner class FullValidation {
         @Test
+        fun `validate reports catalog room names instead of generated pointer labels`() {
+            val parser = romParser ?: return
+            val names = parser.roomCatalog.rooms.associate { it.getRoomIdAsInt() to it.name }
+
+            val roomIssues = RomValidator.validate(parser, allRoomIds).filter { it.roomId != null }
+
+            assertTrue(roomIssues.isNotEmpty())
+            roomIssues.forEach { issue ->
+                assertEquals(names[issue.roomId!!], issue.roomName)
+            }
+        }
+
+        @Test
         fun `validate returns results without crashing`() {
             val parser = romParser ?: return
             val issues = RomValidator.validate(parser, allRoomIds)
@@ -60,6 +73,20 @@ class RomValidatorTest {
 
     @Nested
     inner class DoorConsistency {
+        @Test
+        fun `unused vanilla Waterway door is a labeled baseline warning`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+
+            val issue = RomValidator.checkDoorConsistency(parser, rooms).single {
+                it.roomId == 0xA0D2 && it.message.contains("Door #1")
+            }
+
+            assertEquals(RomValidator.Severity.WARNING, issue.severity)
+            assertTrue(issue.message.contains("Pre-existing vanilla data bug"))
+            assertTrue(issue.message.contains("not a project edit"))
+        }
+
         @Test
         fun `door validation catches out-of-bounds spawn coordinates`() {
             val parser = romParser ?: return

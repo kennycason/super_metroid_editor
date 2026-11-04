@@ -8,6 +8,7 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import com.supermetroid.editor.asm.*
 import com.supermetroid.editor.data.ProjectRomBuildMode
@@ -189,6 +190,21 @@ class AsmRoomSourceActionsTest {
             repeat(3) { scene.render(surface.canvas, System.nanoTime() + it * 16_666_667) }
             assertTrue(nodes(scene).none { text(it).contains("Preview / make editable") || text(it) == "Edit layout ASM…" })
         } finally { scene.close(); surface.close() }
+    }
+
+    @Test fun `read only room source preview retains ASM syntax highlighting`() {
+        val source = "; Native preview\nmacro SmeditScrolls_A0D2()\n  db ${'$'}01 ; Blue\nendmacro\nmacro SmeditDoors_A0D2_Door_1()\nendmacro"
+        val rendered = highlightAsmReadOnlySource(source, darkTheme = true)
+
+        assertEquals(source, rendered.text)
+        assertTrue(rendered.spanStyles.size >= 3, "Comments, directives and numbers should retain distinct styles")
+        assertTrue(rendered.spanStyles.map { it.item.color }.distinct().size >= 3)
+        for (macro in listOf("SmeditScrolls_A0D2", "SmeditDoors_A0D2_Door_1")) {
+            val start = source.indexOf(macro)
+            assertTrue(rendered.spanStyles.any {
+                it.start == start && it.end == start + macro.length && it.item.fontWeight == FontWeight.SemiBold
+            }, "$macro should be highlighted as a definition without waiting for the source index")
+        }
     }
 
     private fun descendants(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::descendants)

@@ -637,7 +637,9 @@ fun main() = application {
             }
             val editorEnemyPlacementLink = editorState.projectAsmNavigation<(RomParser.EnemyEntry) -> Unit> { openEnemySource(it) }
             val editorEnemiesLink = editorState.projectAsmNavigation<(String, Boolean) -> Unit> { state, graphics -> openEnemySource(null, graphics, state) }
-            val editorDoorsLink = editorState.projectAsmNavigation<(Int) -> Unit> { index -> roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.DOORS, door = index)) }
+            val editorDoorsLink = editorState.projectAsmNavigation<(Int) -> Unit> { index ->
+                roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.DOORS, door = index.takeIf { it >= 0 }))
+            }
 
             fun openAsmEditorTarget(target: AsmEditorTarget) {
                 navigate {

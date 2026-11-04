@@ -1,8 +1,6 @@
 package com.supermetroid.editor.ui
 
-import androidx.compose.foundation.ScrollState
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -54,7 +52,7 @@ class RoomRuntimeInspectorTest {
         assertEquals(RoomRuntimeHealth.CURRENT, runtimeBuildHealth("Built"))
     }
 
-    @Test fun `runtime mode and resource rows render in a narrow room sidebar`() {
+    @Test fun `unified room overview renders ownership and problems in a narrow sidebar`() {
         val snapshot = RoomRuntimeSnapshot(
             roomId = 0x91F8,
             roomName = "Landing Site",
@@ -74,24 +72,20 @@ class RoomRuntimeInspectorTest {
                 )
             },
         )
-        val runtime = mutableStateOf(false)
         val scene = ComposeScene()
         val surface = Surface.makeRasterN32Premul(330, 720)
         try {
             scene.constraints = Constraints.fixed(330, 720)
             scene.setContent {
                 MaterialTheme {
-                    if (runtime.value) RoomRuntimeInspector(snapshot, RoomRuntimeNavigation(), ScrollState(0))
-                    else RoomInfoModeSwitch(false) { runtime.value = it }
+                    RoomRuntimeOverview(snapshot, RoomRuntimeNavigation())
                 }
             }
             render(scene, surface)
-            click(scene, "Runtime")
-            render(scene, surface)
             assertTrue(texts(scene).any { it.contains("Landing Site") })
-            assertTrue(texts(scene).any { it == "Problems · 1" })
-            assertTrue(texts(scene).any { it == "Selectors" })
-            assertTrue(texts(scene).any { it == "Save spawns" || it == "Saves" })
+            assertTrue(texts(scene).any { it == "Needs attention · 1" })
+            assertTrue(texts(scene).any { it.contains("Selectors · ASM") })
+            assertTrue(texts(scene).any { it.contains("Saves · Native") })
         } finally {
             scene.close()
             surface.close()
@@ -113,14 +107,4 @@ class RoomRuntimeInspectorTest {
         node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
     }
 
-    private fun click(scene: ComposeScene, label: String) {
-        val node = nodes(scene).first { candidate ->
-            candidate.config.getOrNull(SemanticsActions.OnClick)?.action != null &&
-                descendants(candidate).any { child ->
-                    child.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == label }
-                }
-        }
-        val action = requireNotNull(node.config.getOrNull(SemanticsActions.OnClick)?.action)
-        assertTrue(action.invoke())
-    }
 }

@@ -85,8 +85,14 @@ object RomValidator {
     fun validate(parser: RomParser, roomIds: List<Int>, project: SmEditProject? = null): List<Issue> {
         val issues = mutableListOf<Issue>()
         val rooms = mutableMapOf<Int, Room>()
+        val catalogRooms = parser.roomCatalog.rooms.associateBy { it.getRoomIdAsInt() }
         for (rid in roomIds) {
-            val room = parser.readRoomHeader(rid) ?: continue
+            val parsed = parser.readRoomHeader(rid) ?: continue
+            val metadata = catalogRooms[rid]
+            val room = if (metadata == null) parsed else parsed.copy(
+                name = metadata.name,
+                handle = metadata.handle,
+            )
             rooms[rid] = room
         }
 
@@ -574,6 +580,10 @@ object RomValidator {
             for ((idx, door) in doors.withIndex()) {
                 val destRoom = rooms[door.destRoomPtr]
                 val label = "Door #$idx (${door.directionName})"
+                val knownVanillaOrphan = roomId == 0xA0D2 && idx == 1 &&
+                    door.destRoomPtr == 0xA641 && door.direction == 6 &&
+                    door.doorCapCode == 0x0316 && door.screenX == 1 && door.screenY == 0 &&
+                    door.distFromDoor == 0x8000 && door.entryCode == 0
 
                 if (destRoom == null) {
                     // Destination room not in our known room list — could be valid but unknown
@@ -590,8 +600,16 @@ object RomValidator {
                 val maxScreenY = destRoom.height - 1
                 if (door.screenX > maxScreenX) {
                     issues.add(Issue(
-                        Severity.ERROR, "Doors", roomId, room.name,
-                        "$label → screenX=${door.screenX} exceeds ${destRoom.name} width (${destRoom.width} screens, max X=$maxScreenX)"
+                        if (knownVanillaOrphan) Severity.WARNING else Severity.ERROR,
+                        "Doors", roomId, room.name,
+                        if (knownVanillaOrphan) {
+                            "Pre-existing vanilla data bug · unused door-list record: $label → " +
+                                "screenX=${door.screenX} exceeds ${destRoom.name} width " +
+                                "(${destRoom.width} screens, max X=$maxScreenX). This is not a project edit."
+                        } else {
+                            "$label → screenX=${door.screenX} exceeds ${destRoom.name} width " +
+                                "(${destRoom.width} screens, max X=$maxScreenX)"
+                        }
                     ))
                 }
                 if (door.screenY > maxScreenY) {

@@ -325,7 +325,7 @@ class AsmDoorSourceTest {
         assertEquals(before, f.bridge.sourceText()); assertEquals(doorBefore, f.bridge.doors.sourceText())
     }
 
-    @Test fun `automatic door editor is a pure navigable overlay never included in saves searches or build input`() = runBlocking {
+    @Test fun `automatic door editor is searchable but remains excluded from saves replace and build input`() = runBlocking {
         val f = fixture(built = true)
         assertTrue(f.editor.saveProject())
         val model = Json.encodeToString(SmEditProject.serializer(), f.project)
@@ -342,9 +342,15 @@ class AsmDoorSourceTest {
         assertEquals(planned.lineIndex, f.workspace.selectedLineIndex)
         assertEquals(planned.text, f.workspace.sourceEditorText(DOOR_SOURCE_FILE))
         assertEquals(source, f.workspace.sourceTexts().single { it.fileId == DOOR_SOURCE_FILE }.text)
+        val searchable = f.workspace.searchSourceTexts().single { it.fileId == DOOR_SOURCE_FILE }
+        assertEquals(planned.text, searchable.text)
+        assertContains(searchable.displayName, "room source preview")
+        val searchMatch = assertNotNull(findAsmSourceText(listOf(searchable), "SmeditDoors_91F8_Door_0").singleOrNull())
         assertTrue(f.workspace.previewProjectSourceReplacement("SmeditDoors_", "oops", true).matches.isEmpty())
-        f.workspace.selectSourceEditorMatch(DOOR_SOURCE_FILE, planned.lineIndex + 1, 7)
-        assertSame(snapshot, f.workspace.roomSourceInspection, "Find must not discard the staged document")
+        f.workspace.openSourceSearchResult(searchMatch.fileId, searchMatch.lineIndex, searchMatch.columnIndex)
+        assertEquals(searchMatch.lineIndex, f.workspace.selectedLineIndex)
+        assertEquals(searchMatch.columnIndex, f.workspace.selectedColumnIndex)
+        assertSame(snapshot, f.workspace.roomSourceInspection, "Sidebar Find must not discard the staged document")
         assertTrue(f.workspace.updateSourceEditText(DOOR_SOURCE_FILE, planned.text), "Selection/no-op events must not adopt")
         assertTrue(f.workspace.saveAllSources()); assertTrue(f.workspace.saveSource(DOOR_SOURCE_FILE))
         assertEquals(source, f.bridge.doors.sourceText())

@@ -311,171 +311,109 @@ internal fun buildRoomRuntimeSnapshot(
 }
 
 @Composable
-internal fun RoomInfoModeSwitch(runtime: Boolean, onRuntimeChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
-            .testTag("room-info-mode-switch"),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        listOf(false to "Edit", true to "Runtime").forEach { (value, label) ->
-            Surface(
-                color = if (runtime == value) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                shape = RoundedCornerShape(5.dp),
-                modifier = Modifier.weight(1f).clickable { onRuntimeChange(value) }
-                    .testTag("room-info-mode-${label.lowercase()}"),
-            ) {
-                Text(
-                    label,
-                    fontSize = ROOM_INFO_COMPACT_FONT_SIZE,
-                    fontWeight = if (runtime == value) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (runtime == value) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 5.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun RoomRuntimeInspector(
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+internal fun RoomRuntimeOverview(
     snapshot: RoomRuntimeSnapshot,
     navigation: RoomRuntimeNavigation,
-    scrollState: ScrollState,
     modifier: Modifier = Modifier,
 ) {
-    var expanded by remember(snapshot.roomId) { mutableStateOf<RoomRuntimeResourceKind?>(null) }
     val problems = snapshot.problems
-    Column(
-        modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 9.dp, vertical = 5.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+        shape = RoundedCornerShape(7.dp),
+        modifier = modifier.fillMaxWidth().testTag("room-data-overview"),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "${snapshot.roomName} · $${snapshot.roomId.toString(16).uppercase()}",
-                    fontSize = ROOM_INFO_BODY_FONT_SIZE,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    snapshot.stateSummary,
-                    fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            RuntimeChip(snapshot.buildSummary, runtimeBuildHealth(snapshot.buildSummary))
-        }
-
-        if (problems.isNotEmpty()) {
-            Surface(
-                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.fillMaxWidth().testTag("room-runtime-problems"),
-            ) {
-                Column(Modifier.padding(7.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        "Problems · ${problems.size}",
-                        fontSize = ROOM_INFO_COMPACT_FONT_SIZE,
+                        "${snapshot.roomName} · $${snapshot.roomId.toString(16).uppercase().padStart(4, '0')}",
+                        fontSize = ROOM_INFO_BODY_FONT_SIZE,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.error,
                     )
-                    problems.take(4).forEach { problem ->
-                        val open = if (problem.fileId != null && problem.lineIndex != null) {
-                            navigation.openSource?.let { callback -> { callback(problem.fileId, problem.lineIndex); Unit } }
-                        } else navigation.action(problem.resource)
-                        Text(
-                            "• ${problem.message}",
-                            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = if (open == null) Modifier else Modifier.clickable(onClick = open),
-                        )
-                    }
-                    if (problems.size > 4) Text(
-                        "+${problems.size - 4} more in the resource rows",
+                    Text(
+                        snapshot.stateSummary,
                         fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                RuntimeChip(snapshot.buildSummary, runtimeBuildHealth(snapshot.buildSummary))
+            }
+
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                snapshot.resources.forEach { resource ->
+                    RuntimeChip(
+                        "${resource.kind.shortTitle()} · ${resource.statusLabel()}",
+                        resource.health,
+                        navigation.action(resource.kind),
                     )
                 }
             }
-        }
 
-        snapshot.resources.forEach { resource ->
-            val isExpanded = expanded == resource.kind
-            val action = navigation.action(resource.kind)
-            Surface(
-                color = if (resource.health == RoomRuntimeHealth.ERROR) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.fillMaxWidth().clickable {
-                    expanded = resource.kind.takeUnless { isExpanded }
-                }.testTag("room-runtime-resource-${resource.kind.name.lowercase()}"),
-            ) {
-                Column(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(if (isExpanded) "▾" else "▸", fontSize = ROOM_INFO_CAPTION_FONT_SIZE)
-                        Column(Modifier.weight(1f)) {
-                            Text(resource.title, fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                resource.summary,
-                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        RuntimeChip(resource.statusLabel(), resource.health)
-                    }
-                    if (isExpanded) {
+            if (problems.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(5.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("room-data-problems"),
+                ) {
+                    Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
-                            resource.scope,
-                            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            "Needs attention · ${problems.size}",
+                            fontSize = ROOM_INFO_COMPACT_FONT_SIZE,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error,
                         )
-                        resource.problems.forEach { problem ->
+                        problems.take(3).forEach { problem ->
+                            val open = if (problem.fileId != null && problem.lineIndex != null) {
+                                navigation.openSource?.let { callback -> { callback(problem.fileId, problem.lineIndex); Unit } }
+                            } else navigation.action(problem.resource)
                             Text(
-                                problem.message,
+                                "• ${problem.message}",
                                 fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                                color = MaterialTheme.colorScheme.error,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = if (open == null) Modifier else Modifier.clickable(onClick = open),
                             )
-                        }
-                        if (action != null) {
-                            TextButton(onClick = action, modifier = Modifier.align(Alignment.End)) {
-                                Text("Open ASM", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
-                            }
                         }
                     }
                 }
             }
         }
-
-        Text(
-            "Read-only · reflects pending source and the selected room state",
-            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 3.dp),
-        )
     }
 }
 
+private fun RoomRuntimeResourceKind.shortTitle(): String = when (this) {
+    RoomRuntimeResourceKind.HEADER -> "Fields"
+    RoomRuntimeResourceKind.SELECTORS -> "Selectors"
+    RoomRuntimeResourceKind.LAYOUT -> "Layout"
+    RoomRuntimeResourceKind.OBJECTS -> "Objects"
+    RoomRuntimeResourceKind.SCROLLS -> "Scrolls"
+    RoomRuntimeResourceKind.FX -> "FX"
+    RoomRuntimeResourceKind.ENEMIES -> "Enemies"
+    RoomRuntimeResourceKind.DOORS -> "Doors"
+    RoomRuntimeResourceKind.SAVES -> "Saves"
+}
+
 @Composable
-private fun RuntimeChip(label: String, health: RoomRuntimeHealth) {
+private fun RuntimeChip(
+    label: String,
+    health: RoomRuntimeHealth,
+    onClick: (() -> Unit)? = null,
+) {
     val color = when (health) {
         RoomRuntimeHealth.ERROR -> MaterialTheme.colorScheme.error
         RoomRuntimeHealth.STALE -> Color(0xFFE0A12B)
         RoomRuntimeHealth.LOADING -> MaterialTheme.colorScheme.tertiary
         RoomRuntimeHealth.CURRENT -> MaterialTheme.colorScheme.primary
     }
-    Surface(color = color.copy(alpha = 0.12f), shape = RoundedCornerShape(50)) {
+    Surface(
+        color = color.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(50),
+        modifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick),
+    ) {
         Text(
             label,
             fontSize = ROOM_INFO_CAPTION_FONT_SIZE,

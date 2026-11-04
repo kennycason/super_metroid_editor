@@ -21,7 +21,8 @@ internal data class AsmRoomSourceInspection(val roomId: Int, val title: String, 
                                           val automaticEdit: AsmRoomSourceAutomaticEdit? = null,
                                           val startEditing: () -> Unit)
 
-/** An editor-only overlay. Save, Build, search/replace and semantic writers still see the real bank. */
+/** An editor-only overlay. Save, Build, project Replace and semantic writers still see the real bank;
+ * sidebar Find may inspect this visible text without adopting it. */
 internal data class AsmRoomSourceAutomaticEdit(
     val text: String,
     val lineIndex: Int,
@@ -1004,6 +1005,17 @@ internal class AsmWorkspaceState(
         } else openSource(fileId, lineIndex, addToHistory = false, columnIndex = columnIndex)
     }
 
+    /** Sidebar results may point into the safe room-source overlay. Keep that
+     * overlay alive when it owns the result; ordinary results retain normal
+     * source navigation and history. */
+    fun openSourceSearchResult(fileId: String, lineIndex: Int, columnIndex: Int) {
+        if (roomSourceInspection?.fileId == fileId && roomSourceInspection?.automaticEdit != null) {
+            selectSourceEditorMatch(fileId, lineIndex, columnIndex)
+        } else {
+            openSource(fileId, lineIndex, columnIndex = columnIndex)
+        }
+    }
+
     fun sourceEditText(fileId: String): String = sourceBuffers[fileId]
         ?: workspace?.index?.file(fileId)?.file?.readText().orEmpty()
 
@@ -1237,6 +1249,22 @@ internal class AsmWorkspaceState(
 
     fun sourceTexts(): List<AsmSourceText> = workspace?.index?.files.orEmpty().map { source ->
         AsmSourceText(source.id, source.displayName, sourceEditText(source.id))
+    }
+
+    /** Sidebar Find follows what the editor is currently showing. A room-source
+     * overlay is deliberately excluded from Save, Build and Replace until the
+     * first edit adopts it, but it must not be invisible to sidebar Find. */
+    fun searchSourceTexts(): List<AsmSourceText> {
+        val preview = roomSourceInspection?.automaticEdit
+        val previewFileId = roomSourceInspection?.fileId
+        return sourceTexts().map { source ->
+            if (preview != null && source.fileId == previewFileId) {
+                source.copy(
+                    displayName = "${source.displayName} · room source preview",
+                    text = preview.text,
+                )
+            } else source
+        }
     }
 
     /** Include unsaved text and disabled modules, independent of the visible browser scope. */

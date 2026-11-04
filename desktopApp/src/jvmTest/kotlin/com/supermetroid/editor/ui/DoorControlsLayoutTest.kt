@@ -285,7 +285,7 @@ class DoorControlsLayoutTest {
     }
 
     @Test
-    fun `Doors starts collapsed in both modes and each newly selected room while ROM overview has no structural actions`() {
+    fun `Doors starts expanded in both modes and each newly selected room while ROM overview has no structural actions`() {
         for (asm in listOf(false, true)) {
             val fixture = fixture(asm)
             val selectedRoom = mutableStateOf(fixture.room.roomId)
@@ -294,8 +294,6 @@ class DoorControlsLayoutTest {
                 Column { RoomDoorsSection(selectedRoom.value, fixture.parser, fixture.editor, fixture.rooms, {}, {}) }
             }) { scene, render ->
                 fun heading() = nodes(scene).single { text(it) == "Doors" }
-                assertTrue(nodes(scene).none { text(it).startsWith("Travels ") })
-                click(heading()); render()
                 assertEquals(fixture.editor.doorEntries.size, nodes(scene).count { text(it).startsWith("Travels ") })
                 assertEquals(asm, nodes(scene).any { text(it) == "Add connection" })
                 assertEquals(asm, nodes(scene).any { text(it) == "Remove" })
@@ -303,17 +301,18 @@ class DoorControlsLayoutTest {
                 click(heading()); render()
                 assertTrue(nodes(scene).none { text(it).startsWith("Travels ") })
                 click(heading()); render()
+                assertEquals(fixture.editor.doorEntries.size, nodes(scene).count { text(it).startsWith("Travels ") })
                 selectedRoom.value = 0x91F8
                 fixture.editor.loadRoom(0x91F8, fixture.parser, assertNotNull(fixture.parser.readRoomHeader(0x91F8)))
                 render()
-                assertTrue(nodes(scene).none { text(it).startsWith("Travels ") }, "Selecting another room starts collapsed")
+                assertTrue(nodes(scene).any { text(it).startsWith("Travels ") }, "Selecting another room starts expanded")
                 assertEquals(before, Json.encodeToString(SmEditProject.serializer(), fixture.editor.project))
             }
         }
     }
 
     @Test
-    fun `a room with zero doors still has a collapsed expandable Doors section`() {
+    fun `a room with zero doors shows its empty expandable Doors section`() {
         val fixture = fixture(asm = false)
         val definition = fixture.editor.createNewRoom(
             NewRoomCreationRequest("Empty Doors UI", false, area = 0, mapX = 2, mapY = 2,
@@ -326,27 +325,44 @@ class DoorControlsLayoutTest {
             Column { RoomDoorsSection(definition.previewRoomId, workspace, fixture.editor, fixture.rooms, null, null) }
         }) { scene, render ->
             assertTrue(nodes(scene).any { text(it) == "Doors" })
-            assertTrue(nodes(scene).none { text(it) == "No door connections." })
-            click(nodes(scene).single { text(it) == "Doors" }); render()
             assertTrue(nodes(scene).any { text(it) == "No door connections." })
+            click(nodes(scene).single { text(it) == "Doors" }); render()
+            assertTrue(nodes(scene).none { text(it) == "No door connections." })
             assertEquals(before, Json.encodeToString(SmEditProject.serializer(), fixture.editor.project))
         }
     }
 
     @Test
-    fun `room overview orders FX Doors Screen Scrolls then Space Usage`() {
-        val fixture = fixture(asm = false)
+    fun `room overview orders FX Doors Screen Scrolls Data Ownership then Space Usage`() {
+        val fixture = fixture(asm = true)
+        val runtime = buildRoomRuntimeSnapshot(fixture.room, fixture.parser, fixture.editor, AsmWorkspaceState())
         withScene(height = 4000, content = {
-            RoomPropertiesPanel(fixture.room, fixture.parser, fixture.editor)
+            RoomPropertiesPanel(fixture.room, fixture.parser, fixture.editor, runtimeSnapshot = runtime)
         }) { scene, _ ->
-            val headings = listOf("FX Data", "Doors", "Screen Scrolls", "Space Usage").map { label ->
+            val headings = listOf("FX Data", "Doors", "Screen Scrolls", "Data Ownership", "Space Usage").map { label ->
                 nodes(scene).first { text(it) == label }
             }
             headings.zipWithNext().forEach { (first, second) ->
                 assertTrue(first.boundsInRoot.bottom < second.boundsInRoot.top,
                     "${text(first)} must precede ${text(second)}")
             }
-            assertTrue(nodes(scene).none { text(it).startsWith("Travels ") })
+            assertTrue(nodes(scene).any { text(it).startsWith("Travels ") })
+        }
+    }
+
+    @Test
+    fun `visual-only room info omits ASM ownership navigation and redundant summary rows`() {
+        val fixture = fixture(asm = false)
+        val runtime = buildRoomRuntimeSnapshot(fixture.room, fixture.parser, fixture.editor, AsmWorkspaceState())
+        withScene(height = 4000, content = {
+            RoomPropertiesPanel(fixture.room, fixture.parser, fixture.editor, runtimeSnapshot = runtime)
+        }) { scene, _ ->
+            val labels = nodes(scene).map(::text)
+            assertTrue("Data Ownership" !in labels)
+            assertTrue("Header" !in labels)
+            assertTrue("State fields" !in labels)
+            assertTrue("Room Header" in labels, "The actual editable header section remains")
+            assertTrue("Space Usage" in labels)
         }
     }
 

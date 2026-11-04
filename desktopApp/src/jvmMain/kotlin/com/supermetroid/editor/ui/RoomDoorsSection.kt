@@ -34,7 +34,7 @@ internal fun RoomDoorsSection(
     onNavigateToDoors: ((Int) -> Unit)?,
     onWorkspaceChanged: (() -> Unit)?,
 ) {
-    var expanded by remember(roomId) { mutableStateOf(false) }
+    var expanded by remember(roomId) { mutableStateOf(true) }
     var addingDoor by remember(roomId) { mutableStateOf(false) }
     var newDoorDirection by remember(roomId) { mutableStateOf(0) }
     var doorManagerError by remember(roomId) { mutableStateOf<String?>(null) }
@@ -45,7 +45,8 @@ internal fun RoomDoorsSection(
         .clickable(role = Role.Button) { expanded = !expanded }
         .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }) {
         SectionHeader("Doors", trailingContent = {
-            Text("${editorState.doorEntries.size}  ${if (expanded) "▾" else "▸"}",
+            val count = editorState.doorEntries.size
+            Text("$count ${if (count == 1) "connection" else "connections"} · ${if (expanded) "Hide ▴" else "Show ▾"}",
                 fontSize = ROOM_INFO_COMPACT_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
         })
     }
