@@ -3,6 +3,7 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.rom.RomWriteConflictException
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
+import com.supermetroid.editor.rom.RomConstants
 import java.io.File
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
@@ -198,7 +199,7 @@ class AsmProjectCompilerTest {
     }
 
     @Test
-    fun `saved jump edit compiles with separate authored asset room and patch ownership`() {
+    fun `saved jump edit compiles with separate authored asset expanded room and patch ownership`() {
         val fixture = AsmProjectTestFixture.create(tempDirectory)
         val projectFile = fixture.projectFile
         val sourceRoot = File(fixture.workspace.workingDirectory, "src")
@@ -209,7 +210,11 @@ class AsmProjectCompilerTest {
         val loadedRom = fixture.rom
         val headerSize = if (loadedRom.size % 0x8000 == 0x200) 0x200 else 0
 
-        val compiled = AsmProjectCompiler().compile(projectFile.absolutePath, loadedRom)
+        val compiled = AsmProjectCompiler().compile(
+            projectFile.absolutePath,
+            loadedRom,
+            outputRomSize = RomConstants.EXPANDED_ROM_SIZE,
+        )
         val ownedOffsets = compiled.sourceOwnedRanges.flatMap { range ->
             (range.pcOffset until range.pcOffset + range.length).toList()
         }.toSet()
@@ -232,7 +237,7 @@ class AsmProjectCompilerTest {
             pcOffset = asset.pcOffset,
             bytes = byteArrayOf(override[0]),
         )
-        val roomPc = 0x2FFFF0
+        val roomPc = 0x300100
         val roomByte = 0x5A.toByte()
         val roomClaim = AsmGeneratedRoomClaim(
             owner = ASM_ROOM_GRAPH_OWNER,
@@ -275,7 +280,9 @@ class AsmProjectCompilerTest {
                 skippedWrites = 0,
             ),
             referenceRomBody = compiled.referenceRomBody,
+            outputRomSize = RomConstants.EXPANDED_ROM_SIZE,
         )
+        assertEquals(headerSize + RomConstants.EXPANDED_ROM_SIZE, materialized.romBytes.size)
         assertEquals(compiled.referenceRomSha256, materialized.referenceRomSha256)
         assertEquals(override[0], materialized.romBytes[headerSize + asset.pcOffset])
         assertEquals(listOf(claim), materialized.generatedAssetClaims)

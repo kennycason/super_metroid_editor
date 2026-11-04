@@ -27,6 +27,7 @@ class SmEditProjectFormatTest {
         assertTrue(project.rooms.isEmpty()); assertTrue(project.newRooms.isEmpty())
         assertFalse(project.asmWorkspace.enabled)
         assertEquals(ProjectRomBuildMode.PATCHED_ROM, project.asmWorkspace.buildMode)
+        assertFalse(project.asmWorkspace.expandRomTo4MiB)
         assertEquals(PatchSortOrder.NAME_ASCENDING, project.generalSettings.patchBrowser.sortOrder)
         assertEquals(project, SmEditProjectFormat.decode(SmEditProjectFormat.encode(project)))
     }

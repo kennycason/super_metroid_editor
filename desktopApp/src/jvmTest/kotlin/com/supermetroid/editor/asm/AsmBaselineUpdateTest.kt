@@ -49,6 +49,10 @@ class AsmBaselineUpdateTest {
         assertTrue(plan.baselineChanges.single().documentationOnly)
         assertEquals(1, plan.editedBankCount)
         assertEquals(2, plan.moduleCount)
+        val bankReview = plan.files.single { it.fileId == "bank_80.asm" }
+        assertEquals(source, bankReview.baseText)
+        assertEquals(edited, bankReview.projectText)
+        assertEquals("; A new explanation.\n$source", bankReview.updatedText)
         assertEquals(before, AsmBaselineUpdateRepository.inventory(initial.root))
         val result = updater().apply(plan, emptyMap(), rom)
         assertEquals("two", result.workspace.baselineRevision)

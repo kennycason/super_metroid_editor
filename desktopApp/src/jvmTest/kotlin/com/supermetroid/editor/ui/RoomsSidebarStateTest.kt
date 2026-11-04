@@ -33,6 +33,8 @@ class RoomsSidebarStateTest {
         info.scrollTo(480)
         tiles.scrollTo(200)
         state.tilesetHorizontalScroll.scrollTo(64)
+        state.runtimeScroll.scrollTo(320)
+        state.showRoomRuntime(true)
         state.select(RoomSidebarTab.TILESET)
         state.select(RoomSidebarTab.PATTERNS)
         state.select(RoomSidebarTab.ROOM_INFO)
@@ -40,6 +42,8 @@ class RoomsSidebarStateTest {
         assertEquals(480, info.value)
         assertEquals(200, tiles.value)
         assertEquals(64, state.tilesetHorizontalScroll.value)
+        assertTrue(state.roomInfoRuntime)
+        assertEquals(320, state.runtimeScroll.value)
         assertNotSame(info, state.verticalScroll(RoomSidebarTab.GENERATE))
         assertEquals(0, state.verticalScroll(RoomSidebarTab.PATTERNS).value)
     }

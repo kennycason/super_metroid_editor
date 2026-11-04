@@ -1845,18 +1845,21 @@ Draw_GameOptionsMenu_Spritemaps:
 
 
 ;;; $8CCF: Game state Ch (pausing, normal gameplay but darkening) ;;;
+; Gameplay continues while brightness decreases. Test only the low brightness
+; nibble for zero, then advance to pause graphics setup. This differs from the
+; unpause menu fade-out, which waits for the full brightness shadow to equal $80.
 GameState_C_Pausing_NormalGameplayDarkening:
     PHP                                                                  ;828CCF;
     REP #$30                                                             ;828CD0;
-    JSR.W GameState_8_MainGameplay                                       ;828CD2;
-    JSL.L HandleFadingOut                                                ;828CD5;
-    LDA.B DP_Brightness                                                  ;828CD9;
-    AND.W #$000F                                                         ;828CDB;
-    BNE .return                                                          ;828CDE;
-    JSL.L EnableNMI                                                      ;828CE0;
-    STZ.W ScreenFadeDelay                                                ;828CE4;
-    STZ.W ScreenFadeCounter                                              ;828CE7;
-    INC.W GameState                                                      ;828CEA;
+    JSR.W GameState_8_MainGameplay                                       ;828CD2; Keep gameplay running while the display darkens.
+    JSL.L HandleFadingOut                                                ;828CD5; Advance the display-brightness fade after the gameplay update.
+    LDA.B DP_Brightness                                                  ;828CD9; Read the brightness shadow; the following mask ignores adjacent data.
+    AND.W #$000F                                                         ;828CDB; Test just the brightness nibble, not the forced-blank bit.
+    BNE .return                                                          ;828CDE; Wait for brightness zero before replacing gameplay graphics.
+    JSL.L EnableNMI                                                      ;828CE0; Keep NMI enabled for the upcoming pause-menu setup.
+    STZ.W ScreenFadeDelay                                                ;828CE4; Clear the completed fade's delay.
+    STZ.W ScreenFadeCounter                                              ;828CE7; Clear the completed fade's counter.
+    INC.W GameState                                                      ;828CEA; Advance the current state, normally from $0C to pause-menu setup $0D.
 
   .return:
     PLP                                                                  ;828CED;
@@ -1864,46 +1867,51 @@ GameState_C_Pausing_NormalGameplayDarkening:
 
 
 ;;; $8CEF: Game state Dh (pausing, loading pause menu) ;;;
+; Replace the gameplay display while dark: suspend HDMA and animated tiles, back
+; up graphics state, run the room's pause hook, then load menu tilemaps and colors.
+; PHP/PHB protect the hook caller; PHK plus PEA form a synthetic long return frame.
+; The indirect JML uses a 24-bit hook pointer. Its RTL consumes that frame before
+; PLB/PLP restore the separately saved bank and status.
 GameState_D_Pausing_LoadingPauseScreen:
     PHP                                                                  ;828CEF;
     REP #$30                                                             ;828CF0;
     PHB                                                                  ;828CF2;
     PHK                                                                  ;828CF3;
-    PLB                                                                  ;828CF4;
-    JSL.L Disable_HDMAObjects                                            ;828CF5;
-    SEP #$20                                                             ;828CF9;
+    PLB                                                                  ;828CF4; Use bank $82 while calling the pause setup routines.
+    JSL.L Disable_HDMAObjects                                            ;828CF5; Stop HDMA-object processing before repurposing the display.
+    SEP #$20                                                             ;828CF9; Use byte writes for the HDMA enable shadow and register.
     LDA.B #$00                                                           ;828CFB;
-    STA.B DP_HDMAEnable                                                  ;828CFD;
-    STA.W $420C                                                          ;828CFF;
-    REP #$20                                                             ;828D02;
-    JSL.L Disable_AnimatedTilesObjects                                   ;828D04;
-    JSR.W Backup_BG2Tilemap_for_PauseMenu                                ;828D08;
-    PHP                                                                  ;828D0B;
-    PHB                                                                  ;828D0C;
-    PHK                                                                  ;828D0D;
-    PEA.W .returnPEA-1                                                   ;828D0E;
-    JML.W [PauseHook_Pause]                                              ;828D11;
+    STA.B DP_HDMAEnable                                                  ;828CFD; Clear the channels that future NMI register work would enable.
+    STA.W $420C                                                          ;828CFF; Disable HDMA in hardware immediately as well.
+    REP #$20                                                             ;828D02; Restore word-sized accumulator operations.
+    JSL.L Disable_AnimatedTilesObjects                                   ;828D04; Suspend animated-tile object processing during the pause menu.
+    JSR.W Backup_BG2Tilemap_for_PauseMenu                                ;828D08; Back up the gameplay BG2 tilemap before loading pause graphics.
+    PHP                                                                  ;828D0B; Preserve the caller's processor status around the room's pause hook.
+    PHB                                                                  ;828D0C; Preserve the data bank independently of the synthetic return address.
+    PHK                                                                  ;828D0D; Push bank $82 as the bank byte of the hook's RTL return frame.
+    PEA.W .returnPEA-1                                                   ;828D0E; Push the return word minus one because RTL increments it.
+    JML.W [PauseHook_Pause]                                              ;828D11; Jump through the room's 24-bit pause-hook pointer; the hook returns with RTL.
 
   .returnPEA:
-    PLB                                                                  ;828D14;
-    PLP                                                                  ;828D15;
-    JSL.L Cancel_Sound_Effects                                           ;828D16;
-    JSR.W Backup_SomeGraphicsState_for_PauseScreen                       ;828D1A;
-    JSL.L LoadPauseMenuTiles_ClearBG2Tilemap                             ;828D1D;
-    JSL.L LoadPauseScreen_BaseTilemaps                                   ;828D21;
-    JSL.L Load_PauseMenuMapTilemap_and_AreaLabel                         ;828D25;
-    JSR.W BackupGameplayPalettes_LoadPauseScreenPalettes                 ;828D29;
-    JSR.W ContinueInitializingPauseMenu                                  ;828D2C;
-    LDA.W #$0001                                                         ;828D2F;
+    PLB                                                                  ;828D14; Restore the data bank after the hook's RTL consumed its return frame.
+    PLP                                                                  ;828D15; Restore the status saved around the hook.
+    JSL.L Cancel_Sound_Effects                                           ;828D16; Cancel gameplay sound effects before showing the pause menu.
+    JSR.W Backup_SomeGraphicsState_for_PauseScreen                       ;828D1A; Save the graphics shadows needed when gameplay resumes.
+    JSL.L LoadPauseMenuTiles_ClearBG2Tilemap                             ;828D1D; Load pause graphics and clear its BG2 tilemap.
+    JSL.L LoadPauseScreen_BaseTilemaps                                   ;828D21; Load the pause screen's base tilemaps.
+    JSL.L Load_PauseMenuMapTilemap_and_AreaLabel                         ;828D25; Build the current area's map and area-name display.
+    JSR.W BackupGameplayPalettes_LoadPauseScreenPalettes                 ;828D29; Keep the gameplay palette and install pause-screen colors.
+    JSR.W ContinueInitializingPauseMenu                                  ;828D2C; Finish pause-menu state and scroll initialisation.
+    LDA.W #$0001                                                         ;828D2F; Prime both timers for the pause-menu fade-in.
     STA.W ScreenFadeDelay                                                ;828D32;
     STA.W ScreenFadeCounter                                              ;828D35;
-    STZ.W PauseMenu_MapScrollLeftArrowAnimationFrame                     ;828D38;
+    STZ.W PauseMenu_MapScrollLeftArrowAnimationFrame                     ;828D38; Restart the map's left-arrow animation.
     LDA.W #$0001                                                         ;828D3B;
-    STA.W PauseMenu_PaletteAnimationTimer                                ;828D3E;
-    STZ.W MapScrolling_Direction                                         ;828D41;
-    STZ.W MapScrolling_SpeedIndex                                        ;828D44;
-    JSL.L QueueClearingOfFXTilemap                                       ;828D47;
-    INC.W GameState                                                      ;828D4B;
+    STA.W PauseMenu_PaletteAnimationTimer                                ;828D3E; Prime pause-palette animation with a one-tick timer.
+    STZ.W MapScrolling_Direction                                         ;828D41; Start with no map-scroll direction selected.
+    STZ.W MapScrolling_SpeedIndex                                        ;828D44; Start the map-scroll speed sequence from its first entry.
+    JSL.L QueueClearingOfFXTilemap                                       ;828D47; Queue clearing of the gameplay FX tilemap.
+    INC.W GameState                                                      ;828D4B; Advance from setup to the pause-menu fade-in state.
     PLB                                                                  ;828D4E;
     PLP                                                                  ;828D4F;
     RTS                                                                  ;828D50;
@@ -2378,19 +2386,22 @@ Setup_MapScrolling_for_FileSelectMap:
 
 
 ;;; $90C8: Game state Eh (paused, loading pause menu) ;;;
+; Draw the pause menu while increasing brightness. An exact $0F shadow means
+; full brightness with forced blank clear; then clear fade timers and advance
+; to the interactive paused state. No ordinary gameplay handler is called here.
 GameState_E_Paused_LoadingPauseScreen:
     PHP                                                                  ;8290C8;
     REP #$30                                                             ;8290C9;
-    JSL.L Draw_PauseMenu_during_FadeIn                                   ;8290CB;
-    JSL.L HandleFadingIn                                                 ;8290CF;
-    SEP #$20                                                             ;8290D3;
+    JSL.L Draw_PauseMenu_during_FadeIn                                   ;8290CB; Draw the pause screen while it is fading in.
+    JSL.L HandleFadingIn                                                 ;8290CF; Advance the brightness fade after drawing the menu.
+    SEP #$20                                                             ;8290D3; Read the byte-sized brightness shadow.
     LDA.B DP_Brightness                                                  ;8290D5;
-    CMP.B #$0F                                                           ;8290D7;
-    BNE .return                                                          ;8290D9;
+    CMP.B #$0F                                                           ;8290D7; Require full brightness with forced blank clear.
+    BNE .return                                                          ;8290D9; Keep fading until the shadow is exactly $0F.
     REP #$20                                                             ;8290DB;
-    STZ.W ScreenFadeDelay                                                ;8290DD;
-    STZ.W ScreenFadeCounter                                              ;8290E0;
-    INC.W GameState                                                      ;8290E3;
+    STZ.W ScreenFadeDelay                                                ;8290DD; Clear the completed fade's delay.
+    STZ.W ScreenFadeCounter                                              ;8290E0; Clear the completed fade's counter.
+    INC.W GameState                                                      ;8290E3; Advance to the interactive paused state, normally $0E to $0F.
 
   .return:
     PLP                                                                  ;8290E6;
@@ -2398,43 +2409,50 @@ GameState_E_Paused_LoadingPauseScreen:
 
 
 ;;; $90E8: Game state Fh (paused, map and item screens) ;;;
+; Maintain timed held/new input, the selected pause page, HUD and palette animation.
+; This uses MainPauseRoutine, not GameState_8_MainGameplay. The outer main loop
+; still services music/HDMA logic, sound queues, OAM and the NMI frame handshake.
 GameState_F_Paused_MapAndItemScreens:
     PHB                                                                  ;8290E8;
     PHK                                                                  ;8290E9;
     PLB                                                                  ;8290EA;
-    LDA.W #$0003                                                         ;8290EB;
-    JSL.L UpdateHeldInput                                                ;8290EE;
-    JSL.L MainPauseRoutine                                               ;8290F2;
-    JSL.L HandleHUDTilemap_PausedAndRunning                              ;8290F6;
-    JSR.W Handle_PauseScreen_PaletteAnimation                            ;8290FA;
+    LDA.W #$0003                                                         ;8290EB; Select the pause menu's held-input repeat mode.
+    JSL.L UpdateHeldInput                                                ;8290EE; Update timed held/new input before processing the pause page.
+    JSL.L MainPauseRoutine                                               ;8290F2; Dispatch the active map, equipment or page-transition handler.
+    JSL.L HandleHUDTilemap_PausedAndRunning                              ;8290F6; Maintain the HUD without running the ordinary gameplay handler.
+    JSR.W Handle_PauseScreen_PaletteAnimation                            ;8290FA; Advance the pause-screen palette animation.
     PLB                                                                  ;8290FD;
     RTS                                                                  ;8290FE;
 
 
 ;;; $90FF: Main pause routine ;;;
+; Dispatch the pause menu's own eight-state machine, independently of GameState.
+; Indices 0 and 1 are the interactive map and equipment pages; 2..4 switch from
+; map to equipment, and 5..7 switch back. Double the index for bank-local word
+; pointers. The table has no bounds check; handlers return with RTS, this entry RTL.
 MainPauseRoutine:
     PHP                                                                  ;8290FF;
     PHB                                                                  ;829100;
     PHK                                                                  ;829101;
     PLB                                                                  ;829102;
-    REP #$30                                                             ;829103;
-    LDA.W PauseMenu_MenuIndex                                            ;829105;
-    ASL                                                                  ;829108;
-    TAX                                                                  ;829109;
-    JSR.W (.pointers,X)                                                  ;82910A;
-    PLB                                                                  ;82910D;
-    PLP                                                                  ;82910E;
-    RTL                                                                  ;82910F;
+    REP #$30                                                             ;829103; Use word-sized registers for the pause page selector.
+    LDA.W PauseMenu_MenuIndex                                            ;829105; Read the pause menu's own state index, separate from GameState.
+    ASL                                                                  ;829108; Convert the page-state index into a word-pointer byte offset.
+    TAX                                                                  ;829109; Index the bank-local pause-handler table.
+    JSR.W (.pointers,X)                                                  ;82910A; Run one pause-page handler using a near return.
+    PLB                                                                  ;82910D; Restore the caller's data bank.
+    PLP                                                                  ;82910E; Restore the caller's processor status.
+    RTL                                                                  ;82910F; Return to the long caller after the selected near handler finishes.
 
   .pointers:
-    dw PauseMenu_0_MapScreen                                             ;829110;
-    dw PauseScreen_1_EquipmentScreen                                     ;829112;
-    dw PauseMenu_2_MapScreenToEquipmentScreen_FadingOut                  ;829114;
-    dw PauseMenu_3_MapScreenToEquipmentScreen_LoadEquipmentScreen        ;829116;
-    dw PauseMenu_4_MapScreenToEquipmentScreen_FadingIn                   ;829118;
-    dw PauseMenu_5_EquipmentScreenToMapScreen_FadingOut                  ;82911A;
-    dw PauseMenu_6_EquipmentScreenToMapScreen_LoadMapScreen              ;82911C;
-    dw PauseMenu_7_EquipmentScreenToMapScreen_FadingIn                   ;82911E;
+    dw PauseMenu_0_MapScreen                                             ;829110; Index 0: interactive map page.
+    dw PauseScreen_1_EquipmentScreen                                     ;829112; Index 1: interactive equipment page.
+    dw PauseMenu_2_MapScreenToEquipmentScreen_FadingOut                  ;829114; Index 2: darken the map before switching to equipment.
+    dw PauseMenu_3_MapScreenToEquipmentScreen_LoadEquipmentScreen        ;829116; Index 3: load the equipment page while dark.
+    dw PauseMenu_4_MapScreenToEquipmentScreen_FadingIn                   ;829118; Index 4: brighten the equipment page.
+    dw PauseMenu_5_EquipmentScreenToMapScreen_FadingOut                  ;82911A; Index 5: darken equipment before switching to the map.
+    dw PauseMenu_6_EquipmentScreenToMapScreen_LoadMapScreen              ;82911C; Index 6: load the map page while dark.
+    dw PauseMenu_7_EquipmentScreenToMapScreen_FadingIn                   ;82911E; Index 7: brighten the map page.
 
 
 ;;; $9120: Pause menu - index 0: map screen ;;;
@@ -2705,21 +2723,24 @@ MapScrolling_SpeedTable:
 
 
 ;;; $9324: Game state 10h (unpausing, loading normal gameplay) ;;;
+; Keep drawing the selected pause page and pressed-Start highlight while fading
+; out. Wait for exactly $80 (forced blank set, brightness zero), not just a zero
+; brightness nibble, before advancing to gameplay graphics restoration.
 GameState_10_Unpausing_LoadingNormalGameplay:
     PHP                                                                  ;829324;
     REP #$30                                                             ;829325;
-    JSL.L Handle_PauseMenu_StartPressedHighlight                         ;829327;
-    JSR.W Draw_PauseMenu_During_FadeOut                                  ;82932B;
-    JSL.L HandleFadingOut                                                ;82932E;
-    SEP #$20                                                             ;829332;
+    JSL.L Handle_PauseMenu_StartPressedHighlight                         ;829327; Keep the pressed-Start highlight active during menu fade-out.
+    JSR.W Draw_PauseMenu_During_FadeOut                                  ;82932B; Draw the currently selected pause page while darkening it.
+    JSL.L HandleFadingOut                                                ;82932E; Advance the display-brightness fade.
+    SEP #$20                                                             ;829332; Test the byte-sized brightness and forced-blank shadow.
     LDA.B DP_Brightness                                                  ;829334;
-    CMP.B #$80                                                           ;829336;
-    BNE .return                                                          ;829338;
-    JSL.L EnableNMI                                                      ;82933A;
+    CMP.B #$80                                                           ;829336; Wait for exactly $80: brightness zero and forced blank set.
+    BNE .return                                                          ;829338; Keep the pause screen active until the fade reaches forced blank.
+    JSL.L EnableNMI                                                      ;82933A; Keep NMI enabled before the gameplay restoration phase.
     REP #$20                                                             ;82933E;
-    STZ.W ScreenFadeDelay                                                ;829340;
-    STZ.W ScreenFadeCounter                                              ;829343;
-    INC.W GameState                                                      ;829346;
+    STZ.W ScreenFadeDelay                                                ;829340; Clear the completed fade's delay.
+    STZ.W ScreenFadeCounter                                              ;829343; Clear the completed fade's counter.
+    INC.W GameState                                                      ;829346; Advance to gameplay graphics restoration, normally state $11.
 
   .return:
     PLP                                                                  ;829349;
@@ -2742,50 +2763,58 @@ Draw_PauseMenu_During_FadeOut:
 
 
 ;;; $9367: Game state 11h (unpausing, loading normal gameplay) ;;;
+; Rebuild the gameplay display before fading it in: restore saved colors and
+; graphics state, reload gameplay assets, then run the room's long unpause hook.
+; PHK/PEA build the hook's RTL return frame; the separate saved bank and status
+; remain on the stack until after HDMA, animated tiles and movement sounds resume.
+; Advance GameState before restoring the handler's outer saved processor status.
 GameState_11_Unpausing_LoadingNormalGameplay:
     PHP                                                                  ;829367;
     REP #$30                                                             ;829368;
-    JSR.W Clear_Samus_Beam_Tiles                                         ;82936A;
-    JSR.W ContinueInitialising_GameplayResume                            ;82936D;
-    JSL.L ResumeGameplay                                                 ;829370;
-    JSR.W Restore_SomeGraphicsState_from_PauseScreen                     ;829374;
-    JSR.W Restore_BG2Tilemap_from_PauseMenu                              ;829377;
-    REP #$30                                                             ;82937A; >.<
-    LDA.W #$0001                                                         ;82937C;
+    JSR.W Clear_Samus_Beam_Tiles                                         ;82936A; Clear the Samus beam graphics before reloading gameplay assets.
+    JSR.W ContinueInitialising_GameplayResume                            ;82936D; Restore saved colors, PPU setup, scrolling, beam graphics and pause state.
+    JSL.L ResumeGameplay                                                 ;829370; Reload gameplay graphics with the interrupt handling provided by ResumeGameplay.
+    JSR.W Restore_SomeGraphicsState_from_PauseScreen                     ;829374; Restore the gameplay graphics-register shadows saved on pause.
+    JSR.W Restore_BG2Tilemap_from_PauseMenu                              ;829377; Restore the backed-up BG2 tilemap.
+    REP #$30                                                             ;82937A; >.< | Re-establish word-sized registers before setting timers and calling the hook.
+    LDA.W #$0001                                                         ;82937C; Prime the gameplay fade-in timers.
     STA.W ScreenFadeDelay                                                ;82937F;
     STA.W ScreenFadeCounter                                              ;829382;
-    PHP                                                                  ;829385;
-    PHB                                                                  ;829386;
-    PHK                                                                  ;829387;
-    PEA.W .returnPEA-1                                                   ;829388;
-    JML.W [PauseHook_Unpause]                                            ;82938B; Execute unpause hook
+    PHP                                                                  ;829385; Preserve processor status around the room's unpause hook.
+    PHB                                                                  ;829386; Preserve the data bank separately from the hook's return frame.
+    PHK                                                                  ;829387; Supply bank $82 for the synthetic RTL return.
+    PEA.W .returnPEA-1                                                   ;829388; Supply the hook's return word minus one for RTL.
+    JML.W [PauseHook_Unpause]                                            ;82938B; Execute unpause hook | Jump through the room's 24-bit unpause-hook pointer.
 
   .returnPEA:
-    JSL.L Enable_HDMAObjects                                             ;82938E;
-    JSL.L Enable_AnimatedTilesObjects                                    ;829392;
-    JSL.L Queue_Samus_Movement_SoundEffects                              ;829396;
-    PLB                                                                  ;82939A;
-    PLP                                                                  ;82939B;
-    INC.W GameState                                                      ;82939C;
-    PLP                                                                  ;82939F;
+    JSL.L Enable_HDMAObjects                                             ;82938E; Re-enable HDMA-object processing after the room's hook completes.
+    JSL.L Enable_AnimatedTilesObjects                                    ;829392; Resume animated-tile object processing.
+    JSL.L Queue_Samus_Movement_SoundEffects                              ;829396; Queue movement sounds appropriate to Samus's resumed state.
+    PLB                                                                  ;82939A; Restore the data bank saved around the unpause hook.
+    PLP                                                                  ;82939B; Restore the status saved around the unpause hook.
+    INC.W GameState                                                      ;82939C; Advance to gameplay fade-in, normally state $12.
+    PLP                                                                  ;82939F; Restore the status saved on entry to the game-state handler.
     RTS                                                                  ;8293A0;
 
 
 ;;; $93A1: Game state 12h (unpausing, normal gameplay but brightening) ;;;
+; Run gameplay while the restored display brightens. On an exact $0F brightness
+; shadow, clear fade timers and explicitly select gameplay state $08.
+; This state resets to $08 instead of advancing to the next numeric game state.
 GameState_12_Unpausing_NormalGameplayBrightening:
     PHP                                                                  ;8293A1;
     REP #$30                                                             ;8293A2;
-    JSR.W GameState_8_MainGameplay                                       ;8293A4;
-    JSL.L HandleFadingIn                                                 ;8293A7;
-    SEP #$20                                                             ;8293AB;
+    JSR.W GameState_8_MainGameplay                                       ;8293A4; Resume gameplay simulation before applying each fade-in step.
+    JSL.L HandleFadingIn                                                 ;8293A7; Brighten the gameplay display after its update.
+    SEP #$20                                                             ;8293AB; Check the byte-sized display-brightness shadow.
     LDA.B DP_Brightness                                                  ;8293AD;
-    CMP.B #$0F                                                           ;8293AF;
-    BNE .return                                                          ;8293B1;
+    CMP.B #$0F                                                           ;8293AF; Require exactly $0F, including forced blank being clear.
+    BNE .return                                                          ;8293B1; Keep using the gameplay fade-in handler until fully bright.
     REP #$20                                                             ;8293B3;
-    STZ.W ScreenFadeDelay                                                ;8293B5;
-    STZ.W ScreenFadeCounter                                              ;8293B8;
-    LDA.W #$0008                                                         ;8293BB;
-    STA.W GameState                                                      ;8293BE;
+    STZ.W ScreenFadeDelay                                                ;8293B5; Clear the completed fade's delay.
+    STZ.W ScreenFadeCounter                                              ;8293B8; Clear the completed fade's counter.
+    LDA.W #$0008                                                         ;8293BB; Select ordinary gameplay explicitly rather than incrementing the state.
+    STA.W GameState                                                      ;8293BE; Return the outer dispatcher to state $08.
 
   .return:
     PLP                                                                  ;8293C1;
@@ -4859,29 +4888,33 @@ EquipmentScreen_Draw_L_R_Highlight:
 
 
 ;;; $A5B7: Handle pause menu start button ;;;
+; Use the pause menu's timed held/new input stream, unlike PauseCheck's new-only
+; controller input. Start queues confirmation, primes fade-out and flashes the
+; button label before incrementing GameState, normally $0F to unpausing state $10.
+; Refresh the L/R/Start tilemap even when no Start input was accepted.
 Handle_PauseScreen_StartButton:
     PHP                                                                  ;82A5B7;
     REP #$30                                                             ;82A5B8;
-    LDA.W Input_TimedHeldNew                                             ;82A5BA;
-    BIT.W #$1000                                                         ;82A5BD;
-    BEQ +                                                                ;82A5C0;
-    LDA.W #$0038                                                         ;82A5C2;
-    JSL.L QueueSound_Lib1_Max6                                           ;82A5C5;
-    LDA.W #$0001                                                         ;82A5C9;
-    STA.W ScreenFadeDelay                                                ;82A5CC;
-    STA.W ScreenFadeCounter                                              ;82A5CF;
-    LDA.W PauseMenu_ButtonLabelMode                                      ;82A5D2;
-    PHA                                                                  ;82A5D5;
+    LDA.W Input_TimedHeldNew                                             ;82A5BA; Read the pause menu's timed held/new button stream.
+    BIT.W #$1000                                                         ;82A5BD; Test the Start button's $1000 bit.
+    BEQ +                                                                ;82A5C0; Without Start, only refresh the menu button-label tilemap.
+    LDA.W #$0038                                                         ;82A5C2; Select the pause-menu confirmation sound.
+    JSL.L QueueSound_Lib1_Max6                                           ;82A5C5; Queue confirmation in sound library 1.
+    LDA.W #$0001                                                         ;82A5C9; Prime the pause-screen fade-out timers.
+    STA.W ScreenFadeDelay                                                ;82A5CC; Set the brightness-step interval to one.
+    STA.W ScreenFadeCounter                                              ;82A5CF; Prime the first brightness step.
+    LDA.W PauseMenu_ButtonLabelMode                                      ;82A5D2; Remember the existing button-label palette mode.
+    PHA                                                                  ;82A5D5; Keep that mode while temporarily selecting the Start-label colors.
     LDA.W #$0001                                                         ;82A5D6;
-    STA.W PauseMenu_ButtonLabelMode                                      ;82A5D9;
-    JSR.W Set_PauseScreen_ButtonLabelPalettes                            ;82A5DC;
-    PLA                                                                  ;82A5DF;
-    STA.W PauseMenu_ButtonLabelMode                                      ;82A5E0;
-    LDA.W #$000B                                                         ;82A5E3;
-    STA.W PauseMenu_ButtonPressedHighlightTimer                          ;82A5E6;
-    INC.W GameState                                                      ;82A5E9;
+    STA.W PauseMenu_ButtonLabelMode                                      ;82A5D9; Use label mode 1 for the Start-button palette update.
+    JSR.W Set_PauseScreen_ButtonLabelPalettes                            ;82A5DC; Apply the temporary label-palette selection.
+    PLA                                                                  ;82A5DF; Recover the previous button-label mode.
+    STA.W PauseMenu_ButtonLabelMode                                      ;82A5E0; Restore the selection used by the normal pause page.
+    LDA.W #$000B                                                         ;82A5E3; Give the pressed-button highlight an eleven-tick lifetime.
+    STA.W PauseMenu_ButtonPressedHighlightTimer                          ;82A5E6; Store the highlight lifetime before beginning unpause.
+    INC.W GameState                                                      ;82A5E9; Advance the game state, normally from paused $0F to fade-out $10.
 
-+   JSR.W Update_PauseMenu_L_R_Start_VRAMTilemap                         ;82A5EC;
++   JSR.W Update_PauseMenu_L_R_Start_VRAMTilemap                         ;82A5EC; Refresh the L/R/Start label tilemap on both input paths.
     PLP                                                                  ;82A5EF;
     RTS                                                                  ;82A5F0;
 
@@ -11100,107 +11133,117 @@ Load_Door_Header:
 
 
 ;;; $DE6F: Load room header ;;;
+; Read the fixed eleven-byte room header in bank $8F, then select a room state
+; from the condition-function stream that follows it. Width and height are stored
+; in screen units and multiplied by sixteen for block dimensions. The hardware
+; multiplier uses only each block dimension's low byte; double its word result
+; to obtain LevelDataSize in bytes. This routine does not decompress level data.
 Load_Room_Header:
-    PEA.W RoomHeaders>>8                                                 ;82DE6F;
+    PEA.W RoomHeaders>>8                                                 ;82DE6F; Select bank $8F for the room header and its state-check stream.
     PLB                                                                  ;82DE72;
     PLB                                                                  ;82DE73;
-    LDX.W RoomPointer                                                    ;82DE74;
-    LDA.W $0000,X                                                        ;82DE77;
-    AND.W #$00FF                                                         ;82DE7A;
-    STA.W RoomIndex                                                      ;82DE7D;
-    LDA.W $0001,X                                                        ;82DE80;
+    LDX.W RoomPointer                                                    ;82DE74; Use the destination room's bank-local header pointer.
+    LDA.W $0000,X                                                        ;82DE77; Read the room index byte through a word load.
+    AND.W #$00FF                                                         ;82DE7A; Discard the adjacent area byte.
+    STA.W RoomIndex                                                      ;82DE7D; Store the room's within-area index.
+    LDA.W $0001,X                                                        ;82DE80; Read the area byte from header offset $01.
     AND.W #$00FF                                                         ;82DE83;
-    STA.W AreaIndex                                                      ;82DE86;
-    LDA.W $0002,X                                                        ;82DE89;
+    STA.W AreaIndex                                                      ;82DE86; Select the area's maps, boss bits and room resources.
+    LDA.W $0002,X                                                        ;82DE89; Read the room's map X byte.
     AND.W #$00FF                                                         ;82DE8C;
-    STA.W RoomMapX                                                       ;82DE8F;
-    LDA.W $0003,X                                                        ;82DE92;
+    STA.W RoomMapX                                                       ;82DE8F; Store the horizontal map-cell origin.
+    LDA.W $0003,X                                                        ;82DE92; Read the room's map Y byte.
     AND.W #$00FF                                                         ;82DE95;
-    STA.W RoomMapY                                                       ;82DE98;
-    LDA.W $0004,X                                                        ;82DE9B;
+    STA.W RoomMapY                                                       ;82DE98; Store the vertical map-cell origin.
+    LDA.W $0004,X                                                        ;82DE9B; Read width in screen/scroll cells.
     AND.W #$00FF                                                         ;82DE9E;
-    STA.W RoomWidthScrolls                                               ;82DEA1;
-    ASL                                                                  ;82DEA4;
+    STA.W RoomWidthScrolls                                               ;82DEA1; Keep the width in its original screen units.
+    ASL                                                                  ;82DEA4; Begin converting screen width to sixteen-block units.
     ASL                                                                  ;82DEA5;
     ASL                                                                  ;82DEA6;
     ASL                                                                  ;82DEA7;
-    STA.W RoomWidthBlocks                                                ;82DEA8;
-    LDA.W $0005,X                                                        ;82DEAB;
+    STA.W RoomWidthBlocks                                                ;82DEA8; Store width in 16-pixel blocks after four left shifts.
+    LDA.W $0005,X                                                        ;82DEAB; Read height in screen/scroll cells.
     AND.W #$00FF                                                         ;82DEAE;
-    STA.W RoomHeightScrolls                                              ;82DEB1;
-    ASL                                                                  ;82DEB4;
+    STA.W RoomHeightScrolls                                              ;82DEB1; Keep the height in its original screen units.
+    ASL                                                                  ;82DEB4; Begin converting screen height to sixteen-block units.
     ASL                                                                  ;82DEB5;
     ASL                                                                  ;82DEB6;
     ASL                                                                  ;82DEB7;
-    STA.W RoomHeightBlocks                                               ;82DEB8;
-    LDA.W $0006,X                                                        ;82DEBB;
+    STA.W RoomHeightBlocks                                               ;82DEB8; Store height in 16-pixel blocks after four left shifts.
+    LDA.W $0006,X                                                        ;82DEBB; Read the up-scroller threshold byte.
     AND.W #$00FF                                                         ;82DEBE;
-    STA.W UpScroller                                                     ;82DEC1;
-    LDA.W $0007,X                                                        ;82DEC4;
+    STA.W UpScroller                                                     ;82DEC1; Keep the room's up-scroller value.
+    LDA.W $0007,X                                                        ;82DEC4; Read the down-scroller threshold byte.
     AND.W #$00FF                                                         ;82DEC7;
-    STA.W DownScroller                                                   ;82DECA;
-    LDA.W $0009,X                                                        ;82DECD;
-    STA.W DoorListPointer                                                ;82DED0;
-    JSL.L Room_State_Checking_Handler                                    ;82DED3;
-    SEP #$20                                                             ;82DED7;
-    LDA.W RoomWidthBlocks                                                ;82DED9;
-    STA.W $4202                                                          ;82DEDC;
-    LDA.W RoomHeightBlocks                                               ;82DEDF;
-    STA.W $4203                                                          ;82DEE2;
-    REP #$20                                                             ;82DEE5;
-    NOP                                                                  ;82DEE7;
+    STA.W DownScroller                                                   ;82DECA; Keep the room's down-scroller value.
+    LDA.W $0009,X                                                        ;82DECD; Read the word pointer to this room's door list.
+    STA.W DoorListPointer                                                ;82DED0; Keep that bank-$8F door-list pointer.
+    JSL.L Room_State_Checking_Handler                                    ;82DED3; Select a state by walking the condition stream after the eleven-byte header.
+    SEP #$20                                                             ;82DED7; Use byte writes for the hardware multiplication operands.
+    LDA.W RoomWidthBlocks                                                ;82DED9; Take the low byte of the block width for multiplication.
+    STA.W $4202                                                          ;82DEDC; Write the first unsigned eight-bit multiplier input.
+    LDA.W RoomHeightBlocks                                               ;82DEDF; Take the low byte of the block height for multiplication.
+    STA.W $4203                                                          ;82DEE2; Start hardware multiplication by writing the second input.
+    REP #$20                                                             ;82DEE5; Return to a word accumulator before reading the product.
+    NOP                                                                  ;82DEE7; Allow the multiplication result time to become available.
     NOP                                                                  ;82DEE8;
     NOP                                                                  ;82DEE9;
-    LDA.W $4216                                                          ;82DEEA;
-    ASL                                                                  ;82DEED;
-    STA.W LevelDataSize                                                  ;82DEEE;
+    LDA.W $4216                                                          ;82DEEA; Read the sixteen-bit product of the two byte-sized dimensions.
+    ASL                                                                  ;82DEED; Convert a block count to two-byte level-data entries.
+    STA.W LevelDataSize                                                  ;82DEEE; Store the resulting level-data byte count.
     RTS                                                                  ;82DEF1;
 
 
 ;;; $DEF2: Load state header ;;;
+; Load the selected state's resource pointers, music, FX, enemy population/set,
+; layer-2 scroll-control bytes and cached room-main callback. Long pointers are
+; assembled with overlapping word stores: high word first, then the low word.
+; The population chooses placements/parameters; the enemy set chooses graphics
+; and palettes. PLMs, library backgrounds and setup ASM are read by later loaders.
 Load_State_Header:
-    PEA.W RoomStates>>8&$FF00                                            ;82DEF2;
+    PEA.W RoomStates>>8&$FF00                                            ;82DEF2; Select bank $8F, where room states and tileset pointer tables reside.
     PLB                                                                  ;82DEF5;
     PLB                                                                  ;82DEF6;
-    LDX.W RoomStatePointer                                               ;82DEF7;
-    LDA.W $0003,X                                                        ;82DEFA;
-    AND.W #$00FF                                                         ;82DEFD;
-    ASL                                                                  ;82DF00;
+    LDX.W RoomStatePointer                                               ;82DEF7; Read the state selected by the room condition stream.
+    LDA.W $0003,X                                                        ;82DEFA; Read the state's tileset index byte.
+    AND.W #$00FF                                                         ;82DEFD; Discard the adjacent music byte.
+    ASL                                                                  ;82DF00; Convert the tileset index to a word-pointer byte offset.
     TAY                                                                  ;82DF01;
-    LDX.W Tileset_Pointers,Y                                             ;82DF02;
-    LDA.W $0001,X                                                        ;82DF05;
-    STA.W TilesetTileTablePointer+1                                      ;82DF08;
-    LDA.W $0000,X                                                        ;82DF0B;
-    STA.W TilesetTileTablePointer                                        ;82DF0E;
-    LDA.W $0004,X                                                        ;82DF11;
-    STA.W TilesetTilesPointer+1                                          ;82DF14;
-    LDA.W $0003,X                                                        ;82DF17;
-    STA.W TilesetTilesPointer                                            ;82DF1A;
-    LDA.W $0007,X                                                        ;82DF1D;
-    STA.W TilesetPalettePointer+1                                        ;82DF20;
-    LDA.W $0006,X                                                        ;82DF23;
-    STA.W TilesetPalettePointer                                          ;82DF26;
-    LDX.W RoomStatePointer                                               ;82DF29;
-    LDA.W $0001,X                                                        ;82DF2C;
-    STA.W LevelDataPointer+1                                             ;82DF2F;
-    LDA.W $0000,X                                                        ;82DF32;
-    STA.W LevelDataPointer                                               ;82DF35;
-    LDA.W $0004,X                                                        ;82DF38;
+    LDX.W Tileset_Pointers,Y                                             ;82DF02; Find the tileset's record of three long resource pointers.
+    LDA.W $0001,X                                                        ;82DF05; Read the overlapping high word of the tile-table pointer.
+    STA.W TilesetTileTablePointer+1                                      ;82DF08; Write pointer bytes 1 and 2 before its low word.
+    LDA.W $0000,X                                                        ;82DF0B; Read the tile-table pointer's low word.
+    STA.W TilesetTileTablePointer                                        ;82DF0E; Complete the three-byte tile-table pointer with an overlapping store.
+    LDA.W $0004,X                                                        ;82DF11; Read the high word of the compressed tile-graphics pointer.
+    STA.W TilesetTilesPointer+1                                          ;82DF14; Store the graphics pointer's middle and bank bytes.
+    LDA.W $0003,X                                                        ;82DF17; Read the graphics pointer's low word.
+    STA.W TilesetTilesPointer                                            ;82DF1A; Complete the compressed tile-graphics pointer.
+    LDA.W $0007,X                                                        ;82DF1D; Read the high word of the compressed palette pointer.
+    STA.W TilesetPalettePointer+1                                        ;82DF20; Store the palette pointer's middle and bank bytes.
+    LDA.W $0006,X                                                        ;82DF23; Read the palette pointer's low word.
+    STA.W TilesetPalettePointer                                          ;82DF26; Complete the compressed palette pointer.
+    LDX.W RoomStatePointer                                               ;82DF29; Return X from the tileset record to the room-state header.
+    LDA.W $0001,X                                                        ;82DF2C; Read the level-data pointer's middle and bank bytes.
+    STA.W LevelDataPointer+1                                             ;82DF2F; Store the level-data pointer's high word first.
+    LDA.W $0000,X                                                        ;82DF32; Read the level-data pointer's low word.
+    STA.W LevelDataPointer                                               ;82DF35; Complete the three-byte compressed level-data pointer.
+    LDA.W $0004,X                                                        ;82DF38; Read the room's music-data index byte.
     AND.W #$00FF                                                         ;82DF3B;
-    STA.W RoomMusicDataIndex                                             ;82DF3E;
-    LDA.W $0005,X                                                        ;82DF41;
+    STA.W RoomMusicDataIndex                                             ;82DF3E; Keep the music-data selection separately from its track.
+    LDA.W $0005,X                                                        ;82DF41; Read the room's music-track index byte.
     AND.W #$00FF                                                         ;82DF44;
-    STA.W RoomMusicTrackIndex                                            ;82DF47;
-    LDA.W $0006,X                                                        ;82DF4A;
-    STA.W FXPointer                                                      ;82DF4D;
-    LDA.W $0008,X                                                        ;82DF50;
-    STA.W EnemyPopulationPointer                                         ;82DF53;
-    LDA.W $000A,X                                                        ;82DF56;
-    STA.W EnemySetPointer                                                ;82DF59;
-    LDA.W $000C,X                                                        ;82DF5C;
-    STA.W Layer2ScrollX                                                  ;82DF5F;
-    LDA.W $0012,X                                                        ;82DF62;
-    STA.W RoomMainASMPointer                                             ;82DF65;
+    STA.W RoomMusicTrackIndex                                            ;82DF47; Keep the selected track within that music data.
+    LDA.W $0006,X                                                        ;82DF4A; Read the bank-local FX header pointer.
+    STA.W FXPointer                                                      ;82DF4D; Select this state's FX definitions.
+    LDA.W $0008,X                                                        ;82DF50; Read the enemy-population pointer at state offset $08.
+    STA.W EnemyPopulationPointer                                         ;82DF53; Select placements and per-spawn enemy parameters.
+    LDA.W $000A,X                                                        ;82DF56; Read the enemy-set pointer at state offset $0A.
+    STA.W EnemySetPointer                                                ;82DF59; Select enemy graphics/palette resources, not the placement list.
+    LDA.W $000C,X                                                        ;82DF5C; Read both adjacent layer-2 scroll-control bytes as one word.
+    STA.W Layer2ScrollX                                                  ;82DF5F; Store the X/Y scroll-control byte pair together.
+    LDA.W $0012,X                                                        ;82DF62; Read the room-main-ASM word at state offset $12.
+    STA.W RoomMainASMPointer                                             ;82DF65; Keep the per-gameplay-update room callback separate from setup ASM.
     RTS                                                                  ;82DF68;
 
 
@@ -11537,63 +11580,79 @@ Load_Target_Colors_for_Common_SpritesBeamsFlashingEnemies:
 
 
 ;;; $E169: Game state 9 (hit a door block) ;;;
+; Call the bank-$82 preliminary door/elevator phase using a synthetic near return:
+; PEA pushes .manualReturn-1 and the indirect JMP reaches a phase ending in RTS.
+; Carry clear keeps state $09; carry set advances the state and tail-calls
+; GameState_A_LoadingNextRoom immediately in the same outer-loop iteration.
 GameState_9_HitADoorBlock:
     PHP                                                                  ;82E169;
-    REP #$30                                                             ;82E16A;
-    PEA.W .manualReturn-1                                                ;82E16C;
-    JMP.W (DoorTransitionFunction)                                       ;82E16F;
+    REP #$30                                                             ;82E16A; Use word-sized registers for the transition function and carry result.
+    PEA.W .manualReturn-1                                                ;82E16C; Build the near RTS return frame for the indirect transition call.
+    JMP.W (DoorTransitionFunction)                                       ;82E16F; Run the current bank-$82 transition phase without pushing a second return.
 
   .manualReturn:
-    BCS .gameStateA                                                      ;82E172;
-    PLP                                                                  ;82E174;
+    BCS .gameStateA                                                      ;82E172; Carry set means the elevator/pre-door delay has finished.
+    PLP                                                                  ;82E174; Carry clear keeps this game state active for the next iteration.
     RTS                                                                  ;82E175;
 
   .gameStateA:
-    INC.W GameState                                                      ;82E176;
+    INC.W GameState                                                      ;82E176; Advance the current state, normally from $09 to $0A.
     PLP                                                                  ;82E179;
-    JMP.W GameState_A_LoadingNextRoom                                    ;82E17A;
+    JMP.W GameState_A_LoadingNextRoom                                    ;82E17A; Tail-call room-transition setup immediately instead of waiting another frame.
 
 
 ;;; $E17D: Door transition function - handle elevator ;;;
+; Ordinary doors and elevators with negative direction finish this preliminary
+; phase immediately with carry set. The other elevator path selects the regional
+; downward delay and executes its first timer decrement in the same call.
 DoorTransitionFunction_HandleElevator:
 ;; Returns:
 ;;     Carry: Set if finished delay, clear otherwise
-    LDA.W ElevatorProperties                                             ;82E17D;
-    BEQ .return                                                          ;82E180;
-    LDA.W #$0000                                                         ;82E182;
-    JSL.L Run_Samus_Command                                              ;82E185;
-    LDA.W ElevatorDirection                                              ;82E189;
-    BMI .return                                                          ;82E18C;
-    LDA.W #$0030*!FPS                                                    ;82E18E;
-    STA.W DownwardsElevatorDelayTimer                                    ;82E191;
-    LDA.W #DoorTransitionFunction_Wait48FramesForDownElevator            ;82E194;
-    STA.W DoorTransitionFunction                                         ;82E197;
-    JMP.W DoorTransitionFunction_Wait48FramesForDownElevator             ;82E19A;
+    LDA.W ElevatorProperties                                             ;82E17D; Check whether this door is associated with an elevator.
+    BEQ .return                                                          ;82E180; Ordinary doors finish this preliminary phase immediately.
+    LDA.W #$0000                                                         ;82E182; Select Samus command 0 for the elevator path.
+    JSL.L Run_Samus_Command                                              ;82E185; Run the elevator path's Samus command before testing its direction.
+    LDA.W ElevatorDirection                                              ;82E189; Read the elevator's signed direction field.
+    BMI .return                                                          ;82E18C; A negative direction needs no down-elevator waiting phase.
+    LDA.W #$0030*!FPS                                                    ;82E18E; Load the region-scaled downward-elevator delay.
+    STA.W DownwardsElevatorDelayTimer                                    ;82E191; Initialise the delay timer before its first decrement.
+    LDA.W #DoorTransitionFunction_Wait48FramesForDownElevator            ;82E194; Select the dedicated down-elevator waiting phase.
+    STA.W DoorTransitionFunction                                         ;82E197; Save that phase for later outer-loop iterations.
+    JMP.W DoorTransitionFunction_Wait48FramesForDownElevator             ;82E19A; Run the first timer step immediately in this same call.
 
   .return:
-    SEC                                                                  ;82E19D;
+    SEC                                                                  ;82E19D; Report completion through carry rather than changing GameState here.
     RTS                                                                  ;82E19E;
 
 
 ;;; $E19F: Door transition function - wait 48 frames for down elevator ;;;
+; Decrement the regional delay before testing its sign. A resulting zero still
+; runs enemies and draws the scene with carry clear; only a negative result
+; returns carry set to release game state $09. This path draws inanimate Samus
+; rather than calling her ordinary gameplay state handlers.
 DoorTransitionFunction_Wait48FramesForDownElevator:
 ;; Returns:
 ;;     Carry: Set if finished delay, clear otherwise
-    DEC.W DownwardsElevatorDelayTimer                                    ;82E19F;
-    BMI .return                                                          ;82E1A2;
-    JSL.L Determine_Which_Enemies_to_Process                             ;82E1A4;
-    JSL.L Main_Enemy_Routine                                             ;82E1A8;
-    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E1AC;
-    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E1B0;
-    CLC                                                                  ;82E1B3;
+    DEC.W DownwardsElevatorDelayTimer                                    ;82E19F; Decrement first; a zero result still takes the waiting path.
+    BMI .return                                                          ;82E1A2; Finish only after the timer becomes negative.
+    JSL.L Determine_Which_Enemies_to_Process                             ;82E1A4; Refresh the enemy lists while the elevator delay is active.
+    JSL.L Main_Enemy_Routine                                             ;82E1A8; Run the main enemy routine during the waiting phase.
+    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E1AC; Draw the actors and projectiles during the delay.
+    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E1B0; Draw Samus through the inanimate drawing path.
+    CLC                                                                  ;82E1B3; Tell game state $09 to stay in this waiting phase.
     RTS                                                                  ;82E1B4;
 
   .return:
-    SEC                                                                  ;82E1B5;
+    SEC                                                                  ;82E1B5; Tell game state $09 that transition setup may begin.
     RTS                                                                  ;82E1B6;
 
 
 ;;; $E1B7: Game state Ah (loading next room) ;;;
+; Prepare the room transition once before entering the phase dispatcher. Set the
+; transition flags, choose fade target colors while retaining selected HUD/timer
+; colors, queue the door sound and inhibit further ordinary sound requests.
+; Select WaitForSoundsToFinish and advance GameState, normally $0A to $0B.
+; Later phases return to the main frame loop; the room is not loaded in one call.
 GameState_A_LoadingNextRoom:
     PHP                                                                  ;82E1B7;
     PHB                                                                  ;82E1B8;
@@ -11676,50 +11735,58 @@ GameState_A_LoadingNextRoom:
 
 
 ;;; $E288: Game state Bh (loading next room) ;;;
+; Dispatch one saved DoorTransitionFunction per call through an indirect near JMP.
+; PEA supplies the return word minus one expected by the phase's RTS. Phases may
+; select another data bank; save and restore the caller's bank around dispatch.
+; After the phase returns, draw an active countdown timer before the common exit.
 GameState_B_LoadingNextRoom:
     PHP                                                                  ;82E288;
-    PHB                                                                  ;82E289;
-    REP #$30                                                             ;82E28A;
-    PEA.W .manualReturn-1                                                ;82E28C;
-    JMP.W (DoorTransitionFunction)                                       ;82E28F;
+    PHB                                                                  ;82E289; Preserve the data bank across phases that select room-data banks.
+    REP #$30                                                             ;82E28A; Use word-sized registers for the indirect phase dispatch.
+    PEA.W .manualReturn-1                                                ;82E28C; Push a near return word minus one for the phase's RTS.
+    JMP.W (DoorTransitionFunction)                                       ;82E28F; Jump to the saved transition phase; it returns to .manualReturn.
 
   .manualReturn:
-    LDA.W TimerStatus                                                    ;82E292;
-    BEQ .return                                                          ;82E295;
-    JSL.L DrawTimer                                                      ;82E297;
+    LDA.W TimerStatus                                                    ;82E292; Check whether an escape/countdown timer must still be drawn.
+    BEQ .return                                                          ;82E295; Skip timer drawing when no timer is active.
+    JSL.L DrawTimer                                                      ;82E297; Keep the active countdown visible during room loading.
 
   .return:
-    PLB                                                                  ;82E29B;
-    PLP                                                                  ;82E29C;
+    PLB                                                                  ;82E29B; Restore the data bank used by the outer frame loop.
+    PLP                                                                  ;82E29C; Restore the outer caller's processor status.
     RTS                                                                  ;82E29D;
 
 
 ;;; $E29E: Door transition function - wait for sounds to finish ;;;
+; Keep running enemies and drawing while all three sound-library queues drain.
+; Each queue is empty when (next index - consumed index) AND $0F is zero.
+; This checks queued requests, not whether a sound has finished playing on the SPC.
+; Only after all three rings are empty select the palette fade-out phase.
 DoorTransitionFunction_WaitForSoundsToFinish:
     PHP                                                                  ;82E29E;
-    JSL.L Determine_Which_Enemies_to_Process                             ;82E29F;
-    JSL.L Main_Enemy_Routine                                             ;82E2A3;
-    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E2A7;
-    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E2AB;
-    SEP #$20                                                             ;82E2AE;
-    LDA.W APU_SoundQueueNextIndexLib1                                    ;82E2B0;
-    SEC                                                                  ;82E2B3;
-    SBC.W APU_SoundQueueStartIndexLib1                                   ;82E2B4;
-    AND.B #$0F                                                           ;82E2B7;
-    BNE .return                                                          ;82E2B9;
-    LDA.W APU_SoundQueueNextIndexLib2                                    ;82E2BB;
+    JSL.L Determine_Which_Enemies_to_Process                             ;82E29F; Keep selecting and running enemies while queued sounds drain.
+    JSL.L Main_Enemy_Routine                                             ;82E2A3; Run the main enemy routine on this transition path.
+    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E2A7; Draw actors and projectiles while waiting for the queues.
+    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E2AB; Draw Samus without advancing her ordinary state handlers here.
+    SEP #$20                                                             ;82E2AE; Compare the sound-ring indices as bytes.
+    LDA.W APU_SoundQueueNextIndexLib1                                    ;82E2B0; Read sound library 1's next insertion index.
+    SEC                                                                  ;82E2B3; Subtract the consumed index without an incoming borrow.
+    SBC.W APU_SoundQueueStartIndexLib1                                   ;82E2B4; Measure outstanding entries in sound library 1.
+    AND.B #$0F                                                           ;82E2B7; Reduce the difference modulo the sixteen-entry ring.
+    BNE .return                                                          ;82E2B9; Keep waiting while library 1 has queued entries.
+    LDA.W APU_SoundQueueNextIndexLib2                                    ;82E2BB; Check library 2 only after library 1's queue is empty.
     SEC                                                                  ;82E2BE;
-    SBC.W APU_SoundQueueStartIndexLib2                                   ;82E2BF;
-    AND.B #$0F                                                           ;82E2C2;
-    BNE .return                                                          ;82E2C4;
-    LDA.W APU_SoundQueueNextIndexLib3                                    ;82E2C6;
+    SBC.W APU_SoundQueueStartIndexLib2                                   ;82E2BF; Measure outstanding entries in sound library 2.
+    AND.B #$0F                                                           ;82E2C2; Apply the same sixteen-entry ring mask to library 2.
+    BNE .return                                                          ;82E2C4; Keep waiting while library 2 has queued entries.
+    LDA.W APU_SoundQueueNextIndexLib3                                    ;82E2C6; Check library 3 only after the first two queues are empty.
     SEC                                                                  ;82E2C9;
-    SBC.W APU_SoundQueueStartIndexLib3                                   ;82E2CA;
-    AND.B #$0F                                                           ;82E2CD;
-    BNE .return                                                          ;82E2CF;
-    REP #$20                                                             ;82E2D1;
-    LDA.W #DoorTransitionFunction_FadeOutTheScreen                       ;82E2D3;
-    STA.W DoorTransitionFunction                                         ;82E2D6;
+    SBC.W APU_SoundQueueStartIndexLib3                                   ;82E2CA; Measure outstanding entries in sound library 3.
+    AND.B #$0F                                                           ;82E2CD; Apply the same sixteen-entry ring mask to library 3.
+    BNE .return                                                          ;82E2CF; Do not advance until all three queue-index differences are zero.
+    REP #$20                                                             ;82E2D1; Restore word-sized access for the transition-function pointer.
+    LDA.W #DoorTransitionFunction_FadeOutTheScreen                       ;82E2D3; Select palette fade-out as the next transition phase.
+    STA.W DoorTransitionFunction                                         ;82E2D6; Schedule that phase for the next state-$0B dispatch.
 
   .return:
     PLP                                                                  ;82E2D9;
@@ -11727,71 +11794,84 @@ DoorTransitionFunction_WaitForSoundsToFinish:
 
 
 ;;; $E2DB: Door transition function - fade out the screen ;;;
+; Fade palette entries toward the targets prepared by state $0A. This is palette
+; interpolation, not HandleFadingOut's display-brightness fade. While unfinished,
+; run enemies and draw the scene; on carry set, schedule door-header/HDMA setup.
 DoorTransitionFunction_FadeOutTheScreen:
-    JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C         ;82E2DB;
-    BCS +                                                                ;82E2DE;
-    JSL.L Determine_Which_Enemies_to_Process                             ;82E2E0;
-    JSL.L Main_Enemy_Routine                                             ;82E2E4;
-    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E2E8;
-    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E2EC;
-    RTS                                                                  ;82E2EF;
+    JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C         ;82E2DB; Advance palette interpolation toward the target colors, not display brightness.
+    BCS +                                                                ;82E2DE; Carry set means the palette transition has completed.
+    JSL.L Determine_Which_Enemies_to_Process                             ;82E2E0; Continue enemy-list selection while the palette fade is unfinished.
+    JSL.L Main_Enemy_Routine                                             ;82E2E4; Run the main enemy routine during the palette fade.
+    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E2E8; Draw actors and projectiles during the fade.
+    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E2EC; Draw Samus through the inanimate path.
+    RTS                                                                  ;82E2EF; Return without changing phases while palette interpolation is unfinished.
 
-+   LDA.W #DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ   ;82E2F0;
-    STA.W DoorTransitionFunction                                         ;82E2F3;
++   LDA.W #DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ   ;82E2F0; Select the door-header and HDMA/IRQ setup phase.
+    STA.W DoorTransitionFunction                                         ;82E2F3; Schedule the next phase rather than running it recursively here.
     RTS                                                                  ;82E2F6;
 
 
 ;;; $E2F7: Door transition function - load door header, delete HDMA objects, and set interrupt command ;;;
+; Load door metadata, remove old HDMA objects and clear their processing-enable
+; bit. Request scanline IRQ command $08 through DP_NextIRQCmd, allowing the
+; interrupt chain to adopt it, then schedule camera alignment.
 DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ:
-    JSR.W Load_Door_Header                                               ;82E2F7;
-    JSL.L Delete_HDMAObjects                                             ;82E2FA;
-    LDA.W #$8000                                                         ;82E2FE;
-    TRB.W HDMAObject_Enable                                              ;82E301;
-    LDA.W #$0008                                                         ;82E304;
-    STA.B DP_NextIRQCmd                                                  ;82E307;
-    LDA.W #DoorTransitionFunction_ScrollScreenToAlignment                ;82E309;
-    STA.W DoorTransitionFunction                                         ;82E30C;
+    JSR.W Load_Door_Header                                               ;82E2F7; Load the destination door header before aligning the old room's camera.
+    JSL.L Delete_HDMAObjects                                             ;82E2FA; Delete the old room's HDMA objects.
+    LDA.W #$8000                                                         ;82E2FE; Select the HDMA-object processing enable bit.
+    TRB.W HDMAObject_Enable                                              ;82E301; Clear that processing bit without replacing the remaining flags.
+    LDA.W #$0008                                                         ;82E304; Request IRQ command $08, the door-transition HUD drawing entry.
+    STA.B DP_NextIRQCmd                                                  ;82E307; Queue the command for the IRQ chain rather than replacing its current command.
+    LDA.W #DoorTransitionFunction_ScrollScreenToAlignment                ;82E309; Select perpendicular-axis camera alignment as the next phase.
+    STA.W DoorTransitionFunction                                         ;82E30C; Save the next transition-function pointer.
     RTS                                                                  ;82E30F;
 
 
 ;;; $E310: Door transition function - scroll screen to alignment ;;;
+; Align the camera axis perpendicular to travel: Y for horizontal doors, X for
+; vertical doors. Each unfinished call moves that coordinate by one pixel toward
+; a $100-pixel boundary; low bytes $80..$FF increment, $01..$7F decrement.
+; The unaligned word load places the coordinate's pixel low byte in A's high byte.
+; Immediate BIT #$FF00 tests it for zero but preserves the load's N flag for BMI.
+; Both paths refresh scrolling. A step reaching alignment still returns first;
+; only an already-aligned entry selects FixDoorsMovingUp.
 DoorTransitionFunction_ScrollScreenToAlignment:
-    PEA.W $8F00                                                          ;82E310;
+    PEA.W $8F00                                                          ;82E310; Prepare bank $8F as the data bank used by this phase.
     PLB                                                                  ;82E313;
-    PLB                                                                  ;82E314;
-    LDA.W DoorDirection                                                  ;82E315;
-    BIT.W #$0002                                                         ;82E318;
-    BNE .vertical                                                        ;82E31B;
-    LDA.W Layer1YPosition-1                                              ;82E31D;
-    BIT.W #$FF00                                                         ;82E320;
-    BEQ .done                                                            ;82E323;
-    BMI .scrollUp                                                        ;82E325;
-    DEC.W Layer1YPosition                                                ;82E327;
-    BRA .return                                                          ;82E32A;
+    PLB                                                                  ;82E314; The second pull selects $8F after the low byte was discarded.
+    LDA.W DoorDirection                                                  ;82E315; Read the transition direction.
+    BIT.W #$0002                                                         ;82E318; Bit 1 distinguishes vertical doors from horizontal doors.
+    BNE .vertical                                                        ;82E31B; For a vertical door, align the camera's X axis.
+    LDA.W Layer1YPosition-1                                              ;82E31D; Read Y position one byte early so its pixel low byte occupies A's high byte.
+    BIT.W #$FF00                                                         ;82E320; Test that pixel byte for zero; immediate BIT preserves the load's N flag.
+    BEQ .done                                                            ;82E323; A zero pixel low byte is already aligned to a $100-pixel boundary.
+    BMI .scrollUp                                                        ;82E325; Use the loaded pixel byte's bit 7 to choose incrementing rather than decrementing.
+    DEC.W Layer1YPosition                                                ;82E327; Move Y one pixel toward the lower $100-pixel boundary.
+    BRA .return                                                          ;82E32A; Update background scrolling without changing the transition phase yet.
 
   .scrollUp:
-    INC.W Layer1YPosition                                                ;82E32C;
+    INC.W Layer1YPosition                                                ;82E32C; Move Y one pixel toward the upper $100-pixel boundary.
     BRA .return                                                          ;82E32F;
 
   .vertical:
-    LDA.W Layer1XPosition-1                                              ;82E331;
-    BIT.W #$FF00                                                         ;82E334;
-    BEQ .done                                                            ;82E337;
-    BMI .scrollRight                                                     ;82E339;
-    DEC.W Layer1XPosition                                                ;82E33B;
-    BRA .return                                                          ;82E33E;
+    LDA.W Layer1XPosition-1                                              ;82E331; Read X position one byte early to inspect its pixel low byte in A's high byte.
+    BIT.W #$FF00                                                         ;82E334; Test X's pixel low byte for zero without replacing the load's N flag.
+    BEQ .done                                                            ;82E337; Advance only when X is already aligned to a $100-pixel boundary.
+    BMI .scrollRight                                                     ;82E339; Choose increasing X when that pixel byte has bit 7 set.
+    DEC.W Layer1XPosition                                                ;82E33B; Move X one pixel toward the lower alignment boundary.
+    BRA .return                                                          ;82E33E; Keep the current phase active while camera alignment is in progress.
 
   .scrollRight:
-    INC.W Layer1XPosition                                                ;82E340;
+    INC.W Layer1XPosition                                                ;82E340; Move X one pixel toward the upper alignment boundary.
 
   .return:
-    JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling   ;82E343;
-    RTS                                                                  ;82E347;
+    JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling   ;82E343; Recalculate layer-2 position and background updates after this one-pixel step.
+    RTS                                                                  ;82E347; Return for another iteration, even if this step just reached alignment.
 
   .done:
-    JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling   ;82E348;
-    LDA.W #DoorTransitionFunction_FixDoorsMovingUp                       ;82E34C;
-    STA.W DoorTransitionFunction                                         ;82E34F;
+    JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling   ;82E348; Refresh background scrolling for the already-aligned camera.
+    LDA.W #DoorTransitionFunction_FixDoorsMovingUp                       ;82E34C; Select the upward-door preparation phase.
+    STA.W DoorTransitionFunction                                         ;82E34F; Advance phases only on the aligned entry path.
     RTS                                                                  ;82E352;
 
 
@@ -11813,6 +11893,10 @@ DoorTransitionFunction_FixDoorsMovingUp:
 
 
 ;;; $E36E: Door transition function - load room header; set up map; decompress level, scroll, and CRE data ;;;
+; Select the room-data bank and preserve elevator-related explored-map state
+; around loading the destination room and state headers. Initialise room effects
+; and decompress level/scroll/CRE data before scheduling scrolling setup.
+; This is one phase of state $0B, not the complete destination-room setup.
 DoorTransitionFunction_LoadRoomHeader_SetupMap_Decompress:
     PEA.W RoomHeaders>>8                                                 ;82E36E;
     PLB                                                                  ;82E371;
@@ -11951,6 +12035,12 @@ DoorTransitionFunction_PlaceSamus_LoadTiles:
 
 
 ;;; $E4A9: Door transition function - load sprites, background, PLMs, audio; execute custom door and room ASM; and wait for scrolling to end ;;;
+; Prepare destination graphics and objects, executing PLMs/door/setup ASM before
+; loading and initialising enemies. The room-main callback is not invoked here.
+; This phase can wait inside one call: IRQ handles the pending FX transfer and
+; door scrolling, and their flags release the two busy loops. After scrolling,
+; run PLMs and explicitly wait for NMI before selecting the next transition phase.
+; PLMs run after the final scroll update; see the visibility caveat below.
 DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM:
 ; In this routine, after all of the loading is done, we sit on this busy loop at $E526 waiting for door transition scrolling to finish
 ; During this busy loop, door transition scrolling updates are happening due to the IRQ handler ($80:979B),
@@ -11960,82 +12050,85 @@ DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM:
 ; PLM draw updates that affect the top row of (the visible part of) the room for upwards doors or the bottom row of the room for downwards doors aren't visible
 ; This is the cause of the "red and green doors appear blue in the Crateria -> Red Brinstar room" bug
     PHP                                                                  ;82E4A9;
-    JSR.W Load_EnemyGFX_to_VRAM                                          ;82E4AA;
-    JSL.L Queue_Room_Music_Data                                          ;82E4AD;
-    JSL.L Clear_Enemy_Projectiles                                        ;82E4B1;
-    JSL.L Clear_AnimatedTilesObjects                                     ;82E4B5;
-    JSL.L Clear_PaletteFXObjects                                         ;82E4B9;
-    JSL.L Clear_PLMs                                                     ;82E4BD;
-    JSL.L CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus       ;82E4C1;
-    JSL.L Load_FX_Header                                                 ;82E4C5;
-    JSR.W Spawn_Door_Closing_PLM                                         ;82E4C9;
-    JSL.L Update_Beam_Tiles_and_Palette                                  ;82E4CC;
-    JSL.L Load_Target_Colors_for_Common_SpritesBeamsFlashingEnemies      ;82E4D0;
-    JSL.L Load_Enemies                                                   ;82E4D4;
-    JSL.L Initialise_Enemies                                             ;82E4D8;
-    JSL.L Reset_Projectile_Data                                          ;82E4DC;
-    JSL.L LoadSamusSuitTargetPalette                                     ;82E4E0;
+    JSR.W Load_EnemyGFX_to_VRAM                                          ;82E4AA; Transfer the destination enemy graphics to VRAM before runtime enemy setup.
+    JSL.L Queue_Room_Music_Data                                          ;82E4AD; Queue the room's music data before later waiting for its music queue.
+    JSL.L Clear_Enemy_Projectiles                                        ;82E4B1; Clear enemy projectiles left by the previous room.
+    JSL.L Clear_AnimatedTilesObjects                                     ;82E4B5; Clear the previous room's animated-tile objects.
+    JSL.L Clear_PaletteFXObjects                                         ;82E4B9; Clear the previous room's palette-effect objects.
+    JSL.L Clear_PLMs                                                     ;82E4BD; Remove the previous room's PLMs before creating the destination list.
+    JSL.L CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus       ;82E4C1; Create destination PLMs, then execute door ASM and room setup ASM.
+    JSL.L Load_FX_Header                                                 ;82E4C5; Load the destination room's FX header after its setup callbacks.
+    JSR.W Spawn_Door_Closing_PLM                                         ;82E4C9; Create the closing-door PLM after the room's own PLM list.
+    JSL.L Update_Beam_Tiles_and_Palette                                  ;82E4CC; Restore Samus beam graphics and colors for the new room.
+    JSL.L Load_Target_Colors_for_Common_SpritesBeamsFlashingEnemies      ;82E4D0; Install target colors shared by sprites, beams and flashing enemies.
+    JSL.L Load_Enemies                                                   ;82E4D4; Prepare enemy-set graphics/palettes and clear the runtime enemy records.
+    JSL.L Initialise_Enemies                                             ;82E4D8; Populate enemy slots and call each enemy's Init AI.
+    JSL.L Reset_Projectile_Data                                          ;82E4DC; Reset Samus projectile data after enemy initialisation.
+    JSL.L LoadSamusSuitTargetPalette                                     ;82E4E0; Select Samus's suit target palette.
     PLP                                                                  ;82E4E4;
-    PEA.W LibraryBGs>>8                                                  ;82E4E5;
+    PEA.W LibraryBGs>>8                                                  ;82E4E5; Select the library-background data bank for the remaining phase.
     PLB                                                                  ;82E4E8;
     PLB                                                                  ;82E4E9;
-    JSR.W Clear_FX_Tilemap                                               ;82E4EA;
-    LDA.W #FXTilemaps>>8&$FF00                                           ;82E4ED;
-    STA.W DoorTransitionVRAM_Src+1                                       ;82E4F0;
-    LDA.W FX_TilemapPointer                                              ;82E4F3;
-    BEQ +                                                                ;82E4F6;
-    STA.W DoorTransitionVRAM_Src                                         ;82E4F8;
-    LDA.W #$5BE0                                                         ;82E4FB;
-    STA.W DoorTransitionVRAM_Dest                                        ;82E4FE;
-    LDA.W #$0840                                                         ;82E501;
-    STA.W DoorTransitionVRAM_Size                                        ;82E504;
-    LDA.W #$8000                                                         ;82E507;
-    TSB.W DoorTransitionVRAM_Flag                                        ;82E50A;
+    JSR.W Clear_FX_Tilemap                                               ;82E4EA; Prepare a cleared FX tilemap before loading a room-specific one.
+    LDA.W #FXTilemaps>>8&$FF00                                           ;82E4ED; Select the FX tilemap source bank.
+    STA.W DoorTransitionVRAM_Src+1                                       ;82E4F0; Store the source pointer's high word for the IRQ-driven transfer.
+    LDA.W FX_TilemapPointer                                              ;82E4F3; Check whether this room supplies an FX tilemap.
+    BEQ +                                                                ;82E4F6; Skip this transfer when the FX tilemap pointer is zero.
+    STA.W DoorTransitionVRAM_Src                                         ;82E4F8; Complete the FX tilemap source pointer.
+    LDA.W #$5BE0                                                         ;82E4FB; Select VRAM word address $5BE0 for the FX tilemap.
+    STA.W DoorTransitionVRAM_Dest                                        ;82E4FE; Store the transfer destination.
+    LDA.W #$0840                                                         ;82E501; Request $0840 bytes of FX tilemap data.
+    STA.W DoorTransitionVRAM_Size                                        ;82E504; Store the DMA byte count.
+    LDA.W #$8000                                                         ;82E507; Select the pending-transfer sign bit.
+    TSB.W DoorTransitionVRAM_Flag                                        ;82E50A; Publish the prepared transfer to the door-transition IRQ handler.
 
   .waitVRAM:
-    BIT.W DoorTransitionVRAM_Flag                                        ;82E50D;
-    BMI .waitVRAM                                                        ;82E510;
+    BIT.W DoorTransitionVRAM_Flag                                        ;82E50D; Test the pending-transfer flag without changing its contents.
+    BMI .waitVRAM                                                        ;82E510; Busy-wait until the IRQ transfer clears bit 15.
 
-+   LDX.W RoomStatePointer                                               ;82E512;
-    LDY.W $0016,X                                                        ;82E515;
-    BPL .noLibraryBackground                                             ;82E518;
++   LDX.W RoomStatePointer                                               ;82E512; Return to this room's selected state header.
+    LDY.W $0016,X                                                        ;82E515; Read the library-background stream pointer at state offset $16.
+    BPL .noLibraryBackground                                             ;82E518; Skip library-background commands when the word is not a high-ROM pointer.
 
   .loop:
-    LDX.W $0000,Y                                                        ;82E51A;
-    INY                                                                  ;82E51D;
+    LDX.W $0000,Y                                                        ;82E51A; Read a library command's existing pointer-table byte offset.
+    INY                                                                  ;82E51D; Advance the background-stream cursor past that command word.
     INY                                                                  ;82E51E;
-    JSR.W (Library_Background_Function_Pointers,X)                       ;82E51F;
-    BCC .loop                                                            ;82E522;
+    JSR.W (Library_Background_Function_Pointers,X)                       ;82E51F; Run the bank-local background command; it advances the remaining stream data.
+    BCC .loop                                                            ;82E522; Carry clear continues the command stream; carry set ends it.
 
   .noLibraryBackground:
-    REP #$30                                                             ;82E524;
+    REP #$30                                                             ;82E524; Re-establish word-sized registers before waiting for scrolling.
 
+  ; Do not return to state $0B while waiting here. IRQ scrolling continues to run
+  ; and sets bit 15 on completion. Only then restore scrolling HDMA, process PLMs
+  ; and wait for NMI. These IRQ-driven waits are not the WaitForNMI request handshake.
   .waitDoor:
-    LDA.W DoorTransitionFinishScrolling                                  ;82E526;
-    BPL .waitDoor                                                        ;82E529;
-    LDA.W #$3BE0                                                         ;82E52B;
-    STA.L Palettes_SpriteP4C4                                            ;82E52E;
-    JSL.L Spawn_BG3_Scroll_HDMA_Object                                   ;82E532;
-    LDA.W #$8000                                                         ;82E536;
-    TSB.W HDMAObject_Enable                                              ;82E539;
-    JSL.L PLM_Handler                                                    ;82E53C;
-    JSL.L WaitForNMI                                                     ;82E540;
-    LDA.W DoorDirection                                                  ;82E544;
-    BIT.W #$0002                                                         ;82E547;
-    BNE .return                                                          ;82E54A;
-    AND.W #$0003                                                         ;82E54C;
-    BEQ .right                                                           ;82E54F;
-    LDA.W #$0007                                                         ;82E551;
-    TRB.W SamusXPosition                                                 ;82E554;
+    LDA.W DoorTransitionFinishScrolling                                  ;82E526; Read the completion flag updated by door-transition IRQ scrolling.
+    BPL .waitDoor                                                        ;82E529; Remain inside this phase until bit 15 signals scrolling completion.
+    LDA.W #$3BE0                                                         ;82E52B; Select the sprite palette color installed at the end of scrolling.
+    STA.L Palettes_SpriteP4C4                                            ;82E52E; Write that color to sprite palette 4, color 4.
+    JSL.L Spawn_BG3_Scroll_HDMA_Object                                   ;82E532; Spawn the destination room's BG3 scrolling HDMA object.
+    LDA.W #$8000                                                         ;82E536; Select the HDMA-object processing enable bit.
+    TSB.W HDMAObject_Enable                                              ;82E539; Resume HDMA-object processing after scrolling completes.
+    JSL.L PLM_Handler                                                    ;82E53C; Run PLMs before publishing the first post-scroll frame.
+    JSL.L WaitForNMI                                                     ;82E540; Service the prepared frame through NMI before continuing this phase.
+    LDA.W DoorDirection                                                  ;82E544; Read the door direction for the final horizontal position adjustment.
+    BIT.W #$0002                                                         ;82E547; Bit 1 identifies vertical doors, which skip this X adjustment.
+    BNE .return                                                          ;82E54A; Keep X unchanged for vertical doors.
+    AND.W #$0003                                                         ;82E54C; Use the low direction bits to distinguish right from left.
+    BEQ .right                                                           ;82E54F; Direction zero takes the rightward adjustment.
+    LDA.W #$0007                                                         ;82E551; Select Samus X position's low three bits.
+    TRB.W SamusXPosition                                                 ;82E554; Clear those bits for the non-rightward horizontal path.
     BRA .return                                                          ;82E557;
 
   .right:
-    LDA.W #$0007                                                         ;82E559;
-    TSB.W SamusXPosition                                                 ;82E55C;
+    LDA.W #$0007                                                         ;82E559; Select the same three X-position bits for the rightward path.
+    TSB.W SamusXPosition                                                 ;82E55C; Set those bits on the rightward horizontal path.
 
   .return:
-    LDA.W #DoorTransitionFunction_HandleAnimatedTiles                    ;82E55F;
-    STA.W DoorTransitionFunction                                         ;82E562;
+    LDA.W #DoorTransitionFunction_HandleAnimatedTiles                    ;82E55F; Select the animated-tile transition phase after all loading and waits.
+    STA.W DoorTransitionFunction                                         ;82E562; Save that next phase for a later state-$0B dispatch.
     RTS                                                                  ;82E565;
 
 
@@ -12260,6 +12353,9 @@ DoorTransitionFunction_HandleAnimatedTiles:
 
 
 ;;; $E664: Door transition function - wait for music queue to clear and possibly load new music ;;;
+; Wait for all music-queue timer words to clear; this is not a test that the
+; currently playing track has ended. Once clear, select the Samus-placement
+; correction phase and request the destination music only if the track changed.
 DoorTransitionFunction_WaitForMusicQueueClear_and_LoadMusic:
     JSL.L CheckIfMusicIsQueued                                           ;82E664;
     BCS .return                                                          ;82E668;
@@ -12384,22 +12480,27 @@ DoorTransitionFunction_NudgeSamusIfInterceptingTheDoor:
 
 
 ;;; $E737: Door transition function - fade in the screen and run enemies; finish door transition ;;;
+; Run destination-room animated tiles, enemies and enemy projectiles while
+; interpolating colors toward the room's target palette. Draw Samus through the
+; inanimate path rather than her ordinary state handlers. When the palette helper
+; returns carry set, restore sound queuing, clear transition flags and select
+; gameplay state $08. This is distinct from the pause/unpause brightness fades.
 DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish:
-    JSL.L AnimatedTilesObject_Handler                                    ;82E737;
-    JSL.L Determine_Which_Enemies_to_Process                             ;82E73B;
-    JSL.L Main_Enemy_Routine                                             ;82E73F;
-    JSL.L Enemy_Projectile_Handler                                       ;82E743;
-    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E747;
-    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E74B;
-    JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer                 ;82E74E;
-    JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C         ;82E752;
-    BCC .return                                                          ;82E755;
-    STZ.W DisableSounds                                                  ;82E757;
-    JSL.L Play_SpinJumpSound_if_SpinJumping                              ;82E75A;
-    STZ.W DoorTransitionFlagElevatorsZebetites                           ;82E75E;
-    STZ.W DoorTransitionFlagEnemiesPause                                 ;82E761;
-    LDA.W #$0008                                                         ;82E764;
-    STA.W GameState                                                      ;82E767;
+    JSL.L AnimatedTilesObject_Handler                                    ;82E737; Advance animated-tile objects during the destination-room fade.
+    JSL.L Determine_Which_Enemies_to_Process                             ;82E73B; Select the destination room's active enemies.
+    JSL.L Main_Enemy_Routine                                             ;82E73F; Run the main enemy routine while fading in.
+    JSL.L Enemy_Projectile_Handler                                       ;82E743; Advance enemy projectiles on this final transition path.
+    JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;82E747; Draw the destination room's actors and projectiles.
+    JSR.W Draw_Inanimate_Samus_Bank82                                    ;82E74B; Draw Samus through the inanimate drawing path.
+    JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer                 ;82E74E; Queue enemy BG2 tilemap updates produced by the new room.
+    JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C         ;82E752; Advance the palette interpolation toward the new room's target palette.
+    BCC .return                                                          ;82E755; Keep the transition active until the palette helper reports completion.
+    STZ.W DisableSounds                                                  ;82E757; Allow ordinary sound queuing again.
+    JSL.L Play_SpinJumpSound_if_SpinJumping                              ;82E75A; Restore Samus's spin-jump sound if appropriate.
+    STZ.W DoorTransitionFlagElevatorsZebetites                           ;82E75E; Clear the transition flag used by elevators and zebetites.
+    STZ.W DoorTransitionFlagEnemiesPause                                 ;82E761; Clear the transition flag that also blocks new pause requests.
+    LDA.W #$0008                                                         ;82E764; Select normal gameplay explicitly after the final palette step.
+    STA.W GameState                                                      ;82E767; Return the outer dispatcher to game state $08.
 
   .return:
     RTS                                                                  ;82E76A;
@@ -13088,32 +13189,37 @@ Load_Level_Scroll_and_CRE_Data:
 
 
 ;;; $EB6C: Create PLMs, execute door ASM, room setup ASM and set elevator status ;;;
+; Read the optional PLM list from state offset $14. Six-byte records contain a
+; PLM ID, X/Y block bytes and argument word; a zero ID terminates the list.
+; Attempt each spawn without checking its carry result, then execute door ASM
+; and room setup ASM in that order, even when the PLM list was absent or empty.
+; Finally set ElevatorStatus to 2 only when the door's elevator property is set.
 CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus:
-    PEA.W $8F00                                                          ;82EB6C;
+    PEA.W $8F00                                                          ;82EB6C; Use bank $8F for room-state and PLM-population records.
     PLB                                                                  ;82EB6F;
     PLB                                                                  ;82EB70;
-    LDX.W RoomStatePointer                                               ;82EB71;
-    LDA.W $0014,X                                                        ;82EB74;
-    BEQ .noPLMs                                                          ;82EB77;
-    TAX                                                                  ;82EB79;
+    LDX.W RoomStatePointer                                               ;82EB71; Find this state's optional PLM-population pointer.
+    LDA.W $0014,X                                                        ;82EB74; Read the PLM list pointer at state offset $14.
+    BEQ .noPLMs                                                          ;82EB77; A zero pointer skips the list but still executes door and setup ASM.
+    TAX                                                                  ;82EB79; Use X as the six-byte PLM-record cursor.
 
   .loop:
-    LDA.W $0000,X                                                        ;82EB7A;
-    BEQ .noPLMs                                                          ;82EB7D;
-    JSL.L Spawn_Room_PLM                                                 ;82EB7F;
-    TXA                                                                  ;82EB83;
-    CLC                                                                  ;82EB84;
-    ADC.W #$0006                                                         ;82EB85;
-    TAX                                                                  ;82EB88;
-    BRA .loop                                                            ;82EB89;
+    LDA.W $0000,X                                                        ;82EB7A; Read the current PLM ID word.
+    BEQ .noPLMs                                                          ;82EB7D; A zero ID terminates the room PLM list.
+    JSL.L Spawn_Room_PLM                                                 ;82EB7F; Attempt to spawn this entry; this walker does not test the returned carry.
+    TXA                                                                  ;82EB83; Recover the preserved list cursor for advancing to the next record.
+    CLC                                                                  ;82EB84; Ignore spawn carry when calculating the next record's address.
+    ADC.W #$0006                                                         ;82EB85; Each PLM record is six bytes: ID, X/Y bytes and argument word.
+    TAX                                                                  ;82EB88; Advance the room PLM-list cursor.
+    BRA .loop                                                            ;82EB89; Continue until the zero-ID terminator.
 
   .noPLMs:
-    JSL.L Execute_Door_ASM                                               ;82EB8B;
-    JSL.L Execute_Room_Setup_ASM                                         ;82EB8F;
-    LDA.W ElevatorProperties                                             ;82EB93;
-    BEQ .return                                                          ;82EB96;
-    LDA.W #$0002                                                         ;82EB98;
-    STA.W ElevatorStatus                                                 ;82EB9B;
+    JSL.L Execute_Door_ASM                                               ;82EB8B; Execute optional door ASM after processing the PLM list.
+    JSL.L Execute_Room_Setup_ASM                                         ;82EB8F; Execute optional room setup ASM after the door callback.
+    LDA.W ElevatorProperties                                             ;82EB93; Check the elevator property loaded from the door header.
+    BEQ .return                                                          ;82EB96; Leave elevator status unchanged for an ordinary door.
+    LDA.W #$0002                                                         ;82EB98; Select elevator status 2 for an elevator entrance.
+    STA.W ElevatorStatus                                                 ;82EB9B; Store elevator status only on that elevator path.
 
   .return:
     RTL                                                                  ;82EB9E;

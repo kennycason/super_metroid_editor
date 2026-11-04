@@ -1,5 +1,5 @@
 {
-  "revision": "super-metroid-ntsc-9",
+  "revision": "super-metroid-ntsc-10",
   "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
   "renames": [
     { "symbol": "SpeedBoostTimerResetValues", "replacement": "SpeedBoostTimerReloadTable" }
@@ -1497,6 +1497,131 @@
         "bit was already collected. Otherwise it installs the pickup continuation as its",
         "link target and a trigger-wait pre-instruction. The triggered continuation sets",
         "the collected bit before clearing queued music and awarding five missiles."
+      ]
+    },
+    {
+      "id": "plm-draw.level-writes",
+      "fileId": "bank_84.asm",
+      "symbol": "Process_PLM_Draw_Instruction",
+      "expectedCode": "LDA.L PLMExtra_DrawInstructionPointers,X",
+      "paragraphs": [
+        "A PLM draw instruction is a sequence of counted block runs applied directly",
+        "to LevelData. Bit 15 of a run header selects a column; clear selects a row.",
+        "The low byte is the block count and the following words are complete level",
+        "block values. Rows advance one word; columns advance one room-width row."
+      ]
+    },
+    {
+      "id": "plm-draw.relative-entries",
+      "fileId": "bank_84.asm",
+      "symbol": "Process_PLM_Draw_Instruction",
+      "localLabel": ".next",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "A zero word terminates the drawing. Otherwise the next two bytes are signed",
+        "X and Y block offsets from the PLM's original block. Sign-extend X and scale",
+        "it by two bytes per level word; multiply signed Y by room width and then by",
+        "two. The following run header begins immediately after that offset pair."
+      ]
+    },
+    {
+      "id": "plm-draw.hardcoded-bases",
+      "fileId": "bank_84.asm",
+      "symbol": "DrawPLM_HardCoded",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Use the native BG1 tilemap bases $5000 and $53E0 for PLM rendering, then",
+        "enter the shared renderer with Y at the current draw instruction. The second",
+        "base is intentionally $20 below $5400; later screen-half arithmetic accounts",
+        "for the split without masking the horizontal block coordinate again."
+      ]
+    },
+    {
+      "id": "plm-draw.visible-window",
+      "fileId": "bank_84.asm",
+      "symbol": "DrawPLM",
+      "expectedCode": "LDA.W PLM_XBlock",
+      "paragraphs": [
+        "Start every draw-entry position from the PLM's block coordinates. Convert the",
+        "Layer 1 camera Y position to blocks and reject entries below its 16-row window.",
+        "Horizontal and vertical runs then clip their other axis before reserving VRAM",
+        "write-table space. Offscreen level-data changes therefore need no tilemap upload."
+      ]
+    },
+    {
+      "id": "plm-draw.horizontal",
+      "fileId": "bank_84.asm",
+      "symbol": "DrawPLM",
+      "localLabel": ".horizontal",
+      "expectedCode": "AND.W #$7FFF",
+      "paragraphs": [
+        "Clear the orientation bit to obtain the horizontal block count. Clip the run",
+        "against the camera's current 17-column update span, retaining a left-skip count",
+        "for its draw-data cursor. A run contained in one BG1 screen uses two VRAM writes",
+        "for its top and bottom tile rows; a screen-boundary crossing can require four."
+      ]
+    },
+    {
+      "id": "plm-draw.metatile-expansion",
+      "fileId": "bank_84.asm",
+      "symbol": "DrawPLM",
+      "localLabel": ".loopHorizBlock",
+      "expectedCode": "LDA.B (DP_Temp03)",
+      "paragraphs": [
+        "Each level word uses its low ten bits as a metatile index. Multiply by eight",
+        "to select four word-sized entries in TileTable. Bits $0400 and $0800 request",
+        "horizontal and vertical flips: reorder the 2x2 quadrants and toggle tilemap",
+        "flip bits $4000/$8000. Each expanded block consumes eight staging bytes."
+      ]
+    },
+    {
+      "id": "plm-draw.vertical",
+      "fileId": "bank_84.asm",
+      "symbol": "DrawPLM",
+      "localLabel": ".vertical",
+      "expectedCode": "AND.W #$7FFF",
+      "paragraphs": [
+        "Clear the orientation bit for the vertical block count and require the column",
+        "to lie inside the camera's horizontal update span. Clip blocks above and below",
+        "the visible rows, then use two column-mode VRAM writes for the left and right",
+        "tile columns. Metatile flip handling mirrors the horizontal path's semantics."
+      ]
+    },
+    {
+      "id": "plm-draw.next-entry",
+      "fileId": "bank_84.asm",
+      "symbol": "DrawPLM",
+      "localLabel": ".nextDrawEntry",
+      "expectedCode": "PLX",
+      "paragraphs": [
+        "After a visible run, restore the caller's X and advance past the run's source",
+        "words. A zero offset pair ends the draw instruction. Otherwise sign-extend the",
+        "next X/Y bytes relative to the original PLM block and render that entry with",
+        "the same clipping and upload rules."
+      ]
+    },
+    {
+      "id": "plm-draw.vram-destination",
+      "fileId": "bank_84.asm",
+      "symbol": "Calculate_PLMDrawTilemap_VRAMDestination",
+      "expectedCode": "LDA.B DP_Temp1A",
+      "paragraphs": [
+        "Map a visible block row and wrapped 32-column block coordinate into the BG1",
+        "tilemap destination. Each block contributes two tile rows and two tile columns.",
+        "BG1XOffset bit 8 selects which $400-word screen half is currently displayed;",
+        "crossing column $10 and that scroll bit choose the opposite half consistently."
+      ]
+    },
+    {
+      "id": "plm-draw.single-screen-vram",
+      "fileId": "bank_84.asm",
+      "symbol": "PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap",
+      "expectedCode": "ORA.B DP_Temp1C",
+      "paragraphs": [
+        "Build two VRAM write records for a run contained in one screen half. Horizontal",
+        "mode targets two tile rows; vertical mode ORs $8000 for column increment and",
+        "targets adjacent columns. Each record copies four bytes per metatile from the",
+        "bank-$7E PLMDrawTilemap staging buffer at its current shared write index."
       ]
     }
   ],
@@ -4323,6 +4448,173 @@
         {"expectedCode":"dw InstList_PLM_MissileTank_2"},
         {"expectedCode":"dw Instruction_PLM_PreInstruction_inY","comment":"Install the trigger-wait pre-instruction for the visible pickup."},
         {"expectedCode":"dw PreInstruction_PLM_GotoLinkInstructionIfTriggered"}
+      ]
+    },
+    {
+      "id": "plm-draw.Process_PLM_Draw_Instruction.lines",
+      "fileId": "bank_84.asm",
+      "symbol": "Process_PLM_Draw_Instruction",
+      "lines": [
+        {"expectedCode":"LDA.L PLMExtra_DrawInstructionPointers,X","comment":"Read this slot's current level-data draw instruction."},
+        {"expectedCode":"TAY","comment":"Y becomes the draw-data cursor in bank $84."},
+        {"expectedCode":"LDA.W PLM_BlockIndices,X","comment":"Read the PLM's original level-data byte offset."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Keep that origin for every relative draw entry."},
+        {"expectedCode":"TAX","comment":"X selects the first destination level word."},
+        {"expectedCode":".loopDrawEntry:"},
+        {"expectedCode":"LDA.W $0000,Y","comment":"Read the orientation bit and low-byte block count."},
+        {"expectedCode":"BMI .column","comment":"Bit 15 set selects a vertical run."},
+        {"expectedCode":"AND.W #$00FF","comment":"A horizontal run uses the low byte as its count."},
+        {"expectedCode":"STA.B DP_Temp16"},
+        {"expectedCode":"INY"},
+        {"expectedCode":"INY","comment":"Advance from the run header to its block words."},
+        {"expectedCode":".loopRow:"},
+        {"expectedCode":"LDA.W $0000,Y","comment":"Read one complete level-data block word."},
+        {"expectedCode":"STA.L LevelData,X","comment":"Replace the destination block, including type and metatile bits."},
+        {"expectedCode":"INY"},
+        {"expectedCode":"INY","comment":"Consume one source word."},
+        {"expectedCode":"INX"},
+        {"expectedCode":"INX","comment":"Move one word to the right in level data."},
+        {"expectedCode":"DEC.B DP_Temp16"},
+        {"expectedCode":"BNE .loopRow"},
+        {"expectedCode":"JMP.W .next"},
+        {"expectedCode":".column:"},
+        {"expectedCode":"AND.W #$00FF","comment":"A vertical run also takes its count from the low byte."},
+        {"expectedCode":"STA.B DP_Temp16"},
+        {"expectedCode":"INY"},
+        {"expectedCode":"INY"},
+        {"expectedCode":".loopColumn:"},
+        {"expectedCode":"LDA.W $0000,Y","comment":"Read the next block for this column."},
+        {"expectedCode":"STA.L LevelData,X"},
+        {"expectedCode":"INY"},
+        {"expectedCode":"INY"},
+        {"expectedCode":"TXA"},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.W RoomWidthBlocks"},
+        {"expectedCode":"ADC.W RoomWidthBlocks","comment":"Advance one row of word-sized room blocks."},
+        {"expectedCode":"TAX"},
+        {"expectedCode":"DEC.B DP_Temp16"},
+        {"expectedCode":"BNE .loopColumn"},
+        {"expectedCode":".next:"},
+        {"expectedCode":"LDA.W $0000,Y","comment":"Peek at the signed X/Y offset pair following this run."},
+        {"expectedCode":"BNE +","comment":"Any nonzero offset byte begins another entry."},
+        {"expectedCode":"RTS","comment":"A zero pair terminates the complete draw instruction."},
+        {"expectedCode":"+ DEY","comment":"Back up one byte to isolate signed X with an unaligned word load."},
+        {"expectedCode":"LDA.W $0000,Y"},
+        {"expectedCode":"XBA","comment":"Move the X offset byte into the sign-tested high byte."},
+        {"expectedCode":"BPL .positive"},
+        {"expectedCode":"ORA.W #$FF00","comment":"Sign-extend a negative X block offset."},
+        {"expectedCode":"BRA +"},
+        {"expectedCode":".positive:"},
+        {"expectedCode":"AND.W #$00FF","comment":"Zero-extend a nonnegative X block offset."},
+        {"expectedCode":"+ ASL","comment":"Scale signed X from blocks to level-data bytes."},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.B DP_Temp12","comment":"Apply X relative to the PLM's original block."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Keep the horizontally adjusted byte offset."},
+        {"expectedCode":"LDA.W $0001,Y","comment":"Use the overlapping load that places signed Y in the high byte."},
+        {"expectedCode":"XBA"},
+        {"expectedCode":"BPL +"},
+        {"expectedCode":"ORA.W #$FF00","comment":"Sign-extend negative Y."},
+        {"expectedCode":"EOR.W #$FFFF"},
+        {"expectedCode":"INC","comment":"Convert negative Y to its positive magnitude."},
+        {"expectedCode":"TAX"},
+        {"expectedCode":"LDA.W #$0000"},
+        {"expectedCode":"- SEC"},
+        {"expectedCode":"SBC.W RoomWidthBlocks","comment":"Accumulate a negative row displacement."},
+        {"expectedCode":"DEX"},
+        {"expectedCode":"BNE -"},
+        {"expectedCode":"BRA .setX"},
+        {"expectedCode":"+ AND.W #$00FF","comment":"Zero-extend nonnegative Y."},
+        {"expectedCode":"BEQ .setX"},
+        {"expectedCode":"TAX"},
+        {"expectedCode":"LDA.W #$0000"},
+        {"expectedCode":"- CLC"},
+        {"expectedCode":"ADC.W RoomWidthBlocks","comment":"Accumulate a positive row displacement."},
+        {"expectedCode":"DEX"},
+        {"expectedCode":"BNE -"},
+        {"expectedCode":".setX:"},
+        {"expectedCode":"ASL","comment":"Convert the signed row displacement to level-data bytes."},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.B DP_Temp14","comment":"Combine relative X, relative Y and the original PLM block."},
+        {"expectedCode":"TAX","comment":"X selects the next draw entry's first destination word."},
+        {"expectedCode":"INY"},
+        {"expectedCode":"INY"},
+        {"expectedCode":"INY","comment":"Advance from the backed-up cursor past both offset bytes."},
+        {"expectedCode":"JMP.W .loopDrawEntry"}
+      ]
+    },
+    {
+      "id": "plm-draw.Calculate_PLMDrawTilemap_VRAMDestination.lines",
+      "fileId": "bank_84.asm",
+      "symbol": "Calculate_PLMDrawTilemap_VRAMDestination",
+      "lines": [
+        {"expectedCode":"LDA.B DP_Temp1A","comment":"Read the visible block row selected for this run."},
+        {"expectedCode":"AND.W #$000F","comment":"Wrap the row within the 16-block-high BG1 screen."},
+        {"expectedCode":"ORA.W #$4000","comment":"Scale it by 64 tilemap bytes through the hardware multiplier."},
+        {"expectedCode":"STA.W $4202"},
+        {"expectedCode":"LDA.B DP_Temp18","comment":"Read the run's first visible block column."},
+        {"expectedCode":"AND.W #$001F","comment":"Wrap it within the two-screen 32-block span."},
+        {"expectedCode":"CMP.W #$0010"},
+        {"expectedCode":"BCS .greaterThanF","comment":"Columns $10..1F use the second BG1 screen base."},
+        {"expectedCode":"ASL","comment":"Each block starts two tilemap words apart."},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.B DP_Temp09","comment":"Add the first BG1 tilemap base."},
+        {"expectedCode":"ADC.W $4216","comment":"Add the row product from the hardware multiplier."},
+        {"expectedCode":"PHA"},
+        {"expectedCode":"LDA.W BG1XOffset","comment":"Inspect which horizontal screen half is currently displayed."},
+        {"expectedCode":"AND.W #$0100"},
+        {"expectedCode":"BEQ .fallthrough"},
+        {"expectedCode":"PLA"},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.W #$0400","comment":"Swap this column into the other $400-word screen half."},
+        {"expectedCode":"PHA"},
+        {"expectedCode":"BRA .fallthrough"},
+        {"expectedCode":".greaterThanF:"},
+        {"expectedCode":"ASL"},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.B DP_Temp0C","comment":"Add the pre-adjusted second-screen tilemap base."},
+        {"expectedCode":"ADC.W $4216"},
+        {"expectedCode":"PHA"},
+        {"expectedCode":"LDA.W BG1XOffset"},
+        {"expectedCode":"AND.W #$0100"},
+        {"expectedCode":"BEQ .fallthrough"},
+        {"expectedCode":"PLA"},
+        {"expectedCode":"SEC"},
+        {"expectedCode":"SBC.W #$0400","comment":"Swap the second-screen column back when scroll bit 8 is set."},
+        {"expectedCode":"PHA"},
+        {"expectedCode":".fallthrough:"},
+        {"expectedCode":"PLA","comment":"Leave the computed VRAM destination in A for the setup helper."}
+      ]
+    },
+    {
+      "id": "plm-draw.PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap.lines",
+      "fileId": "bank_84.asm",
+      "symbol": "PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap",
+      "lines": [
+        {"expectedCode":"ORA.B DP_Temp1C","comment":"Add the vertical column-increment flag when requested."},
+        {"expectedCode":"STA.B VRAMWrite.dest,X","comment":"Store the first row or column destination."},
+        {"expectedCode":"LDA.B DP_Temp14","comment":"Read the clipped metatile count."},
+        {"expectedCode":"ASL"},
+        {"expectedCode":"ASL","comment":"Each metatile contributes two word tiles, or four bytes, per record."},
+        {"expectedCode":"STA.B VRAMWrite.size,X"},
+        {"expectedCode":"STA.B VRAMWrite[1].size,X","comment":"The paired tile row/column has the same byte count."},
+        {"expectedCode":"LDA.W #PLMDrawTilemap","comment":"Use the shared bank-$7E expansion buffer."},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.W PLM_DrawTilemapIndex","comment":"Append after tilemap data queued by earlier PLMs this pass."},
+        {"expectedCode":"STA.B VRAMWrite.src,X"},
+        {"expectedCode":"STA.B DP_Temp00","comment":"Publish the first staging pointer for metatile expansion."},
+        {"expectedCode":"CLC"},
+        {"expectedCode":"ADC.B VRAMWrite.size,X","comment":"The second half follows the first record's bytes."},
+        {"expectedCode":"STA.B VRAMWrite[1].src,X"},
+        {"expectedCode":"STA.B DP_Temp06","comment":"Publish the paired staging pointer."},
+        {"expectedCode":"SEP #$20"},
+        {"expectedCode":"LDA.B #$7E","comment":"Both staging sources live in WRAM bank $7E."},
+        {"expectedCode":"STA.B VRAMWrite.src+2,X"},
+        {"expectedCode":"STA.B VRAMWrite[1].src+2,X"},
+        {"expectedCode":"STA.B DP_Temp02"},
+        {"expectedCode":"STA.B DP_Temp08"},
+        {"expectedCode":"REP #$20"},
+        {"expectedCode":"RTS"},
+        {"expectedCode":"if !FEATURE_KEEP_UNREFERENCED"}
       ]
     }
   ]

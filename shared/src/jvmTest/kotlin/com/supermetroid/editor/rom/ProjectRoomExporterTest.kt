@@ -65,6 +65,90 @@ class ProjectRoomExporterTest {
     }
 
     @Test
+    fun `source layout reuses its private native allocation when it still fits`() {
+        val rom = TestRomHelper.requireRomBytes().copyOf()
+        val parser = RomParser(rom)
+        val room = requireNotNull(parser.readRoomHeader(0x9D19))
+        val originalState = parser.parseRoomStatesWithData(room.roomId).single()
+        val original = parser.decompressLZ2(originalState.levelDataPtr)
+        val project = SmEditProject(romPath = "base.smc")
+        val edits = project.getOrCreateRoom(room.roomId)
+        edits.ensureStateManifest(parser)
+        edits.asmLayoutSourceVersion = 1
+        val sourceLayouts = edits.states.associate { state ->
+            state.id to SourceRoomLayoutResource(
+                identity = state.resources.level,
+                width = room.width * 16,
+                height = room.height * 16,
+                values = original.map { it.toInt() and 0xFF },
+            )
+        }
+
+        val result = ProjectRoomExporter(
+            project = project,
+            romParser = parser,
+            romData = rom,
+            sourceLayouts = mapOf(room.roomId to sourceLayouts),
+        ).exportRooms()
+
+        val exported = RomParser(rom)
+        assertEquals(originalState.levelDataPtr, exported.parseRoomStatesWithData(room.roomId).single().levelDataPtr)
+        assertContentEquals(original, exported.decompressLZ2(originalState.levelDataPtr))
+        assertTrue(result.allocations.none { it.label.contains("source layout") })
+    }
+
+    @Test
+    fun `source layout can relocate into managed expanded banks`() {
+        val vanilla = TestRomHelper.requireRomBytes()
+        val rom = vanilla.copyOf(RomConstants.EXPANDED_ROM_SIZE).also {
+            it.fill(0xFF.toByte(), vanilla.size, it.size)
+        }
+        val parser = RomParser(rom)
+        val room = requireNotNull(parser.readRoomHeader(0x9D19))
+        val originalState = parser.parseRoomStatesWithData(room.roomId).single()
+        val original = parser.decompressLZ2(originalState.levelDataPtr)
+        val incompressible = original.copyOf()
+        var random = 0x13579BDF
+        for (index in 2 until incompressible.size) {
+            random = random * 1103515245 + 12345
+            incompressible[index] = (random ushr 16).toByte()
+        }
+        val originalCompressedSize = parser.decompressLZ2WithSize(originalState.levelDataPtr).second
+        assertTrue(LZ5Compressor.compress(incompressible).size > originalCompressedSize)
+
+        // Remove every vanilla relocation candidate without disturbing the
+        // expanded banks that this test is proving.
+        (0xC0..0xCE).forEach { bank ->
+            rom[parser.snesToPc((bank shl 16) or 0xFFFF)] = 0
+        }
+        val project = SmEditProject(romPath = "base.smc")
+        val edits = project.getOrCreateRoom(room.roomId)
+        edits.ensureStateManifest(parser)
+        edits.asmLayoutSourceVersion = 1
+        val sourceLayouts = edits.states.associate { state ->
+            state.id to SourceRoomLayoutResource(
+                identity = state.resources.level,
+                width = room.width * 16,
+                height = room.height * 16,
+                values = incompressible.map { it.toInt() and 0xFF },
+            )
+        }
+
+        val result = ProjectRoomExporter(
+            project = project,
+            romParser = parser,
+            romData = rom,
+            sourceLayouts = mapOf(room.roomId to sourceLayouts),
+        ).exportRooms()
+
+        val exported = RomParser(rom)
+        val pointer = exported.parseRoomStatesWithData(room.roomId).single().levelDataPtr
+        assertTrue((pointer ushr 16) in 0xE0..0xFF, "pointer=${pointer.toString(16)}")
+        assertContentEquals(incompressible, exported.decompressLZ2(pointer))
+        assertTrue(result.allocations.any { it.bank in 0xE0..0xFF && it.label.contains("source layout") })
+    }
+
+    @Test
     fun `custom scroll behavior rejects a target outside the room`() {
         val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
         val parser = RomParser(rom)

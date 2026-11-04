@@ -213,13 +213,16 @@ RTS_A0807B:
 
 
 ;;; $807C: Instruction - delete enemy ;;;
+; Set property $0200 and exit this interpreter call through a replaced return word.
+; The command does not clear Enemy.ID itself. Activity selection later removes
+; deletion-marked slots; drawing eligibility also rejects that property bit.
 Instruction_Common_DeleteEnemy:
-    LDA.W Enemy.properties,X                                             ;A0807C;
-    ORA.W #$0200                                                         ;A0807F;
-    STA.W Enemy.properties,X                                             ;A08082;
-    PLA                                                                  ;A08085;
-    PEA.W ProcessEnemyInstructions_return-1                              ;A08086;
-    RTL                                                                  ;A08089;
+    LDA.W Enemy.properties,X                                             ;A0807C; Read the current property flags before requesting deletion.
+    ORA.W #$0200                                                         ;A0807F; Set deletion bit $0200 without clearing the other flags.
+    STA.W Enemy.properties,X                                             ;A08082; Mark the slot for the activity scan to clear; do not clear its ID here.
+    PLA                                                                  ;A08085; Remove the command loop's synthetic return word.
+    PEA.W ProcessEnemyInstructions_return-1                              ;A08086; Redirect the command's RTL to the interpreter's shared exit.
+    RTL                                                                  ;A08089; End script processing for this call; deletion is handled by the later scan.
 
 
 ;;; $808A: Instruction - call function [[Y]] ;;;
@@ -304,10 +307,12 @@ endif ; !FEATURE_KEEP_UNREFERENCED
 
 
 ;;; $80ED: Instruction - go to [[Y]] ;;;
+; Y points to the destination parameter word after the fetched command. Replace
+; Y with that word and RTL to the interpreter loop, which fetches at the new cursor.
 Instruction_Common_GotoY:
-    LDA.W $0000,Y                                                        ;A080ED;
-    TAY                                                                  ;A080F0;
-    RTL                                                                  ;A080F1;
+    LDA.W $0000,Y                                                        ;A080ED; Read the destination word at the command's parameter cursor.
+    TAY                                                                  ;A080F0; Use that address as the interpreter's next Y cursor.
+    RTL                                                                  ;A080F1; Resume the interpreter loop through its synthetic long return.
 
 
 ;;; $80F2: Instruction - go to [[Y]] + ±[[Y]] ;;;
@@ -330,12 +335,15 @@ Instruction_Common_GotoY_PlusY:
 
 
 ;;; $8108: Instruction - decrement timer and go to [[Y]] if non-zero ;;;
+; Pre-decrement the loop-counter word. A nonzero result reuses the goto command
+; with the current target parameter; zero skips that parameter and continues.
+; Neither path ends this interpreter call or changes the spritemap directly.
 Instruction_Common_DecrementTimer_GotoYIfNonZero:
-    DEC.W Enemy.loopCounter,X                                            ;A08108;
-    BNE Instruction_Common_GotoY                                         ;A0810B;
-    INY                                                                  ;A0810D;
-    INY                                                                  ;A0810E;
-    RTL                                                                  ;A0810F;
+    DEC.W Enemy.loopCounter,X                                            ;A08108; Pre-decrement the enemy's separate loop-counter word.
+    BNE Instruction_Common_GotoY                                         ;A0810B; For a nonzero result, reuse the goto command with the current parameter cursor.
+    INY                                                                  ;A0810D; A zero result skips the goto target's first byte.
+    INY                                                                  ;A0810E; Skip its second byte and continue with the following command.
+    RTL                                                                  ;A0810F; Resume command interpretation in the same call.
 
 
 ;;; $8110: Instruction - decrement timer and go to [[Y]] if non-zero ;;;
@@ -358,12 +366,14 @@ Instruction_Common_DecrementTimer_GotoY_PlusY_IfNonZero:
 
 
 ;;; $8123: Instruction - timer = [[Y]] ;;;
+; Set Enemy.loopCounter from the parameter word and advance Y by two.
+; This loop counter is separate from Enemy.instTimer's graphical/wait duration.
 Instruction_Common_TimerInY:
-    LDA.W $0000,Y                                                        ;A08123;
-    STA.W Enemy.loopCounter,X                                            ;A08126;
-    INY                                                                  ;A08129;
-    INY                                                                  ;A0812A;
-    RTL                                                                  ;A0812B;
+    LDA.W $0000,Y                                                        ;A08123; Read the command's loop-counter parameter word.
+    STA.W Enemy.loopCounter,X                                            ;A08126; Store the loop counter, not the frame-duration timer.
+    INY                                                                  ;A08129; Consume the first byte of the parameter word.
+    INY                                                                  ;A0812A; Consume its second byte before returning to command dispatch.
+    RTL                                                                  ;A0812B; Continue interpreting commands in the same processing call.
 
 
 ;;; $812C: Instruction - skip next instruction ;;;
@@ -374,31 +384,39 @@ Instruction_Common_SkipNextInstruction:
 
 
 ;;; $812F: Instruction - sleep ;;;
+; Y starts after this command word. Rewind it by two and save the sleep command's
+; address in Enemy.instList. Replace the interpreter loop's return word with its
+; shared exit word, keeping the synthetic bank byte, then RTL out of this call.
+; This command does not set Enemy.instTimer or change the spritemap.
 Instruction_Common_Sleep:
-    DEY                                                                  ;A0812F;
+    DEY                                                                  ;A0812F; Rewind Y to the sleep command's own word.
     DEY                                                                  ;A08130;
-    TYA                                                                  ;A08131;
-    STA.W Enemy.instList,X                                               ;A08132;
-    PLA                                                                  ;A08135;
-    PEA.W ProcessEnemyInstructions_return-1                              ;A08136;
-    RTL                                                                  ;A08139;
+    TYA                                                                  ;A08131; Prepare that command address for saving.
+    STA.W Enemy.instList,X                                               ;A08132; Leave the saved instruction cursor pointing at sleep.
+    PLA                                                                  ;A08135; Remove the interpreter loop's synthetic return word, retaining its bank byte.
+    PEA.W ProcessEnemyInstructions_return-1                              ;A08136; Replace it with the interpreter's shared exit word minus one.
+    RTL                                                                  ;A08139; RTL exits this interpreter call instead of looping through another command.
 
 
 ;;; $813A: Instruction - wait [[Y]] frames ;;;
+; Load Enemy.instTimer from the duration parameter, save the cursor after it and
+; terminate this interpreter call by replacing the synthetic return word.
+; The current spritemap is retained. This differs from a graphical record,
+; which installs a new spritemap and performs the graphical-update marker write.
 Instruction_Common_WaitYFrames:
 ; Set instruction timer and terminate processing enemy instructions
 ; Used for running a delay that doesn't update graphics,
 ; useful for e.g. GT eye beam attack ($AA:D10D), implemented by an instruction list that has no graphical instructions,
 ; which allows it to be called from multiple different poses
-    LDA.W $0000,Y                                                        ;A0813A;
-    STA.W Enemy.instTimer,X                                              ;A0813D;
-    INY                                                                  ;A08140;
+    LDA.W $0000,Y                                                        ;A0813A; Read the wait duration at the parameter cursor.
+    STA.W Enemy.instTimer,X                                              ;A0813D; Set the frame-duration timer without replacing the spritemap.
+    INY                                                                  ;A08140; Advance past the wait parameter's two bytes.
     INY                                                                  ;A08141;
-    TYA                                                                  ;A08142;
-    STA.W Enemy.instList,X                                               ;A08143;
-    PLA                                                                  ;A08146;
-    PEA.W ProcessEnemyInstructions_return-1                              ;A08147;
-    RTL                                                                  ;A0814A;
+    TYA                                                                  ;A08142; Save the cursor following this wait parameter.
+    STA.W Enemy.instList,X                                               ;A08143; Resume from that saved cursor on a future eligible timer expiry.
+    PLA                                                                  ;A08146; Remove the loop return word but keep its synthetic bank byte.
+    PEA.W ProcessEnemyInstructions_return-1                              ;A08147; Substitute the interpreter's shared exit word minus one.
+    RTL                                                                  ;A0814A; Terminate this interpreter call through that replacement return.
 
 
 ;;; $814B: Instruction - transfer [[Y]] bytes from [[Y] + 2] to VRAM [[Y] + 5] ;;;
@@ -1061,71 +1079,80 @@ endif
 
 
 ;;; $8A1E: Load enemies (load and process enemy set, clear enemy data, load enemy tile data) ;;;
+; Prepare enemy graphics/palettes and clear the base runtime enemy records before
+; Initialise_Enemies fills population slots and calls Init AI. The enemy set and
+; population are separate resources. Reset room-level enemy hooks and bookkeeping,
+; process the set and load tile data into RAM, then clear inherited sprite objects.
+; Door transitions have already loaded enemy VRAM graphics on an earlier path.
 Load_Enemies:
 ; Called when loading the game, and during door transition
 ; This routine loads enemy tile data, which during door transition has already loaded by $82:DFD1, making the call to $8C6C a fairly hefty waste of time
 ; Aside from loading tile data, this routine also loads palette data, and the enemy GFX data needed for respawn
     PHP                                                                  ;A08A1E;
     PHB                                                                  ;A08A1F;
-    PEA.W Load_Enemies>>8&$FF00                                          ;A08A20;
+    PEA.W Load_Enemies>>8&$FF00                                          ;A08A20; Select bank $A0 for enemy headers and enemy-loading helpers.
     PLB                                                                  ;A08A23;
     PLB                                                                  ;A08A24;
-    REP #$30                                                             ;A08A25;
+    REP #$30                                                             ;A08A25; Use word-sized registers while preparing the room's enemy resources.
 if !DEBUG
-    JSL.L Debug_LoadEnemySetData                                         ;A08A27;
-    STZ.W DebugTimeIsFrozenForEnemies                                    ;A08A2B;
+    JSL.L Debug_LoadEnemySetData                                         ;A08A27; Load the optional debug enemy-set data on this build path.
+    STZ.W DebugTimeIsFrozenForEnemies                                    ;A08A2B; Clear the debug-only enemy frozen-time setting.
 endif
-    STZ.W BossID                                                         ;A08A2E;
-    LDA.W #RTL_A0804C>>16                                                ;A08A31;
-    STA.W EnemyGraphicsDrawnHook+2                                       ;A08A34;
-    LDA.W #RTL_A0804C                                                    ;A08A37;
-    STA.W EnemyGraphicsDrawnHook                                         ;A08A3A;
+    STZ.W BossID                                                         ;A08A2E; Clear the previous room's boss identifier.
+    LDA.W #RTL_A0804C>>16                                                ;A08A31; Select the bank of the default no-op graphics hook.
+    STA.W EnemyGraphicsDrawnHook+2                                       ;A08A34; Start replacing the graphics hook's long pointer.
+    LDA.W #RTL_A0804C                                                    ;A08A37; Select the no-op RTL routine's word address.
+    STA.W EnemyGraphicsDrawnHook                                         ;A08A3A; Finish installing a harmless default enemy-graphics hook.
     LDA.W #RTL_A0804C>>16                                                ;A08A3D;
     STA.W neverRead1790+2                                                ;A08A40;
     LDA.W #RTL_A0804C                                                    ;A08A43;
     STA.W neverRead1790                                                  ;A08A46;
-    LDA.W #$0800                                                         ;A08A49;
+    LDA.W #$0800                                                         ;A08A49; Set the default enemy BG2 tilemap size to $0800 bytes.
     STA.W EnemyBG2TilemapSize                                            ;A08A4C;
     STZ.W neverRead179E                                                  ;A08A4F;
     STZ.W neverRead17A0                                                  ;A08A52;
-    STZ.W BossID                                                         ;A08A55; >.<
-    JSL.L ClearEnemyData_ProcessEnemySet                                 ;A08A58;
-    JSL.L LoadEnemyTileData                                              ;A08A5C;
-    STZ.W EnemyTileData_SrcAddr                                          ;A08A60;
-    STZ.W DisableSamusVsProjectileInteraction                            ;A08A63;
-    JSL.L ClearSpriteObjects                                             ;A08A66;
+    STZ.W BossID                                                         ;A08A55; >.< | Repeat the earlier BossID reset.
+    JSL.L ClearEnemyData_ProcessEnemySet                                 ;A08A58; Clear enemy records and process the room's enemy graphics/palette set.
+    JSL.L LoadEnemyTileData                                              ;A08A5C; Load enemy tile data into the RAM staging buffer.
+    STZ.W EnemyTileData_SrcAddr                                          ;A08A60; Reset the enemy tile-transfer source address.
+    STZ.W DisableSamusVsProjectileInteraction                            ;A08A63; Allow Samus/projectile interactions for the new room.
+    JSL.L ClearSpriteObjects                                             ;A08A66; Clear sprite objects inherited from the previous room.
     PLB                                                                  ;A08A6A;
     PLP                                                                  ;A08A6B;
     RTL                                                                  ;A08A6C;
 
 
 ;;; $8A6D: Clear enemy data and process enemy set ;;;
+; Zero $0800 bytes of base enemy records: each word write advances X twice and
+; decrements the byte counter twice. Then inspect the first population ID.
+; An immediate $FFFF skips enemy-set processing; a nonempty population processes
+; the graphics/palette set before returning. This does not call enemy Init AI.
 ClearEnemyData_ProcessEnemySet:
     PHP                                                                  ;A08A6D;
     PHB                                                                  ;A08A6E;
     PEA.W ClearEnemyData_ProcessEnemySet>>8&$FF00                        ;A08A6F;
     PLB                                                                  ;A08A72;
     PLB                                                                  ;A08A73;
-    REP #$30                                                             ;A08A74;
-    LDA.W #$0000                                                         ;A08A76;
-    LDY.W #$0800                                                         ;A08A79;
-    LDX.W #$0000                                                         ;A08A7C;
+    REP #$30                                                             ;A08A74; Use word-sized stores and counters for the base enemy-record clear.
+    LDA.W #$0000                                                         ;A08A76; Fill the runtime enemy records with zero words.
+    LDY.W #$0800                                                         ;A08A79; Count $0800 bytes of base enemy-record storage.
+    LDX.W #$0000                                                         ;A08A7C; Begin at the first enemy slot.
 
   .loop:
-    STA.L Enemy.ID,X                                                     ;A08A7F;
-    INX                                                                  ;A08A83;
-    DEY                                                                  ;A08A84;
-    INX                                                                  ;A08A85;
-    DEY                                                                  ;A08A86;
-    BNE .loop                                                            ;A08A87;
-    LDX.W EnemyPopulationPointer                                         ;A08A89;
-    LDA.L EnemyPopulations_ID,X                                          ;A08A8C;
-    CMP.W #$FFFF                                                         ;A08A90;
-    BNE .processEnemySet                                                 ;A08A93;
-    JMP.W .return                                                        ;A08A95;
+    STA.L Enemy.ID,X                                                     ;A08A7F; Clear this word, not just an individual enemy ID.
+    INX                                                                  ;A08A83; Advance the destination cursor by one of this word's two bytes.
+    DEY                                                                  ;A08A84; Consume one of the two cleared bytes from the remaining count.
+    INX                                                                  ;A08A85; Finish advancing past the word just cleared.
+    DEY                                                                  ;A08A86; Consume its second byte from the remaining count.
+    BNE .loop                                                            ;A08A87; Continue until all $0800 bytes have been cleared.
+    LDX.W EnemyPopulationPointer                                         ;A08A89; Inspect the room's population after clearing every base enemy slot.
+    LDA.L EnemyPopulations_ID,X                                          ;A08A8C; Read its first enemy ID word.
+    CMP.W #$FFFF                                                         ;A08A90; An immediate $FFFF means an empty population.
+    BNE .processEnemySet                                                 ;A08A93; Only a nonempty population processes the enemy set on this path.
+    JMP.W .return                                                        ;A08A95; Empty populations return without calling the set processor.
 
   .processEnemySet:
-    JSR.W ProcessEnemySet_LoadPalettesAndEnemyLoadingData                ;A08A98;
+    JSR.W ProcessEnemySet_LoadPalettesAndEnemyLoadingData                ;A08A98; Load palettes and enemy-loading metadata from the enemy set.
 
   .return:
     PLB                                                                  ;A08A9B;
@@ -1134,172 +1161,189 @@ ClearEnemyData_ProcessEnemySet:
 
 
 ;;; $8A9E: Initialise enemies ;;;
+; Enter with word-sized registers. First clear $1400 words ($2800 bytes) from
+; EnemyTileData at $7E:7000 through $7E:97FF, then reset projectile bookkeeping.
+; For each $10-byte population record, fill a $40-byte runtime slot from header
+; defaults and placement fields, expose the slot in EnemyIndex and call Init AI.
+; The generic init word at population offset $06 first occupies Enemy.instList;
+; some Init AI, including Zoomer, reads it as flags rather than an address.
+; The AI can change these fields. After it returns, reset/select the placeholder
+; spritemap, advance both cursors and stop at $FFFF. Only the nonempty-list tail
+; records FirstFreeEnemyIndex, the listed count and the terminator's kill byte.
 Initialise_Enemies:
     PHP                                                                  ;A08A9E;
     PHB                                                                  ;A08A9F;
-    LDY.W #$1400                                                         ;A08AA0;
-    LDX.W #$0000                                                         ;A08AA3;
-    LDA.W #$0000                                                         ;A08AA6;
+    LDY.W #$1400                                                         ;A08AA0; Count $1400 word writes; unlike the earlier clear, this is not a byte count.
+    LDX.W #$0000                                                         ;A08AA3; Begin at the EnemyTileData buffer's first byte.
+    LDA.W #$0000                                                         ;A08AA6; Use a zero word for the tile/extra-enemy RAM clear.
 
   .loopExtraEnemyRAM:
-    STA.L EnemyTileData,X                                                ;A08AA9;
-    INX                                                                  ;A08AAD;
-    INX                                                                  ;A08AAE;
-    DEY                                                                  ;A08AAF;
-    BNE .loopExtraEnemyRAM                                               ;A08AB0;
-    PEA.W EnemyHeaders>>8&$FF00                                          ;A08AB2;
+    STA.L EnemyTileData,X                                                ;A08AA9; Clear the next word in the $7E:7000..97FF region.
+    INX                                                                  ;A08AAD; Advance by one of the word's two bytes.
+    INX                                                                  ;A08AAE; Advance by its second byte.
+    DEY                                                                  ;A08AAF; Consume one word write from the counter, not two bytes.
+    BNE .loopExtraEnemyRAM                                               ;A08AB0; Repeat for $1400 words, clearing $2800 bytes in total.
+    PEA.W EnemyHeaders>>8&$FF00                                          ;A08AB2; Select bank $A0 for fixed enemy-header fields.
     PLB                                                                  ;A08AB5;
     PLB                                                                  ;A08AB6;
-    REP #$30                                                             ;A08AB7;
+    REP #$30                                                             ;A08AB7; Re-establish word-sized registers for header and population processing.
     STZ.W neverRead0E4E                                                  ;A08AB9;
-    STZ.W NumberOfEnemiesKilled                                          ;A08ABC;
-    STZ.W GlobalOffScreenEnemyProcessingFlag                             ;A08ABF;
-    LDX.W #$011E                                                         ;A08AC2;
+    STZ.W NumberOfEnemiesKilled                                          ;A08ABC; Reset the room's count of killed enemies.
+    STZ.W GlobalOffScreenEnemyProcessingFlag                             ;A08ABF; Reset global offscreen-enemy processing for the new room.
+    LDX.W #$011E                                                         ;A08AC2; Start clearing the extra projectile area from its last word.
     LDA.W #$0000                                                         ;A08AC5;
 
   .loopExtraEnemyProjectileRAM:
-    STA.L EnemyProjectileData_CollisionOptions,X                         ;A08AC8;
+    STA.L EnemyProjectileData_CollisionOptions,X                         ;A08AC8; Clear an extra enemy-projectile bookkeeping word.
     DEX                                                                  ;A08ACC;
     DEX                                                                  ;A08ACD;
-    BPL .loopExtraEnemyProjectileRAM                                     ;A08ACE;
-    LDX.W #$0022                                                         ;A08AD0;
-    LDA.W #$FFFF                                                         ;A08AD3;
+    BPL .loopExtraEnemyProjectileRAM                                     ;A08ACE; Walk backwards through that area in two-byte steps.
+    LDX.W #$0022                                                         ;A08AD0; Start at the last killed-enemy-index word.
+    LDA.W #$FFFF                                                         ;A08AD3; Use $FFFF as the no-killed-enemy index sentinel.
 
   .loopEnemyProjectileKilledEnemyIndices:
-    STA.L EnemyProjectileData_KilledEnemyIndex,X                         ;A08AD6;
+    STA.L EnemyProjectileData_KilledEnemyIndex,X                         ;A08AD6; Reset this projectile's killed-enemy index.
     DEX                                                                  ;A08ADA;
     DEX                                                                  ;A08ADB;
-    BPL .loopEnemyProjectileKilledEnemyIndices                           ;A08ADC;
-    LDX.W EnemyPopulationPointer                                         ;A08ADE;
-    LDA.L EnemyPopulations_ID,X                                          ;A08AE1;
-    CMP.W #$FFFF                                                         ;A08AE5;
+    BPL .loopEnemyProjectileKilledEnemyIndices                           ;A08ADC; Continue until the killed-enemy-index list is reset.
+    LDX.W EnemyPopulationPointer                                         ;A08ADE; Start at the first population record.
+    LDA.L EnemyPopulations_ID,X                                          ;A08AE1; Read the first population ID, before attempting any enemy Init AI.
+    CMP.W #$FFFF                                                         ;A08AE5; An immediate $FFFF selects the early empty-population exit.
     BNE +                                                                ;A08AE8;
-    JMP.W .return                                                        ;A08AEA;
+    JMP.W .return                                                        ;A08AEA; Do not run the slot loop or terminator-tail assignments for an empty list.
 
 +   STZ.W neverRead0E48                                                  ;A08AED;
-    LDY.W #$0000                                                         ;A08AF0;
+    LDY.W #$0000                                                         ;A08AF0; Use runtime enemy slot offset zero for the first population record.
 
   .loop:
-    JSR.W LoadEnemyGFXIndices                                            ;A08AF3;
-    PHX                                                                  ;A08AF6;
-    LDA.L EnemyPopulations_ID,X                                          ;A08AF7;
-    TAX                                                                  ;A08AFB;
-    LDA.W $0008,X                                                        ;A08AFC;
-    STA.W Enemy.XHitboxRadius,Y                                          ;A08AFF;
-    LDA.W $000A,X                                                        ;A08B02;
-    STA.W Enemy.YHitboxRadius,Y                                          ;A08B05;
-    LDA.W $0004,X                                                        ;A08B08;
-    STA.W Enemy.health,Y                                                 ;A08B0B;
-    LDA.W $0039,X                                                        ;A08B0E;
-    AND.W #$00FF                                                         ;A08B11;
-    STA.W Enemy.layer,Y                                                  ;A08B14;
-    LDA.W $000C,X                                                        ;A08B17;
-    STA.W Enemy.bank,Y                                                   ;A08B1A;
-    LDA.W $0010,X                                                        ;A08B1D;
-    BEQ +                                                                ;A08B20;
-    STA.W BossID                                                         ;A08B22;
+    JSR.W LoadEnemyGFXIndices                                            ;A08AF3; Match this enemy ID to the enemy set's graphics and palette metadata.
+    PHX                                                                  ;A08AF6; Keep the population cursor while X temporarily selects the enemy header.
+    LDA.L EnemyPopulations_ID,X                                          ;A08AF7; Read this placement's fixed enemy-header ID.
+    TAX                                                                  ;A08AFB; Use that ID as the bank-$A0 header pointer.
+    LDA.W $0008,X                                                        ;A08AFC; Read the header's X hitbox radius.
+    STA.W Enemy.XHitboxRadius,Y                                          ;A08AFF; Copy the X radius into the current runtime slot.
+    LDA.W $000A,X                                                        ;A08B02; Read the header's Y hitbox radius.
+    STA.W Enemy.YHitboxRadius,Y                                          ;A08B05; Copy the Y radius into the current runtime slot.
+    LDA.W $0004,X                                                        ;A08B08; Read the header's initial health word.
+    STA.W Enemy.health,Y                                                 ;A08B0B; Copy header health before running enemy-specific Init AI.
+    LDA.W $0039,X                                                        ;A08B0E; Read the header's layer byte.
+    AND.W #$00FF                                                         ;A08B11; Discard its neighboring byte.
+    STA.W Enemy.layer,Y                                                  ;A08B14; Set the runtime drawing layer.
+    LDA.W $000C,X                                                        ;A08B17; Read the AI bank byte together with the neighboring hurt-AI-time byte.
+    STA.W Enemy.bank,Y                                                   ;A08B1A; Store that byte pair in the word-sized Enemy.bank field.
+    LDA.W $0010,X                                                        ;A08B1D; Read the header's boss identifier.
+    BEQ +                                                                ;A08B20; A zero identifier does not replace the global BossID.
+    STA.W BossID                                                         ;A08B22; Keep the nonzero boss identifier from this enemy header.
 
-+   PLX                                                                  ;A08B25;
-    LDA.L EnemyPopulations_ID,X                                          ;A08B26;
-    STA.W Enemy.ID,Y                                                     ;A08B2A;
-    LDA.L EnemyPopulations_XPosition,X                                   ;A08B2D;
-    STA.W Enemy.XPosition,Y                                              ;A08B31;
-    LDA.L EnemyPopulations_YPosition,X                                   ;A08B34;
-    STA.W Enemy.YPosition,Y                                              ;A08B38;
-    LDA.L EnemyPopulations_init,X                                        ;A08B3B;
-    STA.W Enemy.instList,Y                                               ;A08B3F;
-    LDA.L EnemyPopulations_properties,X                                  ;A08B42;
-    STA.W Enemy.properties,Y                                             ;A08B46;
-    LDA.L EnemyPopulations_extraProperties,X                             ;A08B49;
-    STA.W Enemy.properties2,Y                                            ;A08B4D;
-    LDA.L EnemyPopulations_param1,X                                      ;A08B50;
-    STA.W Enemy.init0,Y                                                  ;A08B54;
-    LDA.L EnemyPopulations_param2,X                                      ;A08B57;
-    STA.W Enemy.init1,Y                                                  ;A08B5B;
++   PLX                                                                  ;A08B25; Recover the population cursor for copying placement fields.
+    LDA.L EnemyPopulations_ID,X                                          ;A08B26; Read the population's enemy-header ID again.
+    STA.W Enemy.ID,Y                                                     ;A08B2A; Install that ID in the runtime slot.
+    LDA.L EnemyPopulations_XPosition,X                                   ;A08B2D; Read the population X position.
+    STA.W Enemy.XPosition,Y                                              ;A08B31; Set the enemy's initial X coordinate.
+    LDA.L EnemyPopulations_YPosition,X                                   ;A08B34; Read the population Y position.
+    STA.W Enemy.YPosition,Y                                              ;A08B38; Set the enemy's initial Y coordinate.
+    LDA.L EnemyPopulations_init,X                                        ;A08B3B; Read the population's generic initialisation word at record offset $06.
+    STA.W Enemy.instList,Y                                               ;A08B3F; Seed Enemy.instList; Init AI may interpret this word as a parameter, not a pointer.
+    LDA.L EnemyPopulations_properties,X                                  ;A08B42; Read the placement's main property flags.
+    STA.W Enemy.properties,Y                                             ;A08B46; Install those flags before Init AI runs.
+    LDA.L EnemyPopulations_extraProperties,X                             ;A08B49; Read the placement's extra property flags.
+    STA.W Enemy.properties2,Y                                            ;A08B4D; Install those extra flags before Init AI runs.
+    LDA.L EnemyPopulations_param1,X                                      ;A08B50; Read population parameter 1 at record offset $0C.
+    STA.W Enemy.init0,Y                                                  ;A08B54; Pass it to Init AI through Enemy.init0.
+    LDA.L EnemyPopulations_param2,X                                      ;A08B57; Read population parameter 2 at record offset $0E.
+    STA.W Enemy.init1,Y                                                  ;A08B5B; Pass it to Init AI through Enemy.init1.
     LDA.W #$0000                                                         ;A08B5E;
-    STA.W Enemy.frameCounter,Y                                           ;A08B61;
-    STA.W Enemy.loopCounter,Y                                            ;A08B64;
-    LDA.W #$0001                                                         ;A08B67;
-    STA.W Enemy.instTimer,Y                                              ;A08B6A;
+    STA.W Enemy.frameCounter,Y                                           ;A08B61; Start the enemy frame counter at zero.
+    STA.W Enemy.loopCounter,Y                                            ;A08B64; Start the instruction loop counter at zero.
+    LDA.W #$0001                                                         ;A08B67; Prime the instruction timer with one tick.
+    STA.W Enemy.instTimer,Y                                              ;A08B6A; Store the timer before the enemy-specific initialisation call.
     LDA.W #$0000                                                         ;A08B6D;
-    STA.W Enemy.frameCounter,Y                                           ;A08B70;
+    STA.W Enemy.frameCounter,Y                                           ;A08B70; Reset the frame counter a second time.
 if !DEBUG
-    JSL.L Record_EnemySpawnData                                          ;A08B73;
+    JSL.L Record_EnemySpawnData                                          ;A08B73; Record spawn data on the optional debug build path.
 endif
-    PHX                                                                  ;A08B77;
-    PHY                                                                  ;A08B78;
-    STY.W EnemyIndex                                                     ;A08B79;
-    LDX.W Enemy.ID,Y                                                     ;A08B7C;
-    LDA.W $0012,X                                                        ;A08B7F;
-    STA.W EnemyAIPointer                                                 ;A08B82;
-    LDA.W $000C,X                                                        ;A08B85;
-    STA.W EnemyAIPointer+2                                               ;A08B88;
-    PHB                                                                  ;A08B8B;
-    JSL.L .executeInitAI                                                 ;A08B8C;
-    PLB                                                                  ;A08B90;
-    PLY                                                                  ;A08B91;
-    PLX                                                                  ;A08B92;
+    PHX                                                                  ;A08B77; Preserve the population cursor across Init AI.
+    PHY                                                                  ;A08B78; Preserve the runtime slot cursor across Init AI.
+    STY.W EnemyIndex                                                     ;A08B79; Expose the current slot offset through EnemyIndex.
+    LDX.W Enemy.ID,Y                                                     ;A08B7C; Use the installed enemy ID to find its fixed header.
+    LDA.W $0012,X                                                        ;A08B7F; Read the Init AI word at enemy-header offset $12.
+    STA.W EnemyAIPointer                                                 ;A08B82; Store the word portion of the dynamic Init AI pointer.
+    LDA.W $000C,X                                                        ;A08B85; Read the AI bank and adjacent header byte.
+    STA.W EnemyAIPointer+2                                               ;A08B88; Complete the pointer's bank byte; the indirect long jump uses three bytes.
+    PHB                                                                  ;A08B8B; Preserve the header data bank across the enemy's own AI bank.
+    JSL.L .executeInitAI                                                 ;A08B8C; Supply a long return frame before the helper tail-jumps into Init AI.
+    PLB                                                                  ;A08B90; Restore the enemy-header data bank after Init AI returns with RTL.
+    PLY                                                                  ;A08B91; Recover the runtime slot cursor.
+    PLX                                                                  ;A08B92; Recover the population-record cursor.
     LDA.W #$0000                                                         ;A08B93;
-    STA.W Enemy.spritemap,Y                                              ;A08B96;
-    LDA.W Enemy.properties,Y                                             ;A08B99;
-    BIT.W #$2000                                                         ;A08B9C;
-    BEQ .noInstructions                                                  ;A08B9F;
+    STA.W Enemy.spritemap,Y                                              ;A08B96; Clear the spritemap field after Init AI, not before it.
+    LDA.W Enemy.properties,Y                                             ;A08B99; Inspect the current properties after Init AI may have changed them.
+    BIT.W #$2000                                                         ;A08B9C; Bit $2000 requests the placeholder spritemap path.
+    BEQ .noInstructions                                                  ;A08B9F; Without that bit, leave the just-cleared spritemap value at zero.
     PHX                                                                  ;A08BA1;
     PHY                                                                  ;A08BA2;
-    LDX.W #Spritemap_Common_Nothing                                      ;A08BA3;
-    LDA.W Enemy.properties2,Y                                            ;A08BA6;
-    BIT.W #$0004                                                         ;A08BA9;
+    LDX.W #Spritemap_Common_Nothing                                      ;A08BA3; Default to the ordinary empty spritemap.
+    LDA.W Enemy.properties2,Y                                            ;A08BA6; Check the current extra properties for an extended spritemap.
+    BIT.W #$0004                                                         ;A08BA9; Bit $0004 chooses the extended empty spritemap.
     BEQ +                                                                ;A08BAC;
-    LDX.W #ExtendedSpritemap_Common_Nothing                              ;A08BAE;
+    LDX.W #ExtendedSpritemap_Common_Nothing                              ;A08BAE; Select the extended empty spritemap when requested.
 
 +   TXA                                                                  ;A08BB1;
-    STA.W Enemy.spritemap,Y                                              ;A08BB2;
+    STA.W Enemy.spritemap,Y                                              ;A08BB2; Install the selected empty spritemap after initialisation.
     PLY                                                                  ;A08BB5;
     PLX                                                                  ;A08BB6;
 
   .noInstructions:
-    TYA                                                                  ;A08BB7;
+    TYA                                                                  ;A08BB7; Advance from this runtime slot to the next slot.
     CLC                                                                  ;A08BB8;
-    ADC.W #$0040                                                         ;A08BB9;
-    TAY                                                                  ;A08BBC;
-    TXA                                                                  ;A08BBD;
+    ADC.W #$0040                                                         ;A08BB9; Runtime enemy records have a $40-byte stride.
+    TAY                                                                  ;A08BBC; Keep Y as the runtime-slot offset.
+    TXA                                                                  ;A08BBD; Advance the corresponding population-record cursor.
     CLC                                                                  ;A08BBE;
-    ADC.W #$0010                                                         ;A08BBF;
-    TAX                                                                  ;A08BC2;
-    LDA.L EnemyPopulations_ID,X                                          ;A08BC3;
-    CMP.W #$FFFF                                                         ;A08BC7;
+    ADC.W #$0010                                                         ;A08BBF; Population records have a separate $10-byte stride.
+    TAX                                                                  ;A08BC2; Keep X as the population-list cursor.
+    LDA.L EnemyPopulations_ID,X                                          ;A08BC3; Read the next population ID.
+    CMP.W #$FFFF                                                         ;A08BC7; Stop at the $FFFF list terminator.
     BEQ +                                                                ;A08BCA;
-    JMP.W .loop                                                          ;A08BCC;
+    JMP.W .loop                                                          ;A08BCC; Initialise the next listed enemy when the terminator is not reached.
 
-+   STY.W FirstFreeEnemyIndex                                            ;A08BCF;
++   STY.W FirstFreeEnemyIndex                                            ;A08BCF; Record the first slot offset after the listed enemies.
     TYA                                                                  ;A08BD2;
-    LSR                                                                  ;A08BD3;
+    LSR                                                                  ;A08BD3; Begin dividing that byte offset by $40 to obtain the listed count.
     LSR                                                                  ;A08BD4;
     LSR                                                                  ;A08BD5;
     LSR                                                                  ;A08BD6;
     LSR                                                                  ;A08BD7;
     LSR                                                                  ;A08BD8;
-    STA.W neverRead0E4E                                                  ;A08BD9;
-    LDA.L EnemyPopulations_XPosition,X                                   ;A08BDC;
-    AND.W #$00FF                                                         ;A08BE0;
-    STA.W NumberOfEnemiesRequiredToKill                                  ;A08BE3;
+    STA.W neverRead0E4E                                                  ;A08BD9; Store the listed count after six right shifts.
+    LDA.L EnemyPopulations_XPosition,X                                   ;A08BDC; Read the word after the $FFFF terminator through the X-position field alias.
+    AND.W #$00FF                                                         ;A08BE0; Keep only the trailing required-kill-count byte.
+    STA.W NumberOfEnemiesRequiredToKill                                  ;A08BE3; Store that count only after a nonempty population has been processed.
 
   .return:
     PLB                                                                  ;A08BE6;
     PLP                                                                  ;A08BE7;
     RTL                                                                  ;A08BE8;
 
+  ; The earlier JSL supplied the long return frame for Init AI's RTL. Select the
+  ; AI data bank with the swapped-word push and two bank pulls, then tail-jump
+  ; through EnemyAIPointer. The caller restores its saved bank and X/Y cursors.
   .executeInitAI:
 ; Execute enemy initialisation AI
-    LDA.W Enemy.bank,Y                                                   ;A08BE9;
-    XBA                                                                  ;A08BEC;
-    PHA                                                                  ;A08BED;
-    PLB                                                                  ;A08BEE;
-    PLB                                                                  ;A08BEF;
-    JML.W [EnemyAIPointer]                                               ;A08BF0;
+    LDA.W Enemy.bank,Y                                                   ;A08BE9; Read the current enemy's bank byte and its neighboring stored byte.
+    XBA                                                                  ;A08BEC; Move the bank byte into the word's high byte for the two pulls.
+    PHA                                                                  ;A08BED; Push both bytes for selecting the Init AI data bank.
+    PLB                                                                  ;A08BEE; Discard the neighboring byte with the first bank pull.
+    PLB                                                                  ;A08BEF; Select the enemy's AI bank with the second pull.
+    JML.W [EnemyAIPointer]                                               ;A08BF0; Tail-jump through the long pointer; Init AI's RTL uses the earlier JSL frame.
 
 
 ;;; $8BF3: Load enemy GFX indices ;;;
+; Match the population's enemy ID against four-byte enemy-set entries. Prior
+; entries contribute tile counts from their header size divided by $20. A match
+; supplies the palette index and accumulated graphics offset for the runtime
+; slot and its spawn-data mirror. A missing match uses offset zero and $0A00
+; palette attributes. Population position/parameters are not graphics metadata.
 LoadEnemyGFXIndices:
 ;; Parameters:
 ;;     X: Enemy population index
@@ -1666,147 +1710,163 @@ ProcessEnemySet_LoadPalettesAndEnemyLoadingData:
 
 
 ;;; $8EB6: Determine which enemies to process ;;;
+; Build separate active and interaction lists of runtime slot offsets, each ending
+; in $FFFF. Scan 32 base records at $40-byte intervals, skipping empty/respawn
+; slots and clearing deletion-marked IDs. Ordinary processing allows property
+; $0800 or frozen-AI bit $0004 to bypass viewport culling; property $0400 omits
+; the slot from the logical interaction list without omitting its AI.
+; The global offscreen override takes a different scan with no viewport tests.
 Determine_Which_Enemies_to_Process:
     PHB                                                                  ;A08EB6;
-    PEA.W Determine_Which_Enemies_to_Process>>8&$FF00                    ;A08EB7;
+    PEA.W Determine_Which_Enemies_to_Process>>8&$FF00                    ;A08EB7; Use bank $A0 for enemy records and header constants.
     PLB                                                                  ;A08EBA;
     PLB                                                                  ;A08EBB;
-    REP #$30                                                             ;A08EBC;
+    REP #$30                                                             ;A08EBC; Use word-sized registers for slot offsets and list entries.
     INC.W neverRead0E46                                                  ;A08EBE;
-    STZ.W EnemyIndex                                                     ;A08EC1;
-    STZ.W ActiveEnemyIndicesStackPointer                                 ;A08EC4;
-    STZ.W InteractiveEnemyIndicesStackPointer                            ;A08EC7;
-    LDA.W GlobalOffScreenEnemyProcessingFlag                             ;A08ECA;
+    STZ.W EnemyIndex                                                     ;A08EC1; Start scanning at runtime slot offset zero.
+    STZ.W ActiveEnemyIndicesStackPointer                                 ;A08EC4; Reset the active-list insertion cursor, measured in bytes.
+    STZ.W InteractiveEnemyIndicesStackPointer                            ;A08EC7; Reset the separate interaction-list insertion cursor.
+    LDA.W GlobalOffScreenEnemyProcessingFlag                             ;A08ECA; Check the global override for processing offscreen slots.
     BEQ .resetIndex                                                      ;A08ECD;
-    JMP.W .loopProcessOffscreen                                          ;A08ECF;
+    JMP.W .loopProcessOffscreen                                          ;A08ECF; Use the alternate scan, which skips the normal viewport tests.
 
   .resetIndex:
     LDX.W #$0000                                                         ;A08ED2; >_<
     LDY.W #$0000                                                         ;A08ED5;
 
   .loop:
-    LDX.W EnemyIndex                                                     ;A08ED8;
-    LDA.W Enemy.ID,X                                                     ;A08EDB;
-    BEQ .next                                                            ;A08EDE;
-    CMP.W #EnemyHeaders_Respawn                                          ;A08EE0;
-    BEQ .next                                                            ;A08EE3;
-    LDA.W Enemy.properties,X                                             ;A08EE5;
-    BIT.W #$0200                                                         ;A08EE8;
-    BEQ ..notDeleted                                                     ;A08EEB;
-    STZ.W Enemy.ID,X                                                     ;A08EED;
-    JMP.W .next                                                          ;A08EF0;
+    LDX.W EnemyIndex                                                     ;A08ED8; Restore the current slot offset before reading its fields.
+    LDA.W Enemy.ID,X                                                     ;A08EDB; Read this slot's enemy-header ID.
+    BEQ .next                                                            ;A08EDE; Skip empty runtime slots.
+    CMP.W #EnemyHeaders_Respawn                                          ;A08EE0; Recognize the respawn-placeholder enemy ID.
+    BEQ .next                                                            ;A08EE3; Skip that placeholder rather than scheduling its AI.
+    LDA.W Enemy.properties,X                                             ;A08EE5; Read the current slot's main property flags.
+    BIT.W #$0200                                                         ;A08EE8; Bit $0200 requests deletion.
+    BEQ ..notDeleted                                                     ;A08EEB; Only undeleted slots continue to activity checks.
+    STZ.W Enemy.ID,X                                                     ;A08EED; Remove a deletion-marked slot by clearing its ID.
+    JMP.W .next                                                          ;A08EF0; Do not add the cleared slot to either list.
 
   ..notDeleted:
-    BIT.W #$0800                                                         ;A08EF3;
-    BNE .activeEnemies                                                   ;A08EF6;
-    LDA.W Enemy.AI,X                                                     ;A08EF8;
-    BIT.W #$0004                                                         ;A08EFB;
-    BNE .activeEnemies                                                   ;A08EFE;
-    LDA.W Enemy.XPosition,X                                              ;A08F00;
+    BIT.W #$0800                                                         ;A08EF3; Bit $0800 bypasses viewport culling for this enemy.
+    BNE .activeEnemies                                                   ;A08EF6; Schedule offscreen-enabled enemies without testing their position.
+    LDA.W Enemy.AI,X                                                     ;A08EF8; Read the enemy's AI-selection flags.
+    BIT.W #$0004                                                         ;A08EFB; The frozen-AI bit also bypasses normal viewport culling.
+    BNE .activeEnemies                                                   ;A08EFE; Keep frozen enemies scheduled even outside the viewport.
+    LDA.W Enemy.XPosition,X                                              ;A08F00; Begin the horizontal test with the enemy's X position.
     CLC                                                                  ;A08F03;
-    ADC.W Enemy.XHitboxRadius,X                                          ;A08F04;
-    CMP.W Layer1XPosition                                                ;A08F07;
-    BMI .next                                                            ;A08F0A;
+    ADC.W Enemy.XHitboxRadius,X                                          ;A08F04; Include its X hitbox radius at the left viewport boundary.
+    CMP.W Layer1XPosition                                                ;A08F07; Compare that right edge against the camera's X origin.
+    BMI .next                                                            ;A08F0A; Reject the slot when this comparison's subtraction result is negative.
     LDA.W Layer1XPosition                                                ;A08F0C;
     CLC                                                                  ;A08F0F;
-    ADC.W #$0100                                                         ;A08F10;
+    ADC.W #$0100                                                         ;A08F10; Use a $100-pixel viewport width.
     CLC                                                                  ;A08F13;
-    ADC.W Enemy.XHitboxRadius,X                                          ;A08F14;
+    ADC.W Enemy.XHitboxRadius,X                                          ;A08F14; Pad the far horizontal boundary by the same X radius.
     CMP.W Enemy.XPosition,X                                              ;A08F17;
-    BMI .next                                                            ;A08F1A;
-    LDA.W Enemy.YPosition,X                                              ;A08F1C;
+    BMI .next                                                            ;A08F1A; Reject the slot when it lies beyond that padded boundary.
+    LDA.W Enemy.YPosition,X                                              ;A08F1C; Use the enemy's Y position for the vertical tests.
     CLC                                                                  ;A08F1F;
-    ADC.W #$0008                                                         ;A08F20;
+    ADC.W #$0008                                                         ;A08F20; Allow eight pixels above the camera's Y origin.
     CMP.W Layer1YPosition                                                ;A08F23;
-    BMI .next                                                            ;A08F26;
+    BMI .next                                                            ;A08F26; Reject the slot on the upper vertical test.
     LDA.W Layer1YPosition                                                ;A08F28;
     CLC                                                                  ;A08F2B;
-    ADC.W #$00F8                                                         ;A08F2C;
+    ADC.W #$00F8                                                         ;A08F2C; Use camera Y plus $F8 for the lower vertical boundary.
     CMP.W Enemy.YPosition,X                                              ;A08F2F;
-    BMI .next                                                            ;A08F32;
+    BMI .next                                                            ;A08F32; Reject the slot on the lower vertical test.
 
   .activeEnemies:
-    TXA                                                                  ;A08F34;
-    LDY.W ActiveEnemyIndicesStackPointer                                 ;A08F35;
-    STA.W ActiveEnemyIndices,Y                                           ;A08F38;
+    TXA                                                                  ;A08F34; Append the runtime slot offset, not an enemy-header pointer.
+    LDY.W ActiveEnemyIndicesStackPointer                                 ;A08F35; Use the active list's own byte insertion cursor.
+    STA.W ActiveEnemyIndices,Y                                           ;A08F38; Store one word in the active-enemy list.
     INY                                                                  ;A08F3B;
     INY                                                                  ;A08F3C;
-    STY.W ActiveEnemyIndicesStackPointer                                 ;A08F3D;
+    STY.W ActiveEnemyIndicesStackPointer                                 ;A08F3D; Commit the two-byte active-list cursor advance.
     LDA.W Enemy.properties,X                                             ;A08F40;
-    BIT.W #$0400                                                         ;A08F43;
-    BNE .next                                                            ;A08F46;
+    BIT.W #$0400                                                         ;A08F43; Bit $0400 excludes this active enemy from the interaction list.
+    BNE .next                                                            ;A08F46; Keep its AI eligible even though it is not added for interactions.
     TXA                                                                  ;A08F48;
-    LDY.W InteractiveEnemyIndicesStackPointer                            ;A08F49;
-    STA.W InteractiveEnemyIndices,Y                                      ;A08F4C;
+    LDY.W InteractiveEnemyIndicesStackPointer                            ;A08F49; Use the interaction list's independent byte cursor.
+    STA.W InteractiveEnemyIndices,Y                                      ;A08F4C; Append the same runtime slot offset to the interaction list.
     INY                                                                  ;A08F4F;
     INY                                                                  ;A08F50;
-    STY.W InteractiveEnemyIndicesStackPointer                            ;A08F51;
+    STY.W InteractiveEnemyIndicesStackPointer                            ;A08F51; Commit that list's two-byte cursor advance.
 
   .next:
     LDA.W EnemyIndex                                                     ;A08F54;
     CLC                                                                  ;A08F57;
-    ADC.W #$0040                                                         ;A08F58;
+    ADC.W #$0040                                                         ;A08F58; Advance by one $40-byte runtime enemy record.
     STA.W EnemyIndex                                                     ;A08F5B;
-    CMP.W #$0800                                                         ;A08F5E;
+    CMP.W #$0800                                                         ;A08F5E; Stop after the $0800-byte area containing 32 base slots.
     BPL .done                                                            ;A08F61;
-    JMP.W .loop                                                          ;A08F63;
+    JMP.W .loop                                                          ;A08F63; Continue scanning the next slot.
 
   .done:
-    LDA.W #$FFFF                                                         ;A08F66;
+    LDA.W #$FFFF                                                         ;A08F66; Terminate both logical lists with a $FFFF word.
     LDY.W ActiveEnemyIndicesStackPointer                                 ;A08F69;
-    STA.W ActiveEnemyIndices,Y                                           ;A08F6C;
+    STA.W ActiveEnemyIndices,Y                                           ;A08F6C; Place the active-list terminator after its last inserted entry.
     LDY.W InteractiveEnemyIndicesStackPointer                            ;A08F6F;
-    STA.W InteractiveEnemyIndices,Y                                      ;A08F72;
+    STA.W InteractiveEnemyIndices,Y                                      ;A08F72; Place the interaction-list terminator using its own cursor.
     PLB                                                                  ;A08F75;
     RTL                                                                  ;A08F76;
 
+  ; The override still skips empty/respawn/deleted slots. It also writes each active
+  ; slot into InteractiveEnemyIndices at the active-list offset before testing
+  ; $0400. The separate interaction cursor controls accepted logical insertions and
+  ; the final sentinel; retain the distinction between this extra store and that
+  ; logical list. This path is not the ordinary visibility path with one flag changed.
   .loopProcessOffscreen:
-    LDX.W EnemyIndex                                                     ;A08F77;
+    LDX.W EnemyIndex                                                     ;A08F77; Scan every base slot on the global offscreen-processing path.
     LDA.W Enemy.ID,X                                                     ;A08F7A;
-    BEQ .nextProcessOffscreen                                            ;A08F7D;
+    BEQ .nextProcessOffscreen                                            ;A08F7D; Still skip empty slots despite the global override.
     CMP.W #EnemyHeaders_Respawn                                          ;A08F7F;
-    BEQ .nextProcessOffscreen                                            ;A08F82;
+    BEQ .nextProcessOffscreen                                            ;A08F82; Still skip respawn placeholders.
     LDA.W Enemy.properties,X                                             ;A08F84;
-    BIT.W #$0200                                                         ;A08F87;
+    BIT.W #$0200                                                         ;A08F87; The global override does not bypass deletion handling.
     BEQ ..notDeleted                                                     ;A08F8A;
-    STZ.W Enemy.ID,X                                                     ;A08F8C;
+    STZ.W Enemy.ID,X                                                     ;A08F8C; Clear a deletion-marked slot's ID.
     BRA .nextProcessOffscreen                                            ;A08F8F;
 
   ..notDeleted:
     TXA                                                                  ;A08F91;
-    LDY.W ActiveEnemyIndicesStackPointer                                 ;A08F92;
-    STA.W ActiveEnemyIndices,Y                                           ;A08F95;
-    STA.W InteractiveEnemyIndices,Y                                      ;A08F98;
+    LDY.W ActiveEnemyIndicesStackPointer                                 ;A08F92; Use the active insertion cursor on this alternate path.
+    STA.W ActiveEnemyIndices,Y                                           ;A08F95; Append this slot to the active list.
+    STA.W InteractiveEnemyIndices,Y                                      ;A08F98; Also write at that active offset in the interaction array; its logical cursor is separate.
     INY                                                                  ;A08F9B;
     INY                                                                  ;A08F9C;
-    STY.W ActiveEnemyIndicesStackPointer                                 ;A08F9D;
+    STY.W ActiveEnemyIndicesStackPointer                                 ;A08F9D; Advance only the active list's cursor at this point.
     LDA.W Enemy.properties,X                                             ;A08FA0;
-    BIT.W #$0400                                                         ;A08FA3;
-    BNE .nextProcessOffscreen                                            ;A08FA6;
+    BIT.W #$0400                                                         ;A08FA3; Test the same $0400 interaction exclusion bit.
+    BNE .nextProcessOffscreen                                            ;A08FA6; Skip logical interaction insertion when that bit is set.
     TXA                                                                  ;A08FA8;
-    LDY.W InteractiveEnemyIndicesStackPointer                            ;A08FA9;
-    STA.W InteractiveEnemyIndices,Y                                      ;A08FAC;
+    LDY.W InteractiveEnemyIndicesStackPointer                            ;A08FA9; Use the actual interaction-list insertion cursor for the accepted slot.
+    STA.W InteractiveEnemyIndices,Y                                      ;A08FAC; Append to the logical interaction-list prefix.
     INY                                                                  ;A08FAF;
     INY                                                                  ;A08FB0;
-    STY.W InteractiveEnemyIndicesStackPointer                            ;A08FB1;
+    STY.W InteractiveEnemyIndicesStackPointer                            ;A08FB1; Advance the interaction cursor only for that accepted insertion.
 
   .nextProcessOffscreen:
     LDA.W EnemyIndex                                                     ;A08FB4;
     CLC                                                                  ;A08FB7;
-    ADC.W #$0040                                                         ;A08FB8;
+    ADC.W #$0040                                                         ;A08FB8; Advance the alternate scan by the same $40-byte slot stride.
     STA.W EnemyIndex                                                     ;A08FBB;
-    CMP.W #$0800                                                         ;A08FBE;
-    BMI .loopProcessOffscreen                                            ;A08FC1;
-    LDA.W #$FFFF                                                         ;A08FC3;
+    CMP.W #$0800                                                         ;A08FBE; Use the same 32-slot scan limit.
+    BMI .loopProcessOffscreen                                            ;A08FC1; Continue without any viewport comparison.
+    LDA.W #$FFFF                                                         ;A08FC3; Finish the alternate path with the same $FFFF sentinel.
     LDY.W ActiveEnemyIndicesStackPointer                                 ;A08FC6;
-    STA.W ActiveEnemyIndices,Y                                           ;A08FC9;
+    STA.W ActiveEnemyIndices,Y                                           ;A08FC9; Terminate the active list at its insertion cursor.
     LDY.W InteractiveEnemyIndicesStackPointer                            ;A08FCC;
-    STA.W InteractiveEnemyIndices,Y                                      ;A08FCF;
+    STA.W InteractiveEnemyIndices,Y                                      ;A08FCF; Terminate the interaction list at its separate insertion cursor.
     PLB                                                                  ;A08FD2;
     RTL                                                                  ;A08FD3;
 
 
 ;;; $8FD4: Main enemy routine ;;;
+; Consume the active list selected earlier, performing collision checks, AI,
+; script updates and drawing-queue eligibility as separate stages. Do not equate
+; an active slot with an interactive or drawable one. The early zero-population
+; path still reaches sprite-object handling and collision-bookkeeping cleanup.
+; Global frozen time and the per-enemy frozen-AI flag are different conditions.
 Main_Enemy_Routine:
 ; If [first unused enemy index] != 0:
 ; {
@@ -1883,204 +1943,220 @@ Main_Enemy_Routine:
 ;     Distances between Samus and enemy when Samus collides with solid enemy = 0
 ; }
     PHB                                                                  ;A08FD4;
-    PEA.W EnemyHeaders>>8&$FF00                                          ;A08FD5;
+    PEA.W EnemyHeaders>>8&$FF00                                          ;A08FD5; Use bank $A0 for fixed enemy-header fields.
     PLB                                                                  ;A08FD8;
     PLB                                                                  ;A08FD9;
-    REP #$30                                                             ;A08FDA;
-    LDA.W FirstFreeEnemyIndex                                            ;A08FDC;
-    BNE .processEnemies                                                  ;A08FDF;
-    JMP.W .return                                                        ;A08FE1;
+    REP #$30                                                             ;A08FDA; Establish word-sized registers for runtime slots and header pointers.
+    LDA.W FirstFreeEnemyIndex                                            ;A08FDC; Check the recorded first-free-slot offset before walking the active list.
+    BNE .processEnemies                                                  ;A08FDF; A nonzero value permits the enemy-processing loop.
+    JMP.W .return                                                        ;A08FE1; Take the shared tail even when no base population was recorded.
 
   .processEnemies:
-    LDA.W EnemyIndexToShake                                              ;A08FE4;
-    CMP.W #$FFFF                                                         ;A08FE7;
+    LDA.W EnemyIndexToShake                                              ;A08FE4; Check for a requested enemy shake update.
+    CMP.W #$FFFF                                                         ;A08FE7; A $FFFF request means no enemy shake is pending.
     BEQ .resetEnemyIndices                                               ;A08FEA;
     TAX                                                                  ;A08FEC;
-    LDA.W #$0040                                                         ;A08FED;
-    STA.W Enemy.shakeTimer,X                                             ;A08FF0;
+    LDA.W #$0040                                                         ;A08FED; Use $40 as the selected enemy's shake duration.
+    STA.W Enemy.shakeTimer,X                                             ;A08FF0; Install that timer in the requested runtime slot.
     LDA.W #$FFFF                                                         ;A08FF3;
-    STA.W EnemyIndexToShake                                              ;A08FF6;
+    STA.W EnemyIndexToShake                                              ;A08FF6; Consume the pending shake request.
 
   .resetEnemyIndices:
-    STZ.W InteractiveEnemyIndicesIndex                                   ;A08FF9;
-    STZ.W ActiveEnemyIndicesIndex                                        ;A08FFC;
+    STZ.W InteractiveEnemyIndicesIndex                                   ;A08FF9; Reset the cursor shared with some interaction routines.
+    STZ.W ActiveEnemyIndicesIndex                                        ;A08FFC; Start consuming the active-list words from offset zero.
 
   .loop:
-    LDY.W ActiveEnemyIndicesIndex                                        ;A08FFF;
-    LDA.W ActiveEnemyIndices,Y                                           ;A09002;
-    CMP.W #$FFFF                                                         ;A09005;
+    LDY.W ActiveEnemyIndicesIndex                                        ;A08FFF; Use a byte offset within the active-enemy list.
+    LDA.W ActiveEnemyIndices,Y                                           ;A09002; Read the next runtime enemy-slot offset.
+    CMP.W #$FFFF                                                         ;A09005; A $FFFF word ends this processing pass.
     BNE ..notDone                                                        ;A09008;
-    JMP.W .return                                                        ;A0900A;
+    JMP.W .return                                                        ;A0900A; Run the common tail after the active list ends.
 
   ..notDone:
-    STA.W EnemyIndex                                                     ;A0900D;
+    STA.W EnemyIndex                                                     ;A0900D; Expose the selected runtime slot through EnemyIndex.
     TAX                                                                  ;A09010;
     CLC                                                                  ;A09011;
-    ADC.W #Enemy.ID                                                      ;A09012;
-    STA.W EnemyDataPointer                                               ;A09015;
-    LDA.W Enemy.bank,X                                                   ;A09018;
-    STA.W EnemyAIPointer+2                                               ;A0901B;
+    ADC.W #Enemy.ID                                                      ;A09012; Convert its slot offset into the base enemy-record address.
+    STA.W EnemyDataPointer                                               ;A09015; Cache that address for routines using EnemyDataPointer.
+    LDA.W Enemy.bank,X                                                   ;A09018; Read the slot's AI bank byte and neighboring stored byte.
+    STA.W EnemyAIPointer+2                                               ;A0901B; Supply the bank part of the shared long AI pointer.
     LDA.W Enemy.properties,X                                             ;A0901E;
-    BIT.W #$0400                                                         ;A09021;
-    BNE .interactEnd                                                     ;A09024;
-    LDA.W Enemy.invincibilityTimer,X                                     ;A09026;
-    BEQ .notInvincible                                                   ;A09029;
-    DEC.W Enemy.invincibilityTimer,X                                     ;A0902B;
-    JMP.W .interactEnd                                                   ;A0902E;
+    BIT.W #$0400                                                         ;A09021; Bit $0400 bypasses this slot's collision-interaction path.
+    BNE .interactEnd                                                     ;A09024; Go directly to the AI path rather than the paralysis precheck.
+    LDA.W Enemy.invincibilityTimer,X                                     ;A09026; Check the tangible enemy's invincibility timer.
+    BEQ .notInvincible                                                   ;A09029; Only a zero timer reaches the ordinary collision checks.
+    DEC.W Enemy.invincibilityTimer,X                                     ;A0902B; Tick this timer before checking global frozen time.
+    JMP.W .interactEnd                                                   ;A0902E; Invincibility bypasses collision handling and the paralysis precheck.
 
   .notInvincible:
 if !DEBUG
-    LDA.W DebugDisableSpriteInteractions                                 ;A09031;
-    BNE .interactEnd                                                     ;A09034;
-    LDA.W TimeIsFrozenFlag                                               ;A09036;
-    ORA.W DebugTimeIsFrozenForEnemies                                    ;A09039;
+    LDA.W DebugDisableSpriteInteractions                                 ;A09031; Check the debug override for sprite interactions.
+    BNE .interactEnd                                                     ;A09034; The debug override enters the AI path directly.
+    LDA.W TimeIsFrozenFlag                                               ;A09036; Check global frozen time before collision handling.
+    ORA.W DebugTimeIsFrozenForEnemies                                    ;A09039; Also include the enemy-specific debug time-freeze setting.
 else
-    LDA.W TimeIsFrozenFlag                                               ;A09036;
+    LDA.W TimeIsFrozenFlag                                               ;A09036; Check global frozen time before collision handling.
 endif
-    BNE .checkParalyzed                                                  ;A0903C;
-    JSR.W EnemyCollisionHandling                                         ;A0903E;
-    LDX.W EnemyIndex                                                     ;A09041;
-    LDA.W Enemy.ID,X                                                     ;A09044;
+    BNE .checkParalyzed                                                  ;A0903C; Frozen time skips collisions but still reaches the paralysis precheck.
+    JSR.W EnemyCollisionHandling                                         ;A0903E; Resolve enemy interactions before choosing its AI handler.
+    LDX.W EnemyIndex                                                     ;A09041; Reload the slot after collision handling.
+    LDA.W Enemy.ID,X                                                     ;A09044; Check whether collision handling cleared the enemy ID.
     BNE .checkParalyzed                                                  ;A09047;
-    JMP.W .drawEnemyEnd                                                  ;A09049;
+    JMP.W .drawEnemyEnd                                                  ;A09049; A collision-deleted enemy skips AI and drawing-queue insertion.
 
+  ; Only branches arriving here apply this pre-AI paralysis skip. Intangible slots,
+  ; nonzero invincibility timers and the debug interaction bypass instead enter
+  ; .interactEnd directly. The later .processAIEnd paralysis/death test is separate.
   .checkParalyzed:
     LDX.W EnemyIndex                                                     ;A0904C;
-    LDA.W Enemy.properties2,X                                            ;A0904F;
-    BIT.W #$0001                                                         ;A09052;
-    BNE .processAIEnd                                                    ;A09055;
+    LDA.W Enemy.properties2,X                                            ;A0904F; Inspect the current extra property flags.
+    BIT.W #$0001                                                         ;A09052; Bit $0001 is the paralysis check on paths reaching this block.
+    BNE .processAIEnd                                                    ;A09055; Skip AI on this branch; intangible/invincible bypasses did not enter here.
 
   .interactEnd:
-    STZ.W DisableDrawingOfEnemies                                        ;A09057;
-    LDA.W TimeIsFrozenFlag                                               ;A0905A;
+    STZ.W DisableDrawingOfEnemies                                        ;A09057; Clear the per-enemy drawing-disable flag on entry to the AI path.
+    LDA.W TimeIsFrozenFlag                                               ;A0905A; Choose the AI path using global frozen time.
 if !DEBUG
-    ORA.W DebugTimeIsFrozenForEnemies                                    ;A0905D;
+    ORA.W DebugTimeIsFrozenForEnemies                                    ;A0905D; Include the debug enemy time-freeze flag when enabled in this build.
 endif
-    BEQ .timeNotFrozen                                                   ;A09060;
-    LDA.W Enemy.ID,X                                                     ;A09062;
+    BEQ .timeNotFrozen                                                   ;A09060; Ordinary time uses the Enemy.AI flag selector.
+    LDA.W Enemy.ID,X                                                     ;A09062; Use the enemy ID as the bank-$A0 header pointer.
     TAY                                                                  ;A09065;
-    LDA.W $0020,Y                                                        ;A09066;
-    BEQ .processAIEnd                                                    ;A09069;
-    STA.W EnemyAIPointer                                                 ;A0906B;
-    BRA .determineAIEnd                                                  ;A0906E;
+    LDA.W $0020,Y                                                        ;A09066; Read the dedicated time-is-frozen callback at header offset $20.
+    BEQ .processAIEnd                                                    ;A09069; A zero frozen-time callback skips execution for this path.
+    STA.W EnemyAIPointer                                                 ;A0906B; Use that word with the enemy's AI bank in the long pointer.
+    BRA .determineAIEnd                                                  ;A0906E; Bypass the ordinary AI-bit selector when global time is frozen.
 
+  ; Enemy.AI = 0 selects the main-AI word at header offset $18. Otherwise select
+  ; one plus the zero-based index of the lowest set bit, then read $18 + 2*index:
+  ; bit 0 selects grapple AI ($1A), bit 1 hurt AI ($1C), bit 2 frozen AI ($1E).
+  ; Higher bits continue the same arithmetic without a validity mask. The earlier
+  ; global frozen-time path bypasses this selector and uses header offset $20.
   .timeNotFrozen:
-    LDX.W #$0000                                                         ;A09070;
+    LDX.W #$0000                                                         ;A09070; Selector index zero means the header's main-AI word.
     LDY.W EnemyIndex                                                     ;A09073;
-    LDA.W Enemy.AI,Y                                                     ;A09076;
-    BEQ +                                                                ;A09079;
+    LDA.W Enemy.AI,Y                                                     ;A09076; Read the enemy's AI-selection bitfield.
+    BEQ +                                                                ;A09079; A zero bitfield keeps selector index zero.
 
   .loopBitIndex:
-    INX                                                                  ;A0907B;
-    LSR                                                                  ;A0907C;
-    BCS +                                                                ;A0907D;
-    BRA .loopBitIndex                                                    ;A0907F;
+    INX                                                                  ;A0907B; Count bits starting at one for a nonzero AI bitfield.
+    LSR                                                                  ;A0907C; Shift the next lowest bit into carry.
+    BCS +                                                                ;A0907D; Stop on the first set bit, giving it priority over higher bits.
+    BRA .loopBitIndex                                                    ;A0907F; Continue until a set bit is found.
 
 +   TXA                                                                  ;A09081;
-    ASL                                                                  ;A09082;
+    ASL                                                                  ;A09082; Convert the selector index into a two-byte header displacement.
     CLC                                                                  ;A09083;
-    ADC.W Enemy.ID,Y                                                     ;A09084;
+    ADC.W Enemy.ID,Y                                                     ;A09084; Add that displacement to the enemy-header address.
     TAX                                                                  ;A09087;
-    LDA.W $0018,X                                                        ;A09088;
-    STA.W EnemyAIPointer                                                 ;A0908B;
+    LDA.W $0018,X                                                        ;A09088; Read header offset $18 plus twice the selector index.
+    STA.W EnemyAIPointer                                                 ;A0908B; Install the selected callback word in the shared AI pointer.
 
   .determineAIEnd:
-    PHB                                                                  ;A0908E;
-    JSL.L .executeAI                                                     ;A0908F;
-    PLB                                                                  ;A09093;
-    BRA +                                                                ;A09094;
+    PHB                                                                  ;A0908E; Preserve the header data bank around enemy-specific AI.
+    JSL.L .executeAI                                                     ;A0908F; Supply the long return frame used by the enemy AI's RTL.
+    PLB                                                                  ;A09093; Restore the header data bank after the callback returns.
+    BRA +                                                                ;A09094; Skip over the inline tail-jump helper to the post-AI checks.
 
+  ; The caller's JSL supplied the long return frame. Refresh the pointer's bank,
+  ; select the enemy's data bank and tail-jump through EnemyAIPointer. Its RTL
+  ; returns after that JSL; the caller restores the header bank and skips over
+  ; this inline helper before rechecking frozen time and processing instructions.
   .executeAI:
-    LDX.W EnemyIndex                                                     ;A09096;
-    LDA.W Enemy.bank,X                                                   ;A09099;
-    STA.W EnemyAIPointer+2                                               ;A0909C;
-    XBA                                                                  ;A0909F;
-    PHA                                                                  ;A090A0;
-    PLB                                                                  ;A090A1;
-    PLB                                                                  ;A090A2;
-    JML.W [EnemyAIPointer]                                               ;A090A3;
+    LDX.W EnemyIndex                                                     ;A09096; Reload the current runtime slot for the callback.
+    LDA.W Enemy.bank,X                                                   ;A09099; Read the AI data bank from this slot.
+    STA.W EnemyAIPointer+2                                               ;A0909C; Refresh the long pointer's bank byte before jumping.
+    XBA                                                                  ;A0909F; Move that bank byte into the pushed word's high byte.
+    PHA                                                                  ;A090A0; Push both bytes for the two bank-register pulls.
+    PLB                                                                  ;A090A1; Discard the neighboring stored byte.
+    PLB                                                                  ;A090A2; Select the enemy's AI data bank.
+    JML.W [EnemyAIPointer]                                               ;A090A3; Tail-jump to AI; its RTL returns through the earlier JSL frame.
 
-+   LDA.W TimeIsFrozenFlag                                               ;A090A6;
++   LDA.W TimeIsFrozenFlag                                               ;A090A6; Recheck global frozen time after AI may have changed game state.
 if !DEBUG
-    ORA.W DebugTimeIsFrozenForEnemies                                    ;A090A9;
+    ORA.W DebugTimeIsFrozenForEnemies                                    ;A090A9; Include the debug enemy freeze flag in that post-AI check.
 endif
-    BNE .processAIEnd                                                    ;A090AC;
+    BNE .processAIEnd                                                    ;A090AC; Frozen time skips frame-counter and instruction updates.
     LDX.W EnemyIndex                                                     ;A090AE;
-    INC.W Enemy.frameCounter,X                                           ;A090B1;
+    INC.W Enemy.frameCounter,X                                           ;A090B1; Advance this slot's frame counter on the eligible post-AI path.
     LDA.W Enemy.properties,X                                             ;A090B4;
-    BIT.W #$2000                                                         ;A090B7;
-    BEQ .processAIEnd                                                    ;A090BA;
+    BIT.W #$2000                                                         ;A090B7; Property bit $2000 enables processing the enemy's instruction list.
+    BEQ .processAIEnd                                                    ;A090BA; Leave the script untouched when that property bit is clear.
 if !DEBUG
-    LDA.W #$0002                                                         ;A090BC;
+    LDA.W #$0002                                                         ;A090BC; Mark instruction processing as stage 2 for this debug build path.
     STA.L EnemyProcessingStage                                           ;A090BF;
 endif
-    JSR.W ProcessEnemyInstructions                                       ;A090C3;
+    JSR.W ProcessEnemyInstructions                                       ;A090C3; Advance scripts only after the selected AI has run.
 
   .processAIEnd:
     LDX.W EnemyIndex                                                     ;A090C6;
-    LDA.W Enemy.properties2,X                                            ;A090C9;
-    BIT.W #$0001                                                         ;A090CC;
+    LDA.W Enemy.properties2,X                                            ;A090C9; Inspect paralysis again on all paths reaching the post-AI section.
+    BIT.W #$0001                                                         ;A090CC; This $0001 test is separate from the earlier pre-AI branch.
     BEQ .paralysedEnd                                                    ;A090CF;
     LDA.W Enemy.flashTimer,X                                             ;A090D1;
-    CMP.W #$0001                                                         ;A090D4;
+    CMP.W #$0001                                                         ;A090D4; A flash timer of one triggers the paralysis death path.
     BEQ +                                                                ;A090D7;
-    LDA.W Enemy.freezeTimer,X                                            ;A090D9;
+    LDA.W Enemy.freezeTimer,X                                            ;A090D9; If not, check the frozen timer for the same terminal value.
     CMP.W #$0001                                                         ;A090DC;
-    BNE .paralysedEnd                                                    ;A090DF;
+    BNE .paralysedEnd                                                    ;A090DF; Skip that death path unless either timer equals one.
 
 +   LDA.W #$0000                                                         ;A090E1;
-    STA.L EnemyTileData+2,X                                              ;A090E4;
+    STA.L EnemyTileData+2,X                                              ;A090E4; Clear the per-slot tile/spawn word used by this death path.
     LDA.W #$0000                                                         ;A090E8; >.<
-    JSL.L EnemyDeath                                                     ;A090EB;
+    JSL.L EnemyDeath                                                     ;A090EB; Invoke enemy death with A = 0 on the paralysis terminal-timer path.
 
+  ; Extended spritemaps bypass the ordinary visibility helper. Other slots must
+  ; pass its radius-padded X and fixed-margin Y tests. Then property bits $0100/
+  ; $0200 and drawing-disable bit 0 can still prevent queue insertion.
+  ; The layer queue contains slot-offset words for a later drawing pass, not OAM.
   .paralysedEnd:
     LDX.W EnemyIndex                                                     ;A090EF;
     LDA.W Enemy.properties2,X                                            ;A090F2;
-    BIT.W #$0004                                                         ;A090F5;
+    BIT.W #$0004                                                         ;A090F5; An extended spritemap bypasses the ordinary visibility helper.
     BNE +                                                                ;A090F8;
-    JSL.L CheckIfEnemyIsOnScreen                                         ;A090FA;
-    BEQ +                                                                ;A090FE;
-    BRA .drawEnemyEnd                                                    ;A09100;
+    JSL.L CheckIfEnemyIsOnScreen                                         ;A090FA; Use the radius-padded horizontal and fixed-margin vertical visibility tests.
+    BEQ +                                                                ;A090FE; A zero result allows drawing checks to continue.
+    BRA .drawEnemyEnd                                                    ;A09100; Skip queue insertion for a failed ordinary visibility test.
 
 +   LDX.W EnemyIndex                                                     ;A09102;
-    LDA.W Enemy.properties,X                                             ;A09105;
-    BIT.W #$0300                                                         ;A09108;
-    BNE .drawEnemyEnd                                                    ;A0910B;
+    LDA.W Enemy.properties,X                                             ;A09105; Reload main properties after AI and possible death processing.
+    BIT.W #$0300                                                         ;A09108; Bits $0100/$0200 block drawing-queue insertion.
+    BNE .drawEnemyEnd                                                    ;A0910B; Do not enqueue invisible or deletion-marked enemies.
     LDA.W DisableDrawingOfEnemies                                        ;A0910D;
-    BIT.W #$0001                                                         ;A09110;
+    BIT.W #$0001                                                         ;A09110; Bit 0 of the drawing-disable flag also blocks queue insertion.
     BNE .drawEnemyEnd                                                    ;A09113;
-    JSR.W AddEnemyToDrawingQueue                                         ;A09115;
+    JSR.W AddEnemyToDrawingQueue                                         ;A09115; Queue this slot for later sprite drawing; do not emit OAM here.
 
   .drawEnemyEnd:
     LDX.W EnemyIndex                                                     ;A09118;
-    LDA.W Enemy.flashTimer,X                                             ;A0911B;
+    LDA.W Enemy.flashTimer,X                                             ;A0911B; Check the enemy's flash timer after the draw decision.
     BEQ +                                                                ;A0911E;
-    LDA.W TimeIsFrozenFlag                                               ;A09120;
+    LDA.W TimeIsFrozenFlag                                               ;A09120; Global frozen time prevents this flash-timer tick.
 if !DEBUG
     ORA.W DebugTimeIsFrozenForEnemies                                    ;A09123;
 endif
-    BNE +                                                                ;A09126;
-    DEC.W Enemy.flashTimer,X                                             ;A09128;
+    BNE +                                                                ;A09126; Keep the flash timer unchanged on a frozen-time pass.
+    DEC.W Enemy.flashTimer,X                                             ;A09128; Tick the flash timer on the eligible path.
     LDA.W Enemy.flashTimer,X                                             ;A0912B;
-    CMP.W #$0008                                                         ;A0912E;
-    BPL +                                                                ;A09131;
+    CMP.W #$0008                                                         ;A0912E; Test the updated timer against eight using the original branch condition.
+    BPL +                                                                ;A09131; Keep the hurt-AI bit while the timer takes this branch.
     LDA.W Enemy.AI,X                                                     ;A09133;
-    AND.W #$FFFD                                                         ;A09136;
-    STA.W Enemy.AI,X                                                     ;A09139;
+    AND.W #$FFFD                                                         ;A09136; Clear only bit 1, the hurt-AI selector bit.
+    STA.W Enemy.AI,X                                                     ;A09139; Preserve the remaining AI flags.
 
-+   INC.W ActiveEnemyIndicesIndex                                        ;A0913C;
-    INC.W ActiveEnemyIndicesIndex                                        ;A0913F;
-    JMP.W .loop                                                          ;A09142;
++   INC.W ActiveEnemyIndicesIndex                                        ;A0913C; Advance the active-list cursor by the first byte of its word entry.
+    INC.W ActiveEnemyIndicesIndex                                        ;A0913F; Complete the two-byte advance to the next active entry.
+    JMP.W .loop                                                          ;A09142; Process the next scheduled slot.
 
   .return:
-    JSL.L HandleSpriteObjects                                            ;A09145;
-    INC.W NumberOfTimesMainEnemyRoutineExecuted                          ;A09149;
-    LDA.W #$FFFF                                                         ;A0914C;
+    JSL.L HandleSpriteObjects                                            ;A09145; Service sprite objects on the common tail, including the early no-population exit.
+    INC.W NumberOfTimesMainEnemyRoutineExecuted                          ;A09149; Count executions of this routine, not hardware NMI events.
+    LDA.W #$FFFF                                                         ;A0914C; Use $FFFF for the four cleared solid-enemy collision slot indices.
     STA.W EnemyIndexSamusCollidesLeft                                    ;A0914F;
     STA.W EnemyIndexSamusCollidesRight                                   ;A09152;
     STA.W EnemyIndexSamusCollidesUp                                      ;A09155;
-    STA.W EnemyIndexSamusCollidesDown                                    ;A09158;
-    STZ.W neverRead1834                                                  ;A0915B;
+    STA.W EnemyIndexSamusCollidesDown                                    ;A09158; Finish clearing the last directional collision index.
+    STZ.W neverRead1834                                                  ;A0915B; Clear the following four bookkeeping words.
     STZ.W neverRead1836                                                  ;A0915E;
     STZ.W neverRead1838                                                  ;A09161;
     STZ.W neverRead183A                                                  ;A09164;
@@ -2452,23 +2528,27 @@ endif
 
 
 ;;; $9423: Add enemy to drawing queue ;;;
+; Append the current runtime slot offset to the queue selected by Enemy.layer.
+; The layer indexes an eight-word base-address table; queue sizes are byte counts
+; and increase by two per appended word. This routine does not draw the sprite
+; or append a sentinel, and has no layer/capacity bounds check.
 AddEnemyToDrawingQueue:
     PHX                                                                  ;A09423;
     PHY                                                                  ;A09424;
-    LDX.W EnemyIndex                                                     ;A09425;
-    LDA.W Enemy.layer,X                                                  ;A09428;
-    ASL                                                                  ;A0942B;
-    STA.W Temp_DrawingQueueIndex0E34                                     ;A0942C;
+    LDX.W EnemyIndex                                                     ;A09425; Use the slot selected by EnemyIndex.
+    LDA.W Enemy.layer,X                                                  ;A09428; Read the enemy's drawing-layer index.
+    ASL                                                                  ;A0942B; Convert the layer number to a word-table byte offset.
+    STA.W Temp_DrawingQueueIndex0E34                                     ;A0942C; Keep that offset for updating the selected queue's size.
     TAY                                                                  ;A0942F;
-    LDA.W AddressesForEnemyDrawingQueues,Y                               ;A09430;
+    LDA.W AddressesForEnemyDrawingQueues,Y                               ;A09430; Read the base address of this layer's drawing queue.
     CLC                                                                  ;A09433;
-    ADC.W EnemyDrawingQueues_Sizes,Y                                     ;A09434;
-    TAY                                                                  ;A09437;
-    LDA.W EnemyIndex                                                     ;A09438;
-    STA.W $0000,Y                                                        ;A0943B;
-    LDX.W Temp_DrawingQueueIndex0E34                                     ;A0943E;
-    INC.W EnemyDrawingQueues_Sizes,X                                     ;A09441;
-    INC.W EnemyDrawingQueues_Sizes,X                                     ;A09444;
+    ADC.W EnemyDrawingQueues_Sizes,Y                                     ;A09434; Add its current byte size to find the insertion address.
+    TAY                                                                  ;A09437; Use Y as that queue insertion address.
+    LDA.W EnemyIndex                                                     ;A09438; Append the runtime slot offset rather than an enemy ID.
+    STA.W $0000,Y                                                        ;A0943B; Write one word to the selected layer's queue.
+    LDX.W Temp_DrawingQueueIndex0E34                                     ;A0943E; Recover the layer's word-table offset.
+    INC.W EnemyDrawingQueues_Sizes,X                                     ;A09441; Advance that queue's byte size by one of the entry's two bytes.
+    INC.W EnemyDrawingQueues_Sizes,X                                     ;A09444; Finish advancing its size by two; drawing happens later.
     PLY                                                                  ;A09447;
     PLX                                                                  ;A09448;
     RTS                                                                  ;A09449;
@@ -6160,40 +6240,45 @@ CheckIfEnemyCenterIsOverAPixelsOffScreen:
 
 
 ;;; $ADE7: Check if enemy is on screen or not off screen ;;;
+; Return A=0/Z set when these viewport tests pass, A=1/Z clear otherwise.
+; Horizontal bounds include XHitboxRadius; vertical bounds use Y+8 and camera
+; Y+$F8, not YHitboxRadius. These match the ordinary activity scan's tests.
+; Comparisons branch on the subtraction result's N flag as written; this is
+; not a general-purpose signed-coordinate rectangle test.
 CheckIfEnemyIsOnScreen:
 ;; Returns:
 ;;     A/zero: 0/set if enemy center is on screen, 1/clear otherwise
     PHX                                                                  ;A0ADE7;
-    LDX.W EnemyIndex                                                     ;A0ADE8;
+    LDX.W EnemyIndex                                                     ;A0ADE8; Check the current runtime slot while preserving the caller's X.
     LDA.W Enemy.XPosition,X                                              ;A0ADEB;
     CLC                                                                  ;A0ADEE;
-    ADC.W Enemy.XHitboxRadius,X                                          ;A0ADEF;
-    CMP.W Layer1XPosition                                                ;A0ADF2;
-    BMI .offScreen                                                       ;A0ADF5;
+    ADC.W Enemy.XHitboxRadius,X                                          ;A0ADEF; Pad the left horizontal test by the enemy's X radius.
+    CMP.W Layer1XPosition                                                ;A0ADF2; Compare the padded enemy position with the camera origin.
+    BMI .offScreen                                                       ;A0ADF5; Reject this test when the subtraction result is negative.
     LDA.W Layer1XPosition                                                ;A0ADF7;
     CLC                                                                  ;A0ADFA;
-    ADC.W #$0100                                                         ;A0ADFB;
+    ADC.W #$0100                                                         ;A0ADFB; Use the same $100-pixel viewport width as the normal activity scan.
     CLC                                                                  ;A0ADFE;
-    ADC.W Enemy.XHitboxRadius,X                                          ;A0ADFF;
+    ADC.W Enemy.XHitboxRadius,X                                          ;A0ADFF; Pad the right boundary by the enemy's X radius.
     CMP.W Enemy.XPosition,X                                              ;A0AE02;
-    BMI .offScreen                                                       ;A0AE05;
+    BMI .offScreen                                                       ;A0AE05; Reject the far horizontal test on a negative result.
     LDA.W Enemy.YPosition,X                                              ;A0AE07;
     CLC                                                                  ;A0AE0A;
-    ADC.W #$0008                                                         ;A0AE0B;
+    ADC.W #$0008                                                         ;A0AE0B; Allow eight pixels above the camera's Y origin.
     CMP.W Layer1YPosition                                                ;A0AE0E;
-    BMI .offScreen                                                       ;A0AE11;
+    BMI .offScreen                                                       ;A0AE11; Reject the upper vertical test on a negative result.
     LDA.W Layer1YPosition                                                ;A0AE13;
     CLC                                                                  ;A0AE16;
-    ADC.W #$00F8                                                         ;A0AE17;
+    ADC.W #$00F8                                                         ;A0AE17; Use camera Y plus $F8 as the lower vertical boundary.
     CMP.W Enemy.YPosition,X                                              ;A0AE1A;
-    BMI .offScreen                                                       ;A0AE1D;
+    BMI .offScreen                                                       ;A0AE1D; Reject the lower vertical test on a negative result.
     PLX                                                                  ;A0AE1F;
-    LDA.W #$0000                                                         ;A0AE20;
+    LDA.W #$0000                                                         ;A0AE20; Return A = 0 and set Z when all four tests pass.
     RTL                                                                  ;A0AE23;
 
   .offScreen:
     PLX                                                                  ;A0AE24;
-    LDA.W #$0001                                                         ;A0AE25;
+    LDA.W #$0001                                                         ;A0AE25; Return A = 1 and clear Z when a test fails.
     RTL                                                                  ;A0AE28;
 
 
@@ -8929,52 +9014,64 @@ endif ; !FEATURE_KEEP_UNREFERENCED
 
 
 ;;; $C26A: Process enemy instructions ;;;
+; Advance the selected enemy's script only when AI bit $0004 is clear and the
+; pre-decremented instruction timer becomes zero. A negative script word is a
+; bank-local command; a nonnegative word begins a four-byte duration/spritemap
+; record. The caller supplies EnemyAIPointer's bank byte; this routine sets its
+; command word and the script data bank. Enter with the expected word register mode.
+; PHK/PEA create a long return to the fetch loop. Commands normally RTL there,
+; but terminating commands replace the return word to reach the shared exit.
+; A timer initially zero wraps to $FFFF on decrement; it is not an immediate tick.
 ProcessEnemyInstructions:
     PHB                                                                  ;A0C26A;
-    LDX.W EnemyIndex                                                     ;A0C26B;
-    LDA.W Enemy.AI,X                                                     ;A0C26E;
-    AND.W #$0004                                                         ;A0C271;
-    BNE .return                                                          ;A0C274;
-    DEC.W Enemy.instTimer,X                                              ;A0C276;
-    BNE .noUpdate                                                        ;A0C279;
-    LDA.W Enemy.bank-1,X                                                 ;A0C27B;
-    PHA                                                                  ;A0C27E;
-    PLB                                                                  ;A0C27F;
-    PLB                                                                  ;A0C280;
-    LDY.W Enemy.instList,X                                               ;A0C281;
+    LDX.W EnemyIndex                                                     ;A0C26B; Use the current runtime slot selected by EnemyIndex.
+    LDA.W Enemy.AI,X                                                     ;A0C26E; Read the per-enemy AI flags before ticking its script timer.
+    AND.W #$0004                                                         ;A0C271; The frozen-AI bit blocks instruction processing independently of global time.
+    BNE .return                                                          ;A0C274; Return without decrementing the instruction timer when that bit is set.
+    DEC.W Enemy.instTimer,X                                              ;A0C276; Pre-decrement the word-sized instruction timer.
+    BNE .noUpdate                                                        ;A0C279; Only a zero result fetches script words; other results take the no-update path.
+    LDA.W Enemy.bank-1,X                                                 ;A0C27B; Read one byte early so the AI bank byte occupies the word's high byte.
+    PHA                                                                  ;A0C27E; Push that word to select the script's data bank.
+    PLB                                                                  ;A0C27F; Discard the byte preceding Enemy.bank.
+    PLB                                                                  ;A0C280; Select the bank containing this enemy's instruction data.
+    LDY.W Enemy.instList,X                                               ;A0C281; Use Y as the current instruction-list cursor.
 
   .loop:
-    LDA.W $0000,Y                                                        ;A0C284;
-    BPL .timer                                                           ;A0C287;
-    STA.W EnemyAIPointer                                                 ;A0C289;
-    INY                                                                  ;A0C28C;
+    LDA.W $0000,Y                                                        ;A0C284; Fetch the next word from the instruction stream.
+    BPL .timer                                                           ;A0C287; A clear sign bit identifies a duration/spritemap record.
+    STA.W EnemyAIPointer                                                 ;A0C289; A set sign bit supplies the command word; the caller supplied the bank byte.
+    INY                                                                  ;A0C28C; Advance past the two-byte command word.
     INY                                                                  ;A0C28D;
-    PHK                                                                  ;A0C28E;
-    PEA.W .loop-1                                                        ;A0C28F;
-    JML.W [EnemyAIPointer]                                               ;A0C292;
+    PHK                                                                  ;A0C28E; Push bank $A0 for the command's synthetic long return frame.
+    PEA.W .loop-1                                                        ;A0C28F; Push the loop return word minus one for the command's RTL.
+    JML.W [EnemyAIPointer]                                               ;A0C292; Run the bank-local command through the shared long pointer.
 
 
+  ; Accept the fetched word as duration, install the following spritemap word and
+  ; advance the saved cursor by four bytes. Set properties2 bit $8000 on this path;
+  ; the nonzero-timer path clears it. Frozen-AI and terminating-command exits do
+  ; not perform that same marker update.
   .timer:
-    STA.W Enemy.instTimer,X                                              ;A0C295;
-    LDA.W $0002,Y                                                        ;A0C298;
-    STA.W Enemy.spritemap,X                                              ;A0C29B;
-    TYA                                                                  ;A0C29E;
+    STA.W Enemy.instTimer,X                                              ;A0C295; Use the nonnegative word as the next instruction duration.
+    LDA.W $0002,Y                                                        ;A0C298; Read the spritemap word immediately following the duration.
+    STA.W Enemy.spritemap,X                                              ;A0C29B; Install that spritemap for the current enemy.
+    TYA                                                                  ;A0C29E; Advance from this duration/spritemap pair to its following record.
     CLC                                                                  ;A0C29F;
-    ADC.W #$0004                                                         ;A0C2A0;
-    STA.W Enemy.instList,X                                               ;A0C2A3;
+    ADC.W #$0004                                                         ;A0C2A0; Each graphical record occupies four bytes.
+    STA.W Enemy.instList,X                                               ;A0C2A3; Save the next instruction-list position.
     LDA.W Enemy.properties2,X                                            ;A0C2A6;
-    ORA.W #$8000                                                         ;A0C2A9;
+    ORA.W #$8000                                                         ;A0C2A9; Set the extra-property sign bit after accepting a graphical record.
     STA.W Enemy.properties2,X                                            ;A0C2AC;
 
   .return:
 ; Sleep/wait/delete instructions return to here
-    PLB                                                                  ;A0C2AF;
-    RTS                                                                  ;A0C2B0;
+    PLB                                                                  ;A0C2AF; Restore the entry data bank on the shared early/command exit.
+    RTS                                                                  ;A0C2B0; RTS returns to the near caller of the interpreter.
 
   .noUpdate:
-    LDA.W Enemy.properties2,X                                            ;A0C2B1;
-    AND.W #$7FFF                                                         ;A0C2B4;
-    STA.W Enemy.properties2,X                                            ;A0C2B7;
+    LDA.W Enemy.properties2,X                                            ;A0C2B1; Keep the current sprite when the pre-decremented timer was nonzero.
+    AND.W #$7FFF                                                         ;A0C2B4; Clear the graphical-update marker on this no-update path.
+    STA.W Enemy.properties2,X                                            ;A0C2B7; Store the remaining extra properties unchanged.
     PLB                                                                  ;A0C2BA;
     RTS                                                                  ;A0C2BB;
 

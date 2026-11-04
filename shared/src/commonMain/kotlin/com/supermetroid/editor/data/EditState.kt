@@ -1016,6 +1016,8 @@ data class ProjectAsmWorkspaceSettings(
      * semantic-edit and patch transaction over that compiled base.
      */
     var buildMode: ProjectRomBuildMode = ProjectRomBuildMode.PATCHED_ROM,
+    /** Adds erased banks $E0-$FF to the checked shared allocator. The base ROM remains immutable. */
+    var expandRomTo4MiB: Boolean = false,
     /** Source-owned PLM pilot. Bindings contain identity/layout only, never a second list of objects. */
     val plmSourceBindings: MutableList<ProjectPlmSourceBinding> = mutableListOf(),
     /** Enemy tuning identities only; values remain in the authored bank source. */

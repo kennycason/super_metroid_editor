@@ -1,5 +1,6 @@
 package com.supermetroid.editor.asm
 
+import com.supermetroid.editor.rom.RomConstants
 import java.io.File
 import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -209,10 +210,12 @@ internal class AsmProjectCompiler(
         roomMaterialization: AsmRoomMaterialization = AsmRoomMaterialization.EMPTY,
         referenceRomBody: ByteArray? = null,
         managedBank8FStart: Int? = null,
+        outputRomSize: Int = loadedRom.size - if (loadedRom.size % 0x8000 == 0x200) 0x200 else 0,
+        expandedFillByte: Int = 0xFF,
         onProgress: (String) -> Unit = {},
     ): AsmCompiledBuildBase = workspaceRepository.withBaselineUpdateLock(projectFilePath) {
         compileLocked(projectFilePath, loadedRom, materialization, patchMaterialization, roomMaterialization,
-            referenceRomBody, managedBank8FStart, onProgress)
+            referenceRomBody, managedBank8FStart, outputRomSize, expandedFillByte, onProgress)
     }
 
     private fun compileLocked(
@@ -223,8 +226,16 @@ internal class AsmProjectCompiler(
         roomMaterialization: AsmRoomMaterialization,
         referenceRomBody: ByteArray?,
         managedBank8FStart: Int?,
+        outputRomSize: Int,
+        expandedFillByte: Int,
         onProgress: (String) -> Unit,
     ): AsmCompiledBuildBase {
+        val loadedHeaderSize = if (loadedRom.size % 0x8000 == 0x200) 0x200 else 0
+        val loadedBodySize = loadedRom.size - loadedHeaderSize
+        require(outputRomSize in loadedBodySize..RomConstants.EXPANDED_ROM_SIZE && outputRomSize % 0x8000 == 0) {
+            "ASM output size must be a bank-aligned ROM body between $loadedBodySize and ${RomConstants.EXPANDED_ROM_SIZE} bytes"
+        }
+        require(expandedFillByte in 0..0xFF) { "Expanded ROM fill byte must be 0..255" }
         val workspace = workspaceRepository.loadForBuild(projectFilePath)
             ?: throw AsmCompilationException("Project ASM is enabled, but its local workspace is missing or incomplete")
         val sourceDiagnostics = AsmSourceLinter.lintTree(
@@ -252,6 +263,8 @@ internal class AsmProjectCompiler(
             roomMaterialization = roomMaterialization,
             referenceRomBody = referenceRomBody,
             managedBank8FStart = managedBank8FStart,
+            outputRomSize = outputRomSize,
+            expandedFillByte = expandedFillByte,
         )
         AsmCompiledBuildCache.get(cacheKey)?.let { cached ->
             val label = if (materialization.isEmpty && patchMaterialization.isEmpty && roomMaterialization.isEmpty) {
@@ -280,10 +293,10 @@ internal class AsmProjectCompiler(
         try {
             reference = if (referenceRomBody == null) {
                 onProgress("Compiling immutable ASM snapshot…")
-                compileTree(workspace.originalDirectory, asar)
+                compileTree(workspace.originalDirectory, asar, romSize = outputRomSize, fillByte = expandedFillByte)
             } else {
-                require(referenceRomBody.size == ASM_ROM_SIZE) {
-                    "Reusable immutable ASM snapshot has ${referenceRomBody.size} bytes; expected $ASM_ROM_SIZE"
+                require(referenceRomBody.size == outputRomSize) {
+                    "Reusable immutable ASM snapshot has ${referenceRomBody.size} bytes; expected $outputRomSize"
                 }
                 onProgress("Reusing immutable ASM snapshot…")
                 CompiledTree(referenceRomBody.copyOf(), emptyList(), ByteArray(0))
@@ -297,7 +310,8 @@ internal class AsmProjectCompiler(
                 predicateStart = managedBank8FStart ?: run {
                     onProgress("Finding verified space for managed bank-8F code…")
                     val authored = compileTree(workspace.workingDirectory, asar,
-                        generatedBank8FSource = AsmManagedBank8FCode.render(predicates, null))
+                        generatedBank8FSource = AsmManagedBank8FCode.render(predicates, null),
+                        romSize = outputRomSize, fillByte = expandedFillByte)
                     AsmManagedBank8FCode.chooseStart(reference.rom, authored.rom, authored.symbols, predicates)
                 }
             }
@@ -309,6 +323,8 @@ internal class AsmProjectCompiler(
                 generatedRoomSource = roomMaterialization.source,
                 generatedPatchSource = patchMaterialization.source,
                 generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                romSize = outputRomSize,
+                fillByte = expandedFillByte,
             )
             val fastDoors = File(workspace.workingDirectory, "src/${AsmFastDoorsModule.FILE}")
             if (fastDoors.isFile && AsmFastDoorsModule.hasGate(fastDoors.readText()) && AsmFastDoorsModule.enabled(fastDoors.readText()) &&
@@ -318,7 +334,7 @@ internal class AsmProjectCompiler(
                     assetOverrides = materialization.assetOverrides, generatedRoomSource = roomMaterialization.source,
                     generatedPatchSource = patchMaterialization.source,
                     generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
-                    muteFastDoors = true).rom
+                    muteFastDoors = true, romSize = outputRomSize, fillByte = expandedFillByte).rom
             }
             if (predicateStart != null) {
                 predicateClaims = AsmManagedBank8FCode.claims(predicates, predicateStart, reference.rom, project.rom, project.symbols)
@@ -345,8 +361,8 @@ internal class AsmProjectCompiler(
             )
         }
 
-        val headerSize = if (loadedRom.size % 0x8000 == 0x200) 0x200 else 0
-        val expectedBodySize = loadedRom.size - headerSize
+        val headerSize = loadedHeaderSize
+        val expectedBodySize = outputRomSize
         if (project.rom.size != expectedBodySize) {
             throw AsmCompilationException(
                 "ASM produced ${project.rom.size} bytes, but the loaded ROM body is $expectedBodySize bytes"
@@ -369,7 +385,10 @@ internal class AsmProjectCompiler(
         return AsmCompiledBuildBase(
             romBytes = output,
             referenceRomBody = reference.rom,
-            referenceRomSha256 = sha256(reference.rom),
+            // Expansion changes Asar's derived internal checksum inside the
+            // first 3 MiB. Artifact compatibility identifies the immutable
+            // loaded ROM, not that generated checksum-bearing build product.
+            referenceRomSha256 = sha256(loadedRom.copyOfRange(loadedHeaderSize, loadedRom.size)),
             // The internal-header checksum/complement are Asar build metadata,
             // not authored source. Downstream SMEDIT writes may legitimately
             // replace them (community sprite IPS files commonly do), so keep
@@ -415,6 +434,8 @@ internal class AsmProjectCompiler(
     fun sourceInputsFingerprint(
         projectFilePath: String,
         loadedRom: ByteArray,
+        outputRomSize: Int = loadedRom.size - if (loadedRom.size % 0x8000 == 0x200) 0x200 else 0,
+        expandedFillByte: Int = 0xFF,
         onProgress: (String) -> Unit = {},
     ): String {
         val workspace = workspaceRepository.loadForBuild(projectFilePath)
@@ -430,6 +451,8 @@ internal class AsmProjectCompiler(
             roomMaterialization = AsmRoomMaterialization.EMPTY,
             referenceRomBody = null,
             managedBank8FStart = null,
+            outputRomSize = outputRomSize,
+            expandedFillByte = expandedFillByte,
         )
     }
 
@@ -459,11 +482,14 @@ internal class AsmProjectCompiler(
         roomMaterialization: AsmRoomMaterialization,
         referenceRomBody: ByteArray?,
         managedBank8FStart: Int?,
+        outputRomSize: Int,
+        expandedFillByte: Int,
     ): String {
         val fingerprint = BuildFingerprint()
         fingerprint.addText(CACHE_FORMAT_VERSION)
         fingerprint.addText("source-baseline:${workspace.baselineId}")
         fingerprint.addText("managed-bank8f-start:$managedBank8FStart")
+        fingerprint.addText("output-rom:$outputRomSize:$expandedFillByte")
         fingerprint.addText(assemblerVersion)
         fingerprint.addFile("asar", asar)
         fingerprint.addBytes("loaded-rom", loadedRom)
@@ -514,6 +540,8 @@ internal class AsmProjectCompiler(
         generatedPatchSource: String = "",
         generatedBank8FSource: String = "",
         muteFastDoors: Boolean = false,
+        romSize: Int = ASM_ROM_SIZE,
+        fillByte: Int = 0xFF,
     ): CompiledTree {
         require(File(sourceTree, "src/main.asm").isFile) { "ASM source tree has no src/main.asm: $sourceTree" }
         require(File(sourceTree, "data").isDirectory) { "ASM source tree has no extracted data: $sourceTree" }
@@ -531,7 +559,9 @@ internal class AsmProjectCompiler(
             applyGeneratedRoomSource(File(staging, "src"), generatedRoomSource)
             applyGeneratedPatchSource(File(staging, "src"), generatedPatchSource)
             val rom = File(staging, "SM.sfc")
-            rom.writeBytes(ByteArray(ASM_ROM_SIZE) { 0xFF.toByte() })
+            rom.writeBytes(ByteArray(romSize) { 0xFF.toByte() }.also { bytes ->
+                if (romSize > ASM_ROM_SIZE) bytes.fill(fillByte.toByte(), ASM_ROM_SIZE, romSize)
+            })
             val symbols = File(staging, "symbols.sym")
             val result = runProcess(
                 command = listOf(
@@ -554,8 +584,8 @@ internal class AsmProjectCompiler(
                     compilerOutput = result.output,
                 )
             }
-            if (!rom.isFile || rom.length() != ASM_ROM_SIZE.toLong()) {
-                throw AsmCompilationException("Asar did not produce the expected $ASM_ROM_SIZE-byte SM.sfc")
+            if (!rom.isFile || rom.length() != romSize.toLong()) {
+                throw AsmCompilationException("Asar did not produce the expected $romSize-byte SM.sfc")
             }
             if (!symbols.isFile || symbols.length() == 0L) {
                 throw AsmCompilationException("Asar completed without a symbol map")

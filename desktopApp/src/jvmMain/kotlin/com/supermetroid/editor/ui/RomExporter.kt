@@ -68,6 +68,18 @@ internal fun writeBytesAtomically(target: File, bytes: ByteArray) {
     }
 }
 
+/** Create erased LoROM banks without mutating or replacing the loaded 3 MiB base. */
+internal fun managedExpandedRomBase(baseRom: ByteArray, headerSize: Int): ByteArray {
+    val bodySize = baseRom.size - headerSize
+    require(bodySize in setOf(RomConstants.ROM_SIZE, RomConstants.EXPANDED_ROM_SIZE)) {
+        "Managed ROM expansion requires a 3 MiB or 4 MiB LoROM body; found $bodySize bytes"
+    }
+    if (bodySize == RomConstants.EXPANDED_ROM_SIZE) return baseRom.copyOf()
+    return baseRom.copyOf(headerSize + RomConstants.EXPANDED_ROM_SIZE).also { expanded ->
+        expanded.fill(0xFF.toByte(), baseRom.size, expanded.size)
+    }
+}
+
 private fun ByteArray.hexAt(offset: Int, count: Int): String {
     if (offset < 0 || offset >= size) return "<out-of-range>"
     val end = (offset + count).coerceAtMost(size)
@@ -324,12 +336,20 @@ internal class RomExporter(
         val exportBase = try {
             communitySamusArtifact?.let {
                 CommunitySamusRomInjector.expandedBase(buildBase, headerSize, inputRomHash, it)
-            } ?: buildBase
+            } ?: if (project.asmWorkspace.expandRomTo4MiB) {
+                managedExpandedRomBase(buildBase, headerSize)
+            } else {
+                buildBase
+            }
         } catch (problem: RomWritePlanException) {
             val message = "Export failed safely: ${problem.message}"
             onLog("ERROR: $message")
             onStatus(message)
             return null
+        }
+        if (exportBase.size > buildBase.size) {
+            val source = if (communitySamusArtifact != null) "community Samus output" else "managed project capacity"
+            onLog("[ROM-SPACE] Expanded build to 4 MiB for $source; banks \$E0–\$FF are allocator-managed")
         }
         val writePlan = RomWritePlan(exportBase, headerSize)
         compiledAsmBase?.sourceOwnedRanges?.forEachIndexed { index, range ->
@@ -433,7 +453,7 @@ internal class RomExporter(
         val asmPatched: Int
         try {
             samusPatched = if (communitySamusArtifact != null) {
-                val recordCount = CommunitySamusRomInjector.apply(writePlan, communitySamusArtifact)
+                val recordCount = CommunitySamusRomInjector.apply(writePlan, communitySamusArtifact, originalRom)
                 onLog(
                     "[EXPORT] Applied project Samus '${project.customGfx.samusCommunitySource?.displayName}' " +
                         "($recordCount IPS records, ${communitySamusArtifact.metadata.providerRevision.take(12)})"
@@ -552,7 +572,7 @@ internal class RomExporter(
             gfxPatched = applyCustomGfxPatches(
                 writePlan,
                 freeSpaceAllocator,
-                expandedZeroFilledBanksAvailable = communitySamusArtifact != null,
+                expandedBanksAvailable = exportBase.size - headerSize >= RomConstants.EXPANDED_ROM_SIZE,
             )
             minimapPatched = applyMinimapEdits(writePlan)
             textPatched = applyTextEdits(writePlan)
@@ -1379,7 +1399,7 @@ internal class RomExporter(
     private fun applyCustomGfxPatches(
         writePlan: RomWritePlan,
         freeSpaceAllocator: RomFreeSpaceAllocator,
-        expandedZeroFilledBanksAvailable: Boolean,
+        expandedBanksAvailable: Boolean,
     ): Int {
         val romData = writePlan.romData
         var gfxPatched = 0
@@ -1404,7 +1424,7 @@ internal class RomExporter(
 
         fun validAllocationBanks(originalSnesAddress: Int): List<Int> {
             val originalBank = (originalSnesAddress shr 16) and 0xFF
-            val expandedBanks = if (expandedZeroFilledBanksAvailable) 0xFF downTo 0xE0 else emptyList()
+            val expandedBanks = if (expandedBanksAvailable) 0xFF downTo 0xE0 else emptyList()
             return (listOf(originalBank) + expandedBanks + (0xCE downTo 0xC0) + (0xBF downTo 0xB0))
                 .distinct()
                 .filter { bank ->

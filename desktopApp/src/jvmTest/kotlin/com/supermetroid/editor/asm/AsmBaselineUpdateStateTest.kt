@@ -16,6 +16,7 @@ class AsmBaselineUpdateStateTest {
     private suspend fun state(
         backupLoader: (suspend (String) -> AsmBaselineBackupList)? = null,
         folderOpener: (File) -> Unit = {},
+        targetRevision: String = "two",
     ): AsmWorkspaceState {
         val referenceRoot = File(temporary, "reference")
         val src = File(referenceRoot, "src").apply { mkdirs() }
@@ -28,7 +29,7 @@ class AsmBaselineUpdateStateTest {
         val repo = AsmProjectWorkspaceRepository(emptyList(), emptyList(), AsmSourceAugmentation("one"))
         val project = File(temporary, "hack/Test.smedit").apply { parentFile.mkdirs(); writeText("{}") }
         repo.initialize(project.path, reference)
-        val recipe = AsmSourceAugmentation("two", documentation = listOf(
+        val recipe = AsmSourceAugmentation(targetRevision, documentation = listOf(
             AsmSourceDocumentation("root", "bank_80.asm", "Root", "dw \$0001", listOf("New explanation."))))
         val updater = AsmBaselineUpdateRepository(repo, recipe, emptyList(), emptyList(), { _, _ -> })
         val backups = AsmBaselineBackupRepository(repo)
@@ -154,7 +155,7 @@ class AsmBaselineUpdateStateTest {
         val state = state()
         assertTrue(state.updateSourceEditText("bank_80.asm", source + "; unsaved\n"))
         assertFalse(state.previewBaselineUpdate())
-        assertContains(state.error.orEmpty(), "Save all")
+        assertContains(state.error.orEmpty(), "Save the open ASM file")
         state.discardSourceBuffer("bank_80.asm")
         assertTrue(state.previewBaselineUpdate(), state.error)
         assertTrue(state.updateSourceEditText("bank_80.asm", source + "; after preview\n"))
@@ -162,6 +163,15 @@ class AsmBaselineUpdateStateTest {
         assertEquals("one", state.projectWorkspace?.baselineRevision)
         assertContains(state.projectSourceText("bank_80.asm"), "; after preview")
         state.cancelBaselineUpdate()
+        assertNull(state.baselineUpdatePlan)
+    }
+
+    @Test fun `current ASM version is not offered as an update or reported as an error`() = runBlocking {
+        val state = state(targetRevision = "one")
+        assertFalse(state.projectAsmUpdateAvailable)
+        assertFalse(state.previewBaselineUpdate())
+        assertNull(state.error)
+        assertEquals("ASM version one is current.", state.baselineUpdateMessage)
         assertNull(state.baselineUpdatePlan)
     }
 
@@ -175,6 +185,7 @@ class AsmBaselineUpdateStateTest {
         assertTrue(state.applyBaselineUpdate(emptyMap(), rom), state.error)
         assertNotEquals(before, state.projectWorkspace?.baselineId, "The UI bridge effect must observe a changed baseline identity")
         assertEquals("two", state.projectWorkspace?.baselineRevision)
+        assertFalse(state.projectAsmUpdateAvailable)
         assertEquals("; New explanation.\n" + source.replace("\$0001", "\$0009"), state.projectSourceText("bank_80.asm"))
         assertEquals(0, state.selectedLineIndex)
         assertFalse(state.canUndoSource("bank_80.asm"), "An old undo transaction must not replace the newly merged source")

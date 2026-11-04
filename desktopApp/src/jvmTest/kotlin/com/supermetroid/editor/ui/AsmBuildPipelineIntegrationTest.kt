@@ -4064,6 +4064,27 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(fixture.rom, fixture.romFile.readBytes())
     }
 
+    @Test
+    fun `managed four MiB capacity survives the complete source build pipeline`() {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.synthetic(
+            tempDirectory,
+            ByteArray(0x300000) { 0xFF.toByte() },
+        )
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture).apply { asmWorkspace.expandRomTo4MiB = true }
+        val logs = mutableListOf<String>()
+
+        val result = assertNotNull(
+            ProjectFileService.buildRom(project, parser, logs::add, logs::add, fixture.projectFile.path),
+            logs.joinToString("\n"),
+        )
+
+        assertEquals(0x400000, result.resultRom.size)
+        assertTrue(result.resultRom.copyOfRange(0x300000, result.resultRom.size).all { it == 0xFF.toByte() })
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
     private fun sourceProject(fixture: AsmProjectTestFixture) = SmEditProject(fixture.romFile.absolutePath).also {
         it.asmWorkspace.enabled = true
         it.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE

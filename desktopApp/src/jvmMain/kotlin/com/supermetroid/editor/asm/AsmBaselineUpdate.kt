@@ -9,6 +9,10 @@ internal data class AsmBaselineFileUpdate(
     val baselineChanged: Boolean = changed,
     val projectEdited: Boolean = false,
     val documentationOnly: Boolean = false,
+    /** Exact review inputs retained by the disposable update plan. */
+    val baseText: String = "",
+    val projectText: String = baseText,
+    val updatedText: String = baseText,
 )
 internal data class AsmBaselineUpdateResult(val workspace: AsmProjectWorkspace, val backupDirectory: File)
 
@@ -38,6 +42,8 @@ internal class AsmBaselineUpdateRepository(
     private val nativeSymbols: List<AsmNativeSymbol>? = null,
     private val validateCandidate: ((String, ByteArray) -> Unit)? = null,
 ) {
+    internal val targetRevision: String get() = augmentation.revision
+
     fun prepare(projectFilePath: String, reference: AsmReferenceWorkspace): AsmBaselineUpdatePlan {
         val current = requireNotNull(projectRepository.load(projectFilePath)) { "Repair Project ASM before updating its baseline" }
         val previous = requireNotNull(AsmSourceBaseline.load(current.root))
@@ -77,12 +83,18 @@ internal class AsmBaselineUpdateRepository(
             val files = updated.map { (id, text) ->
                 val baselineChanged = old.getValue(id) != text
                 val projectEdited = authored.getValue(id) != old.getValue(id)
-                AsmBaselineFileUpdate(id, AsmThreeWayMerge.merge(normalizedOld.getValue(id), normalizedProject.getValue(id), text),
+                val baseText = normalizedOld.getValue(id)
+                val projectText = normalizedProject.getValue(id)
+                AsmBaselineFileUpdate(id, AsmThreeWayMerge.merge(baseText, projectText, text),
                     baselineChanged || projectEdited, baselineChanged, projectEdited,
-                    baselineChanged && asmBaselineDocumentationOnly(old.getValue(id), text))
+                    baselineChanged && asmBaselineDocumentationOnly(old.getValue(id), text),
+                    baseText, projectText, text)
             } + current.projectModuleFileIds.map { id ->
-                AsmBaselineFileUpdate(id, AsmTextMerge(listOf(AsmMergePiece(normalizedProject.getValue(id)))),
-                    normalizedProject.getValue(id) != authored.getValue(id), baselineChanged = false, projectEdited = true)
+                val projectText = authored.getValue(id)
+                val updatedText = normalizedProject.getValue(id)
+                AsmBaselineFileUpdate(id, AsmTextMerge(listOf(AsmMergePiece(updatedText))),
+                    updatedText != projectText, baselineChanged = false, projectEdited = true,
+                    baseText = projectText, projectText = projectText, updatedText = updatedText)
             }
             require(inventory(current.root) == before) { "Project ASM changed while preparing the update. Preview it again." }
             return AsmBaselineUpdatePlan(projectFilePath, previous.augmentationRevision, candidate.augmentationRevision, files, staging, before, candidate)

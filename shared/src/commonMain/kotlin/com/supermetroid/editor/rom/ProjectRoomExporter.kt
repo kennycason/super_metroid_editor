@@ -673,9 +673,41 @@ class ProjectRoomExporter(
                 require(LZ5Compressor.decompress(compressed).contentEquals(bytes)) { "Layout compression did not round trip." }
                 val native = requireNotNull(state.baseSourceStateIndex()?.let { states.getOrNull(it)?.stateDataPcOffset })
                 val originalPointer = romParser.readStateData(native).getValue("levelDataPtr")
-                val allocation = levelDataAllocator.allocate(compressed, levelDataRelocationBanks(originalPointer), "Room $roomKey source layout ${resource.identity}")
-                    ?: failExport("Room $roomKey source layout needs ${compressed.size} contiguous bytes of level-data space")
-                allocation.snesAddress.also { pointers[resource.identity] = it to resource }
+                val (originalData, originalSize) = runCatching {
+                    RomParser(romData).decompressLZ2WithSize(originalPointer)
+                }.getOrElse {
+                    failExport("Room $roomKey source layout has an unreadable native level-data pointer")
+                }
+                val sharedOutsideRoom = hasExternalRoomStateReference(
+                    roomId,
+                    stateFieldOffset = 0,
+                    value = originalPointer,
+                    u24 = true,
+                )
+                val sharedWithAnotherResource = edits.states.any { other ->
+                    inputs.getValue(other.id).identity != resource.identity &&
+                        other.baseSourceStateIndex()?.let { states.getOrNull(it)?.stateDataPcOffset }
+                            ?.let { romParser.readStateData(it).getValue("levelDataPtr") == originalPointer } == true
+                }
+                val levelPc = romParser.snesToPc(originalPointer)
+                val canReuseNative = compressed.size <= originalSize && !sharedOutsideRoom &&
+                    !sharedWithAnotherResource && levelDataAllocator.tryProtectRanges(
+                        listOf(levelPc until levelPc + originalSize),
+                    )
+                if (canReuseNative) {
+                    if (!bytes.contentEquals(originalData)) {
+                        compressed.copyInto(romData, levelPc)
+                        for (index in compressed.size until originalSize) romData[levelPc + index] = 0xFF.toByte()
+                    }
+                    originalPointer.also { pointers[resource.identity] = it to resource }
+                } else {
+                    val allocation = levelDataAllocator.allocate(
+                        compressed,
+                        levelDataRelocationBanks(originalPointer),
+                        "Room $roomKey source layout ${resource.identity}",
+                    ) ?: failExport("Room $roomKey source layout needs ${compressed.size} contiguous bytes of level-data space")
+                    allocation.snesAddress.also { pointers[resource.identity] = it to resource }
+                }
             }
             val offset = rewritten[state.id] ?: state.sourceStateIndex?.let { states.getOrNull(it)?.stateDataPcOffset }
                 ?: failExport("Layout source state ${state.id} has no writable record")
@@ -2992,7 +3024,8 @@ class ProjectRoomExporter(
 
     private fun levelDataRelocationBanks(originalSnesAddress: Int): List<Int> {
         val originalBank = (originalSnesAddress shr 16) and 0xFF
-        return (listOf(originalBank) + (0xCE downTo 0xC0)).distinct()
+        val expandedBanks = if (romData.size >= RomConstants.EXPANDED_ROM_SIZE) 0xFF downTo 0xE0 else emptyList()
+        return (listOf(originalBank) + expandedBanks + (0xCE downTo 0xC0)).distinct()
     }
 
     /**

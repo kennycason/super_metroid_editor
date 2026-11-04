@@ -14972,31 +14972,41 @@ MainASM_ShakeScreenSwitchingBetweenMediumHorizAndStrongDiag:
 
 
 ;;; $E5D2: Room state checking handler ;;;
+; Walk bank-$8F condition functions starting eleven bytes after the room header.
+; Each function word is followed by that condition's own payload; X points at
+; the payload when the function runs. PEA supplies an RTS return to the loop.
+; A failed condition advances X past its payload and returns with RTS. A match
+; jumps to Use_StatePointer_inX, which drops that near return and exits with RTL.
 Room_State_Checking_Handler:
 ;; Parameters:
 ;;     X: Room pointer
 
 ; A matching state condition will return out of *this* routine by popping the return address pushed to the stack by $E5E0
-    TXA                                                                  ;8FE5D2;
-    CLC                                                                  ;8FE5D3;
-    ADC.W #$000B                                                         ;8FE5D4;
-    TAX                                                                  ;8FE5D7;
+    TXA                                                                  ;8FE5D2; Start from the room-header address supplied in X.
+    CLC                                                                  ;8FE5D3; Add the fixed header length without an incoming carry.
+    ADC.W #$000B                                                         ;8FE5D4; Skip eleven header bytes to the first condition-function word.
+    TAX                                                                  ;8FE5D7; Use X as the condition-stream cursor.
 
   .loop:
-    LDA.W $0000,X                                                        ;8FE5D8;
-    STA.W EventPointer                                                   ;8FE5DB;
-    INX                                                                  ;8FE5DE;
+    LDA.W $0000,X                                                        ;8FE5D8; Read the next bank-$8F condition function's word address.
+    STA.W EventPointer                                                   ;8FE5DB; Save the callback word for the indirect near jump.
+    INX                                                                  ;8FE5DE; Advance past the two-byte function word to its payload.
     INX                                                                  ;8FE5DF;
-    PEA.W .loop-1                                                        ;8FE5E0;
-    JMP.W (EventPointer)                                                 ;8FE5E3;
+    PEA.W .loop-1                                                        ;8FE5E0; Supply a synthetic RTS return to the loop, not a new long-call frame.
+    JMP.W (EventPointer)                                                 ;8FE5E3; Run the condition function; failure returns here via RTS.
 
 
 ;;; $E5E6: Use state pointer [X] ;;;
+; X is the chosen state-header address, not the address of a pointer to dereference.
+; The default condition reaches this routine with X immediately after its own
+; function word, at the inline default state header. Matching non-default checks
+; instead load X from their payload's state pointer. Discard the scan loop's
+; two-byte return before RTL returns to the selector's long caller.
 Use_StatePointer_inX:
 ; Room state check: default
-    STX.W RoomStatePointer                                               ;8FE5E6;
-    PLA                                                                  ;8FE5E9;
-    RTL                                                                  ;8FE5EA;
+    STX.W RoomStatePointer                                               ;8FE5E6; Select the state header at X itself, not a pointer read from [X].
+    PLA                                                                  ;8FE5E9; Discard the condition loop's synthetic near return word.
+    RTL                                                                  ;8FE5EA; Return directly to the caller of Room_State_Checking_Handler.
 
 
 if !FEATURE_KEEP_UNREFERENCED
@@ -15032,19 +15042,22 @@ RoomStateCheck_MainAreaBossIsDead:
 
 
 ;;; $E612: Room state check: event has been set ;;;
+; This condition's payload is one event byte followed by a two-byte state pointer.
+; On success select that pointed-to state through the common long-return exit.
+; On failure skip all three payload bytes and RTS back to the condition scan.
 RoomStateCheck_EventHasBeenSet:
-    LDA.W $0000,X                                                        ;8FE612;
-    AND.W #$00FF                                                         ;8FE615;
-    JSL.L CheckIfEvent_inA_HasHappened                                   ;8FE618;
-    BCC +                                                                ;8FE61C;
-    LDA.W $0001,X                                                        ;8FE61E;
-    TAX                                                                  ;8FE621;
-    JMP.W Use_StatePointer_inX                                           ;8FE622;
+    LDA.W $0000,X                                                        ;8FE612; Read the event byte at the current condition payload.
+    AND.W #$00FF                                                         ;8FE615; Discard the neighboring state-pointer byte.
+    JSL.L CheckIfEvent_inA_HasHappened                                   ;8FE618; Test this event against the game's event flags.
+    BCC +                                                                ;8FE61C; On failure, skip this condition's payload and return to the stream loop.
+    LDA.W $0001,X                                                        ;8FE61E; On success, read the state pointer immediately after the event byte.
+    TAX                                                                  ;8FE621; Use that selected state-header address as X.
+    JMP.W Use_StatePointer_inX                                           ;8FE622; Take the shared success exit, which discards the synthetic near return.
 
-+   INX                                                                  ;8FE625;
++   INX                                                                  ;8FE625; Skip the event byte and two-byte state pointer on the failure path.
     INX                                                                  ;8FE626;
     INX                                                                  ;8FE627;
-    RTS                                                                  ;8FE628;
+    RTS                                                                  ;8FE628; RTS resumes the condition loop at its next function word.
 
 
 ;;; $E629: Room state check: boss is dead ;;;
@@ -15450,56 +15463,68 @@ endif ; !FEATURE_KEEP_UNREFERENCED
 
 
 ;;; $E88F: Execute setup ASM ;;;
+; State offset $18 is an optional bank-$8F setup callback. A zero word skips it;
+; otherwise JSR invokes the setup routine, which returns with RTS. Restore the
+; saved data bank and processor status before RTL returns to the long caller.
+; This wrapper expects the state-header data to be readable in the entry data bank.
 Execute_Room_Setup_ASM:
     PHP                                                                  ;8FE88F;
     PHB                                                                  ;8FE890;
     REP #$30                                                             ;8FE891;
-    LDX.W RoomStatePointer                                               ;8FE893;
-    LDA.W $0018,X                                                        ;8FE896;
-    BEQ .return                                                          ;8FE899;
-    PHK                                                                  ;8FE89B;
+    LDX.W RoomStatePointer                                               ;8FE893; Use the room state chosen by the condition stream.
+    LDA.W $0018,X                                                        ;8FE896; Read the setup-ASM pointer at state offset $18.
+    BEQ .return                                                          ;8FE899; A zero pointer means there is no setup callback.
+    PHK                                                                  ;8FE89B; Select this code bank for the optional room callback.
     PLB                                                                  ;8FE89C;
-    JSR.W ($0018,X)                                                      ;8FE89D;
+    JSR.W ($0018,X)                                                      ;8FE89D; Call the bank-$8F setup routine with a near RTS return.
 
   .return:
-    PLB                                                                  ;8FE8A0;
-    PLP                                                                  ;8FE8A1;
-    RTL                                                                  ;8FE8A2;
+    PLB                                                                  ;8FE8A0; Restore the data bank saved before the callback.
+    PLP                                                                  ;8FE8A1; Restore the saved processor status.
+    RTL                                                                  ;8FE8A2; Return to the long caller after optional setup ASM.
 
 
 ;;; $E8A3: Execute door ASM ;;;
+; Read the optional door-ASM word from bank-$83 door data, but execute it in
+; bank $8F. For a nonzero pointer, PEA builds the callback's near RTS return
+; before the indirect JMP. The wrapper then restores bank/status and returns
+; with RTL. This is distinct from the room-state setup and main callbacks.
 Execute_Door_ASM:
     PHP                                                                  ;8FE8A3;
     PHB                                                                  ;8FE8A4;
     REP #$30                                                             ;8FE8A5;
-    LDX.W DoorPointer                                                    ;8FE8A7;
-    LDA.L DoorHeaders_doorASM,X                                          ;8FE8AA;
-    BEQ .return                                                          ;8FE8AE;
-    STA.B DP_Temp12                                                      ;8FE8B0;
-    PHK                                                                  ;8FE8B2;
+    LDX.W DoorPointer                                                    ;8FE8A7; Use the current door-header pointer.
+    LDA.L DoorHeaders_doorASM,X                                          ;8FE8AA; Read the door-ASM word from bank-$83 door data.
+    BEQ .return                                                          ;8FE8AE; Skip the callback when its pointer is zero.
+    STA.B DP_Temp12                                                      ;8FE8B0; Use a scratch word for the indirect near jump.
+    PHK                                                                  ;8FE8B2; Select bank $8F for executing door ASM.
     PLB                                                                  ;8FE8B3;
-    PEA.W .return-1                                                      ;8FE8B4;
-    JMP.W (DP_Temp12)                                                    ;8FE8B7;
+    PEA.W .return-1                                                      ;8FE8B4; Create the near return word minus one expected by the callback's RTS.
+    JMP.W (DP_Temp12)                                                    ;8FE8B7; Jump to the bank-$8F door callback through the scratch pointer.
 
   .return:
-    PLB                                                                  ;8FE8BA;
-    PLP                                                                  ;8FE8BB;
-    RTL                                                                  ;8FE8BC;
+    PLB                                                                  ;8FE8BA; Restore the caller's data bank after the optional callback.
+    PLP                                                                  ;8FE8BB; Restore the processor status saved on entry.
+    RTL                                                                  ;8FE8BC; Return to the long caller, not directly from the door callback.
 
 
 ;;; $E8BD: Execute room main ASM ;;;
+; Execute the cached bank-$8F room-main word pointer when it is nonzero.
+; Set X to zero for the indexed indirect JSR, and restore the caller's data bank
+; after the callback's RTS. Unlike setup/door wrappers, this entry has no PHP/PLP
+; or register-width setup; it relies on the calling gameplay path's register mode.
 Execute_Room_Main_ASM:
-    LDX.W RoomMainASMPointer                                             ;8FE8BD;
-    BEQ .return                                                          ;8FE8C0;
-    PHB                                                                  ;8FE8C2;
+    LDX.W RoomMainASMPointer                                             ;8FE8BD; Read the room-main callback pointer cached from the state header.
+    BEQ .return                                                          ;8FE8C0; Zero skips the per-update room callback.
+    PHB                                                                  ;8FE8C2; Preserve the caller's data bank around the room-main routine.
     PHK                                                                  ;8FE8C3;
-    PLB                                                                  ;8FE8C4;
-    LDX.W #$0000                                                         ;8FE8C5;
-    JSR.W (RoomMainASMPointer,X)                                         ;8FE8C8;
-    PLB                                                                  ;8FE8CB;
+    PLB                                                                  ;8FE8C4; Use bank $8F for the room-main callback's data accesses.
+    LDX.W #$0000                                                         ;8FE8C5; Use X = 0 to call through the pointer without an added index.
+    JSR.W (RoomMainASMPointer,X)                                         ;8FE8C8; Call bank-$8F room main ASM using its cached word pointer.
+    PLB                                                                  ;8FE8CB; Restore the data bank before returning to gameplay.
 
   .return:
-    RTL                                                                  ;8FE8CC;
+    RTL                                                                  ;8FE8CC; Return to the caller; this wrapper does not save processor status.
 
 
 ;;; $E8CD: Main ASM: Crocomire's room shaking ;;;

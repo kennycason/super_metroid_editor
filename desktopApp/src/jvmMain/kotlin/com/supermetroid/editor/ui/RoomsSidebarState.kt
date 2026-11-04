@@ -16,6 +16,9 @@ internal class RoomsSidebarState(
     var selectedTab by mutableStateOf(RoomSidebarTab.entries.firstOrNull { it.name == initialTab } ?: RoomSidebarTab.TILESET)
         private set
     private val vertical = RoomSidebarTab.entries.associateWith { ScrollState(0) }
+    val runtimeScroll = ScrollState(0)
+    var roomInfoRuntime by mutableStateOf(false)
+        private set
     val tilesetHorizontalScroll = ScrollState(0)
     fun verticalScroll(tab: RoomSidebarTab): ScrollState = vertical.getValue(tab)
 
@@ -23,5 +26,9 @@ internal class RoomsSidebarState(
         if (selectedTab == tab) return
         selectedTab = tab
         persistTab(tab.name)
+    }
+
+    fun showRoomRuntime(show: Boolean) {
+        roomInfoRuntime = show
     }
 }

@@ -71,6 +71,31 @@ class AsmSourceBindingsSmokeTest {
             val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
             assertEquals(0x808000, labels["${version}Entry"])
             assertEquals(listOf("project/objectives.asm", "project/new_module.asm"), newerApp.load(file.path)?.projectModuleFileIds)
+            val expandedPc = 0x300100
+            val expandedByte = 0x5A.toByte()
+            val expandedClaim = AsmGeneratedRoomClaim(
+                owner = ASM_ROOM_GRAPH_OWNER,
+                label = "Expanded smoke-test room data",
+                pcOffset = expandedPc,
+                bytes = byteArrayOf(expandedByte),
+            )
+            val expanded = compiler.compile(
+                projectFilePath = file.path,
+                loadedRom = rom,
+                roomMaterialization = AsmRoomMaterialization(
+                    source = "org \$E08100\ndb \$5A\n",
+                    claims = listOf(expandedClaim),
+                    roomIds = setOf("91F8"),
+                    eligibleWrites = 1,
+                    skippedWrites = 0,
+                ),
+                outputRomSize = 0x400000,
+            )
+            assertEquals(0x400000, expanded.romBytes.size)
+            assertEquals(expandedByte, expanded.romBytes[expandedPc])
+            assertEquals(listOf(expandedClaim), expanded.generatedRoomClaims)
+            assertEquals(compiled.referenceRomSha256, expanded.referenceRomSha256)
+            assertTrue(expanded.sourceOwnedRanges.none { expandedPc in it.pcOffset until it.pcOffset + it.length })
             AsmProjectCompiler.clearBuildCacheForTests()
             val header = ByteArray(512) { 0x5A }
             val cold = AsmProjectCompiler(newerApp, toolchain).compile(file.path, header + rom)

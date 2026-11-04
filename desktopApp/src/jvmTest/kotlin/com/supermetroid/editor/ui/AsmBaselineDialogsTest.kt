@@ -78,23 +78,30 @@ class AsmBaselineDialogsTest {
             "fixture", "test.sfc", "ab".repeat(32), 0x300000, 0)
         val candidate = AsmSourceBaseline(reference = metadata, augmentationRevision = "v2",
             upstreamSourceHashes = emptyMap(), sourceHashes = emptyMap(), assets = emptyList())
-        val merge = if (conflict) AsmTextMerge(listOf(AsmMergePiece(conflict = AsmMergeConflict("old", "mine", "new"))))
-            else AsmTextMerge(listOf(AsmMergePiece("merged")))
+        val base = if (conflict) "old\n" else "Root:\n dw \$0001\n RTL\n"
+        val project = if (conflict) "mine\n" else "Root:\n dw \$0009\n RTL\n"
+        val updated = if (conflict) "new\n" else "; documented\n$base"
+        val merge = AsmThreeWayMerge.merge(base, project, updated)
         return AsmBaselineUpdatePlan("Test.smedit", "v1", "v2", listOf(AsmBaselineFileUpdate("bank_A3.asm", merge, true,
-            baselineChanged = true, projectEdited = true, documentationOnly = true)), directory, emptyMap(), candidate)
+            baselineChanged = true, projectEdited = true, documentationOnly = true,
+            baseText = base, projectText = project, updatedText = updated)), directory, emptyMap(), candidate)
     }
 
-    @Test fun `clean updates keep file details collapsed and apply without an extra acceptance step`() {
+    @Test fun `clean updates expose selectable project version and result diffs before apply`() {
         val plan = plan(conflict = false)
         var applied: Map<String, Map<Int, String>>? = null
         withDialog({ AsmBaselineUpdateDialog(plan, false, null, null, {}, { applied = it }) }) { scene, render ->
             assertContains(texts(scene), "comments/formatting only")
-            assertContains(texts(scene), "No changes need review")
-            assertFalse(texts(scene).contains("bank_A3.asm"))
-            click(scene, "asm-baseline-details-toggle"); render()
             assertContains(texts(scene), "bank_A3.asm")
-            click(scene, "asm-baseline-details-toggle"); render()
-            assertFalse(texts(scene).contains("bank_A3.asm"))
+            assertContains(texts(scene), "\$0009")
+            assertContains(texts(scene), "+1 / -1")
+            assertContains(texts(scene), "Old")
+            assertContains(texts(scene), "New")
+            click(scene, "asm-baseline-view-version"); render()
+            assertContains(texts(scene), "; documented")
+            assertContains(texts(scene), "+1 / -0")
+            click(scene, "asm-baseline-view-result"); render()
+            assertContains(texts(scene), "update will change")
             click(scene, "asm-baseline-apply")
             assertEquals(emptyMap(), applied)
         }
@@ -107,9 +114,79 @@ class AsmBaselineDialogsTest {
             assertTrue(tag(scene, "asm-baseline-apply").config.contains(SemanticsProperties.Disabled))
             click(scene, "asm-baseline-keep-bank_A3.asm-0"); render()
             assertFalse(tag(scene, "asm-baseline-apply").config.contains(SemanticsProperties.Disabled))
-            assertContains(texts(scene), "Review complete")
+            assertContains(texts(scene), "Ready to validate")
             click(scene, "asm-baseline-apply")
-            assertEquals(mapOf("bank_A3.asm" to mapOf(0 to "mine")), applied)
+            assertEquals(mapOf("bank_A3.asm" to mapOf(0 to "mine\n")), applied)
+        }
+    }
+
+    @Test fun `changed file selection opens each files own diff`() {
+        val first = plan(conflict = false)
+        val base = "Stable:\n RTL\n"
+        val updated = "Updated:\n RTL\n"
+        val second = AsmBaselineFileUpdate(
+            "bank_B0.asm", AsmThreeWayMerge.merge(base, base, updated), changed = true,
+            baselineChanged = true, baseText = base, projectText = base, updatedText = updated,
+        )
+        val plan = AsmBaselineUpdatePlan(first.projectFilePath, first.previousRevision, first.nextRevision,
+            first.files + second, directory, emptyMap(), first.candidate)
+
+        withDialog({ AsmBaselineUpdateDialog(plan, false, null, null, {}, {}) }) { scene, render ->
+            assertContains(texts(scene), "\$0009")
+            click(scene, "asm-baseline-file-bank_B0.asm"); render()
+            assertContains(texts(scene), "Updated:")
+            assertContains(texts(scene), "What v2 changed from v1")
+            assertContains(texts(scene), "+1 / -1")
+        }
+    }
+
+    @Test fun `diff review pages through one separated change at a time`() {
+        val fixture = plan(conflict = false)
+        val baseLines = MutableList(20) { "NativeLine$it\n" }
+        val projectLines = baseLines.toMutableList().apply {
+            this[1] = "FirstProjectChange\n"
+            this[18] = "SecondProjectChange\n"
+        }
+        val base = baseLines.joinToString("")
+        val project = projectLines.joinToString("")
+        val file = AsmBaselineFileUpdate(
+            "bank_90.asm", AsmThreeWayMerge.merge(base, project, base), changed = true,
+            projectEdited = true, baseText = base, projectText = project, updatedText = base,
+        )
+        val plan = AsmBaselineUpdatePlan(fixture.projectFilePath, fixture.previousRevision, fixture.nextRevision,
+            listOf(file), directory, emptyMap(), fixture.candidate)
+
+        withDialog({ AsmBaselineUpdateDialog(plan, false, null, null, {}, {}) }) { scene, render ->
+            assertContains(texts(scene), "Change 1 of 2")
+            assertContains(texts(scene), "FirstProjectChange")
+            assertFalse(texts(scene).contains("SecondProjectChange"))
+            assertTrue(tag(scene, "asm-baseline-previous-change").config.contains(SemanticsProperties.Disabled))
+            click(scene, "asm-baseline-next-change"); render()
+            assertContains(texts(scene), "Change 2 of 2")
+            assertContains(texts(scene), "SecondProjectChange")
+            assertFalse(texts(scene).contains("FirstProjectChange"))
+        }
+    }
+
+    @Test fun `whole-file conflicts use bounded previews and complete version choices`() {
+        val huge = buildString { repeat(45_000) { append("    LDA.W #\$1234 ; guarded conflict\n") } }
+        val metadata = AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT,
+            "fixture", "test.sfc", "ab".repeat(32), 0x300000, 0)
+        val candidate = AsmSourceBaseline(reference = metadata, augmentationRevision = "v2",
+            upstreamSourceHashes = emptyMap(), sourceHashes = emptyMap(), assets = emptyList())
+        val conflict = AsmMergeConflict(huge, "$huge; project tail\n", "$huge; updated tail\n")
+        val merge = AsmTextMerge(listOf(AsmMergePiece(conflict = conflict)))
+        val plan = AsmBaselineUpdatePlan("Test.smedit", "v1", "v2",
+            listOf(AsmBaselineFileUpdate("bank_84.asm", merge, true, true, true,
+                baseText = huge, projectText = conflict.project, updatedText = conflict.updated)), directory, emptyMap(), candidate)
+        var applied: Map<String, Map<Int, String>>? = null
+
+        withDialog({ AsmBaselineUpdateDialog(plan, false, null, null, {}, { applied = it }) }) { scene, render ->
+            assertContains(texts(scene), "no stable line anchors")
+            assertContains(texts(scene), "more characters in this version")
+            click(scene, "asm-baseline-keep-bank_84.asm-0"); render()
+            click(scene, "asm-baseline-apply")
+            assertEquals(conflict.project, applied?.get("bank_84.asm")?.get(0))
         }
     }
 

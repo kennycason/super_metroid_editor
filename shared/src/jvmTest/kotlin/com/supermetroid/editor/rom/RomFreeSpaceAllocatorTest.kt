@@ -53,6 +53,7 @@ class RomFreeSpaceAllocatorTest {
         val rom = ByteArray(0x10000) { -1 }
         val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes)
         val first = allocator.observing {}.reserve(16, listOf(0x80), "reserved source conflict")!!
+        assertTrue(!allocator.tryProtectRanges(listOf(first.pcOffset until first.pcOffset + first.size)))
         assertFailsWith<IllegalArgumentException> {
             allocator.protectRanges(listOf(first.pcOffset until first.pcOffset + first.size))
         }

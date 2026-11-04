@@ -122,9 +122,12 @@ class AsmProjectWorkspaceTest {
         val state = AsmWorkspaceState(projectRepository = repository, installedReferenceLoader = {
             started.complete(Unit); release.await(); reference
         })
+        assertFalse(state.referenceDiscoveryComplete)
+        assertFalse(state.hasReferenceWorkspace)
         val global = launch { state.loadInstalled() }
         try {
             withTimeout(5_000) { started.await() }
+            assertFalse(state.referenceDiscoveryComplete)
             state.bindProject(file.path, true, progressive = true)
             assertTrue(state.referenceLoading)
             assertFalse(state.busy)
@@ -132,6 +135,8 @@ class AsmProjectWorkspaceTest {
             state.replaceProjectSource(PLM_SOURCE_FILE, original, original + "; fast edit\n")
             release.complete(Unit)
             global.join()
+            assertTrue(state.referenceDiscoveryComplete)
+            assertTrue(state.hasReferenceWorkspace)
             state.awaitSourceIndexing()
             assertEquals(AsmWorkspaceKind.PROJECT, state.workspaceKind)
             assertEquals(original + "; fast edit\n", state.projectSourceText(PLM_SOURCE_FILE))

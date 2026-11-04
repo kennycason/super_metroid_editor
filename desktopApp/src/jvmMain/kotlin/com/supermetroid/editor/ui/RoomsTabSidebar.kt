@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.rom.RomParser
 
@@ -35,6 +36,7 @@ internal fun RoomsTabSidebar(
     onRoomSelected: (RoomInfo) -> Unit,
     romParser: RomParser?,
     editorState: EditorState,
+    asmWorkspaceState: AsmWorkspaceState,
     sidebarState: RoomsSidebarState,
     onCreateRoom: (NewRoomCreationRequest) -> String?,
     onDeleteRoom: (Int) -> String?,
@@ -46,11 +48,13 @@ internal fun RoomsTabSidebar(
     onNavigateToAsm: ((Int) -> Unit)? = null,
     onNavigateToInitialScrolls: (() -> Unit)? = null,
     onNavigateToLayoutSource: (() -> Unit)? = null,
+    onNavigateToObjects: (() -> Unit)? = null,
     onNavigateToRoomProperties: ((String?) -> Unit)? = null,
     onNavigateToSelectors: ((String?) -> Unit)? = null,
     onNavigateToFx: ((String, Int?, com.supermetroid.editor.data.ProjectSourceDoorReference?) -> Unit)? = null,
     onNavigateToEnemies: ((String, Boolean) -> Unit)? = null,
     onNavigateToDoors: ((Int) -> Unit)? = null,
+    onOpenAsmSource: ((String, Int) -> Unit)? = null,
     onReassignRoomArea: ((Int, Int) -> Unit)? = null,
     modifier: Modifier = Modifier,
     onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
@@ -132,24 +136,72 @@ internal fun RoomsTabSidebar(
                                 if (rp != null && sr != null) {
                                     val roomHeader = remember(sr, rp) { rp.readRoomHeader(sr.getRoomIdAsInt()) }
                                     if (roomHeader != null) {
-                                        RoomPropertiesPanel(
-                                            room = roomHeader,
-                                            romParser = rp,
-                                            editorState = editorState,
-                                            modifier = Modifier.fillMaxSize(),
-                                            onNavigateToMap = onNavigateToMap,
-                                            onNavigateToAsm = onNavigateToAsm,
-                                            onNavigateToInitialScrolls = onNavigateToInitialScrolls,
-                                            onNavigateToLayoutSource = onNavigateToLayoutSource,
-                                            onNavigateToRoomProperties = onNavigateToRoomProperties,
-                                            onNavigateToSelectors = onNavigateToSelectors,
-                                            onNavigateToFx = onNavigateToFx,
-                                            onNavigateToEnemies = onNavigateToEnemies,
-                                            onNavigateToDoors = onNavigateToDoors,
-                                            onWorkspaceChanged = onWorkspaceChanged,
-                                            onReassignRoomArea = onReassignRoomArea,
-                                            scrollState = sidebarState.verticalScroll(RoomSidebarTab.ROOM_INFO),
-                                        )
+                                        Column(Modifier.fillMaxSize()) {
+                                            RoomInfoModeSwitch(sidebarState.roomInfoRuntime, sidebarState::showRoomRuntime)
+                                            if (sidebarState.roomInfoRuntime) {
+                                                val stateId = editorState.currentStateId
+                                                val diagnostics = asmWorkspaceState.displayedDiagnostics
+                                                val snapshot = remember(
+                                                    roomHeader,
+                                                    rp,
+                                                    editorState.editVersion,
+                                                    stateId,
+                                                    editorState.scrollVersion,
+                                                    editorState.objectPreviewProblem,
+                                                    editorState.initialScrollPreviewProblem,
+                                                    editorState.fxPreviewProblem,
+                                                    editorState.enemyPreviewProblem,
+                                                    editorState.doorPreviewProblem,
+                                                    editorState.selectorPreviewProblem,
+                                                    editorState.roomPropertiesPreviewProblem,
+                                                    editorState.layoutPreviewProblem,
+                                                    editorState.selectorProjectionStatus,
+                                                    asmWorkspaceState.projectWorkspace,
+                                                    asmWorkspaceState.sourceBuildRequired,
+                                                    asmWorkspaceState.sourceBufferRevision,
+                                                    asmWorkspaceState.buildReport,
+                                                    diagnostics,
+                                                ) {
+                                                    buildRoomRuntimeSnapshot(roomHeader, rp, editorState, asmWorkspaceState)
+                                                }
+                                                RoomRuntimeInspector(
+                                                    snapshot = snapshot,
+                                                    navigation = RoomRuntimeNavigation(
+                                                        openHeader = onNavigateToRoomProperties?.let { open -> { open(null) } },
+                                                        openSelectors = onNavigateToSelectors?.let { open -> { open(stateId) } },
+                                                        openLayout = onNavigateToLayoutSource,
+                                                        openObjects = onNavigateToObjects,
+                                                        openScrolls = onNavigateToInitialScrolls,
+                                                        openFx = stateId?.let { id -> onNavigateToFx?.let { open -> { open(id, null, null) } } },
+                                                        openEnemies = stateId?.let { id -> onNavigateToEnemies?.let { open -> { open(id, false) } } },
+                                                        openDoors = onNavigateToDoors?.let { open -> { open(-1) } },
+                                                        openSaves = onNavigateToObjects,
+                                                        openSource = onOpenAsmSource,
+                                                    ),
+                                                    scrollState = sidebarState.runtimeScroll,
+                                                    modifier = Modifier.fillMaxWidth().weight(1f),
+                                                )
+                                            } else {
+                                                RoomPropertiesPanel(
+                                                    room = roomHeader,
+                                                    romParser = rp,
+                                                    editorState = editorState,
+                                                    modifier = Modifier.fillMaxWidth().weight(1f),
+                                                    onNavigateToMap = onNavigateToMap,
+                                                    onNavigateToAsm = onNavigateToAsm,
+                                                    onNavigateToInitialScrolls = onNavigateToInitialScrolls,
+                                                    onNavigateToLayoutSource = onNavigateToLayoutSource,
+                                                    onNavigateToRoomProperties = onNavigateToRoomProperties,
+                                                    onNavigateToSelectors = onNavigateToSelectors,
+                                                    onNavigateToFx = onNavigateToFx,
+                                                    onNavigateToEnemies = onNavigateToEnemies,
+                                                    onNavigateToDoors = onNavigateToDoors,
+                                                    onWorkspaceChanged = onWorkspaceChanged,
+                                                    onReassignRoomArea = onReassignRoomArea,
+                                                    scrollState = sidebarState.verticalScroll(RoomSidebarTab.ROOM_INFO),
+                                                )
+                                            }
+                                        }
                                     } else {
                                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                             Text(

@@ -24,10 +24,15 @@ class AsmPlmRuntimeEnrichmentTest {
     @Test fun `v9 adds PLM runtime and item lifecycle notes without changing the exact frozen v8 recipe`() {
         val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-8.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
-        assertEquals("super-metroid-ntsc-9", current.revision)
-        assertEquals(previous, current.copy(revision = previous.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith("plm-runtime.") },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith("plm-runtime.") }))
+        val v9 = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-9.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        assertEquals("super-metroid-ntsc-9", v9.revision)
+        assertEquals(previous, v9.copy(revision = previous.revision,
+            documentation = v9.documentation.filterNot { it.id.startsWith("plm-runtime.") },
+            lineDocumentation = v9.lineDocumentation.filterNot { it.id.startsWith("plm-runtime.") }))
+        assertEquals(v9.documentation.filter { it.id.startsWith("plm-runtime.") },
+            current.documentation.filter { it.id.startsWith("plm-runtime.") })
+        assertEquals(v9.lineDocumentation.filter { it.id.startsWith("plm-runtime.") }, groups)
         assertEquals(10, current.documentation.count { it.id.startsWith("plm-runtime.") })
         assertEquals(9, groups.size)
         assertEquals(103, groups.flatMap { it.lines }.count { it.comment != null })

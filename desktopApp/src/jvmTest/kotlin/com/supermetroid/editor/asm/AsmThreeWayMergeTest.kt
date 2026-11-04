@@ -52,6 +52,61 @@ class AsmThreeWayMergeTest {
         assertNull(merge.resolved())
     }
 
+    @Test fun `large generated insertion uses stable anchors and merges separate documentation cleanly`() {
+        val baseLines = MutableList(2_501) { "UniqueNativeLine$it\n" }
+        val projectLines = baseLines.toMutableList().apply {
+            addAll(500, List(1_800) { "GeneratedRoomRow$it\n" })
+            this[3_800] = "ProjectChangedNativeLine2000\n"
+        }
+        val updatedLines = baseLines.toMutableList().apply {
+            add(100, "; New documentation away from project source\n")
+        }
+        val base = baseLines.joinToString("")
+        val project = projectLines.joinToString("")
+        val updated = updatedLines.joinToString("")
+
+        val merge = AsmThreeWayMerge.merge(base, project, updated)
+        val resolved = assertNotNull(merge.resolved())
+        assertEquals(0, merge.conflicts.size)
+        assertContains(resolved, "; New documentation away from project source")
+        assertContains(resolved, "GeneratedRoomRow1799")
+        assertContains(resolved, "ProjectChangedNativeLine2000")
+        val review = AsmThreeWayMerge.compare(base, project)
+        assertFalse(review.approximateAlignment)
+        assertEquals(1_801, review.addedLines)
+        assertEquals(1, review.removedLines)
+        assertEquals(2, review.hunks.size)
+    }
+
+    @Test fun `review diff reports exact counts line numbers and bounded context`() {
+        val diff = AsmThreeWayMerge.compare(
+            (1..12).joinToString("\n", postfix = "\n") { "line$it" },
+            (1..12).joinToString("\n", postfix = "\n") { if (it == 6) "changed" else "line$it" },
+            context = 2,
+        )
+        assertEquals(1, diff.addedLines)
+        assertEquals(1, diff.removedLines)
+        assertFalse(diff.truncated)
+        assertEquals("line6", diff.lines.single { it.kind == AsmDiffLineKind.REMOVED }.text)
+        assertEquals(6, diff.lines.single { it.kind == AsmDiffLineKind.ADDED }.newLine)
+        assertTrue(diff.lines.any { it.kind == AsmDiffLineKind.OMITTED })
+        assertFalse(diff.lines.any { it.text == "line1" })
+        assertEquals(1, diff.hunks.size)
+        assertEquals(AsmSourceDiff(emptyList(), 0, 0), AsmThreeWayMerge.compare("same\n", "same\n"))
+    }
+
+    @Test fun `review diff remains bounded when a complex whole file conflict cannot align`() {
+        val before = (0..1200).joinToString("\n") { "base$it" }
+        val after = (0..1200).joinToString("\n") { "updated$it" }
+        val diff = AsmThreeWayMerge.compare(before, after, maxChangedLines = 100)
+        assertTrue(diff.approximateAlignment)
+        assertTrue(diff.truncated)
+        assertEquals(1201, diff.addedLines)
+        assertEquals(1201, diff.removedLines)
+        assertTrue(diff.lines.size < 10)
+        assertContains(diff.lines.single().text, "changed lines omitted")
+    }
+
     @Test fun `random insert delete replace sequences never lose project lines while merging a separate append`() {
         val random = Random(7183)
         repeat(1000) {

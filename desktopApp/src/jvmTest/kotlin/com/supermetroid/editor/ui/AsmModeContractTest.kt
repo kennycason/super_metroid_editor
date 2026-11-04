@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AsmModeContractTest {
@@ -16,5 +17,16 @@ class AsmModeContractTest {
         assertTrue(state.project.asmWorkspace.enabled)
         assertEquals("pinned-revision", state.project.asmWorkspace.sourceRevision)
         assertEquals(ProjectRomBuildMode.ASM_SOURCE, state.project.asmWorkspace.buildMode)
+    }
+
+    @Test
+    fun `managed ROM expansion is an explicit dirty project setting`() {
+        val state = EditorState()
+        assertFalse(state.project.asmWorkspace.expandRomTo4MiB)
+
+        state.setProjectRomExpansion(true)
+
+        assertTrue(state.project.asmWorkspace.expandRomTo4MiB)
+        assertTrue(state.dirty)
     }
 }

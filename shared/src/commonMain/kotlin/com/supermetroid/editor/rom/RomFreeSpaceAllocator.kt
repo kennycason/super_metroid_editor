@@ -61,12 +61,18 @@ class RomFreeSpaceAllocator(
 
     /** Protect live source bytes for this entire export session, including existing observer views. */
     fun protectRanges(ranges: List<IntRange>) {
+        require(tryProtectRanges(ranges)) { "Protected ROM range overlaps an existing allocation" }
+    }
+
+    /** Protect ranges only when no earlier reservation already owns any of their bytes. */
+    fun tryProtectRanges(ranges: List<IntRange>): Boolean {
         val live = ranges.filterNot { it.isEmpty() }
         require(live.all { it.first >= 0 && it.last < romData.size }) { "Protected ROM range is outside ROM bounds" }
-        require(sessionState.reservations.none { allocation -> live.any {
+        if (sessionState.reservations.any { allocation -> live.any {
             allocation.pcOffset <= it.last && allocation.pcOffset + allocation.size > it.first
-        } }) { "Protected ROM range overlaps an existing allocation" }
+        } }) return false
         sessionState.protectedRanges += live
+        return true
     }
 
     fun reserve(

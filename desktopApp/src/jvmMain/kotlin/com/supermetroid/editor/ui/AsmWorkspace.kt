@@ -355,6 +355,9 @@ internal fun AsmWorkspaceSidebar(
     onProjectAsmEnabled: () -> Unit,
     projectBuildMode: ProjectRomBuildMode = ProjectRomBuildMode.PATCHED_ROM,
     onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit = {},
+    projectRomExpanded: Boolean = false,
+    projectRomExpansionForced: Boolean = false,
+    onProjectRomExpandedChanged: (Boolean) -> Unit = {},
     buildRomPreview: (() -> AsmRomPreview?)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -576,12 +579,15 @@ internal fun AsmWorkspaceSidebar(
             projectFilePath = projectFilePath,
             projectAsmEnabled = projectAsmEnabled,
             projectBuildMode = projectBuildMode,
+            projectRomExpanded = projectRomExpanded,
+            projectRomExpansionForced = projectRomExpansionForced,
             onDownload = ::download,
             onSyncAssets = ::syncAssets,
             onEnableProjectAsm = ::enableProjectAsm,
             onUpdateBaseline = { scope.launch { if (state.saveAllSources()) state.previewBaselineUpdate() } },
             onShowBaselineBackups = { scope.launch { state.showBaselineBackups() } },
             onProjectBuildModeChanged = onProjectBuildModeChanged,
+            onProjectRomExpandedChanged = onProjectRomExpandedChanged,
         )
     }
 }
@@ -798,20 +804,25 @@ private fun AsmWorkspaceControls(
     projectFilePath: String,
     projectAsmEnabled: Boolean,
     projectBuildMode: ProjectRomBuildMode,
+    projectRomExpanded: Boolean,
+    projectRomExpansionForced: Boolean,
     onDownload: () -> Unit,
     onSyncAssets: () -> Unit,
     onEnableProjectAsm: () -> Unit,
     onUpdateBaseline: () -> Unit,
     onShowBaselineBackups: () -> Unit,
     onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit,
+    onProjectRomExpandedChanged: (Boolean) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val referenceReady = state.hasReferenceWorkspace
     val projectReady = state.hasProjectWorkspace
+    val checkingReference = state.referenceLoading || !state.referenceDiscoveryComplete
     var expanded by remember { mutableStateOf(false) }
-    val showDetails = expanded || !referenceReady || state.busy || state.error != null
+    val showDetails = expanded || (state.referenceDiscoveryComplete && !referenceReady) || state.busy || state.error != null
     val summary = when {
         state.busy -> state.progress ?: "Updating ASM workspace…"
+        checkingReference -> "Checking installed ASM reference…"
         projectReady -> {
             val modified = state.projectModifiedFileIds.size
             val unsaved = state.unsavedSourceFileIds.size
@@ -866,7 +877,7 @@ private fun AsmWorkspaceControls(
                 }
             }
 
-            if (state.busy) {
+            if (state.busy || checkingReference) {
                 Spacer(Modifier.height(6.dp))
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
@@ -887,7 +898,13 @@ private fun AsmWorkspaceControls(
                 Spacer(Modifier.height(7.dp))
                 Divider()
                 Spacer(Modifier.height(7.dp))
-                if (!referenceReady) {
+                if (checkingReference) {
+                    Text(
+                        "Checking installed ASM reference…",
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (!referenceReady) {
                     Text("ASM reference", fontSize = fs.detail, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(5.dp))
                     Button(
@@ -945,14 +962,18 @@ private fun AsmWorkspaceControls(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "Baseline ${state.projectWorkspace?.baselineRevision} · ${state.projectWorkspace?.referenceWorkspace?.metadata?.commit?.take(12)}",
+                        "ASM version ${state.projectWorkspace?.baselineRevision} · ${state.projectWorkspace?.referenceWorkspace?.metadata?.commit?.take(12)}",
                         fontSize = fs.detail,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedButton(onClick = onUpdateBaseline, enabled = referenceReady && romAvailable && !state.busy,
+                    OutlinedButton(onClick = onUpdateBaseline,
+                        enabled = referenceReady && romAvailable && !state.busy && state.projectAsmUpdateAvailable,
                         modifier = Modifier.fillMaxWidth(), shape = ASM_CONTROL_SHAPE) {
-                        Text("Save edits & preview baseline update…", fontSize = fs.detail)
+                        Text(
+                            if (state.projectAsmUpdateAvailable) "Update ASM Version…" else "ASM Version Is Current",
+                            fontSize = fs.detail,
+                        )
                     }
                     state.baselineUpdateMessage?.let { Text(it, fontSize = fs.detail, color = MaterialTheme.colorScheme.primary) }
                     TextButton(onClick = onShowBaselineBackups, enabled = !state.busy,
@@ -981,6 +1002,34 @@ private fun AsmWorkspaceControls(
                             "Compiles project source first, then applies normal SMEDIT edits and patches with conflict checks."
                         } else {
                             "Uses the ROM you opened. You can return to ASM source at any time; the first source edit selects it automatically."
+                        },
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 5.dp),
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    Text("ROM capacity", fontSize = fs.detail, fontWeight = FontWeight.Bold)
+                    val effectiveRomExpansion = projectRomExpanded || projectRomExpansionForced
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AsmBuildModeButton(
+                            label = "3 MiB",
+                            selected = !effectiveRomExpansion,
+                            enabled = !projectRomExpansionForced,
+                            modifier = Modifier.weight(1f),
+                        ) { onProjectRomExpandedChanged(false) }
+                        AsmBuildModeButton(
+                            label = "4 MiB expanded",
+                            selected = effectiveRomExpansion,
+                            modifier = Modifier.weight(1f),
+                        ) { onProjectRomExpandedChanged(true) }
+                    }
+                    Text(
+                        if (projectRomExpansionForced) {
+                            "4 MiB is required by the active community Samus build; expanded free ranges share the checked allocator."
+                        } else if (projectRomExpanded) {
+                            "Adds managed banks \$E0–\$FF for relocatable room and asset data. The original ROM is never modified."
+                        } else {
+                            "Uses only the loaded ROM capacity. Select 4 MiB when existing banks cannot hold growing data."
                         },
                         fontSize = fs.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -5247,7 +5296,7 @@ private fun addressSearch(index: AsmReferenceIndex, query: AsmAddressQuery): Lis
 }
 
 @Composable
-private fun asmAnnotatedLine(
+internal fun asmAnnotatedLine(
     line: String,
     fileId: String? = null,
     lineIndex: Int = 0,

@@ -241,8 +241,20 @@ internal object ProjectFileService {
         onLog("[ASM-BUILD] Preparing clean source build for $projectFilePath")
         val compiler = asmProjectCompiler
         val loadedRom = romParser.copyRomData()
+        val communityExpanded = project.customGfx.samusCommunitySource?.injectionArtifact != null
+        val asmOutputRomSize = if (project.asmWorkspace.expandRomTo4MiB || communityExpanded) {
+            com.supermetroid.editor.rom.RomConstants.EXPANDED_ROM_SIZE
+        } else {
+            com.supermetroid.editor.rom.RomConstants.ROM_SIZE
+        }
+        val expandedFillByte = if (communityExpanded) 0x00 else 0xFF
         com.supermetroid.editor.asm.AsmFastDoorsModule.prepare(project, projectFilePath)
-        val sourceInputs = compiler.sourceInputsFingerprint(projectFilePath, loadedRom) { progress ->
+        val sourceInputs = compiler.sourceInputsFingerprint(
+            projectFilePath,
+            loadedRom,
+            outputRomSize = asmOutputRomSize,
+            expandedFillByte = expandedFillByte,
+        ) { progress ->
             onLog("[ASM-BUILD] $progress")
             onStatus(progress)
         }
@@ -411,6 +423,8 @@ internal object ProjectFileService {
         val resolvedSelectors = com.supermetroid.editor.asm.resolveExecutableRoomSelectors(selectorDeclarations, protectLinkedObjects(compiler.compile(
             projectFilePath = projectFilePath,
             loadedRom = loadedRom,
+            outputRomSize = asmOutputRomSize,
+            expandedFillByte = expandedFillByte,
         ) { progress ->
             onLog("[ASM-BUILD] $progress")
             onStatus(progress)
@@ -539,7 +553,7 @@ internal object ProjectFileService {
         val patchMaterialization = AsmSourcePatchMaterializer().materialize(
             report = planned.writeReport,
             sourceOwners = AsmPatchBackendRegistry.sourceOwners(project.patches),
-            compiledRomSize = AsmProjectCompiler.ASM_ROM_SIZE,
+            compiledRomSize = initial.referenceRomBody.size,
         )
         val compiled = if (materialization.isEmpty && roomMaterialization.isEmpty && patchMaterialization.isEmpty) {
             onLog(
@@ -587,6 +601,8 @@ internal object ProjectFileService {
                 roomMaterialization = roomMaterialization,
                 referenceRomBody = initial.referenceRomBody,
                 managedBank8FStart = initial.managedBank8FStart,
+                outputRomSize = asmOutputRomSize,
+                expandedFillByte = expandedFillByte,
             ) { progress ->
                 onLog("[ASM-BUILD] $progress")
                 onStatus(progress)

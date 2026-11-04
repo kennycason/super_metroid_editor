@@ -100,6 +100,12 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previous)
     }
 
+    @Test fun `explicit v9 to current update adds PLM drawing notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-9.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -154,6 +160,8 @@ class AsmSourceAugmentationIntegrationTest {
             ";A38136; Replace it with the interpreter's shared exit word minus one.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_84.asm").readText(),
             ";8485F7; Create a synthetic near return to fetch another list word.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_84.asm").readText(),
+            ";84862C; Bit 15 set selects a vertical run.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
@@ -249,6 +257,7 @@ class AsmSourceAugmentationIntegrationTest {
         verifyAsmRoomLoadingContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         verifyAsmEnemyRuntimeContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         verifyAsmPlmRuntimeContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
+        verifyAsmPlmDrawContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         val natives = assertNotNull(manifest.nativeSymbols)
         assertEquals(163, natives.size)
         natives.forEach { native ->

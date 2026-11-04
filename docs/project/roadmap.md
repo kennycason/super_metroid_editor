@@ -4,7 +4,7 @@
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model.md` for the current state model and delivery chunks, and
 `project_format.md` for the native `.smedit` boundary.
-**Last updated:** 2026-10-20
+**Last updated:** 2026-11-03
 
 ---
 
@@ -48,7 +48,8 @@
 - Room loading / Init-AI enrichment — Guarded comments connect room/state selection, separate population/set resources, PLM creation, door/setup/main callbacks and enemy initialisation. Tests pin compiled Landing Site records, callback frames, word/byte clear loops, parameter copies, runtime/population strides and IRQ wait paths; frozen-baseline upgrades preserve enemy tuning and authored modules.
 - Enemy runtime / script enrichment — Active/interactive selection, lowest-set-bit AI dispatch, freeze/paralysis paths, drawing queues and animation-script commands have guarded block/line comments. Compiled bank-local command copies and synthetic returns, queue pointers, timer arithmetic and cross-bank interpreter renames are checked; baselines 1–7 retain authored edits and modules through explicit upgrades.
 - PLM runtime / item enrichment — Room-population spawning, forty-slot scheduling, pre-instructions, timer/command dispatch, terminating sleep/delete commands, coordinate division and persistent item-bit routing have guarded block/line comments. Compiled return frames, RAM arrays and missile pickup pointers plus slot/timer/bit arithmetic are checked; the frozen v8 baseline upgrades without changing authored ROM output.
-- ASM baseline update/recovery UX — Compact change summaries, optional clean-merge details and focused conflict review retain compile-before-install validation. Previous ASM versions stay under expanded settings with dates/sizes, folder access and guarded, confirmed deletion of only the selected recovery pair; no automatic pruning or unsafe partial-project Restore.
+- PLM drawing / VRAM enrichment — Counted row/column level-data writes, signed relative draw entries, viewport clipping, metatile expansion/flips and paired VRAM uploads have guarded block/line comments. Compiled masks, buffer limits, cursor increments and RAM identities plus source clipping/destination contracts are checked; the frozen v9 baseline upgrades without changing authored ROM output.
+- ASM baseline update/recovery UX — Selectable changed-file review shows syntax-highlighted, aligned project/version/result diffs one hunk at a time. Stable-line anchoring keeps large generated room insertions separate from documentation updates; focused conflict choices retain compile-before-install validation and never create partial-version installs. Previous ASM versions stay under expanded settings with dates/sizes, folder access and guarded, confirmed deletion of only the selected recovery pair; no automatic pruning or unsafe partial-project Restore.
 - Project-root workflow — NEW/OPEN, original-name immutable base ROM, portable relative path + ROM fingerprint, missing-ROM recovery, project-named builds, authored `asm/`, generated `smedit/`, `states/` and `exports/`; no automatic legacy-folder migration
 - Enemy/Boss promoted to top-level tabs
 - TestRomHelper migration — 73 test files, eliminated hardcoded ROM paths

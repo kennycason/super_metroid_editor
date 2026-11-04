@@ -81,6 +81,31 @@ class AsmSourceRoomMaterializerTest {
         assertEquals(2, result.skippedWrites)
     }
 
+    @Test
+    fun `expanded room claims materialize only when the compiler owns four MiB`() {
+        val report = report(
+            RomWriteIntent(
+                owner = ASM_ROOM_GRAPH_OWNER,
+                label = "Expanded level data",
+                offset = 0x300100,
+                bytes = listOf(0x12, 0x34),
+                kind = RomWriteKind.ALLOCATION,
+            ),
+        )
+
+        val standard = AsmSourceRoomMaterializer().materialize(editedProject(), report)
+        val expanded = AsmSourceRoomMaterializer().materialize(
+            editedProject(),
+            report,
+            compiledRomSize = 0x400000,
+        )
+
+        assertTrue(standard.isEmpty)
+        assertFalse(expanded.isEmpty)
+        assertTrue(expanded.source.contains("org \$E08100"), expanded.source)
+        assertContentEquals(byteArrayOf(0x12, 0x34), expanded.claims.single().bytes)
+    }
+
     private fun editedProject() = SmEditProject(
         romPath = "/tmp/Super Metroid.sfc",
         rooms = mutableMapOf(

@@ -297,6 +297,8 @@ internal class AsmWorkspaceState(
     private var referenceWorkspace: AsmReferenceWorkspace? = null
     var referenceLoading by mutableStateOf(false)
         private set
+    var referenceDiscoveryComplete by mutableStateOf(false)
+        private set
     private var referenceLoadGeneration = 0L
     private var boundProjectFilePath: String = ""
     private var boundProjectEnabled: Boolean = false
@@ -332,6 +334,8 @@ internal class AsmWorkspaceState(
         get() = currentRomSha256 != null && currentRomSha256 == referenceWorkspace?.metadata?.romSha256
     val hasReferenceWorkspace: Boolean get() = referenceWorkspace != null
     val hasProjectWorkspace: Boolean get() = projectWorkspace != null
+    val projectAsmUpdateAvailable: Boolean
+        get() = projectWorkspace?.baselineRevision?.let { it != baselineUpdater.targetRevision } == true
     val projectModifiedFileIds: Set<String> get() = projectWorkspace?.modifiedFileIds.orEmpty()
     val projectModuleFileIds: List<String> get() = projectWorkspace?.projectModuleFileIds.orEmpty()
     val disabledProjectModuleFileIds: Set<String>
@@ -487,9 +491,13 @@ internal class AsmWorkspaceState(
                 workspaceKind = AsmWorkspaceKind.REFERENCE
             } else if (projectWorkspace == null) loadBoundProjectWorkspace()
             if (!boundProjectEnabled) ensureSelection()
+            referenceDiscoveryComplete = true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (problem: Exception) {
-            if (generation == referenceLoadGeneration) error = problem.message ?: "Could not open the ASM reference"
+            if (generation == referenceLoadGeneration) {
+                error = problem.message ?: "Could not open the ASM reference"
+                referenceDiscoveryComplete = true
+            }
         } finally {
             referenceLoading = false
         }
@@ -609,8 +617,13 @@ internal class AsmWorkspaceState(
 
     suspend fun previewBaselineUpdate(): Boolean {
         if (busy || projectWorkspace == null || boundProjectFilePath.isBlank()) return false
+        if (!projectAsmUpdateAvailable) {
+            error = null
+            baselineUpdateMessage = "ASM version ${baselineUpdater.targetRevision} is current."
+            return false
+        }
         if (unsavedSourceFileIds.isNotEmpty()) {
-            error = "Save all ASM edits before previewing a baseline update."
+            error = "Save the open ASM file before updating the ASM version."
             return false
         }
         val reference = referenceWorkspace ?: run { error = "Download the current ASM reference before updating."; return false }
@@ -618,7 +631,7 @@ internal class AsmWorkspaceState(
         val generation = projectBindingGeneration
         busy = true
         error = null
-        progress = "Comparing the old baseline, project edits and updated baseline…"
+        progress = "Comparing the current ASM version, project edits and updated version…"
         return try {
             val plan = withContext(Dispatchers.IO) { baselineUpdater.prepare(path, reference) }
             if (path != boundProjectFilePath || generation != projectBindingGeneration) {
@@ -632,7 +645,7 @@ internal class AsmWorkspaceState(
                 true
             }
         } catch (problem: Exception) {
-            error = problem.message ?: "Could not prepare the baseline update"
+            error = problem.message ?: "Could not prepare the ASM version update"
             false
         } finally { busy = false; progress = null }
     }
@@ -676,7 +689,7 @@ internal class AsmWorkspaceState(
             true
         } catch (problem: Exception) {
             if (plan.consumed) baselineUpdatePlan = null
-            error = problem.message ?: "The baseline update could not be validated. The current project was not replaced."
+            error = problem.message ?: "The ASM version update could not be validated. The current project was not replaced."
             false
         } finally { busy = false; progress = null }
     }

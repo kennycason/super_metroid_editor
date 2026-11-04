@@ -55,7 +55,7 @@ asset manifest uses different filenames or ranges.
 **Original (read-only)** continues to browse raw upstream source. Custom modules
 remain separate authored files and retain their order and enabled state.
 Upstream/augmentation recipe maintenance remains engineering work. Projects never
-upgrade automatically, but **Save edits & preview baseline update…** explicitly
+upgrade automatically, but **Update ASM Version…** explicitly
 merges the project's saved edits onto the current reviewed baseline.
 If an already-enabled project loses `asm/base/`, repair reports the missing
 authored input instead of silently creating a newer baseline. Restore that folder
@@ -63,8 +63,9 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-9`. It retains the
-Zoomer/crawler, Waver, core-loop, pause/door, room-loading and enemy-runtime documentation unchanged. Revision 5 added
+The current enrichment revision is `super-metroid-ntsc-10`. It retains the
+Zoomer/crawler, Waver, core-loop, pause/door, room-loading, enemy-runtime and
+PLM-runtime/item documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
 ordering, NMI request/lag paths and scanline IRQ dispatch. Revision 6 adds
 23 block explanations and 251 line comments across 19 guarded pause/unpause
@@ -74,8 +75,9 @@ callback and enemy-initialisation scopes, also without new symbol renames.
 Revision 8 adds 23 block explanations and 302 line comments across 17 enemy
 scheduling, AI dispatch, drawing and instruction-script scopes. Revision 9 adds
 10 block explanations and 103 line comments across nine guarded PLM runtime,
-interpreter and item-lifecycle scopes. Existing names, instructions and upstream
-comments remain intact.
+interpreter and item-lifecycle scopes. Revision 10 adds 10 block explanations
+and 61 line comments across three complete guarded PLM drawing and VRAM-upload
+scopes. Existing names, instructions and upstream comments remain intact.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -295,27 +297,75 @@ coordinate boundaries, timer wraparound and all 512 collected-item bits. These a
 source/compiler and arithmetic checks, not CPU emulation. Updating a frozen v8
 baseline preserves authored enemy tuning and modules with byte-identical ROM output.
 
+### PLM drawing and VRAM-upload reading route
+
+Continue in bank `$84` at `Process_PLM_Draw_Instruction`. Each draw entry starts
+with a run header: bit 15 selects a vertical column rather than a horizontal row,
+and the low byte is the block count. The following words replace complete
+`LevelData` block words. A row advances two bytes per block; a column advances
+`RoomWidthBlocks * 2`. A zero word ends the instruction. Otherwise its two bytes
+are signed X/Y offsets relative to the PLM's original block, followed immediately
+by another run header.
+
+`DrawPLM_HardCoded` supplies the native BG1 screen bases and falls through to
+`DrawPLM`. That renderer clips each run to the camera's update window before it
+reserves VRAM-write records. Horizontal runs use paired top/bottom tile rows;
+vertical runs set the `$8000` VRAM increment flag and use adjacent tile columns.
+Runs crossing a BG1 screen boundary need four records, while a run contained in
+one screen uses `PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap` to
+create two. Offscreen runs still changed level data in the earlier interpreter,
+but do not consume staging or upload space.
+
+At `DrawPLM_loopHorizBlock` and `DrawPLM_loopVertBlock`, the low ten bits of each
+level word select one of the four-word metatiles in `TileTable`; multiplying by
+eight reaches its top-left, top-right, bottom-left and bottom-right words. Bits
+`$0400` and `$0800` reorder those quadrants and toggle the tilemap's `$4000`
+horizontal and `$8000` vertical flip bits. Each block consumes eight bytes in the
+`$200`-byte `PLMDrawTilemap` staging buffer. Each paired VRAM record copies four
+bytes per block.
+
+`Calculate_PLMDrawTilemap_VRAMDestination` combines the visible row, wrapped
+32-column coordinate, BG1 bases and `BG1XOffset` bit 8. That scroll bit and the
+column `$10` boundary choose which `$400`-word screen half receives the upload.
+Independent contracts pin the staging/VRAM RAM addresses, run-header and signed
+offset encodings, metatile masks and flip XORs, eight-byte cursor advance and
+`$0200` cap. Source contracts separately pin horizontal/vertical clipping and the
+two-record destination setup. Updating a frozen v9 baseline preserves authored
+enemy tuning and modules with byte-identical complete ROM output.
+
 ### Applying an update
 
 Expand the **Project ASM enabled** controls to see the project's actual baseline
-revision and upstream commit. Choose **Save edits & preview baseline update…**.
-This first saves source buffers through their normal source/model bridge, then
+revision and upstream commit. Choose **Update ASM Version…**.
+Any unsaved source buffer is first saved through its normal source/model bridge, then
 compares the old frozen baseline, authored source and new augmented baseline.
 Opening, repairing or redownloading the reference never invokes this operation.
 
 The preview starts with a short summary: the baseline versions, files whose changes
 are limited to comments/formatting, files with code/data/symbol changes, and the
-authored banks/custom modules carried forward. This is a lexical description, not
-a claim of gameplay equivalence. Clean merges need no additional acceptance step;
-**Show update details** optionally lists affected files. A conflict presents the
-focused resolver instead. **Validate & apply** remains the single final action.
+authored banks/custom modules carried forward. A selectable changed-file list opens
+a syntax-highlighted, line-numbered diff with aligned old/new gutters and exact
+added/removed counts. **Project vs vN** compares the frozen version with saved
+project source, **vNext vs vN** compares the two frozen versions, and **Merged
+result** compares saved source with the completed merge. Previous/Next visits one
+change hunk at a time, so generated room blocks are not laid out all at once. This
+is a lexical description, not a claim of gameplay equivalence.
+
+A conflict is resolved inside its selected file: keep the project fragment, use the
+updated fragment, or enter a custom fragment. **Final result** becomes available
+after that file's conflicts have choices. Clean merges need no additional acceptance
+step. **Validate & apply update** remains the single final action; selecting a file
+only changes the review view and never installs a partial ASM version.
 
 Non-overlapping edits are combined with a bounded, exact-line three-way merge.
 CRLF and final-newline differences remain meaningful. Overlaps are typed conflict
 records in a separate draft, not conflict markers written into compilable source.
 For each conflict, keep the project fragment, use the updated fragment or edit a
 custom resolution. Clean fragments surrounding a conflict remain merged. Large
-or expensive differences conservatively become a whole-file review conflict.
+localized insertions first use unique stable-line anchors, allowing generated room
+source and independent documentation edits to remain separate hunks. A region with
+no safe anchors and an exhausted bounded matcher conservatively remains a review
+conflict rather than guessing.
 
 Symbol-map changes first migrate both the old baseline and the complete authored
 image, including custom modules, through the existing strict symbol-aware
@@ -324,7 +374,7 @@ scopes, shadowed parameters, missing declarations or unclassified references sto
 the preview rather than using broad textual substitution. Unchanged modules are
 copied verbatim; order, disabled state and additional authored files are preserved.
 
-**Validate & apply** requires every conflict to be resolved. The candidate's
+**Validate & apply update** requires every conflict to be resolved. The candidate's
 immutable source must rebuild the expected base ROM, and the merged source and
 enabled modules must assemble successfully before publication. This is not a
 substitute for reviewing gameplay semantics or running the normal export/native

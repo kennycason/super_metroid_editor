@@ -462,6 +462,13 @@ class EditorState(
         dirty = true
     }
 
+    fun setProjectRomExpansion(enabled: Boolean) {
+        if (project.asmWorkspace.expandRomTo4MiB == enabled) return
+        project.asmWorkspace.expandRomTo4MiB = enabled
+        asmModeRevision++
+        dirty = true
+    }
+
     fun setCommunitySamusSource(source: CommunitySamusSpriteSource): Boolean {
         if (project.customGfx.samusCommunitySource == source) return false
         project.customGfx.samusCommunitySource = source
@@ -5379,6 +5386,26 @@ class EditorState(
         operations.removeAll { operation -> !operation.hasNonLayoutChanges() }
     }
 
+    /**
+     * Room-wide tile operations predate semantic level resources. Once a room
+     * has a state manifest, fold that legacy overlay into each active resource
+     * so export applies every layout in one compression pass. Keeping both
+     * streams would make a later resource pass mistake the first pass's padded
+     * result for the layout's physical allocation size.
+     */
+    private fun migrateLegacyRoomLayoutOperations(roomEdits: RoomEdits) {
+        val legacyLayout = roomEdits.operations
+            .filter { operation -> operation.edits.isNotEmpty() }
+            .map { operation -> operation.tileOnly() }
+        if (legacyLayout.isEmpty()) return
+        roomEdits.states.map { state -> state.resources.level }.distinct().forEach { resourceId ->
+            roomEdits.levelResourceOperations
+                .getOrPut(resourceId) { mutableListOf() }
+                .addAll(0, legacyLayout)
+        }
+        stripTileEdits(roomEdits.operations)
+    }
+
     private fun nextUniqueLevelResourceId(roomEdits: RoomEdits): String {
         var ordinal = 1
         var candidate: String
@@ -9238,6 +9265,7 @@ class EditorState(
             promoted.levelResourceChanged = false
         }
         roomEdits.states.removeAt(index)
+        migrateLegacyRoomLayoutOperations(roomEdits)
         pruneUnusedLevelResources(roomEdits)
         roomEdits.stateGraphChanged = true
         val selected = roomEdits.states.getOrNull(index) ?: roomEdits.states.last()

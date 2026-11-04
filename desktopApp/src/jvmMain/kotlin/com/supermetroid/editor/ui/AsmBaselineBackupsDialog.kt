@@ -42,11 +42,11 @@ internal fun AsmBaselineBackupsDialog(
         title = { Text("Previous ASM versions", fontSize = fs.heading) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Local ASM copies kept before baseline updates. These are not full-project restore points.", fontSize = fs.body)
+                Text("Local ASM copies kept before ASM version updates. These are not full-project restore points.", fontSize = fs.body)
                 Text("Sizes include the companion build cache, when present. Your active source and custom modules are separate.", fontSize = fs.detail)
                 listing?.notice?.let { Text(it, fontSize = fs.detail) }
                 if (listing != null && listing.entries.isEmpty()) Text(
-                    "No previous ASM versions yet. A copy is kept when a baseline update is applied.",
+                    "No previous ASM versions yet. A copy is kept when an ASM version update is applied.",
                     fontSize = fs.body, modifier = Modifier.testTag("asm-backups-empty"))
                 LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(listing?.entries.orEmpty(), key = { it.id }) { entry ->

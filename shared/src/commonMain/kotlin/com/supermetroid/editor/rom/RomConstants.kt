@@ -35,6 +35,9 @@ object RomConstants {
     /** Super Metroid ROM size without SMC header (3 MB) */
     const val ROM_SIZE = 0x300000
 
+    /** Maximum LoROM body addressable through banks $80-$FF (4 MiB). */
+    const val EXPANDED_ROM_SIZE = 0x400000
+
     /** ROM size with 512-byte SMC header */
     const val ROM_SIZE_WITH_HEADER = 0x300200
 

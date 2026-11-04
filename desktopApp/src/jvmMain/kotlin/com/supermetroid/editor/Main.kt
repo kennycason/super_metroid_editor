@@ -622,6 +622,10 @@ fun main() = application {
             val editorScrollCommandsLink = editorState.projectAsmNavigation(::openScrollCommands)
             val editorInitialScrollsLink = editorState.projectAsmNavigation(::openInitialScrolls)
             val editorLayoutSourceLink = editorState.projectAsmNavigation { openLayoutSource() }
+            val editorObjectsLink = editorState.projectAsmNavigation<() -> Unit> {
+                roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.PLMS))
+                Unit
+            }
             val editorRoomPropertiesLink = editorState.projectAsmNavigation<(String?) -> Unit> { openRoomProperties(it) }
             val editorSelectorsLink = editorState.projectAsmNavigation<(String?) -> Unit> { openRoomSelectors(it) }
             val editorFxLink = editorState.projectAsmNavigation(::openFx)
@@ -1328,6 +1332,7 @@ fun main() = application {
                                             onRoomSelected = ::selectRoomFromNavigation,
                                             romParser = romParser,
                                             editorState = editorState,
+                                            asmWorkspaceState = asmWorkspaceState,
                                             sidebarState = roomsSidebarState,
                                             onCreateRoom = { request ->
                                                 runCatching {
@@ -1374,11 +1379,19 @@ fun main() = application {
                                             onNavigateToAsm = editorAsmAddressLink,
                                             onNavigateToInitialScrolls = editorInitialScrollsLink,
                                             onNavigateToLayoutSource = editorLayoutSourceLink,
+                                            onNavigateToObjects = editorObjectsLink,
                                             onNavigateToRoomProperties = editorRoomPropertiesLink,
                                             onNavigateToSelectors = editorSelectorsLink,
                                             onNavigateToFx = editorFxLink,
                                             onNavigateToEnemies = editorEnemiesLink,
                                             onNavigateToDoors = editorDoorsLink,
+                                            onOpenAsmSource = { fileId, lineIndex ->
+                                                navigate {
+                                                    asmWorkspaceState.showProjectWorkspace()
+                                                    asmWorkspaceState.openSource(fileId, lineIndex)
+                                                    leftTab = TAB_ASM
+                                                }
+                                            },
                                             onReassignRoomArea = { roomId, targetArea ->
                                                 romParser?.let { parser ->
                                                     minimapEditorState.initIfNeeded(parser, editorState)
@@ -1466,8 +1479,15 @@ fun main() = application {
                                             romParser?.let(editorState::saveProject)
                                         },
                                         projectBuildMode = editorState.project.asmWorkspace.buildMode,
+                                        projectRomExpanded = editorState.project.asmWorkspace.expandRomTo4MiB,
+                                        projectRomExpansionForced =
+                                            editorState.project.customGfx.samusCommunitySource?.injectionArtifact != null,
                                         onProjectBuildModeChanged = { mode ->
                                             editorState.setProjectRomBuildMode(mode)
+                                            romParser?.let(editorState::saveProject)
+                                        },
+                                        onProjectRomExpandedChanged = { expanded ->
+                                            editorState.setProjectRomExpansion(expanded)
                                             romParser?.let(editorState::saveProject)
                                         },
                                         buildRomPreview = romParser?.let { parser ->

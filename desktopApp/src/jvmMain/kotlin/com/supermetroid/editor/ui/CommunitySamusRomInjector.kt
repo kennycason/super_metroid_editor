@@ -18,9 +18,10 @@ internal object CommunitySamusRomInjector {
     ): ByteArray {
         val artifact = loaded.metadata
         val bodySize = originalRom.size - headerSize
-        if (bodySize != artifact.baseRomSize) {
+        if (bodySize !in setOf(artifact.baseRomSize, artifact.outputRomSize)) {
             throw RomWritePlanException(
-                "Community Samus injection requires a ${artifact.baseRomSize}-byte base-ROM body; found $bodySize bytes"
+                "Community Samus injection requires a ${artifact.baseRomSize}-byte base or " +
+                    "${artifact.outputRomSize}-byte expanded ROM body; found $bodySize bytes"
             )
         }
         if (!inputRomHash.equals(artifact.baseRomSha256, ignoreCase = true)) {
@@ -35,6 +36,7 @@ internal object CommunitySamusRomInjector {
     fun apply(
         writePlan: RomWritePlan,
         loaded: CommunitySamusSourceCodec.LoadedInjectionArtifact,
+        cleanBaseRom: ByteArray,
     ): Int {
         val bodySize = writePlan.romData.size - writePlan.headerSize
         if (bodySize != loaded.metadata.outputRomSize) {
@@ -43,19 +45,30 @@ internal object CommunitySamusRomInjector {
             )
         }
 
-        val patched = writePlan.romData.copyOf()
+        val cleanHeaderSize = if (cleanBaseRom.size % 0x8000 == 0x200) 0x200 else 0
+        val cleanBodySize = cleanBaseRom.size - cleanHeaderSize
+        if (cleanHeaderSize != writePlan.headerSize || cleanBodySize != loaded.metadata.baseRomSize) {
+            throw RomWritePlanException(
+                "Community Samus injector needs the original ${loaded.metadata.baseRomSize}-byte base ROM"
+            )
+        }
+        // Compare the IPS with its clean expanded baseline, not with the current
+        // source-built ROM. This keeps transport-only zero padding available to
+        // the allocator while real artifact bytes still conflict normally.
+        val cleanExpanded = cleanBaseRom.copyOf(cleanHeaderSize + loaded.metadata.outputRomSize)
+        val patched = cleanExpanded.copyOf()
         for (write in loaded.writes) {
-            val start = writePlan.headerSize + write.offset.toInt()
+            val start = cleanHeaderSize + write.offset.toInt()
             for (index in write.bytes.indices) patched[start + index] = write.bytes[index].toByte()
         }
 
         // IPS records may contain padding bytes that already match the clean
         // base ROM. They are transport details rather than Samus mutations, so
         // do not claim them against otherwise-compatible patches.
-        val ranges = changedRanges(writePlan.romData, patched, writePlan.headerSize)
+        val ranges = changedRanges(cleanExpanded, patched, cleanHeaderSize)
         for ((index, range) in ranges.withIndex()) {
             val bytes = (range.first..range.last).map { pc ->
-                patched[writePlan.headerSize + pc].toInt() and 0xFF
+                patched[cleanHeaderSize + pc].toInt() and 0xFF
             }
             writePlan.add(
                 owner = OWNER,

@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.EditOperation
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.rom.TestRomHelper
@@ -415,6 +416,17 @@ class RoomStatePreviewTest {
         editor.switchRoomState(targetId, parser)
         assertTrue(editor.shareCurrentLayoutWithState(ownerId, parser))
         editor.switchRoomState(ownerId, parser)
+        val legacyOldWord = editor.readBlockWord(1, 0)
+        val legacyNewWord = legacyOldWord xor 1
+        val legacyPlm = PlmChange("add", 0xEED7, 1, 1)
+        val roomEdits = editor.project.rooms.getValue(editor.project.roomKey(roomId))
+        roomEdits.operations += EditOperation(
+            "Legacy room layout",
+            edits = listOf(
+                TileEdit(1, 0, legacyOldWord, legacyNewWord, editor.readBts(1, 0), editor.readBts(1, 0)),
+            ),
+            plmAdds = listOf(legacyPlm),
+        )
         editor.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
         val oldWord = editor.readBlockWord(0, 0)
         val newWord = oldWord xor 1
@@ -429,12 +441,15 @@ class RoomStatePreviewTest {
         editor.endStroke()
 
         editor.deleteRoomState(ownerId, parser)
-        val roomEdits = editor.project.rooms.getValue(editor.project.roomKey(roomId))
         val target = roomEdits.states.single { it.id == targetId }
         val sharingStates = roomEdits.states.filter { it.resources.level == target.resources.level }
         assertTrue(sharingStates.any { !it.levelResourceChanged })
+        val retainedLegacyMetadata = roomEdits.operations.single { it.description == "Legacy room layout" }
+        assertTrue(retainedLegacyMetadata.edits.isEmpty())
+        assertEquals(listOf(legacyPlm), retainedLegacyMetadata.plmAdds)
         editor.switchRoomState(targetId, parser)
         assertEquals(newWord, editor.readBlockWord(0, 0))
+        assertEquals(legacyNewWord, editor.readBlockWord(1, 0))
     }
 
     @Test
