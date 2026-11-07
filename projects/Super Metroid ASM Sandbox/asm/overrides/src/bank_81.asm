@@ -5,84 +5,96 @@ org $818000
 
 
 ;;; $8000: Save to SRAM ;;;
+; Normalize the requested slot to 0..2, refresh the WRAM save mirror with live
+; equipment/options, explored maps, load station and area, then copy its complete
+; word range to that slot's SRAM offset. Sum every word modulo $10000 while copying.
 SaveToSRAM:
 ;; Parameter:
 ;;     A: SRAM slot (0, 1 or 2)
 
 ; Almost returns carry clear
-    PHP                                                                  ;818000;
-    REP #$30                                                             ;818001;
-    PHB                                                                  ;818003;
+    PHP                                                                  ;818000; Preserve the caller's processor status.
+    REP #$30                                                             ;818001; Use 16-bit data, indices, checksums and offsets.
+    PHB                                                                  ;818003; Preserve the caller's data bank.
     PHX                                                                  ;818004;
-    PHY                                                                  ;818005;
-    PEA.W SRAMMirror_Equipment>>8&$FF00                                  ;818006;
+    PHY                                                                  ;818005; Preserve both caller index registers.
+    PEA.W SRAMMirror_Equipment>>8&$FF00                                  ;818006; Push the WRAM mirror bank as a data-bank value.
     PLB                                                                  ;818009;
-    PLB                                                                  ;81800A;
-    STZ.B DP_Temp14                                                      ;81800B;
-    AND.W #$0003                                                         ;81800D;
-    ASL                                                                  ;818010;
-    STA.B DP_Temp12                                                      ;818011;
-    LDY.W #$005E                                                         ;818013;
+    PLB                                                                  ;81800A; Select bank $7E for live state and mirror accesses.
+    STZ.B DP_Temp14                                                      ;81800B; Start the modulo-$10000 checksum at zero.
+    AND.W #$0003                                                         ;81800D; Limit the supplied slot number to its low two bits.
+    ASL                                                                  ;818010; Convert the slot number to a word-table byte offset.
+    STA.B DP_Temp12                                                      ;818011; Retain that offset for slot and checksum tables.
+    LDY.W #$005E                                                         ;818013; Start at the final word of the $60-byte equipment/options region.
 
   .loopSamus:
-    LDA.W EquippedItems,Y                                                ;818016;
-    STA.W SRAMMirror_Equipment,Y                                         ;818019;
+    LDA.W EquippedItems,Y                                                ;818016; Read one live equipment/options word.
+    STA.W SRAMMirror_Equipment,Y                                         ;818019; Refresh the corresponding save-mirror word.
     DEY                                                                  ;81801C;
-    DEY                                                                  ;81801D;
-    BPL .loopSamus                                                       ;81801E;
+    DEY                                                                  ;81801D; Move backward by one word.
+    BPL .loopSamus                                                       ;81801E; Copy all $30 words through offset zero.
     LDX.W #$0000                                                         ;818020;
-    LDA.W AreaIndex                                                      ;818023;
-    XBA                                                                  ;818026;
-    TAX                                                                  ;818027;
-    LDY.W #$0000                                                         ;818028;
+    LDA.W AreaIndex                                                      ;818023; Read the current area number.
+    XBA                                                                  ;818026; Multiply it by $100 for the area's explored-map slice.
+    TAX                                                                  ;818027; X selects that slice in the all-area map array.
+    LDY.W #$0000                                                         ;818028; Y selects the current area's working-map byte pair.
 
+  ; Before compacting map data, copy the current area's $100-byte working map into
+  ; its area slice in the full explored-map array. SaveMap then exports only the
+  ; listed meaningful bytes for all areas into the SRAM mirror.
   .loopMap:
-    LDA.W MapTilesExplored,Y                                             ;81802B;
-    STA.W ExploredMapTiles,X                                             ;81802E;
+    LDA.W MapTilesExplored,Y                                             ;81802B; Read two bytes from the current working map.
+    STA.W ExploredMapTiles,X                                             ;81802E; Update the same bytes in the area's persistent full-map slice.
     INY                                                                  ;818031;
-    INY                                                                  ;818032;
+    INY                                                                  ;818032; Advance the working-map offset by one word.
     INX                                                                  ;818033;
-    INX                                                                  ;818034;
-    CPY.W #$0100                                                         ;818035;
+    INX                                                                  ;818034; Advance the full-map destination by one word.
+    CPY.W #$0100                                                         ;818035; Test the end of this area's $100-byte map.
     BMI .loopMap                                                         ;818038;
-    JSR.W SaveMap                                                        ;81803A;
-    LDA.W LoadStationIndex                                               ;81803D;
-    STA.W SRAMMirror_SaveStationIndex                                    ;818040;
-    LDA.W AreaIndex                                                      ;818043;
-    STA.W SRAMMirror_AreaIndex                                           ;818046;
-    LDX.B DP_Temp12                                                      ;818049;
-    LDA.L SaveSlotOffsets,X                                              ;81804B;
-    TAX                                                                  ;81804F;
-    LDY.W #SRAMMirror_Equipment                                          ;818050;
+    JSR.W SaveMap                                                        ;81803A; Compact the meaningful explored-map bytes for all areas into the mirror.
+    LDA.W LoadStationIndex                                               ;81803D; Read the current load/save station index.
+    STA.W SRAMMirror_SaveStationIndex                                    ;818040; Publish it to the save mirror.
+    LDA.W AreaIndex                                                      ;818043; Read the current area.
+    STA.W SRAMMirror_AreaIndex                                           ;818046; Publish it to the save mirror.
+    LDX.B DP_Temp12                                                      ;818049; Recover the doubled slot number.
+    LDA.L SaveSlotOffsets,X                                              ;81804B; Read this slot's SRAM starting offset.
+    TAX                                                                  ;81804F; X becomes the destination cursor within SRAM.
+    LDY.W #SRAMMirror_Equipment                                          ;818050; Y begins at the first word of the WRAM mirror.
 
+  ; Copy every mirror word into the chosen slot and accumulate its 16-bit checksum.
+  ; Store two identical checksum copies and two identical one's-complement copies;
+  ; the loader accepts either checksum/complement pair.
   .loopToSRAM:
-    LDA.W $0000,Y                                                        ;818053;
-    STA.L SRAM_Start,X                                                   ;818056;
+    LDA.W $0000,Y                                                        ;818053; Read one mirror word.
+    STA.L SRAM_Start,X                                                   ;818056; Write it into the selected SRAM slot.
     CLC                                                                  ;81805A;
-    ADC.B DP_Temp14                                                      ;81805B;
-    STA.B DP_Temp14                                                      ;81805D;
+    ADC.B DP_Temp14                                                      ;81805B; Add the word to the wrapping checksum.
+    STA.B DP_Temp14                                                      ;81805D; Keep the new 16-bit sum.
     INX                                                                  ;81805F;
-    INX                                                                  ;818060;
+    INX                                                                  ;818060; Advance the SRAM destination by one word.
     INY                                                                  ;818061;
-    INY                                                                  ;818062;
-    CPY.W #SRAMMirror_End+1                                              ;818063;
+    INY                                                                  ;818062; Advance the WRAM mirror source by one word.
+    CPY.W #SRAMMirror_End+1                                              ;818063; Test the first address after the complete mirror range.
     BNE .loopToSRAM                                                      ;818066;
-    LDX.B DP_Temp12                                                      ;818068;
-    LDA.B DP_Temp14                                                      ;81806A;
-    STA.L SRAM_Checksum0,X                                               ;81806C;
-    STA.L SRAM_Checksum1,X                                               ;818070;
-    EOR.W #$FFFF                                                         ;818074;
-    STA.L SRAM_Complement0,X                                             ;818077;
-    STA.L SRAM_Complement1,X                                             ;81807B;
+    LDX.B DP_Temp12                                                      ;818068; Recover the doubled slot number for metadata arrays.
+    LDA.B DP_Temp14                                                      ;81806A; Read the completed checksum.
+    STA.L SRAM_Checksum0,X                                               ;81806C; Store the primary checksum copy.
+    STA.L SRAM_Checksum1,X                                               ;818070; Store the secondary checksum copy.
+    EOR.W #$FFFF                                                         ;818074; Calculate the checksum's one's complement.
+    STA.L SRAM_Complement0,X                                             ;818077; Store the primary complement.
+    STA.L SRAM_Complement1,X                                             ;81807B; Store the secondary complement.
     PLY                                                                  ;81807F;
     PLX                                                                  ;818080;
-    CLC                                                                  ;818081;
+    CLC                                                                  ;818081; Return the routine's historical success carry state.
     PLB                                                                  ;818082;
-    PLP                                                                  ;818083;
+    PLP                                                                  ;818083; Restore the caller's bank, status and index registers.
     RTL                                                                  ;818084;
 
 
 ;;; $8085: Load from SRAM / clear SRAM ;;;
+; Copy the selected SRAM slot into the WRAM mirror while recomputing the word sum.
+; Validate the primary checksum and complement first, then fall back to the second
+; pair. A valid slot is committed to live state only after one pair passes.
 LoadFromSRAM:
 ;; Parameter:
 ;;     A: SRAM slot (0, 1 or 2)
@@ -98,103 +110,111 @@ LoadFromSRAM:
 ;     Clears the SRAM slot
 ;     Sets load station index to 0 and area index to Crateria
 ;     $09A2..0A01 and map data are NOT modified
-    REP #$30                                                             ;818085;
+    REP #$30                                                             ;818085; Use 16-bit slot offsets, data, indices and checksum arithmetic.
     PHB                                                                  ;818087;
     PHX                                                                  ;818088;
-    PHY                                                                  ;818089;
-    PEA.W SRAMMirror_Equipment>>8&$FF00                                  ;81808A;
+    PHY                                                                  ;818089; Preserve the caller's data bank and index registers.
+    PEA.W SRAMMirror_Equipment>>8&$FF00                                  ;81808A; Push the WRAM mirror bank.
     PLB                                                                  ;81808D;
-    PLB                                                                  ;81808E;
-    STZ.B DP_Temp14                                                      ;81808F;
-    AND.W #$0003                                                         ;818091;
-    ASL                                                                  ;818094;
-    STA.B DP_Temp12                                                      ;818095;
+    PLB                                                                  ;81808E; Select bank $7E for mirror and live-state accesses.
+    STZ.B DP_Temp14                                                      ;81808F; Start the recomputed checksum at zero.
+    AND.W #$0003                                                         ;818091; Limit the requested slot to its low two bits.
+    ASL                                                                  ;818094; Convert the slot number to a metadata-table word offset.
+    STA.B DP_Temp12                                                      ;818095; Retain the doubled slot number.
     TAX                                                                  ;818097;
-    LDA.L SaveSlotOffsets,X                                              ;818098;
-    TAX                                                                  ;81809C;
-    LDY.W #SRAMMirror_Equipment                                          ;81809D;
+    LDA.L SaveSlotOffsets,X                                              ;818098; Read this slot's SRAM starting offset.
+    TAX                                                                  ;81809C; X becomes the source cursor within SRAM.
+    LDY.W #SRAMMirror_Equipment                                          ;81809D; Y begins at the WRAM save mirror.
 
   .loop:
-    LDA.L SRAM_Checksum0,X                                               ;8180A0;
-    STA.W $0000,Y                                                        ;8180A4;
+    LDA.L SRAM_Checksum0,X                                               ;8180A0; Read one slot word; the checksum-array base aliases SRAM offset zero.
+    STA.W $0000,Y                                                        ;8180A4; Stage it in the WRAM mirror without publishing live state.
     CLC                                                                  ;8180A7;
-    ADC.B DP_Temp14                                                      ;8180A8;
-    STA.B DP_Temp14                                                      ;8180AA;
+    ADC.B DP_Temp14                                                      ;8180A8; Add the word to the wrapping checksum.
+    STA.B DP_Temp14                                                      ;8180AA; Keep the recomputed 16-bit sum.
     INX                                                                  ;8180AC;
-    INX                                                                  ;8180AD;
+    INX                                                                  ;8180AD; Advance the SRAM source by one word.
     INY                                                                  ;8180AE;
-    INY                                                                  ;8180AF;
-    CPY.W #SRAMMirror_End+1                                              ;8180B0;
+    INY                                                                  ;8180AF; Advance the mirror destination by one word.
+    CPY.W #SRAMMirror_End+1                                              ;8180B0; Test the end of the complete staged mirror.
     BNE .loop                                                            ;8180B3;
-    LDX.B DP_Temp12                                                      ;8180B5;
-    LDA.B DP_Temp14                                                      ;8180B7;
-    CMP.L SRAM_Checksum0,X                                               ;8180B9;
-    BNE .doubleCheck                                                     ;8180BD;
-    EOR.W #$FFFF                                                         ;8180BF;
-    CMP.L SRAM_Complement0,X                                             ;8180C2;
-    BNE .doubleCheck                                                     ;8180C6;
-    BRA .success                                                         ;8180C8;
+    LDX.B DP_Temp12                                                      ;8180B5; Recover the doubled slot number for checksum metadata.
+    LDA.B DP_Temp14                                                      ;8180B7; Read the recomputed checksum.
+    CMP.L SRAM_Checksum0,X                                               ;8180B9; Compare with the primary stored checksum.
+    BNE .doubleCheck                                                     ;8180BD; Try the redundant pair when the checksum differs.
+    EOR.W #$FFFF                                                         ;8180BF; Calculate the recomputed checksum's complement.
+    CMP.L SRAM_Complement0,X                                             ;8180C2; Compare with the primary stored complement.
+    BNE .doubleCheck                                                     ;8180C6; Try the redundant pair when its complement differs.
+    BRA .success                                                         ;8180C8; The primary checksum/complement pair validates the staged slot.
 
   .doubleCheck:
-    LDA.B DP_Temp14                                                      ;8180CA;
-    CMP.L SRAM_Checksum1,X                                               ;8180CC;
-    BNE .corrupt                                                         ;8180D0;
-    EOR.W #$FFFF                                                         ;8180D2;
-    CMP.L SRAM_Complement1,X                                             ;8180D5;
-    BNE .corrupt                                                         ;8180D9;
+    LDA.B DP_Temp14                                                      ;8180CA; Recover the uncomplemented recomputed checksum.
+    CMP.L SRAM_Checksum1,X                                               ;8180CC; Compare with the secondary checksum copy.
+    BNE .corrupt                                                         ;8180D0; Both checksum copies disagree; reject the slot.
+    EOR.W #$FFFF                                                         ;8180D2; Calculate the recomputed complement again.
+    CMP.L SRAM_Complement1,X                                             ;8180D5; Compare with the secondary complement copy.
+    BNE .corrupt                                                         ;8180D9; Reject when the final complement check fails.
 
+  ; For a valid slot, copy the $60-byte equipment/options region into live low RAM,
+  ; expand the saved map representation, restore station and area, and return carry
+  ; clear. Validation never partially publishes a corrupt mirror.
   .success:
-    LDY.W #$005E                                                         ;8180DB;
+    LDY.W #$005E                                                         ;8180DB; Start at the final word of the staged $60-byte equipment/options region.
 
   .loopSuccess:
-    LDA.W SRAMMirror_Equipment,Y                                         ;8180DE;
-    STA.W EquippedItems,Y                                                ;8180E1;
+    LDA.W SRAMMirror_Equipment,Y                                         ;8180DE; Read one validated staged word.
+    STA.W EquippedItems,Y                                                ;8180E1; Commit it into live equipment/options RAM.
     DEY                                                                  ;8180E4;
-    DEY                                                                  ;8180E5;
-    BPL .loopSuccess                                                     ;8180E6;
-    JSR.W LoadMap                                                        ;8180E8;
-    LDA.W SRAMMirror_SaveStationIndex                                    ;8180EB;
-    STA.W LoadStationIndex                                               ;8180EE;
-    LDA.W SRAMMirror_AreaIndex                                           ;8180F1;
-    STA.W AreaIndex                                                      ;8180F4;
+    DEY                                                                  ;8180E5; Move backward by one word.
+    BPL .loopSuccess                                                     ;8180E6; Commit all $30 words through offset zero.
+    JSR.W LoadMap                                                        ;8180E8; Expand saved map bytes into the full explored-map representation.
+    LDA.W SRAMMirror_SaveStationIndex                                    ;8180EB; Read the validated station index.
+    STA.W LoadStationIndex                                               ;8180EE; Commit it to live state.
+    LDA.W SRAMMirror_AreaIndex                                           ;8180F1; Read the validated area index.
+    STA.W AreaIndex                                                      ;8180F4; Commit it to live state.
     PLY                                                                  ;8180F7;
     PLX                                                                  ;8180F8;
-    CLC                                                                  ;8180F9;
+    CLC                                                                  ;8180F9; Report a valid slot with carry clear.
     PLB                                                                  ;8180FA;
     RTL                                                                  ;8180FB;
 
+  ; If both checksum pairs fail, overwrite the complete selected SRAM slot with zero,
+  ; reset station and area to zero, and return carry set. Live equipment and map data
+  ; are intentionally not copied from the invalid mirror.
   .corrupt:
-    STZ.B DP_Temp14                                                      ;8180FC;
-    LDX.B DP_Temp12                                                      ;8180FE;
-    LDA.L SaveSlotOffsets,X                                              ;818100;
-    TAX                                                                  ;818104;
-    LDY.W #SRAMMirror_Equipment                                          ;818105;
-    LDA.W #$0000                                                         ;818108;
+    STZ.B DP_Temp14                                                      ;8180FC; Reset the otherwise-unused checksum accumulator for the clear pass.
+    LDX.B DP_Temp12                                                      ;8180FE; Recover the doubled slot number.
+    LDA.L SaveSlotOffsets,X                                              ;818100; Read the corrupt slot's starting offset.
+    TAX                                                                  ;818104; X becomes the SRAM clear cursor.
+    LDY.W #SRAMMirror_Equipment                                          ;818105; Use the mirror range only as the clear-loop length.
+    LDA.W #$0000                                                         ;818108; Prepare the zero fill word.
 
   .loopCorrupt:
-    STA.L SRAM_Checksum0,X                                               ;81810B;
+    STA.L SRAM_Checksum0,X                                               ;81810B; Clear one word in the selected SRAM slot.
     CLC                                                                  ;81810F;
     ADC.B DP_Temp14                                                      ;818110;
-    STA.B DP_Temp14                                                      ;818112;
+    STA.B DP_Temp14                                                      ;818112; The retained checksum stays zero throughout the fill.
     INX                                                                  ;818114;
-    INX                                                                  ;818115;
+    INX                                                                  ;818115; Advance the SRAM clear cursor.
     INY                                                                  ;818116;
-    INY                                                                  ;818117;
-    CPY.W #SRAMMirror_End+1                                              ;818118;
+    INY                                                                  ;818117; Advance the range-length cursor.
+    CPY.W #SRAMMirror_End+1                                              ;818118; Clear exactly one complete slot-sized range.
     BNE .loopCorrupt                                                     ;81811B;
     LDA.W #$0000                                                         ;81811D;
-    STA.W LoadStationIndex                                               ;818120;
-    STA.W AreaIndex                                                      ;818123;
+    STA.W LoadStationIndex                                               ;818120; Fall back to station zero.
+    STA.W AreaIndex                                                      ;818123; Fall back to area zero, Crateria.
     PLY                                                                  ;818126;
     PLX                                                                  ;818127;
-    SEC                                                                  ;818128;
+    SEC                                                                  ;818128; Report that the selected SRAM slot was cleared.
     PLB                                                                  ;818129;
     RTL                                                                  ;81812A;
 
 
 ;;; $812B: SRAM offsets for each save slot ;;;
+; The three slots begin at SRAM offsets $0010, $066C and $0CC8. The caller's slot
+; number is doubled before indexing this word table.
 SaveSlotOffsets:
-    dw $0010,$066C,$0CC8                                                 ;81812B;
+    dw $0010,$066C,$0CC8                                                 ;81812B; Slots A, B and C begin at these SRAM byte offsets.
 
 ;;; $8131: Exported map data ;;;
 SRAMMapData:

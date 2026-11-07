@@ -5,6 +5,9 @@ org $938000
 
 
 ;;; $8000: Initialise projectile ;;;
+; Resolve a beam, missile, hyper beam or ice-SBA type into its projectile-data record.
+; Beam low-nibble combinations select charged or uncharged tables; non-beams select by
+; the type high nibble. Direction chooses one of the record's instruction-list pointers.
 InitializeProjectile:
 ;; Parameters:
 ;;     X: Projectile index
@@ -14,63 +17,66 @@ InitializeProjectile:
     PHB                                                                  ;938001;
     PHK                                                                  ;938002;
     PLB                                                                  ;938003;
-    REP #$30                                                             ;938004;
-    LDA.W SamusProjectile_Directions,X                                   ;938006;
-    AND.W #$000F                                                         ;938009;
-    ASL                                                                  ;93800C;
-    STA.B DP_Temp12                                                      ;93800D;
-    LDA.W SamusProjectile_Types,X                                        ;93800F;
-    BIT.W #$0F00                                                         ;938012;
-    BNE .notBeam                                                         ;938015;
-    BIT.W #$0010                                                         ;938017;
+    REP #$30                                                             ;938004; Select bank $93 and use word-sized table indices/state.
+    LDA.W SamusProjectile_Directions,X                                   ;938006; Read projectile direction.
+    AND.W #$000F                                                         ;938009; Keep its direction index.
+    ASL                                                                  ;93800C; Convert direction to a word-pointer byte offset.
+    STA.B DP_Temp12                                                      ;93800D; Preserve that offset for the chosen data record.
+    LDA.W SamusProjectile_Types,X                                        ;93800F; Read beam-combination and category bits.
+    BIT.W #$0F00                                                         ;938012; Test the non-beam category nibble.
+    BNE .notBeam                                                         ;938015; Missiles, hyper beam and ice SBA select the non-beam table.
+    BIT.W #$0010                                                         ;938017; For beams, test the charged bit.
     BNE .charged                                                         ;93801A;
-    AND.W #$000F                                                         ;93801C;
-    ASL                                                                  ;93801F;
+    AND.W #$000F                                                         ;93801C; Keep the uncharged beam-combination index.
+    ASL                                                                  ;93801F; Convert it to a word-table offset.
     TAY                                                                  ;938020;
-    LDA.W SamusProjectileDataPointers_UnchargedBeams,Y                   ;938021;
+    LDA.W SamusProjectileDataPointers_UnchargedBeams,Y                   ;938021; Resolve the uncharged beam data record.
     TAY                                                                  ;938024;
     BRA .merge                                                           ;938025;
 
   .charged:
-    AND.W #$000F                                                         ;938027;
+    AND.W #$000F                                                         ;938027; Keep the charged beam-combination index.
     ASL                                                                  ;93802A;
     TAY                                                                  ;93802B;
-    LDA.W SamusProjectileDataPointers_ChargedBeams,Y                     ;93802C;
+    LDA.W SamusProjectileDataPointers_ChargedBeams,Y                     ;93802C; Resolve the charged beam data record.
     TAY                                                                  ;93802F;
     BRA .merge                                                           ;938030;
 
   .notBeam:
-    XBA                                                                  ;938032;
-    AND.W #$000F                                                         ;938033;
+    XBA                                                                  ;938032; Move the category byte into the low accumulator byte.
+    AND.W #$000F                                                         ;938033; Keep the non-beam type index.
     ASL                                                                  ;938036;
     TAY                                                                  ;938037;
-    LDA.W SamusProjectileDataPointers_NonBeam,Y                          ;938038;
+    LDA.W SamusProjectileDataPointers_NonBeam,Y                          ;938038; Resolve the non-beam data record.
     TAY                                                                  ;93803B;
 
+  ; Load damage from the record, reject a negative sentinel, then select the direction's
+  ; instruction list. Its first frame supplies byte-sized X/Y radii at offsets 4 and 5;
+  ; an instruction timer of one schedules immediate interpretation.
   .merge:
-    LDA.W $0000,Y                                                        ;93803C;
-    STA.W SamusProjectile_Damages,X                                      ;93803F;
-    BPL .dontCrash                                                       ;938042;
-    JML Crash_Handler                                                    ;938044;
+    LDA.W $0000,Y                                                        ;93803C; Read record damage.
+    STA.W SamusProjectile_Damages,X                                      ;93803F; Publish damage to the projectile slot.
+    BPL .dontCrash                                                       ;938042; Continue only for a nonnegative damage value.
+    JML Crash_Handler                                                    ;938044; Treat a negative data-table value as invalid.
 
   .dontCrash:
     INY                                                                  ;938048;
-    INY                                                                  ;938049;
+    INY                                                                  ;938049; Advance past damage to the direction-pointer array.
     TYA                                                                  ;93804A;
     CLC                                                                  ;93804B;
-    ADC.B DP_Temp12                                                      ;93804C;
+    ADC.B DP_Temp12                                                      ;93804C; Select this projectile direction's instruction-list pointer.
     TAY                                                                  ;93804E;
-    LDA.W $0000,Y                                                        ;93804F;
-    STA.W SamusProjectile_InstructionPointers,X                          ;938052;
+    LDA.W $0000,Y                                                        ;93804F; Read the selected instruction-list address.
+    STA.W SamusProjectile_InstructionPointers,X                          ;938052; Activate the slot at that script.
     TAY                                                                  ;938055;
-    LDA.W $0004,Y                                                        ;938056;
+    LDA.W $0004,Y                                                        ;938056; Read the first frame's X radius byte.
     AND.W #$00FF                                                         ;938059;
-    STA.W SamusProjectile_XRadii,X                                       ;93805C;
-    LDA.W $0005,Y                                                        ;93805F;
+    STA.W SamusProjectile_XRadii,X                                       ;93805C; Publish horizontal collision radius.
+    LDA.W $0005,Y                                                        ;93805F; Read the first frame's Y radius byte.
     AND.W #$00FF                                                         ;938062;
-    STA.W SamusProjectile_YRadii,X                                       ;938065;
+    STA.W SamusProjectile_YRadii,X                                       ;938065; Publish vertical collision radius.
     LDA.W #$0001                                                         ;938068;
-    STA.W SamusProjectile_InstructionTimers,X                            ;93806B;
+    STA.W SamusProjectile_InstructionTimers,X                            ;93806B; Run the first projectile instruction on the next handler call.
     PLB                                                                  ;93806E;
     PLP                                                                  ;93806F;
     RTL                                                                  ;938070;
@@ -111,6 +117,8 @@ InitializeSuperMissileLink:
 
 
 ;;; $80A0: Initialise (power) bomb ;;;
+; Select bomb or power-bomb projectile data from the non-beam type nibble, load damage
+; and the record's single instruction-list pointer, and schedule its first command.
 InitializeBomb:
 ;; Parameters:
 ;;     X: Projectile index
@@ -118,31 +126,34 @@ InitializeBomb:
     PHB                                                                  ;9380A1;
     PHK                                                                  ;9380A2;
     PLB                                                                  ;9380A3;
-    REP #$30                                                             ;9380A4;
-    LDA.W SamusProjectile_Types+1,X                                      ;9380A6;
-    AND.W #$000F                                                         ;9380A9;
-    ASL                                                                  ;9380AC;
+    REP #$30                                                             ;9380A4; Select bank $93 and use word-sized projectile state.
+    LDA.W SamusProjectile_Types+1,X                                      ;9380A6; Read the byte containing the non-beam type nibble.
+    AND.W #$000F                                                         ;9380A9; Keep the bomb or power-bomb data index.
+    ASL                                                                  ;9380AC; Convert that index to a word-pointer byte offset.
     TAY                                                                  ;9380AD;
-    LDA.W SamusProjectileDataPointers_NonBeam,Y                          ;9380AE;
+    LDA.W SamusProjectileDataPointers_NonBeam,Y                          ;9380AE; Resolve the matching non-beam projectile-data record.
     TAY                                                                  ;9380B1;
-    LDA.W $0000,Y                                                        ;9380B2;
-    STA.W SamusProjectile_Damages,X                                      ;9380B5;
-    BPL .dontCrash                                                       ;9380B8;
-    JML Crash_Handler                                                    ;9380BA;
+    LDA.W $0000,Y                                                        ;9380B2; Read the record's damage word.
+    STA.W SamusProjectile_Damages,X                                      ;9380B5; Publish damage to this bomb slot.
+    BPL .dontCrash                                                       ;9380B8; Continue only for a nonnegative damage value.
+    JML Crash_Handler                                                    ;9380BA; Treat a negative data-table value as invalid.
 
   .dontCrash:
     INY                                                                  ;9380BE;
-    INY                                                                  ;9380BF;
-    LDA.W $0000,Y                                                        ;9380C0;
-    STA.W SamusProjectile_InstructionPointers,X                          ;9380C3;
+    INY                                                                  ;9380BF; Advance past damage to the single instruction-list pointer.
+    LDA.W $0000,Y                                                        ;9380C0; Read the bomb animation/instruction-list address.
+    STA.W SamusProjectile_InstructionPointers,X                          ;9380C3; Activate the slot at that script.
     LDA.W #$0001                                                         ;9380C6;
-    STA.W SamusProjectile_InstructionTimers,X                            ;9380C9;
+    STA.W SamusProjectile_InstructionTimers,X                            ;9380C9; Run its first command on the next handler call.
     PLB                                                                  ;9380CC;
     PLP                                                                  ;9380CD;
     RTL                                                                  ;9380CE;
 
 
 ;;; $80CF: Initialise beam / missile explosion ;;;
+; Convert a killed beam to category $07 or a missile/super missile to category $08,
+; select the matching explosion instruction list and sound, and give the explosion
+; damage 8. Super missiles additionally start earthquake type $14 for 30 ticks.
 Initialize_Beam_Missile_Explosion:
 ;; Parameters:
 ;;     X: Projectile index
@@ -152,59 +163,61 @@ Initialize_Beam_Missile_Explosion:
     PHB                                                                  ;9380D0;
     PHK                                                                  ;9380D1;
     PLB                                                                  ;9380D2;
-    REP #$30                                                             ;9380D3;
-    LDA.W SamusProjectile_Types,X                                        ;9380D5;
-    BIT.W #$0F00                                                         ;9380D8;
-    BNE .notBeam                                                         ;9380DB;
+    REP #$30                                                             ;9380D3; Select bank $93 and use word-sized projectile state.
+    LDA.W SamusProjectile_Types,X                                        ;9380D5; Read the killed projectile's type and category bits.
+    BIT.W #$0F00                                                         ;9380D8; Test whether it belongs to a non-beam category.
+    BNE .notBeam                                                         ;9380DB; Missiles and super missiles take the non-beam explosion path.
     LDA.W SamusProjectile_Types,X                                        ;9380DD;
-    AND.W #$F0FF                                                         ;9380E0;
-    ORA.W #$0700                                                         ;9380E3;
+    AND.W #$F0FF                                                         ;9380E0; Remove the old beam/category nibble while retaining other type flags.
+    ORA.W #$0700                                                         ;9380E3; Mark the object as a beam explosion.
     STA.W SamusProjectile_Types,X                                        ;9380E6;
-    LDA.W ProjectileDataTable_NonBeam_BeamExplosion_pointer              ;9380E9;
+    LDA.W ProjectileDataTable_NonBeam_BeamExplosion_pointer              ;9380E9; Select the beam-explosion instruction list.
     STA.W SamusProjectile_InstructionPointers,X                          ;9380EC;
-    LDA.W #$000C                                                         ;9380EF;
-    JSL.L QueueSound_Lib2_Max6                                           ;9380F2;
+    LDA.W #$000C                                                         ;9380EF; Select the beam-impact sound.
+    JSL.L QueueSound_Lib2_Max6                                           ;9380F2; Queue it in sound library 2 with six outstanding requests allowed.
     BRA .return                                                          ;9380F6;
 
   .notBeam:
-    LDA.W CinematicFunction                                              ;9380F8;
-    BNE .setExplosion                                                    ;9380FB;
-    LDA.W #$0007                                                         ;9380FD;
-    JSL.L QueueSound_Lib2_Max6                                           ;938100;
+    LDA.W CinematicFunction                                              ;9380F8; Check whether a cinematic currently owns presentation.
+    BNE .setExplosion                                                    ;9380FB; Cinematics suppress the missile-impact sound only.
+    LDA.W #$0007                                                         ;9380FD; Select the missile-impact sound.
+    JSL.L QueueSound_Lib2_Max6                                           ;938100; Queue it in sound library 2.
 
   .setExplosion:
-    LDA.W SamusProjectile_Types,X                                        ;938104;
-    PHA                                                                  ;938107;
-    AND.W #$F0FF                                                         ;938108;
-    ORA.W #$0800                                                         ;93810B;
+    LDA.W SamusProjectile_Types,X                                        ;938104; Reload the original missile type.
+    PHA                                                                  ;938107; Preserve it long enough to distinguish a super missile.
+    AND.W #$F0FF                                                         ;938108; Remove the old missile category nibble.
+    ORA.W #$0800                                                         ;93810B; Mark the object as a missile-family explosion.
     STA.W SamusProjectile_Types,X                                        ;93810E;
-    PLA                                                                  ;938111;
-    BIT.W #$0200                                                         ;938112;
+    PLA                                                                  ;938111; Recover the original type flags.
+    BIT.W #$0200                                                         ;938112; Test the super-missile category bit.
     BNE .superMissile                                                    ;938115;
-    LDA.W ProjectileDataTable_NonBeam_MissileExplosion_pointer           ;938117;
+    LDA.W ProjectileDataTable_NonBeam_MissileExplosion_pointer           ;938117; Select the normal missile-explosion instruction list.
     STA.W SamusProjectile_InstructionPointers,X                          ;93811A;
     BRA .setCooldown                                                     ;93811D;
 
   .superMissile:
-    LDA.W ProjectileDataTable_NonBeam_SuperMissileExplosion_pointer      ;93811F;
+    LDA.W ProjectileDataTable_NonBeam_SuperMissileExplosion_pointer      ;93811F; Select the super-missile explosion instruction list.
     STA.W SamusProjectile_InstructionPointers,X                          ;938122;
-    LDA.W #$0014                                                         ;938125;
+    LDA.W #$0014                                                         ;938125; Select the super-missile impact earthquake type.
     STA.W EarthquakeType                                                 ;938128;
-    LDA.W #$001E                                                         ;93812B;
+    LDA.W #$001E                                                         ;93812B; Run that earthquake for 30 ticks.
     STA.W EarthquakeTimer                                                ;93812E;
 
+  ; If the global shot cooldown is 21 or greater, lower it to 20 so the explosion path
+  ; does not retain a longer delay. Shorter existing cooldowns remain unchanged.
   .setCooldown:
-    LDA.W SamusProjectile_CooldownTimer                                  ;938131;
-    CMP.W #$0015                                                         ;938134;
-    BMI .return                                                          ;938137;
-    LDA.W #$0014                                                         ;938139;
+    LDA.W SamusProjectile_CooldownTimer                                  ;938131; Read the global firing cooldown.
+    CMP.W #$0015                                                         ;938134; Test whether it is at least 21 ticks.
+    BMI .return                                                          ;938137; Keep shorter existing cooldowns unchanged.
+    LDA.W #$0014                                                         ;938139; Cap a long cooldown at 20 ticks.
     STA.W SamusProjectile_CooldownTimer                                  ;93813C;
 
   .return:
     LDA.W #$0001                                                         ;93813F;
-    STA.W SamusProjectile_InstructionTimers,X                            ;938142;
+    STA.W SamusProjectile_InstructionTimers,X                            ;938142; Run the first explosion command on the next handler call.
     LDA.W #$0008                                                         ;938145;
-    STA.W SamusProjectile_Damages,X                                      ;938148;
+    STA.W SamusProjectile_Damages,X                                      ;938148; Give every beam/missile explosion damage 8.
     PLB                                                                  ;93814B;
     PLP                                                                  ;93814C;
     RTL                                                                  ;93814D;
@@ -327,41 +340,47 @@ Get_ProjectileTrailFrame:
 
 
 ;;; $81E9: Projectile instruction handler ;;;
+; Tick the active slot's instruction timer. On expiry, interpret negative words as
+; bank-$93 commands and nonnegative words as eight-byte timed frame records containing
+; duration, spritemap, byte-sized X/Y radii and the next instruction cursor.
 ProjectileInstructionHandler:
 ; Called by Handle_Projectiles
     PHP                                                                  ;9381E9;
     PHB                                                                  ;9381EA;
     PHK                                                                  ;9381EB;
     PLB                                                                  ;9381EC;
-    REP #$30                                                             ;9381ED;
-    LDX.W ProjectileIndex                                                ;9381EF;
-    DEC.W SamusProjectile_InstructionTimers,X                            ;9381F2;
-    BNE .return                                                          ;9381F5;
-    LDY.W SamusProjectile_InstructionPointers,X                          ;9381F7;
+    REP #$30                                                             ;9381ED; Select bank $93 and use word-sized cursors and timers.
+    LDX.W ProjectileIndex                                                ;9381EF; Load the shared active-slot word offset.
+    DEC.W SamusProjectile_InstructionTimers,X                            ;9381F2; Tick this slot's current frame duration.
+    BNE .return                                                          ;9381F5; Keep the current frame until its timer expires.
+    LDY.W SamusProjectile_InstructionPointers,X                          ;9381F7; Load the slot's bank-$93 instruction cursor.
 
+  ; Commands receive Y pointing after their opcode. A synthetic near return sends RTS
+  ; back to the interpreter loop, allowing commands to change Y or consume arguments.
+  ; A delete command instead removes that return and exits the long handler directly.
   .loop:
-    LDA.W $0000,Y                                                        ;9381FA;
-    BPL .timer                                                           ;9381FD;
-    STA.B DP_Temp12                                                      ;9381FF;
+    LDA.W $0000,Y                                                        ;9381FA; Read the next command opcode or timed-frame duration.
+    BPL .timer                                                           ;9381FD; Nonnegative words begin timed eight-byte frame records.
+    STA.B DP_Temp12                                                      ;9381FF; Preserve the negative command address for indirect dispatch.
     INY                                                                  ;938201;
-    INY                                                                  ;938202;
-    PEA.W .loop-1                                                        ;938203;
-    JMP.W (DP_Temp12)                                                    ;938206;
+    INY                                                                  ;938202; Advance Y to the command's arguments.
+    PEA.W .loop-1                                                        ;938203; Create a near return that resumes interpretation at the next cursor.
+    JMP.W (DP_Temp12)                                                    ;938206; Dispatch the bank-$93 instruction command.
 
   .timer:
-    STA.W SamusProjectile_InstructionTimers,X                            ;938209;
-    LDA.W $0002,Y                                                        ;93820C;
+    STA.W SamusProjectile_InstructionTimers,X                            ;938209; Install the new frame duration.
+    LDA.W $0002,Y                                                        ;93820C; Read the frame's spritemap pointer.
     STA.W SamusProjectile_SpritemapPointers,X                            ;93820F;
-    LDA.W $0004,Y                                                        ;938212;
-    AND.W #$00FF                                                         ;938215;
+    LDA.W $0004,Y                                                        ;938212; Read packed X radius and the following Y-radius byte.
+    AND.W #$00FF                                                         ;938215; Keep the X radius byte.
     STA.W SamusProjectile_XRadii,X                                       ;938218;
-    LDA.W $0005,Y                                                        ;93821B;
+    LDA.W $0005,Y                                                        ;93821B; Read the unaligned Y radius byte.
     AND.W #$00FF                                                         ;93821E;
     STA.W SamusProjectile_YRadii,X                                       ;938221;
     TYA                                                                  ;938224;
     CLC                                                                  ;938225;
-    ADC.W #$0008                                                         ;938226;
-    STA.W SamusProjectile_InstructionPointers,X                          ;938229;
+    ADC.W #$0008                                                         ;938226; Advance past the complete timed-frame record.
+    STA.W SamusProjectile_InstructionPointers,X                          ;938229; Publish the next instruction cursor.
 
   .return:
     PLB                                                                  ;93822C;
@@ -370,27 +389,31 @@ ProjectileInstructionHandler:
 
 
 ;;; $822F: Instruction - delete ;;;
+; Clear the current projectile, discard the interpreter's synthetic near return, then
+; restore the handler's saved bank/status and return directly to its long caller.
 Instruction_SamusProjectile_Delete:
 ;; Parameters:
 ;;     X: Projectile index
-    REP #$30                                                             ;93822F;
-    JSL.L Clear_Projectile                                               ;938231;
-    PLA                                                                  ;938235;
-    PLB                                                                  ;938236;
-    PLP                                                                  ;938237;
-    RTL                                                                  ;938238;
+    REP #$30                                                             ;93822F; Use word-sized projectile state.
+    JSL.L Clear_Projectile                                               ;938231; Clear the current slot and release its ownership counter.
+    PLA                                                                  ;938235; Discard the synthetic near return to the interpreter loop.
+    PLB                                                                  ;938236; Restore the handler's saved data bank.
+    PLP                                                                  ;938237; Restore the handler's saved processor status.
+    RTL                                                                  ;938238; Return directly to the long handler caller.
 
 
 ;;; $8239: Instruction - go to [[Y]] ;;;
+; Replace Y with the word pointer stored at the command argument and return to the
+; interpreter loop. The target is a bank-$93 instruction-list address.
 Instruction_SamusProjectile_GotoY:
 ;; Parameters:
 ;;     Y: Pointer to instruction arguments
 ;; Returns:
 ;;     Y: Pointer to next instruction
-    REP #$30                                                             ;938239;
-    LDA.W $0000,Y                                                        ;93823B;
-    TAY                                                                  ;93823E;
-    RTS                                                                  ;93823F;
+    REP #$30                                                             ;938239; Use a word-sized bank-$93 instruction pointer.
+    LDA.W $0000,Y                                                        ;93823B; Read the target address from the command argument.
+    TAY                                                                  ;93823E; Replace the instruction cursor with that target.
+    RTS                                                                  ;93823F; Resume the interpreter through its synthetic near return.
 
 
 if !FEATURE_KEEP_UNREFERENCED
@@ -417,96 +440,103 @@ endif ; !FEATURE_KEEP_UNREFERENCED
 
 
 ;;; $8254: Draw projectiles ;;;
+; Visit the five ordinary projectile slots from word offset 8 down to zero. Inactive
+; slots and bomb/explosion categories are skipped. Beam combinations without a charge
+; or non-beam category alternate frames by slot parity to reduce sprite pressure.
 DrawProjectiles:
     PHP                                                                  ;938254;
-    REP #$30                                                             ;938255;
-    LDX.W #$0008                                                         ;938257;
-    STX.W ProjectileIndex                                                ;93825A;
+    REP #$30                                                             ;938255; Use word-sized slot offsets, positions and type flags.
+    LDX.W #$0008                                                         ;938257; Start at the fifth ordinary projectile slot.
+    STX.W ProjectileIndex                                                ;93825A; Publish the shared drawing-slot offset.
 
   .loop:
-    LDA.W SamusProjectile_InstructionPointers,X                          ;93825D;
-    BNE +                                                                ;938260;
+    LDA.W SamusProjectile_InstructionPointers,X                          ;93825D; Read this slot's instruction cursor.
+    BNE +                                                                ;938260; Only an active slot can be drawn.
     JMP.W .next                                                          ;938262;
 
-+   LDA.W SamusProjectile_Types,X                                        ;938265;
-    BIT.W #$0F10                                                         ;938268;
-    BNE .noFlickering                                                    ;93826B;
-    BIT.W #$000C                                                         ;93826D;
-    BNE .spazerPlasma                                                    ;938270;
-    TXA                                                                  ;938272;
++   LDA.W SamusProjectile_Types,X                                        ;938265; Read beam-combination and projectile-category bits.
+    BIT.W #$0F10                                                         ;938268; Test non-beam category bits and the charged-beam bit.
+    BNE .noFlickering                                                    ;93826B; Charged beams and non-beam projectiles bypass beam flicker.
+    BIT.W #$000C                                                         ;93826D; Test the spazer/plasma beam bits.
+    BNE .spazerPlasma                                                    ;938270; Those wider beams use a separate flicker cadence.
+    TXA                                                                  ;938272; Use slot offset bit 1 to split projectiles into alternating groups.
     BIT.W #$0002                                                         ;938273;
     BNE +                                                                ;938276;
-    LDA.W NMI_FrameCounter                                               ;938278;
+    LDA.W NMI_FrameCounter                                               ;938278; Read serviced-frame parity.
     BIT.W #$0001                                                         ;93827B;
-    BNE .draw                                                            ;93827E;
+    BNE .draw                                                            ;93827E; Draw even-group ordinary beams on odd frames.
     BRA .next                                                            ;938280;
 
 +   LDA.W NMI_FrameCounter                                               ;938282;
     BIT.W #$0001                                                         ;938285;
     BNE .next                                                            ;938288;
-    BRA .draw                                                            ;93828A;
+    BRA .draw                                                            ;93828A; Draw odd-group ordinary beams on even frames.
 
   .spazerPlasma:
     TXA                                                                  ;93828C;
-    BIT.W #$0002                                                         ;93828D;
+    BIT.W #$0002                                                         ;93828D; Split wide-beam slots into the same two groups.
     BNE +                                                                ;938290;
     LDA.W NMI_FrameCounter                                               ;938292;
-    BIT.W #$0002                                                         ;938295;
+    BIT.W #$0002                                                         ;938295; Use frame-counter bit 1 for a two-frame cadence.
     BNE .next                                                            ;938298;
     BRA .draw                                                            ;93829A;
 
 +   LDA.W NMI_FrameCounter                                               ;93829C;
     BIT.W #$0002                                                         ;93829F;
     BEQ .next                                                            ;9382A2;
-    BRA .draw                                                            ;9382A4;
+    BRA .draw                                                            ;9382A4; Draw the other wide-beam group during the opposite two frames.
 
   .noFlickering:
-    AND.W #$0F00                                                         ;9382A6;
-    CMP.W #$0300                                                         ;9382A9;
+    AND.W #$0F00                                                         ;9382A6; Keep the projectile category.
+    CMP.W #$0300                                                         ;9382A9; Categories $03 and above belong to the bomb/explosion drawing pass.
     BPL .next                                                            ;9382AC;
 
+  ; Ceres rotation paths calculate screen position through the rotating-room helper.
+  ; Normal paths subtract layer-1 scroll. A negative spritemap pointer is submitted only
+  ; when the computed Y coordinate is on the visible byte page; offscreen paths retain
+  ; the original no-op long call.
   .draw:
-    LDA.W CeresStatus                                                    ;9382AE;
+    LDA.W CeresStatus                                                    ;9382AE; Check whether the Ceres rotating-room transform is active.
     BPL .noRotation                                                      ;9382B1;
-    JSL.L Calculate_ProjectilePosition_InRotatingElevatorRoom            ;9382B3;
-    LDA.B DP_Temp12                                                      ;9382B7;
+    JSL.L Calculate_ProjectilePosition_InRotatingElevatorRoom            ;9382B3; Calculate transformed screen coordinates.
+    LDA.B DP_Temp12                                                      ;9382B7; Recover transformed screen Y for visibility testing.
     BRA .positionCalculated                                              ;9382B9;
 
   .noRotation:
-    LDA.W SamusProjectile_XPositions,X                                   ;9382BB;
+    LDA.W SamusProjectile_XPositions,X                                   ;9382BB; Read world X.
     SEC                                                                  ;9382BE;
-    SBC.W Layer1XPosition                                                ;9382BF;
+    SBC.W Layer1XPosition                                                ;9382BF; Convert it to screen X.
     STA.B DP_Temp14                                                      ;9382C2;
-    LDA.W SamusProjectile_YPositions,X                                   ;9382C4;
+    LDA.W SamusProjectile_YPositions,X                                   ;9382C4; Read world Y.
     SEC                                                                  ;9382C7;
-    SBC.W Layer1YPosition                                                ;9382C8;
+    SBC.W Layer1YPosition                                                ;9382C8; Convert it to screen Y.
     STA.B DP_Temp12                                                      ;9382CB;
 
   .positionCalculated:
-    AND.W #$FF00                                                         ;9382CD;
-    BNE +                                                                ;9382D0;
-    LDA.W SamusProjectile_SpritemapPointers,X                            ;9382D2;
-    BPL .loadIndex                                                       ;9382D5;
-    JSL.L AddProjectileSpritemapToOAM                                    ;9382D7;
+    AND.W #$FF00                                                         ;9382CD; Test whether screen Y lies on byte page zero.
+    BNE +                                                                ;9382D0; Use the retained offscreen path otherwise.
+    LDA.W SamusProjectile_SpritemapPointers,X                            ;9382D2; Read the current spritemap pointer.
+    BPL .loadIndex                                                       ;9382D5; Only negative-form pointers are submitted by this path.
+    JSL.L AddProjectileSpritemapToOAM                                    ;9382D7; Append the visible projectile spritemap to OAM.
     BRA .loadIndex                                                       ;9382DB;
 
 +   LDA.W SamusProjectile_SpritemapPointers,X                            ;9382DD;
     BPL .loadIndex                                                       ;9382E0;
-    JSL.L RTL_818AB7                                                     ;9382E2;
+    JSL.L RTL_818AB7                                                     ;9382E2; Retain the original offscreen no-op long call.
 
   .loadIndex:
-    LDX.W ProjectileIndex                                                ;9382E6;
+    LDX.W ProjectileIndex                                                ;9382E6; Recover the slot offset after drawing code repurposes X.
 
   .next:
     DEX                                                                  ;9382E9;
-    DEX                                                                  ;9382EA;
+    DEX                                                                  ;9382EA; Move to the preceding ordinary projectile slot.
     STX.W ProjectileIndex                                                ;9382EB;
-    BMI .echoes                                                          ;9382EE;
+    BMI .echoes                                                          ;9382EE; Finish after offsets $08 through $00.
     JMP.W .loop                                                          ;9382F0;
 
   .echoes:
-    JSL.L DrawShinesparkCrashEchoProjectiles                             ;9382F3;
-    JSL.L HandleProjectileTrails                                         ;9382F7;
+    JSL.L DrawShinesparkCrashEchoProjectiles                             ;9382F3; Draw the independent shinespark crash echoes.
+    JSL.L HandleProjectileTrails                                         ;9382F7; Advance and draw projectile trail objects.
     PLP                                                                  ;9382FB;
     RTL                                                                  ;9382FC;
 
@@ -564,64 +594,67 @@ endif ; !FEATURE_KEEP_UNREFERENCED
 
 
 ;;; $834D: Draw bombs and projectile explosions ;;;
+; Visit all ten slots but draw only categories $03 and above: bombs, power bombs and
+; projectile explosions. Power bombs with a zero bomb timer remain hidden. Ordinary
+; coordinates use a wider horizontal cull before OAM submission.
 DrawBombsAndProjectileExplosions:
     PHP                                                                  ;93834D;
-    REP #$30                                                             ;93834E;
-    LDX.W #$0012                                                         ;938350;
-    STX.W ProjectileIndex                                                ;938353;
+    REP #$30                                                             ;93834E; Use word-sized slot offsets, positions and categories.
+    LDX.W #$0012                                                         ;938350; Start at the final of all ten projectile/bomb slots.
+    STX.W ProjectileIndex                                                ;938353; Publish the shared drawing-slot offset.
 
   .loop:
-    LDA.W SamusProjectile_InstructionPointers,X                          ;938356;
-    BEQ .next                                                            ;938359;
-    LDA.W SamusProjectile_Types,X                                        ;93835B;
-    AND.W #$0F00                                                         ;93835E;
-    CMP.W #$0300                                                         ;938361;
-    BMI .next                                                            ;938364;
-    BEQ .powerBomb                                                       ;938366;
-    CMP.W #$0500                                                         ;938368;
+    LDA.W SamusProjectile_InstructionPointers,X                          ;938356; Read this slot's instruction cursor.
+    BEQ .next                                                            ;938359; Skip inactive slots.
+    LDA.W SamusProjectile_Types,X                                        ;93835B; Read projectile type and category.
+    AND.W #$0F00                                                         ;93835E; Keep category bits $00..$0F.
+    CMP.W #$0300                                                         ;938361; Bombs, power bombs and explosions begin at category $03.
+    BMI .next                                                            ;938364; Leave beams and missiles to the ordinary projectile pass.
+    BEQ .powerBomb                                                       ;938366; Category $03 needs an active power-bomb timer.
+    CMP.W #$0500                                                         ;938368; Category $05 uses ordinary screen-coordinate calculation.
     BEQ .normalPositionCalculation                                       ;93836B;
-    LDA.W CeresStatus                                                    ;93836D;
+    LDA.W CeresStatus                                                    ;93836D; Check whether rotating-room coordinates are active.
     BPL .normalPositionCalculation                                       ;938370;
-    JSL.L Calculate_ProjectilePosition_InRotatingElevatorRoom            ;938372;
-    LDA.B DP_Temp12                                                      ;938376;
+    JSL.L Calculate_ProjectilePosition_InRotatingElevatorRoom            ;938372; Calculate transformed screen coordinates for other categories.
+    LDA.B DP_Temp12                                                      ;938376; Recover transformed screen Y.
     BRA .calculatedPosition                                              ;938378;
 
   .powerBomb:
-    LDA.W SamusProjectile_BombTimers-$A,X                                ;93837A;
-    BEQ .next                                                            ;93837D;
+    LDA.W SamusProjectile_BombTimers-$A,X                                ;93837A; Read the power-bomb slot's timer using its $0A-offset array base.
+    BEQ .next                                                            ;93837D; Do not draw an inactive power bomb.
 
   .normalPositionCalculation:
-    LDA.W SamusProjectile_XPositions,X                                   ;93837F;
+    LDA.W SamusProjectile_XPositions,X                                   ;93837F; Read world X.
     SEC                                                                  ;938382;
-    SBC.W Layer1XPosition                                                ;938383;
+    SBC.W Layer1XPosition                                                ;938383; Convert it to screen X.
     STA.B DP_Temp14                                                      ;938386;
-    CMP.W #$0130                                                         ;938388;
+    CMP.W #$0130                                                         ;938388; Cull at or beyond 304 pixels to the right.
     BPL .next                                                            ;93838B;
-    CMP.W #$FFD0                                                         ;93838D;
+    CMP.W #$FFD0                                                         ;93838D; Cull below -48 pixels to the left.
     BMI .next                                                            ;938390;
-    LDA.W SamusProjectile_YPositions,X                                   ;938392;
+    LDA.W SamusProjectile_YPositions,X                                   ;938392; Read world Y.
     SEC                                                                  ;938395;
-    SBC.W Layer1YPosition                                                ;938396;
+    SBC.W Layer1YPosition                                                ;938396; Convert it to screen Y.
     STA.B DP_Temp12                                                      ;938399;
 
   .calculatedPosition:
-    AND.W #$FF00                                                         ;93839B;
+    AND.W #$FF00                                                         ;93839B; Test whether screen Y lies on byte page zero.
     BNE .offScreen                                                       ;93839E;
-    LDA.W SamusProjectile_SpritemapPointers,X                            ;9383A0;
-    JSL.L AddProjectileSpritemapToOAM                                    ;9383A3;
-    LDX.W ProjectileIndex                                                ;9383A7;
+    LDA.W SamusProjectile_SpritemapPointers,X                            ;9383A0; Read the current spritemap pointer.
+    JSL.L AddProjectileSpritemapToOAM                                    ;9383A3; Append the visible bomb/explosion spritemap to OAM.
+    LDX.W ProjectileIndex                                                ;9383A7; Recover the slot offset after OAM code repurposes X.
     BRA .next                                                            ;9383AA;
 
   .offScreen:
     LDA.W SamusProjectile_SpritemapPointers,X                            ;9383AC;
-    JSL.L RTL_818AB7                                                     ;9383AF;
+    JSL.L RTL_818AB7                                                     ;9383AF; Retain the original offscreen no-op long call.
     LDX.W ProjectileIndex                                                ;9383B3;
 
   .next:
     DEX                                                                  ;9383B6;
-    DEX                                                                  ;9383B7;
+    DEX                                                                  ;9383B7; Move to the preceding word-indexed slot.
     STX.W ProjectileIndex                                                ;9383B8;
-    BPL .loop                                                            ;9383BB;
+    BPL .loop                                                            ;9383BB; Visit offsets $12 through $00.
     PLP                                                                  ;9383BD;
     RTL                                                                  ;9383BE;
 
