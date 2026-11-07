@@ -63,7 +63,7 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-21`. It retains the
+The current enrichment revision is `super-metroid-ntsc-27`. It retains the
 Zoomer/crawler, Waver, core-loop, pause/door, room-loading, enemy-runtime and
 PLM-runtime/item documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
@@ -103,6 +103,16 @@ Revision 20 adds 4 block explanations and 33 line comments across three complete
 bank-$90 scopes for cooldown ticking and beam/missile slot reservations. Revision
 21 adds 7 block explanations and 94 line comments across five complete bank-$93
 scopes for projectile instruction execution, command returns and drawing passes.
+Revision 22 adds 6 block explanations and 63 line comments across the complete
+117-line bank-$90 uncharged-beam firing scope. Revision 23 adds 5 block explanations
+and 54 line comments across the complete 94-line charged-beam firing scope. Revision
+24 adds 7 block explanations and 76 line comments across two bank-$90 scopes for
+missile/super-missile firing and linked-super construction.
+Revision 25 adds 6 block explanations and 63 line comments across the complete
+125-line morph-ball weapon constructor. Revision 26 adds 4 block explanations and
+35 line comments across two bomb reservation/spread-gate scopes. Revision 27 adds
+4 block explanations and 32 line comments across the normal/power-bomb fuse and
+explosion handlers.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -543,6 +553,82 @@ hides power bombs with zero timers, and culls ordinary coordinates from -48 thro
 303 pixels horizontally. Both paths account for the Ceres rotating room and reload
 the shared slot after drawing code repurposes X. Guards pin 178 source lines;
 focused record, slot, category and culling tests accompany the revision-20 update.
+
+### Uncharged and charged beam firing reading route
+
+In bank `$90`, start at `Fire_Uncharge_Beam`. Hyper Beam redirects immediately;
+ordinary beams first reserve cooldown/counter ownership, then scan the five normal
+slots for a zero damage word. Origin/direction is pose-dependent. Successful setup
+adds the live flag to equipped beam bits, chooses sound and bank-$93 projectile
+data, then probes collision at zero velocity before installing motion.
+
+Cooldown selection has an important split. With Charge Beam equipped—or for a new
+shot edge—the routine uses `ProjectileCooldowns_Uncharged`. Without Charge Beam,
+a held auto-fire continuation uses `BeamAutoFireCooldowns`. Both byte tables are
+indexed by the low six projectile-type bits. Non-wave beams destroyed by their
+spawn-point collision return before motion; surviving combinations select one of
+twelve pre-instruction pointers and receive directional velocity.
+
+`FireChargeBeam` follows the same reservation, slot, origin and collision structure.
+It retains only equipment bit `$1000` and the low beam combination, then adds live
+`$8000` and charged `$0010`. Despite its name, this routine deliberately also uses
+`ProjectileCooldowns_Uncharged`; the projectile type remains charged. Charged wave
+combinations use the shared wide-wave handler, non-wave combinations use the
+straight handler, and completed construction starts a four-tick glow. Together the
+two guarded scopes pin 211 source lines; revision-21/22 upgrades add comments only.
+
+### Missile and linked-super firing reading route
+
+Continue at `HUDSelectionHandler_Missiles_SuperMissiles`. A current or retained
+new-shot edge calls the shared reservation gate before checking ammo and damage-word
+occupancy. Zero ammo or no zero-damage slot decrements the counter to undo that
+reservation. Once pose origin succeeds, the routine starts a 20-tick interaction
+window, consumes one ammo unit, encodes HUD item 1/2 as category `$01/$02`, and adds
+the live flag. Cinematics suppress the firing sound but not construction.
+
+Velocity and bank-$93 data are initialized before selecting normal- or super-missile
+movement. The category chooses its byte cooldown. Auto-cancel clears HUD selection
+immediately; otherwise firing the final unit clears it. `Spawn_SuperMissileLink`
+finds a second normal slot, marks category `$02` plus the link flag, copies primary
+position/direction, and installs link data/behavior. Its word offset is packed into
+the primary variable's low byte, preserving the high byte, and the projectile count
+increments for that second owned slot. Guards cover 148 lines; focused tests protect
+ammo rollback, type encoding, selection clearing and the link back-reference.
+
+### Morph-ball bombs and power-bomb runtime reading route
+
+In bank `$90`, begin at `HUDSelectionHandler_MorphBall`. Held shot with HUD item 3
+selects power bombs; other selections use normal bombs. Releasing shot cancels a
+nonzero charge/flare state and restores the suit palette. A successful normal-bomb
+reservation scans offsets `$0A..$12`, creates category `$05` at Samus's position,
+loads the regional fuse, bank-$93 data and bank-$90 pre-instruction, then selects
+the category cooldown.
+
+Power bombs reject while their signed global active flag is negative. A new shot
+edge reserves a bomb slot, consumes ammo, sets the active flag to `$FFFF`, creates
+category `$03` at Samus's position and installs its fuse behavior. Auto-cancel
+clears HUD selection/request together; otherwise selection clears after the final
+power bomb.
+
+Follow `FireBombOrBombSpread`. Bombs equipment bit `$1000` is mandatory. Fewer
+than 60 charge ticks or any active bomb tail into `FireBomb`. With full charge and
+zero active bombs, controller bit `$0400` holds the spread until release or until
+the timeout's `$C0` bits become set. Spread release creates the spread, restores
+the suit palette and returns carry clear because it did not reserve one single
+bomb slot.
+
+`FireBomb` requires a real new shot edge. The first active bomb bypasses the
+subsequent-bomb limit/cooldown checks; later reservations require a count below
+five and cooldown low byte zero. Success increments bomb count and a provisional
+cooldown that construction replaces. Failure cancels active charge presentation.
+
+Finally, `HandleBomb` and `HandlePowerBomb` tick their regional fuses. At 15 ticks
+remaining, both advance the animation cursor by `$1C`; at zero, a normal bomb
+loads its explosion animation while a power bomb publishes its origin, enables
+HDMA objects and spawns the global effect. Its slot timer becomes `$FFFF`. A later
+zero-timer call waits for the global flag to clear before releasing the slot.
+Together these five scopes guard 241 source lines; focused tests cover charge,
+reservation, slot/category, fuse and effect-cleanup boundaries.
 
 ### NMI VRAM-write and scrolling-DMA reading route
 

@@ -177,6 +177,11 @@ clear/kill/dispatch and bank-$93 projectile, bomb and explosion initialization.
 Revision 19 documents missile reserve overflow plus super-missile and power-bomb
 pickup caps. Revision 20 covers cooldown ticking and beam/missile slot reservation.
 Revision 21 follows bank-$93 projectile command execution and both drawing passes.
+Revision 22 documents uncharged-beam slot construction, cooldown selection,
+spawn collision and motion. Revision 23 covers the charged-beam counterpart.
+Revision 24 follows missile/super-missile construction and the linked super slot.
+Revision 25 documents morph-ball normal/power-bomb construction. Revision 26 adds
+bomb/spread reservation gates, and revision 27 follows both fuse/explosion handlers.
 See the
 [PLM/VRAM reading routes](reference_workspace.md#plm-runtime-and-item-lifecycle-reading-route)
 the [audio-runtime route](reference_workspace.md#vram-read-and-audio-runtime-reading-route),
@@ -189,9 +194,9 @@ dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1 through 20 are compiled before and after migration,
+Updates from revisions 1 through 26 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2 through version-20 recipes are
+with byte-identical complete ROM output. Version-2 through version-26 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 

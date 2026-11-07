@@ -173,6 +173,42 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previous)
     }
 
+    @Test fun `explicit v21 to current update adds uncharged-beam notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-21.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v22 to current update adds charged-beam notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-22.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v23 to current update adds missile-firing notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-23.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v24 to current update adds morph-ball weapon notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-24.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v25 to current update adds bomb-reservation notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-25.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v26 to current update adds bomb-runtime notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-26.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -263,6 +299,18 @@ class AsmSourceAugmentationIntegrationTest {
             ";90AC32; Select a 32-tick firing lockout.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_93.asm").readText(),
             ";938226; Advance past the complete timed-frame record.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B90B; Read the held-shot auto-fire cooldown.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B9CD; Mark the projectile live and charged.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90BF92; Pack the new link slot offset into the low byte.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90C001; Load bomb damage and instruction-list data from bank $93.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90C0F1; The first active bomb bypasses later-bomb limit/cooldown checks.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90C18D; Create the global power-bomb explosion object.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
