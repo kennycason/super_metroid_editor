@@ -1,0 +1,1296 @@
+{
+  "fileId": "bank_93.asm",
+  "documentation": [
+    {
+      "id": "projectile-lifecycle.initialize",
+      "symbol": "InitializeProjectile",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Resolve a beam, missile, hyper beam or ice-SBA type into its projectile-data record.",
+        "Beam low-nibble combinations select charged or uncharged tables; non-beams select by",
+        "the type high nibble. Direction chooses one of the record's instruction-list pointers."
+      ]
+    },
+    {
+      "id": "projectile-lifecycle.initialize-record",
+      "symbol": "InitializeProjectile",
+      "localLabel": ".merge",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "Load damage from the record, reject a negative sentinel, then select the direction's",
+        "instruction list. Its first frame supplies byte-sized X/Y radii at offsets 4 and 5;",
+        "an instruction timer of one schedules immediate interpretation."
+      ]
+    },
+    {
+      "id": "projectile-lifecycle.initialize-bomb",
+      "symbol": "InitializeBomb",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Select bomb or power-bomb projectile data from the non-beam type nibble, load damage",
+        "and the record's single instruction-list pointer, and schedule its first command."
+      ]
+    },
+    {
+      "id": "projectile-lifecycle.explosion",
+      "symbol": "Initialize_Beam_Missile_Explosion",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Convert a killed beam to category $07 or a missile/super missile to category $08,",
+        "select the matching explosion instruction list and sound, and give the explosion",
+        "damage 8. Super missiles additionally start earthquake type $14 for 30 ticks."
+      ]
+    },
+    {
+      "id": "projectile-lifecycle.explosion-cooldown",
+      "symbol": "Initialize_Beam_Missile_Explosion",
+      "localLabel": ".setCooldown",
+      "expectedCode": "LDA.W SamusProjectile_CooldownTimer",
+      "paragraphs": [
+        "If the global shot cooldown is 21 or greater, lower it to 20 so the explosion path",
+        "does not retain a longer delay. Shorter existing cooldowns remain unchanged."
+      ]
+    },
+    {
+      "id": "projectile-runtime.interpreter",
+      "symbol": "ProjectileInstructionHandler",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Tick the active slot's instruction timer. On expiry, interpret negative words as",
+        "bank-$93 commands and nonnegative words as eight-byte timed frame records containing",
+        "duration, spritemap, byte-sized X/Y radii and the next instruction cursor."
+      ]
+    },
+    {
+      "id": "projectile-runtime.command-return",
+      "symbol": "ProjectileInstructionHandler",
+      "localLabel": ".loop",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "Commands receive Y pointing after their opcode. A synthetic near return sends RTS",
+        "back to the interpreter loop, allowing commands to change Y or consume arguments.",
+        "A delete command instead removes that return and exits the long handler directly."
+      ]
+    },
+    {
+      "id": "projectile-runtime.delete-command",
+      "symbol": "Instruction_SamusProjectile_Delete",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Clear the current projectile, discard the interpreter's synthetic near return, then",
+        "restore the handler's saved bank/status and return directly to its long caller."
+      ]
+    },
+    {
+      "id": "projectile-runtime.goto-command",
+      "symbol": "Instruction_SamusProjectile_GotoY",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Replace Y with the word pointer stored at the command argument and return to the",
+        "interpreter loop. The target is a bank-$93 instruction-list address."
+      ]
+    },
+    {
+      "id": "projectile-runtime.draw-projectiles",
+      "symbol": "DrawProjectiles",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Visit the five ordinary projectile slots from word offset 8 down to zero. Inactive",
+        "slots and bomb/explosion categories are skipped. Beam combinations without a charge",
+        "or non-beam category alternate frames by slot parity to reduce sprite pressure."
+      ]
+    },
+    {
+      "id": "projectile-runtime.draw-bombs-explosions",
+      "symbol": "DrawBombsAndProjectileExplosions",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Visit all ten slots but draw only categories $03 and above: bombs, power bombs and",
+        "projectile explosions. Power bombs with a zero bomb timer remain hidden. Ordinary",
+        "coordinates use a wider horizontal cull before OAM submission."
+      ]
+    },
+    {
+      "id": "projectile-runtime.rotating-room-draw",
+      "symbol": "DrawProjectiles",
+      "localLabel": ".draw",
+      "expectedCode": "LDA.W CeresStatus",
+      "paragraphs": [
+        "Ceres rotation paths calculate screen position through the rotating-room helper.",
+        "Normal paths subtract layer-1 scroll. A negative spritemap pointer is submitted only",
+        "when the computed Y coordinate is on the visible byte page; offscreen paths retain",
+        "the original no-op long call."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "projectile-lifecycle.Initialize.lines",
+      "symbol": "InitializeProjectile",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Select bank $93 and use word-sized table indices/state."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Directions,X",
+          "comment": "Read projectile direction."
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Keep its direction index."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert direction to a word-pointer byte offset."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Preserve that offset for the chosen data record."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Types,X",
+          "comment": "Read beam-combination and category bits."
+        },
+        {
+          "expectedCode": "BIT.W #$0F00",
+          "comment": "Test the non-beam category nibble."
+        },
+        {
+          "expectedCode": "BNE .notBeam",
+          "comment": "Missiles, hyper beam and ice SBA select the non-beam table."
+        },
+        {
+          "expectedCode": "BIT.W #$0010",
+          "comment": "For beams, test the charged bit."
+        },
+        {
+          "expectedCode": "BNE .charged"
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Keep the uncharged beam-combination index."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert it to a word-table offset."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectileDataPointers_UnchargedBeams,Y",
+          "comment": "Resolve the uncharged beam data record."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".charged:"
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Keep the charged beam-combination index."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectileDataPointers_ChargedBeams,Y",
+          "comment": "Resolve the charged beam data record."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".notBeam:"
+        },
+        {
+          "expectedCode": "XBA",
+          "comment": "Move the category byte into the low accumulator byte."
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Keep the non-beam type index."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectileDataPointers_NonBeam,Y",
+          "comment": "Resolve the non-beam data record."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": ".merge:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read record damage."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_Damages,X",
+          "comment": "Publish damage to the projectile slot."
+        },
+        {
+          "expectedCode": "BPL .dontCrash",
+          "comment": "Continue only for a nonnegative damage value."
+        },
+        {
+          "expectedCode": "JML Crash_Handler",
+          "comment": "Treat a negative data-table value as invalid."
+        },
+        {
+          "expectedCode": ".dontCrash:"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance past damage to the direction-pointer array."
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp12",
+          "comment": "Select this projectile direction's instruction-list pointer."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the selected instruction-list address."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionPointers,X",
+          "comment": "Activate the slot at that script."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W $0004,Y",
+          "comment": "Read the first frame's X radius byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_XRadii,X",
+          "comment": "Publish horizontal collision radius."
+        },
+        {
+          "expectedCode": "LDA.W $0005,Y",
+          "comment": "Read the first frame's Y radius byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_YRadii,X",
+          "comment": "Publish vertical collision radius."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionTimers,X",
+          "comment": "Run the first projectile instruction on the next handler call."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "projectile-lifecycle.InitializeBomb.lines",
+      "symbol": "InitializeBomb",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Select bank $93 and use word-sized projectile state."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Types+1,X",
+          "comment": "Read the byte containing the non-beam type nibble."
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Keep the bomb or power-bomb data index."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert that index to a word-pointer byte offset."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectileDataPointers_NonBeam,Y",
+          "comment": "Resolve the matching non-beam projectile-data record."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the record's damage word."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_Damages,X",
+          "comment": "Publish damage to this bomb slot."
+        },
+        {
+          "expectedCode": "BPL .dontCrash",
+          "comment": "Continue only for a nonnegative damage value."
+        },
+        {
+          "expectedCode": "JML Crash_Handler",
+          "comment": "Treat a negative data-table value as invalid."
+        },
+        {
+          "expectedCode": ".dontCrash:"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance past damage to the single instruction-list pointer."
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the bomb animation/instruction-list address."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionPointers,X",
+          "comment": "Activate the slot at that script."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionTimers,X",
+          "comment": "Run its first command on the next handler call."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "projectile-lifecycle.InitializeExplosion.lines",
+      "symbol": "Initialize_Beam_Missile_Explosion",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Select bank $93 and use word-sized projectile state."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Types,X",
+          "comment": "Read the killed projectile's type and category bits."
+        },
+        {
+          "expectedCode": "BIT.W #$0F00",
+          "comment": "Test whether it belongs to a non-beam category."
+        },
+        {
+          "expectedCode": "BNE .notBeam",
+          "comment": "Missiles and super missiles take the non-beam explosion path."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Types,X"
+        },
+        {
+          "expectedCode": "AND.W #$F0FF",
+          "comment": "Remove the old beam/category nibble while retaining other type flags."
+        },
+        {
+          "expectedCode": "ORA.W #$0700",
+          "comment": "Mark the object as a beam explosion."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_Types,X"
+        },
+        {
+          "expectedCode": "LDA.W ProjectileDataTable_NonBeam_BeamExplosion_pointer",
+          "comment": "Select the beam-explosion instruction list."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionPointers,X"
+        },
+        {
+          "expectedCode": "LDA.W #$000C",
+          "comment": "Select the beam-impact sound."
+        },
+        {
+          "expectedCode": "JSL.L QueueSound_Lib2_Max6",
+          "comment": "Queue it in sound library 2 with six outstanding requests allowed."
+        },
+        {
+          "expectedCode": "BRA .return"
+        },
+        {
+          "expectedCode": ".notBeam:"
+        },
+        {
+          "expectedCode": "LDA.W CinematicFunction",
+          "comment": "Check whether a cinematic currently owns presentation."
+        },
+        {
+          "expectedCode": "BNE .setExplosion",
+          "comment": "Cinematics suppress the missile-impact sound only."
+        },
+        {
+          "expectedCode": "LDA.W #$0007",
+          "comment": "Select the missile-impact sound."
+        },
+        {
+          "expectedCode": "JSL.L QueueSound_Lib2_Max6",
+          "comment": "Queue it in sound library 2."
+        },
+        {
+          "expectedCode": ".setExplosion:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Types,X",
+          "comment": "Reload the original missile type."
+        },
+        {
+          "expectedCode": "PHA",
+          "comment": "Preserve it long enough to distinguish a super missile."
+        },
+        {
+          "expectedCode": "AND.W #$F0FF",
+          "comment": "Remove the old missile category nibble."
+        },
+        {
+          "expectedCode": "ORA.W #$0800",
+          "comment": "Mark the object as a missile-family explosion."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_Types,X"
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Recover the original type flags."
+        },
+        {
+          "expectedCode": "BIT.W #$0200",
+          "comment": "Test the super-missile category bit."
+        },
+        {
+          "expectedCode": "BNE .superMissile"
+        },
+        {
+          "expectedCode": "LDA.W ProjectileDataTable_NonBeam_MissileExplosion_pointer",
+          "comment": "Select the normal missile-explosion instruction list."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionPointers,X"
+        },
+        {
+          "expectedCode": "BRA .setCooldown"
+        },
+        {
+          "expectedCode": ".superMissile:"
+        },
+        {
+          "expectedCode": "LDA.W ProjectileDataTable_NonBeam_SuperMissileExplosion_pointer",
+          "comment": "Select the super-missile explosion instruction list."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionPointers,X"
+        },
+        {
+          "expectedCode": "LDA.W #$0014",
+          "comment": "Select the super-missile impact earthquake type."
+        },
+        {
+          "expectedCode": "STA.W EarthquakeType"
+        },
+        {
+          "expectedCode": "LDA.W #$001E",
+          "comment": "Run that earthquake for 30 ticks."
+        },
+        {
+          "expectedCode": "STA.W EarthquakeTimer"
+        },
+        {
+          "expectedCode": ".setCooldown:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_CooldownTimer",
+          "comment": "Read the global firing cooldown."
+        },
+        {
+          "expectedCode": "CMP.W #$0015",
+          "comment": "Test whether it is at least 21 ticks."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Keep shorter existing cooldowns unchanged."
+        },
+        {
+          "expectedCode": "LDA.W #$0014",
+          "comment": "Cap a long cooldown at 20 ticks."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_CooldownTimer"
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionTimers,X",
+          "comment": "Run the first explosion command on the next handler call."
+        },
+        {
+          "expectedCode": "LDA.W #$0008"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_Damages,X",
+          "comment": "Give every beam/missile explosion damage 8."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "projectile-runtime.Interpreter.lines",
+      "symbol": "ProjectileInstructionHandler",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Select bank $93 and use word-sized cursors and timers."
+        },
+        {
+          "expectedCode": "LDX.W ProjectileIndex",
+          "comment": "Load the shared active-slot word offset."
+        },
+        {
+          "expectedCode": "DEC.W SamusProjectile_InstructionTimers,X",
+          "comment": "Tick this slot's current frame duration."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep the current frame until its timer expires."
+        },
+        {
+          "expectedCode": "LDY.W SamusProjectile_InstructionPointers,X",
+          "comment": "Load the slot's bank-$93 instruction cursor."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the next command opcode or timed-frame duration."
+        },
+        {
+          "expectedCode": "BPL .timer",
+          "comment": "Nonnegative words begin timed eight-byte frame records."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Preserve the negative command address for indirect dispatch."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance Y to the command's arguments."
+        },
+        {
+          "expectedCode": "PEA.W .loop-1",
+          "comment": "Create a near return that resumes interpretation at the next cursor."
+        },
+        {
+          "expectedCode": "JMP.W (DP_Temp12)",
+          "comment": "Dispatch the bank-$93 instruction command."
+        },
+        {
+          "expectedCode": ".timer:"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionTimers,X",
+          "comment": "Install the new frame duration."
+        },
+        {
+          "expectedCode": "LDA.W $0002,Y",
+          "comment": "Read the frame's spritemap pointer."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_SpritemapPointers,X"
+        },
+        {
+          "expectedCode": "LDA.W $0004,Y",
+          "comment": "Read packed X radius and the following Y-radius byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Keep the X radius byte."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_XRadii,X"
+        },
+        {
+          "expectedCode": "LDA.W $0005,Y",
+          "comment": "Read the unaligned Y radius byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_YRadii,X"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0008",
+          "comment": "Advance past the complete timed-frame record."
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_InstructionPointers,X",
+          "comment": "Publish the next instruction cursor."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "projectile-runtime.DeleteCommand.lines",
+      "symbol": "Instruction_SamusProjectile_Delete",
+      "lines": [
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized projectile state."
+        },
+        {
+          "expectedCode": "JSL.L Clear_Projectile",
+          "comment": "Clear the current slot and release its ownership counter."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Discard the synthetic near return to the interpreter loop."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the handler's saved data bank."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the handler's saved processor status."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return directly to the long handler caller."
+        }
+      ]
+    },
+    {
+      "id": "projectile-runtime.GotoCommand.lines",
+      "symbol": "Instruction_SamusProjectile_GotoY",
+      "lines": [
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use a word-sized bank-$93 instruction pointer."
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the target address from the command argument."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Replace the instruction cursor with that target."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Resume the interpreter through its synthetic near return."
+        },
+        {
+          "expectedCode": "if !FEATURE_KEEP_UNREFERENCED"
+        }
+      ]
+    },
+    {
+      "id": "projectile-runtime.DrawProjectiles.lines",
+      "symbol": "DrawProjectiles",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized slot offsets, positions and type flags."
+        },
+        {
+          "expectedCode": "LDX.W #$0008",
+          "comment": "Start at the fifth ordinary projectile slot."
+        },
+        {
+          "expectedCode": "STX.W ProjectileIndex",
+          "comment": "Publish the shared drawing-slot offset."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_InstructionPointers,X",
+          "comment": "Read this slot's instruction cursor."
+        },
+        {
+          "expectedCode": "BNE +",
+          "comment": "Only an active slot can be drawn."
+        },
+        {
+          "expectedCode": "JMP.W .next"
+        },
+        {
+          "expectedCode": "+ LDA.W SamusProjectile_Types,X",
+          "comment": "Read beam-combination and projectile-category bits."
+        },
+        {
+          "expectedCode": "BIT.W #$0F10",
+          "comment": "Test non-beam category bits and the charged-beam bit."
+        },
+        {
+          "expectedCode": "BNE .noFlickering",
+          "comment": "Charged beams and non-beam projectiles bypass beam flicker."
+        },
+        {
+          "expectedCode": "BIT.W #$000C",
+          "comment": "Test the spazer/plasma beam bits."
+        },
+        {
+          "expectedCode": "BNE .spazerPlasma",
+          "comment": "Those wider beams use a separate flicker cadence."
+        },
+        {
+          "expectedCode": "TXA",
+          "comment": "Use slot offset bit 1 to split projectiles into alternating groups."
+        },
+        {
+          "expectedCode": "BIT.W #$0002"
+        },
+        {
+          "expectedCode": "BNE +"
+        },
+        {
+          "expectedCode": "LDA.W NMI_FrameCounter",
+          "comment": "Read serviced-frame parity."
+        },
+        {
+          "expectedCode": "BIT.W #$0001"
+        },
+        {
+          "expectedCode": "BNE .draw",
+          "comment": "Draw even-group ordinary beams on odd frames."
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": "+ LDA.W NMI_FrameCounter"
+        },
+        {
+          "expectedCode": "BIT.W #$0001"
+        },
+        {
+          "expectedCode": "BNE .next"
+        },
+        {
+          "expectedCode": "BRA .draw",
+          "comment": "Draw odd-group ordinary beams on even frames."
+        },
+        {
+          "expectedCode": ".spazerPlasma:"
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "BIT.W #$0002",
+          "comment": "Split wide-beam slots into the same two groups."
+        },
+        {
+          "expectedCode": "BNE +"
+        },
+        {
+          "expectedCode": "LDA.W NMI_FrameCounter"
+        },
+        {
+          "expectedCode": "BIT.W #$0002",
+          "comment": "Use frame-counter bit 1 for a two-frame cadence."
+        },
+        {
+          "expectedCode": "BNE .next"
+        },
+        {
+          "expectedCode": "BRA .draw"
+        },
+        {
+          "expectedCode": "+ LDA.W NMI_FrameCounter"
+        },
+        {
+          "expectedCode": "BIT.W #$0002"
+        },
+        {
+          "expectedCode": "BEQ .next"
+        },
+        {
+          "expectedCode": "BRA .draw",
+          "comment": "Draw the other wide-beam group during the opposite two frames."
+        },
+        {
+          "expectedCode": ".noFlickering:"
+        },
+        {
+          "expectedCode": "AND.W #$0F00",
+          "comment": "Keep the projectile category."
+        },
+        {
+          "expectedCode": "CMP.W #$0300",
+          "comment": "Categories $03 and above belong to the bomb/explosion drawing pass."
+        },
+        {
+          "expectedCode": "BPL .next"
+        },
+        {
+          "expectedCode": ".draw:"
+        },
+        {
+          "expectedCode": "LDA.W CeresStatus",
+          "comment": "Check whether the Ceres rotating-room transform is active."
+        },
+        {
+          "expectedCode": "BPL .noRotation"
+        },
+        {
+          "expectedCode": "JSL.L Calculate_ProjectilePosition_InRotatingElevatorRoom",
+          "comment": "Calculate transformed screen coordinates."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp12",
+          "comment": "Recover transformed screen Y for visibility testing."
+        },
+        {
+          "expectedCode": "BRA .positionCalculated"
+        },
+        {
+          "expectedCode": ".noRotation:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_XPositions,X",
+          "comment": "Read world X."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W Layer1XPosition",
+          "comment": "Convert it to screen X."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_YPositions,X",
+          "comment": "Read world Y."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W Layer1YPosition",
+          "comment": "Convert it to screen Y."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12"
+        },
+        {
+          "expectedCode": ".positionCalculated:"
+        },
+        {
+          "expectedCode": "AND.W #$FF00",
+          "comment": "Test whether screen Y lies on byte page zero."
+        },
+        {
+          "expectedCode": "BNE +",
+          "comment": "Use the retained offscreen path otherwise."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_SpritemapPointers,X",
+          "comment": "Read the current spritemap pointer."
+        },
+        {
+          "expectedCode": "BPL .loadIndex",
+          "comment": "Only negative-form pointers are submitted by this path."
+        },
+        {
+          "expectedCode": "JSL.L AddProjectileSpritemapToOAM",
+          "comment": "Append the visible projectile spritemap to OAM."
+        },
+        {
+          "expectedCode": "BRA .loadIndex"
+        },
+        {
+          "expectedCode": "+ LDA.W SamusProjectile_SpritemapPointers,X"
+        },
+        {
+          "expectedCode": "BPL .loadIndex"
+        },
+        {
+          "expectedCode": "JSL.L RTL_818AB7",
+          "comment": "Retain the original offscreen no-op long call."
+        },
+        {
+          "expectedCode": ".loadIndex:"
+        },
+        {
+          "expectedCode": "LDX.W ProjectileIndex",
+          "comment": "Recover the slot offset after drawing code repurposes X."
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Move to the preceding ordinary projectile slot."
+        },
+        {
+          "expectedCode": "STX.W ProjectileIndex"
+        },
+        {
+          "expectedCode": "BMI .echoes",
+          "comment": "Finish after offsets $08 through $00."
+        },
+        {
+          "expectedCode": "JMP.W .loop"
+        },
+        {
+          "expectedCode": ".echoes:"
+        },
+        {
+          "expectedCode": "JSL.L DrawShinesparkCrashEchoProjectiles",
+          "comment": "Draw the independent shinespark crash echoes."
+        },
+        {
+          "expectedCode": "JSL.L HandleProjectileTrails",
+          "comment": "Advance and draw projectile trail objects."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": "if !FEATURE_KEEP_UNREFERENCED"
+        }
+      ]
+    },
+    {
+      "id": "projectile-runtime.DrawBombsExplosions.lines",
+      "symbol": "DrawBombsAndProjectileExplosions",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized slot offsets, positions and categories."
+        },
+        {
+          "expectedCode": "LDX.W #$0012",
+          "comment": "Start at the final of all ten projectile/bomb slots."
+        },
+        {
+          "expectedCode": "STX.W ProjectileIndex",
+          "comment": "Publish the shared drawing-slot offset."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_InstructionPointers,X",
+          "comment": "Read this slot's instruction cursor."
+        },
+        {
+          "expectedCode": "BEQ .next",
+          "comment": "Skip inactive slots."
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_Types,X",
+          "comment": "Read projectile type and category."
+        },
+        {
+          "expectedCode": "AND.W #$0F00",
+          "comment": "Keep category bits $00..$0F."
+        },
+        {
+          "expectedCode": "CMP.W #$0300",
+          "comment": "Bombs, power bombs and explosions begin at category $03."
+        },
+        {
+          "expectedCode": "BMI .next",
+          "comment": "Leave beams and missiles to the ordinary projectile pass."
+        },
+        {
+          "expectedCode": "BEQ .powerBomb",
+          "comment": "Category $03 needs an active power-bomb timer."
+        },
+        {
+          "expectedCode": "CMP.W #$0500",
+          "comment": "Category $05 uses ordinary screen-coordinate calculation."
+        },
+        {
+          "expectedCode": "BEQ .normalPositionCalculation"
+        },
+        {
+          "expectedCode": "LDA.W CeresStatus",
+          "comment": "Check whether rotating-room coordinates are active."
+        },
+        {
+          "expectedCode": "BPL .normalPositionCalculation"
+        },
+        {
+          "expectedCode": "JSL.L Calculate_ProjectilePosition_InRotatingElevatorRoom",
+          "comment": "Calculate transformed screen coordinates for other categories."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp12",
+          "comment": "Recover transformed screen Y."
+        },
+        {
+          "expectedCode": "BRA .calculatedPosition"
+        },
+        {
+          "expectedCode": ".powerBomb:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_BombTimers-$A,X",
+          "comment": "Read the power-bomb slot's timer using its $0A-offset array base."
+        },
+        {
+          "expectedCode": "BEQ .next",
+          "comment": "Do not draw an inactive power bomb."
+        },
+        {
+          "expectedCode": ".normalPositionCalculation:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_XPositions,X",
+          "comment": "Read world X."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W Layer1XPosition",
+          "comment": "Convert it to screen X."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14"
+        },
+        {
+          "expectedCode": "CMP.W #$0130",
+          "comment": "Cull at or beyond 304 pixels to the right."
+        },
+        {
+          "expectedCode": "BPL .next"
+        },
+        {
+          "expectedCode": "CMP.W #$FFD0",
+          "comment": "Cull below -48 pixels to the left."
+        },
+        {
+          "expectedCode": "BMI .next"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_YPositions,X",
+          "comment": "Read world Y."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W Layer1YPosition",
+          "comment": "Convert it to screen Y."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12"
+        },
+        {
+          "expectedCode": ".calculatedPosition:"
+        },
+        {
+          "expectedCode": "AND.W #$FF00",
+          "comment": "Test whether screen Y lies on byte page zero."
+        },
+        {
+          "expectedCode": "BNE .offScreen"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_SpritemapPointers,X",
+          "comment": "Read the current spritemap pointer."
+        },
+        {
+          "expectedCode": "JSL.L AddProjectileSpritemapToOAM",
+          "comment": "Append the visible bomb/explosion spritemap to OAM."
+        },
+        {
+          "expectedCode": "LDX.W ProjectileIndex",
+          "comment": "Recover the slot offset after OAM code repurposes X."
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".offScreen:"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_SpritemapPointers,X"
+        },
+        {
+          "expectedCode": "JSL.L RTL_818AB7",
+          "comment": "Retain the original offscreen no-op long call."
+        },
+        {
+          "expectedCode": "LDX.W ProjectileIndex"
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Move to the preceding word-indexed slot."
+        },
+        {
+          "expectedCode": "STX.W ProjectileIndex"
+        },
+        {
+          "expectedCode": "BPL .loop",
+          "comment": "Visit offsets $12 through $00."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    }
+  ]
+}

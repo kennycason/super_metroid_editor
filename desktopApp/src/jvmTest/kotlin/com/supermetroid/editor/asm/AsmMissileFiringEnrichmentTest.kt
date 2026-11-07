@@ -10,7 +10,7 @@ class AsmMissileFiringEnrichmentTest {
     private val current get() = AsmSourceAugmentation.bundled()
     private val prefix = "missile-firing."
     private val groups get() = current.lineDocumentation.filter { it.id.startsWith(prefix) }
-    private fun previous() = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-23.json"))
+    private fun frozen(revision: Int) = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-$revision.json"))
         .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
     private fun recipe() = current.copy(revision = "missile-firing-test", upstreamSourceSha256 = "", renames = emptyList(),
         documentation = current.documentation.filter { it.id.startsWith(prefix) }, lineDocumentation = groups)
@@ -23,12 +23,16 @@ class AsmMissileFiringEnrichmentTest {
     }
 
     @Test fun `v24 adds missile and super-link firing without changing frozen v23`() {
-        val v23 = previous()
-        assertEquals("super-metroid-ntsc-24", current.revision)
-        assertEquals(v23, current.copy(revision = v23.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith(prefix) },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith(prefix) }))
-        assertEquals(7, current.documentation.count { it.id.startsWith(prefix) })
+        val v23 = frozen(23); val v24 = frozen(24)
+        assertEquals("super-metroid-ntsc-24", v24.revision)
+        assertEquals(v23, v24.copy(revision = v23.revision,
+            documentation = v24.documentation.filterNot { it.id.startsWith(prefix) },
+            lineDocumentation = v24.lineDocumentation.filterNot { it.id.startsWith(prefix) }))
+        assertEquals(v24.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id })
+        assertEquals(v24.lineDocumentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            groups.sortedBy { it.id })
+        assertEquals(7, v24.documentation.count { it.id.startsWith(prefix) })
         assertEquals(2, groups.size)
         assertEquals(148, groups.sumOf { it.lines.size })
         assertEquals(76, groups.flatMap { it.lines }.count { it.comment != null })

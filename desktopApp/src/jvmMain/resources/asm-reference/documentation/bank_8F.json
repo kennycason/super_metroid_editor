@@ -1,0 +1,349 @@
+{
+  "fileId": "bank_8F.asm",
+  "documentation": [
+    {
+      "id": "rooms.state-checks",
+      "symbol": "Room_State_Checking_Handler",
+      "expectedCode": "TXA",
+      "paragraphs": [
+        "Walk bank-$8F condition functions starting eleven bytes after the room header.",
+        "Each function word is followed by that condition's own payload; X points at",
+        "the payload when the function runs. PEA supplies an RTS return to the loop.",
+        "A failed condition advances X past its payload and returns with RTS. A match",
+        "jumps to Use_StatePointer_inX, which drops that near return and exits with RTL."
+      ]
+    },
+    {
+      "id": "rooms.selected-state",
+      "symbol": "Use_StatePointer_inX",
+      "expectedCode": "STX.W RoomStatePointer",
+      "paragraphs": [
+        "X is the chosen state-header address, not the address of a pointer to dereference.",
+        "The default condition reaches this routine with X immediately after its own",
+        "function word, at the inline default state header. Matching non-default checks",
+        "instead load X from their payload's state pointer. Discard the scan loop's",
+        "two-byte return before RTL returns to the selector's long caller."
+      ]
+    },
+    {
+      "id": "rooms.event-state",
+      "symbol": "RoomStateCheck_EventHasBeenSet",
+      "expectedCode": "LDA.W $0000,X",
+      "paragraphs": [
+        "This condition's payload is one event byte followed by a two-byte state pointer.",
+        "On success select that pointed-to state through the common long-return exit.",
+        "On failure skip all three payload bytes and RTS back to the condition scan."
+      ]
+    },
+    {
+      "id": "rooms.setup-callback",
+      "symbol": "Execute_Room_Setup_ASM",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "State offset $18 is an optional bank-$8F setup callback. A zero word skips it;",
+        "otherwise JSR invokes the setup routine, which returns with RTS. Restore the",
+        "saved data bank and processor status before RTL returns to the long caller.",
+        "This wrapper expects the state-header data to be readable in the entry data bank."
+      ]
+    },
+    {
+      "id": "rooms.door-callback",
+      "symbol": "Execute_Door_ASM",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Read the optional door-ASM word from bank-$83 door data, but execute it in",
+        "bank $8F. For a nonzero pointer, PEA builds the callback's near RTS return",
+        "before the indirect JMP. The wrapper then restores bank/status and returns",
+        "with RTL. This is distinct from the room-state setup and main callbacks."
+      ]
+    },
+    {
+      "id": "rooms.main-callback",
+      "symbol": "Execute_Room_Main_ASM",
+      "expectedCode": "LDX.W RoomMainASMPointer",
+      "paragraphs": [
+        "Execute the cached bank-$8F room-main word pointer when it is nonzero.",
+        "Set X to zero for the indexed indirect JSR, and restore the caller's data bank",
+        "after the callback's RTS. Unlike setup/door wrappers, this entry has no PHP/PLP",
+        "or register-width setup; it relies on the calling gameplay path's register mode."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "rooms.Room_State_Checking_Handler.lines",
+      "symbol": "Room_State_Checking_Handler",
+      "lines": [
+        {
+          "expectedCode": "TXA",
+          "comment": "Start from the room-header address supplied in X."
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Add the fixed header length without an incoming carry."
+        },
+        {
+          "expectedCode": "ADC.W #$000B",
+          "comment": "Skip eleven header bytes to the first condition-function word."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use X as the condition-stream cursor."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,X",
+          "comment": "Read the next bank-$8F condition function's word address."
+        },
+        {
+          "expectedCode": "STA.W EventPointer",
+          "comment": "Save the callback word for the indirect near jump."
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance past the two-byte function word to its payload."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "PEA.W .loop-1",
+          "comment": "Supply a synthetic RTS return to the loop, not a new long-call frame."
+        },
+        {
+          "expectedCode": "JMP.W (EventPointer)",
+          "comment": "Run the condition function; failure returns here via RTS."
+        }
+      ]
+    },
+    {
+      "id": "rooms.Use_StatePointer_inX.lines",
+      "symbol": "Use_StatePointer_inX",
+      "lines": [
+        {
+          "expectedCode": "STX.W RoomStatePointer",
+          "comment": "Select the state header at X itself, not a pointer read from [X]."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Discard the condition loop's synthetic near return word."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return directly to the caller of Room_State_Checking_Handler."
+        },
+        {
+          "expectedCode": "if !FEATURE_KEEP_UNREFERENCED"
+        }
+      ]
+    },
+    {
+      "id": "rooms.RoomStateCheck_EventHasBeenSet.lines",
+      "symbol": "RoomStateCheck_EventHasBeenSet",
+      "lines": [
+        {
+          "expectedCode": "LDA.W $0000,X",
+          "comment": "Read the event byte at the current condition payload."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Discard the neighboring state-pointer byte."
+        },
+        {
+          "expectedCode": "JSL.L CheckIfEvent_inA_HasHappened",
+          "comment": "Test this event against the game's event flags."
+        },
+        {
+          "expectedCode": "BCC +",
+          "comment": "On failure, skip this condition's payload and return to the stream loop."
+        },
+        {
+          "expectedCode": "LDA.W $0001,X",
+          "comment": "On success, read the state pointer immediately after the event byte."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use that selected state-header address as X."
+        },
+        {
+          "expectedCode": "JMP.W Use_StatePointer_inX",
+          "comment": "Take the shared success exit, which discards the synthetic near return."
+        },
+        {
+          "expectedCode": "+   INX",
+          "comment": "Skip the event byte and two-byte state pointer on the failure path."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "RTS resumes the condition loop at its next function word."
+        }
+      ]
+    },
+    {
+      "id": "rooms.Execute_Room_Setup_ASM.lines",
+      "symbol": "Execute_Room_Setup_ASM",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDX.W RoomStatePointer",
+          "comment": "Use the room state chosen by the condition stream."
+        },
+        {
+          "expectedCode": "LDA.W $0018,X",
+          "comment": "Read the setup-ASM pointer at state offset $18."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "A zero pointer means there is no setup callback."
+        },
+        {
+          "expectedCode": "PHK",
+          "comment": "Select this code bank for the optional room callback."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "JSR.W ($0018,X)",
+          "comment": "Call the bank-$8F setup routine with a near RTS return."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the data bank saved before the callback."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the saved processor status."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return to the long caller after optional setup ASM."
+        }
+      ]
+    },
+    {
+      "id": "rooms.Execute_Door_ASM.lines",
+      "symbol": "Execute_Door_ASM",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDX.W DoorPointer",
+          "comment": "Use the current door-header pointer."
+        },
+        {
+          "expectedCode": "LDA.L DoorHeaders_doorASM,X",
+          "comment": "Read the door-ASM word from bank-$83 door data."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Skip the callback when its pointer is zero."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Use a scratch word for the indirect near jump."
+        },
+        {
+          "expectedCode": "PHK",
+          "comment": "Select bank $8F for executing door ASM."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PEA.W .return-1",
+          "comment": "Create the near return word minus one expected by the callback's RTS."
+        },
+        {
+          "expectedCode": "JMP.W (DP_Temp12)",
+          "comment": "Jump to the bank-$8F door callback through the scratch pointer."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the caller's data bank after the optional callback."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the processor status saved on entry."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return to the long caller, not directly from the door callback."
+        }
+      ]
+    },
+    {
+      "id": "rooms.Execute_Room_Main_ASM.lines",
+      "symbol": "Execute_Room_Main_ASM",
+      "lines": [
+        {
+          "expectedCode": "LDX.W RoomMainASMPointer",
+          "comment": "Read the room-main callback pointer cached from the state header."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Zero skips the per-update room callback."
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the caller's data bank around the room-main routine."
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $8F for the room-main callback's data accesses."
+        },
+        {
+          "expectedCode": "LDX.W #$0000",
+          "comment": "Use X = 0 to call through the pointer without an added index."
+        },
+        {
+          "expectedCode": "JSR.W (RoomMainASMPointer,X)",
+          "comment": "Call bank-$8F room main ASM using its cached word pointer."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the data bank before returning to gameplay."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return to the caller; this wrapper does not save processor status."
+        }
+      ]
+    }
+  ]
+}

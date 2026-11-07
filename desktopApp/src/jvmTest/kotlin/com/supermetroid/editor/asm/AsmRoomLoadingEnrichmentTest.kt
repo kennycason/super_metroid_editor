@@ -29,8 +29,9 @@ class AsmRoomLoadingEnrichmentTest {
         assertEquals(previous, v7.copy(revision = previous.revision,
             documentation = v7.documentation.filterNot { it.id.startsWith("rooms.") },
             lineDocumentation = v7.lineDocumentation.filterNot { it.id.startsWith("rooms.") }))
-        assertEquals(v7.documentation.filter { it.id.startsWith("rooms.") }, current.documentation.filter { it.id.startsWith("rooms.") })
-        assertEquals(v7.lineDocumentation.filter { it.id.startsWith("rooms.") }, groups)
+        assertEquals(v7.documentation.filter { it.id.startsWith("rooms.") }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith("rooms.") }.sortedBy { it.id })
+        assertEquals(v7.lineDocumentation.filter { it.id.startsWith("rooms.") }.sortedBy { it.id }, groups.sortedBy { it.id })
         assertEquals(16, current.documentation.count { it.id.startsWith("rooms.") })
         assertEquals(13, groups.size)
         assertEquals(337, groups.flatMap { it.lines }.count { it.comment != null })

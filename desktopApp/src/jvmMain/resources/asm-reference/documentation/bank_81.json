@@ -1,0 +1,667 @@
+{
+  "fileId": "bank_81.asm",
+  "documentation": [
+    {
+      "id": "save-files.write-slot",
+      "symbol": "SaveToSRAM",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Normalize the requested slot to 0..2, refresh the WRAM save mirror with live",
+        "equipment/options, explored maps, load station and area, then copy its complete",
+        "word range to that slot's SRAM offset. Sum every word modulo $10000 while copying."
+      ]
+    },
+    {
+      "id": "save-files.refresh-current-map",
+      "symbol": "SaveToSRAM",
+      "localLabel": ".loopMap",
+      "expectedCode": "LDA.W MapTilesExplored,Y",
+      "paragraphs": [
+        "Before compacting map data, copy the current area's $100-byte working map into",
+        "its area slice in the full explored-map array. SaveMap then exports only the",
+        "listed meaningful bytes for all areas into the SRAM mirror."
+      ]
+    },
+    {
+      "id": "save-files.write-checksums",
+      "symbol": "SaveToSRAM",
+      "localLabel": ".loopToSRAM",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "Copy every mirror word into the chosen slot and accumulate its 16-bit checksum.",
+        "Store two identical checksum copies and two identical one's-complement copies;",
+        "the loader accepts either checksum/complement pair."
+      ]
+    },
+    {
+      "id": "save-files.read-slot",
+      "symbol": "LoadFromSRAM",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Copy the selected SRAM slot into the WRAM mirror while recomputing the word sum.",
+        "Validate the primary checksum and complement first, then fall back to the second",
+        "pair. A valid slot is committed to live state only after one pair passes."
+      ]
+    },
+    {
+      "id": "save-files.load-success",
+      "symbol": "LoadFromSRAM",
+      "localLabel": ".success",
+      "expectedCode": "LDY.W #$005E",
+      "paragraphs": [
+        "For a valid slot, copy the $60-byte equipment/options region into live low RAM,",
+        "expand the saved map representation, restore station and area, and return carry",
+        "clear. Validation never partially publishes a corrupt mirror."
+      ]
+    },
+    {
+      "id": "save-files.load-corrupt",
+      "symbol": "LoadFromSRAM",
+      "localLabel": ".corrupt",
+      "expectedCode": "STZ.B DP_Temp14",
+      "paragraphs": [
+        "If both checksum pairs fail, overwrite the complete selected SRAM slot with zero,",
+        "reset station and area to zero, and return carry set. Live equipment and map data",
+        "are intentionally not copied from the invalid mirror."
+      ]
+    },
+    {
+      "id": "save-files.slot-offsets",
+      "symbol": "SaveSlotOffsets",
+      "expectedCode": "dw $0010,$066C,$0CC8",
+      "paragraphs": [
+        "The three slots begin at SRAM offsets $0010, $066C and $0CC8. The caller's slot",
+        "number is doubled before indexing this word table."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "save-files.SaveToSRAM.lines",
+      "symbol": "SaveToSRAM",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's processor status."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit data, indices, checksums and offsets."
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the caller's data bank."
+        },
+        {
+          "expectedCode": "PHX"
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve both caller index registers."
+        },
+        {
+          "expectedCode": "PEA.W SRAMMirror_Equipment>>8&$FF00",
+          "comment": "Push the WRAM mirror bank as a data-bank value."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select bank $7E for live state and mirror accesses."
+        },
+        {
+          "expectedCode": "STZ.B DP_Temp14",
+          "comment": "Start the modulo-$10000 checksum at zero."
+        },
+        {
+          "expectedCode": "AND.W #$0003",
+          "comment": "Limit the supplied slot number to its low two bits."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the slot number to a word-table byte offset."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Retain that offset for slot and checksum tables."
+        },
+        {
+          "expectedCode": "LDY.W #$005E",
+          "comment": "Start at the final word of the $60-byte equipment/options region."
+        },
+        {
+          "expectedCode": ".loopSamus:"
+        },
+        {
+          "expectedCode": "LDA.W EquippedItems,Y",
+          "comment": "Read one live equipment/options word."
+        },
+        {
+          "expectedCode": "STA.W SRAMMirror_Equipment,Y",
+          "comment": "Refresh the corresponding save-mirror word."
+        },
+        {
+          "expectedCode": "DEY"
+        },
+        {
+          "expectedCode": "DEY",
+          "comment": "Move backward by one word."
+        },
+        {
+          "expectedCode": "BPL .loopSamus",
+          "comment": "Copy all $30 words through offset zero."
+        },
+        {
+          "expectedCode": "LDX.W #$0000"
+        },
+        {
+          "expectedCode": "LDA.W AreaIndex",
+          "comment": "Read the current area number."
+        },
+        {
+          "expectedCode": "XBA",
+          "comment": "Multiply it by $100 for the area's explored-map slice."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X selects that slice in the all-area map array."
+        },
+        {
+          "expectedCode": "LDY.W #$0000",
+          "comment": "Y selects the current area's working-map byte pair."
+        },
+        {
+          "expectedCode": ".loopMap:"
+        },
+        {
+          "expectedCode": "LDA.W MapTilesExplored,Y",
+          "comment": "Read two bytes from the current working map."
+        },
+        {
+          "expectedCode": "STA.W ExploredMapTiles,X",
+          "comment": "Update the same bytes in the area's persistent full-map slice."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance the working-map offset by one word."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance the full-map destination by one word."
+        },
+        {
+          "expectedCode": "CPY.W #$0100",
+          "comment": "Test the end of this area's $100-byte map."
+        },
+        {
+          "expectedCode": "BMI .loopMap"
+        },
+        {
+          "expectedCode": "JSR.W SaveMap",
+          "comment": "Compact the meaningful explored-map bytes for all areas into the mirror."
+        },
+        {
+          "expectedCode": "LDA.W LoadStationIndex",
+          "comment": "Read the current load/save station index."
+        },
+        {
+          "expectedCode": "STA.W SRAMMirror_SaveStationIndex",
+          "comment": "Publish it to the save mirror."
+        },
+        {
+          "expectedCode": "LDA.W AreaIndex",
+          "comment": "Read the current area."
+        },
+        {
+          "expectedCode": "STA.W SRAMMirror_AreaIndex",
+          "comment": "Publish it to the save mirror."
+        },
+        {
+          "expectedCode": "LDX.B DP_Temp12",
+          "comment": "Recover the doubled slot number."
+        },
+        {
+          "expectedCode": "LDA.L SaveSlotOffsets,X",
+          "comment": "Read this slot's SRAM starting offset."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X becomes the destination cursor within SRAM."
+        },
+        {
+          "expectedCode": "LDY.W #SRAMMirror_Equipment",
+          "comment": "Y begins at the first word of the WRAM mirror."
+        },
+        {
+          "expectedCode": ".loopToSRAM:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read one mirror word."
+        },
+        {
+          "expectedCode": "STA.L SRAM_Start,X",
+          "comment": "Write it into the selected SRAM slot."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp14",
+          "comment": "Add the word to the wrapping checksum."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Keep the new 16-bit sum."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance the SRAM destination by one word."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance the WRAM mirror source by one word."
+        },
+        {
+          "expectedCode": "CPY.W #SRAMMirror_End+1",
+          "comment": "Test the first address after the complete mirror range."
+        },
+        {
+          "expectedCode": "BNE .loopToSRAM"
+        },
+        {
+          "expectedCode": "LDX.B DP_Temp12",
+          "comment": "Recover the doubled slot number for metadata arrays."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Read the completed checksum."
+        },
+        {
+          "expectedCode": "STA.L SRAM_Checksum0,X",
+          "comment": "Store the primary checksum copy."
+        },
+        {
+          "expectedCode": "STA.L SRAM_Checksum1,X",
+          "comment": "Store the secondary checksum copy."
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF",
+          "comment": "Calculate the checksum's one's complement."
+        },
+        {
+          "expectedCode": "STA.L SRAM_Complement0,X",
+          "comment": "Store the primary complement."
+        },
+        {
+          "expectedCode": "STA.L SRAM_Complement1,X",
+          "comment": "Store the secondary complement."
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Return the routine's historical success carry state."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the caller's bank, status and index registers."
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "save-files.LoadFromSRAM.lines",
+      "symbol": "LoadFromSRAM",
+      "lines": [
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit slot offsets, data, indices and checksum arithmetic."
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHX"
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve the caller's data bank and index registers."
+        },
+        {
+          "expectedCode": "PEA.W SRAMMirror_Equipment>>8&$FF00",
+          "comment": "Push the WRAM mirror bank."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select bank $7E for mirror and live-state accesses."
+        },
+        {
+          "expectedCode": "STZ.B DP_Temp14",
+          "comment": "Start the recomputed checksum at zero."
+        },
+        {
+          "expectedCode": "AND.W #$0003",
+          "comment": "Limit the requested slot to its low two bits."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the slot number to a metadata-table word offset."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Retain the doubled slot number."
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.L SaveSlotOffsets,X",
+          "comment": "Read this slot's SRAM starting offset."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X becomes the source cursor within SRAM."
+        },
+        {
+          "expectedCode": "LDY.W #SRAMMirror_Equipment",
+          "comment": "Y begins at the WRAM save mirror."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.L SRAM_Checksum0,X",
+          "comment": "Read one slot word; the checksum-array base aliases SRAM offset zero."
+        },
+        {
+          "expectedCode": "STA.W $0000,Y",
+          "comment": "Stage it in the WRAM mirror without publishing live state."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp14",
+          "comment": "Add the word to the wrapping checksum."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Keep the recomputed 16-bit sum."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance the SRAM source by one word."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance the mirror destination by one word."
+        },
+        {
+          "expectedCode": "CPY.W #SRAMMirror_End+1",
+          "comment": "Test the end of the complete staged mirror."
+        },
+        {
+          "expectedCode": "BNE .loop"
+        },
+        {
+          "expectedCode": "LDX.B DP_Temp12",
+          "comment": "Recover the doubled slot number for checksum metadata."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Read the recomputed checksum."
+        },
+        {
+          "expectedCode": "CMP.L SRAM_Checksum0,X",
+          "comment": "Compare with the primary stored checksum."
+        },
+        {
+          "expectedCode": "BNE .doubleCheck",
+          "comment": "Try the redundant pair when the checksum differs."
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF",
+          "comment": "Calculate the recomputed checksum's complement."
+        },
+        {
+          "expectedCode": "CMP.L SRAM_Complement0,X",
+          "comment": "Compare with the primary stored complement."
+        },
+        {
+          "expectedCode": "BNE .doubleCheck",
+          "comment": "Try the redundant pair when its complement differs."
+        },
+        {
+          "expectedCode": "BRA .success",
+          "comment": "The primary checksum/complement pair validates the staged slot."
+        },
+        {
+          "expectedCode": ".doubleCheck:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Recover the uncomplemented recomputed checksum."
+        },
+        {
+          "expectedCode": "CMP.L SRAM_Checksum1,X",
+          "comment": "Compare with the secondary checksum copy."
+        },
+        {
+          "expectedCode": "BNE .corrupt",
+          "comment": "Both checksum copies disagree; reject the slot."
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF",
+          "comment": "Calculate the recomputed complement again."
+        },
+        {
+          "expectedCode": "CMP.L SRAM_Complement1,X",
+          "comment": "Compare with the secondary complement copy."
+        },
+        {
+          "expectedCode": "BNE .corrupt",
+          "comment": "Reject when the final complement check fails."
+        },
+        {
+          "expectedCode": ".success:"
+        },
+        {
+          "expectedCode": "LDY.W #$005E",
+          "comment": "Start at the final word of the staged $60-byte equipment/options region."
+        },
+        {
+          "expectedCode": ".loopSuccess:"
+        },
+        {
+          "expectedCode": "LDA.W SRAMMirror_Equipment,Y",
+          "comment": "Read one validated staged word."
+        },
+        {
+          "expectedCode": "STA.W EquippedItems,Y",
+          "comment": "Commit it into live equipment/options RAM."
+        },
+        {
+          "expectedCode": "DEY"
+        },
+        {
+          "expectedCode": "DEY",
+          "comment": "Move backward by one word."
+        },
+        {
+          "expectedCode": "BPL .loopSuccess",
+          "comment": "Commit all $30 words through offset zero."
+        },
+        {
+          "expectedCode": "JSR.W LoadMap",
+          "comment": "Expand saved map bytes into the full explored-map representation."
+        },
+        {
+          "expectedCode": "LDA.W SRAMMirror_SaveStationIndex",
+          "comment": "Read the validated station index."
+        },
+        {
+          "expectedCode": "STA.W LoadStationIndex",
+          "comment": "Commit it to live state."
+        },
+        {
+          "expectedCode": "LDA.W SRAMMirror_AreaIndex",
+          "comment": "Read the validated area index."
+        },
+        {
+          "expectedCode": "STA.W AreaIndex",
+          "comment": "Commit it to live state."
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Report a valid slot with carry clear."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".corrupt:"
+        },
+        {
+          "expectedCode": "STZ.B DP_Temp14",
+          "comment": "Reset the otherwise-unused checksum accumulator for the clear pass."
+        },
+        {
+          "expectedCode": "LDX.B DP_Temp12",
+          "comment": "Recover the doubled slot number."
+        },
+        {
+          "expectedCode": "LDA.L SaveSlotOffsets,X",
+          "comment": "Read the corrupt slot's starting offset."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X becomes the SRAM clear cursor."
+        },
+        {
+          "expectedCode": "LDY.W #SRAMMirror_Equipment",
+          "comment": "Use the mirror range only as the clear-loop length."
+        },
+        {
+          "expectedCode": "LDA.W #$0000",
+          "comment": "Prepare the zero fill word."
+        },
+        {
+          "expectedCode": ".loopCorrupt:"
+        },
+        {
+          "expectedCode": "STA.L SRAM_Checksum0,X",
+          "comment": "Clear one word in the selected SRAM slot."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp14"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "The retained checksum stays zero throughout the fill."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance the SRAM clear cursor."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance the range-length cursor."
+        },
+        {
+          "expectedCode": "CPY.W #SRAMMirror_End+1",
+          "comment": "Clear exactly one complete slot-sized range."
+        },
+        {
+          "expectedCode": "BNE .loopCorrupt"
+        },
+        {
+          "expectedCode": "LDA.W #$0000"
+        },
+        {
+          "expectedCode": "STA.W LoadStationIndex",
+          "comment": "Fall back to station zero."
+        },
+        {
+          "expectedCode": "STA.W AreaIndex",
+          "comment": "Fall back to area zero, Crateria."
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Report that the selected SRAM slot was cleared."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "save-files.SaveSlotOffsets.lines",
+      "symbol": "SaveSlotOffsets",
+      "lines": [
+        {
+          "expectedCode": "dw $0010,$066C,$0CC8",
+          "comment": "Slots A, B and C begin at these SRAM byte offsets."
+        }
+      ]
+    }
+  ]
+}

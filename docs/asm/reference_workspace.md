@@ -23,7 +23,10 @@ available in either mode.
 ## Frozen augmented project baseline
 
 New Project ASM workspaces start from the exact upstream revision plus the reviewed
-recipe in `desktopApp/src/jvmMain/resources/asm-reference/augmentation.json`.
+recipe rooted at
+`desktopApp/src/jvmMain/resources/asm-reference/documentation/manifest.json`.
+The manifest owns version metadata and renames; each adjacent `bank_XX.json` owns
+the current block and line documentation for one source bank.
 The recipe checks the complete upstream source digest before adding ordinary
 game-code comments or performing symbol-aware renames. Revision 1 documents Speed
 Booster timing, jump/movement storage, escape timers, bomb fuse timing and item
@@ -60,6 +63,22 @@ merges the project's saved edits onto the current reviewed baseline.
 If an already-enabled project loses `asm/base/`, repair reports the missing
 authored input instead of silently creating a newer baseline. Restore that folder
 from the project's backup or source control; its modules and overrides are not discarded.
+
+### Maintaining the current documentation
+
+The files under `asm-reference/documentation/` are the only authored current
+documentation. To add or revise an explanation, edit the JSON file matching its
+ASM bank. Records inherit that file's `fileId`, so contributors do not repeat the
+bank on every entry. Keep record IDs stable and unique; block targets are unique by
+symbol/local label, and guarded line scopes are unique by symbol. When publishing a
+new documentation version, advance the manifest revision and `updatedAt` date. Add
+a new bank file to the manifest once if documentation reaches a previously unlisted
+bank.
+
+The numbered monolithic files under `src/jvmTest/resources/asm-baselines/` are
+frozen migration fixtures. They prove old-to-new update behavior and are not files
+to edit when improving today's comments. Runtime loading merges the current bank
+files directly; there is no generated monolithic authoring copy to keep in sync.
 
 ### Explicit baseline updates
 

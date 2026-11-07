@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 internal data class AsmSourceLineDocumentation(
     val id: String,
-    val fileId: String,
+    val fileId: String = "",
     val symbol: String,
     val lines: List<AsmSourceLineNote>,
 )

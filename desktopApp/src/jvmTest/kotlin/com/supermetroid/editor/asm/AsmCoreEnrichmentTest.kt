@@ -31,8 +31,9 @@ class AsmCoreEnrichmentTest {
         assertEquals(previous, v5.copy(revision = previous.revision,
             documentation = v5.documentation.filterNot { it.id.startsWith("core.") },
             lineDocumentation = v5.lineDocumentation.filterNot { it.id.startsWith("core.") }))
-        assertEquals(v5.documentation.filter { it.id.startsWith("core.") }, current.documentation.filter { it.id.startsWith("core.") })
-        assertEquals(v5.lineDocumentation.filter { it.id.startsWith("core.") }, groups)
+        assertEquals(v5.documentation.filter { it.id.startsWith("core.") }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith("core.") }.sortedBy { it.id })
+        assertEquals(v5.lineDocumentation.filter { it.id.startsWith("core.") }.sortedBy { it.id }, groups.sortedBy { it.id })
         assertEquals(15, current.documentation.count { it.id.startsWith("core.") })
         assertEquals(9, groups.size)
         assertEquals(182, groups.flatMap { it.lines }.count { it.comment != null })

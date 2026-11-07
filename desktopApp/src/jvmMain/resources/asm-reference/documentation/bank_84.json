@@ -1,0 +1,1426 @@
+{
+  "fileId": "bank_84.asm",
+  "documentation": [
+    {
+      "id": "plm-runtime.coordinates",
+      "symbol": "Calculate_PLM_Block_Coordinates",
+      "expectedCode": "LDA.W PLM_BlockIndices,X",
+      "paragraphs": [
+        "PLM_BlockIndices stores a byte offset into the room's word-sized level data.",
+        "Halve it to a linear block number, then divide by the room width using the",
+        "SNES hardware divider. The quotient is the zero-based Y block and the",
+        "remainder is X. Six NOPs provide the divider's required result latency."
+      ]
+    },
+    {
+      "id": "plm-runtime.spawn-room",
+      "symbol": "Spawn_Room_PLM",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Scan the forty even PLM slots from $4E down to zero and fail with carry set",
+        "when none is free. A room population row supplies ID, byte X/Y and a word",
+        "argument. Convert Y * room-width + X to the level-data byte offset.",
+        "The ID addresses a bank-$84 PLM header: its first word is setup code and its",
+        "second word is the initial instruction list. Initialise the slot before calling",
+        "setup with X = header address and Y = slot; a successful spawn returns carry clear."
+      ]
+    },
+    {
+      "id": "plm-runtime.handler",
+      "symbol": "PLM_Handler",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Run only while PLM_Flag has bit 15 set. Reset the shared draw-tilemap cursor",
+        "once per handler call, then visit occupied PLM slots from $4E down to zero.",
+        "PLM_Index is the durable current-slot identity because setup, pre-instructions",
+        "and instruction handlers freely reuse X. Empty slots are skipped."
+      ]
+    },
+    {
+      "id": "plm-runtime.interpreter",
+      "symbol": "Process_PLM",
+      "expectedCode": "JSR.W (PLM_PreInstructions,X)",
+      "paragraphs": [
+        "Call the slot's pre-instruction on every eligible handler pass, then reload X",
+        "from PLM_Index. Pre-decrement the 16-bit instruction timer; only zero advances",
+        "the list. Starting from zero therefore wraps to $FFFF rather than advancing.",
+        "A list word with bit 15 set is bank-$84 code. PEA installs a synthetic near",
+        "return to the fetch loop and indirect JMP dispatches it; an ordinary RTS resumes."
+      ]
+    },
+    {
+      "id": "plm-runtime.graphical-record",
+      "symbol": "Process_PLM",
+      "localLabel": ".nonZeroTimer",
+      "expectedCode": "STA.L PLMExtra_InstructionTimers,X",
+      "paragraphs": [
+        "A nonnegative list word is a frame duration followed by a draw-instruction",
+        "pointer. Save both, advance the list cursor four bytes and immediately apply",
+        "the draw instruction to level data. Then derive block coordinates and enqueue",
+        "the PLM's visible tilemap. Duration zero is not an immediate next-frame record:",
+        "the following pre-decrement wraps it to $FFFF."
+      ]
+    },
+    {
+      "id": "plm-runtime.sleep",
+      "symbol": "Instruction_PLM_Sleep",
+      "expectedCode": "DEY",
+      "paragraphs": [
+        "Y begins after the command word. Rewind and save the sleep command as the",
+        "slot's instruction cursor. PLA discards the synthetic fetch-loop return, so",
+        "the final RTS exits Process_PLM through its original caller return.",
+        "The expired zero timer wraps to $FFFF on later passes until something wakes",
+        "the PLM by replacing its cursor or timer."
+      ]
+    },
+    {
+      "id": "plm-runtime.delete",
+      "symbol": "Instruction_PLM_Delete",
+      "expectedCode": "STZ.W PLM_IDs,X",
+      "paragraphs": [
+        "Clear the slot's ID so the outer handler treats it as free. As with sleep,",
+        "discard the synthetic fetch-loop return and RTS directly out of Process_PLM.",
+        "The parallel slot arrays need not be cleared because the zero ID owns liveness."
+      ]
+    },
+    {
+      "id": "plm-runtime.item-test",
+      "symbol": "Instruction_PLM_GotoY_ifRoomArg_ItemIsCollected",
+      "expectedCode": "PHX",
+      "paragraphs": [
+        "Treat the room argument as a global item-bit index. A negative argument",
+        "deliberately behaves as not collected. Otherwise convert the bit index to an",
+        "SRAM byte and mask, restoring the PLM slot X before testing the result.",
+        "A set bit follows the instruction-list target; an unset bit skips that word."
+      ]
+    },
+    {
+      "id": "plm-runtime.item-set",
+      "symbol": "Instruction_PLM_SetRoomArg_ItemCollected",
+      "expectedCode": "PHX",
+      "paragraphs": [
+        "For a nonnegative room argument, set its global collected-item bit in the SRAM",
+        "mirror without disturbing neighbouring flags. Negative arguments suppress the",
+        "write. Item scripts perform this before granting the pickup and message."
+      ]
+    },
+    {
+      "id": "plm-runtime.missile-item",
+      "symbol": "InstList_PLM_MissileTank_0",
+      "expectedCode": "dw Instruction_PLM_GotoY_ifRoomArg_ItemIsCollected",
+      "paragraphs": [
+        "A visible missile tank first branches to the empty-item path when its room-argument",
+        "bit was already collected. Otherwise it installs the pickup continuation as its",
+        "link target and a trigger-wait pre-instruction. The triggered continuation sets",
+        "the collected bit before clearing queued music and awarding five missiles."
+      ]
+    },
+    {
+      "id": "plm-draw.level-writes",
+      "symbol": "Process_PLM_Draw_Instruction",
+      "expectedCode": "LDA.L PLMExtra_DrawInstructionPointers,X",
+      "paragraphs": [
+        "A PLM draw instruction is a sequence of counted block runs applied directly",
+        "to LevelData. Bit 15 of a run header selects a column; clear selects a row.",
+        "The low byte is the block count and the following words are complete level",
+        "block values. Rows advance one word; columns advance one room-width row."
+      ]
+    },
+    {
+      "id": "plm-draw.relative-entries",
+      "symbol": "Process_PLM_Draw_Instruction",
+      "localLabel": ".next",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "A zero word terminates the drawing. Otherwise the next two bytes are signed",
+        "X and Y block offsets from the PLM's original block. Sign-extend X and scale",
+        "it by two bytes per level word; multiply signed Y by room width and then by",
+        "two. The following run header begins immediately after that offset pair."
+      ]
+    },
+    {
+      "id": "plm-draw.hardcoded-bases",
+      "symbol": "DrawPLM_HardCoded",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Use the native BG1 tilemap bases $5000 and $53E0 for PLM rendering, then",
+        "enter the shared renderer with Y at the current draw instruction. The second",
+        "base is intentionally $20 below $5400; later screen-half arithmetic accounts",
+        "for the split without masking the horizontal block coordinate again."
+      ]
+    },
+    {
+      "id": "plm-draw.visible-window",
+      "symbol": "DrawPLM",
+      "expectedCode": "LDA.W PLM_XBlock",
+      "paragraphs": [
+        "Start every draw-entry position from the PLM's block coordinates. Convert the",
+        "Layer 1 camera Y position to blocks and reject entries below its 16-row window.",
+        "Horizontal and vertical runs then clip their other axis before reserving VRAM",
+        "write-table space. Offscreen level-data changes therefore need no tilemap upload."
+      ]
+    },
+    {
+      "id": "plm-draw.horizontal",
+      "symbol": "DrawPLM",
+      "localLabel": ".horizontal",
+      "expectedCode": "AND.W #$7FFF",
+      "paragraphs": [
+        "Clear the orientation bit to obtain the horizontal block count. Clip the run",
+        "against the camera's current 17-column update span, retaining a left-skip count",
+        "for its draw-data cursor. A run contained in one BG1 screen uses two VRAM writes",
+        "for its top and bottom tile rows; a screen-boundary crossing can require four."
+      ]
+    },
+    {
+      "id": "plm-draw.metatile-expansion",
+      "symbol": "DrawPLM",
+      "localLabel": ".loopHorizBlock",
+      "expectedCode": "LDA.B (DP_Temp03)",
+      "paragraphs": [
+        "Each level word uses its low ten bits as a metatile index. Multiply by eight",
+        "to select four word-sized entries in TileTable. Bits $0400 and $0800 request",
+        "horizontal and vertical flips: reorder the 2x2 quadrants and toggle tilemap",
+        "flip bits $4000/$8000. Each expanded block consumes eight staging bytes."
+      ]
+    },
+    {
+      "id": "plm-draw.vertical",
+      "symbol": "DrawPLM",
+      "localLabel": ".vertical",
+      "expectedCode": "AND.W #$7FFF",
+      "paragraphs": [
+        "Clear the orientation bit for the vertical block count and require the column",
+        "to lie inside the camera's horizontal update span. Clip blocks above and below",
+        "the visible rows, then use two column-mode VRAM writes for the left and right",
+        "tile columns. Metatile flip handling mirrors the horizontal path's semantics."
+      ]
+    },
+    {
+      "id": "plm-draw.next-entry",
+      "symbol": "DrawPLM",
+      "localLabel": ".nextDrawEntry",
+      "expectedCode": "PLX",
+      "paragraphs": [
+        "After a visible run, restore the caller's X and advance past the run's source",
+        "words. A zero offset pair ends the draw instruction. Otherwise sign-extend the",
+        "next X/Y bytes relative to the original PLM block and render that entry with",
+        "the same clipping and upload rules."
+      ]
+    },
+    {
+      "id": "plm-draw.vram-destination",
+      "symbol": "Calculate_PLMDrawTilemap_VRAMDestination",
+      "expectedCode": "LDA.B DP_Temp1A",
+      "paragraphs": [
+        "Map a visible block row and wrapped 32-column block coordinate into the BG1",
+        "tilemap destination. Each block contributes two tile rows and two tile columns.",
+        "BG1XOffset bit 8 selects which $400-word screen half is currently displayed;",
+        "crossing column $10 and that scroll bit choose the opposite half consistently."
+      ]
+    },
+    {
+      "id": "plm-draw.single-screen-vram",
+      "symbol": "PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap",
+      "expectedCode": "ORA.B DP_Temp1C",
+      "paragraphs": [
+        "Build two VRAM write records for a run contained in one screen half. Horizontal",
+        "mode targets two tile rows; vertical mode ORs $8000 for column increment and",
+        "targets adjacent columns. Each record copies four bytes per metatile from the",
+        "bank-$7E PLMDrawTilemap staging buffer at its current shared write index."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "plm-runtime.Calculate_PLM_Block_Coordinates.lines",
+      "symbol": "Calculate_PLM_Block_Coordinates",
+      "lines": [
+        {
+          "expectedCode": "LDA.W PLM_BlockIndices,X",
+          "comment": "Read this slot's byte offset into word-sized level data."
+        },
+        {
+          "expectedCode": "LSR",
+          "comment": "Convert the byte offset to a linear block number."
+        },
+        {
+          "expectedCode": "STA.W $4204",
+          "comment": "Supply that block number as the hardware-division dividend."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Use the divider's byte-sized divisor register."
+        },
+        {
+          "expectedCode": "LDA.W RoomWidthBlocks",
+          "comment": "Read the room width in blocks."
+        },
+        {
+          "expectedCode": "STA.W $4206",
+          "comment": "Start unsigned division by the nonzero room width."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "NOP",
+          "comment": "Wait for the hardware divider to finish."
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "LDA.W $4214",
+          "comment": "The quotient is the zero-based Y block."
+        },
+        {
+          "expectedCode": "STA.W PLM_YBlock",
+          "comment": "Publish Y for setup, drawing and collision helpers."
+        },
+        {
+          "expectedCode": "LDA.W $4216",
+          "comment": "The division remainder is the zero-based X block."
+        },
+        {
+          "expectedCode": "STA.W PLM_XBlock",
+          "comment": "Publish X alongside the quotient-derived Y."
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.Spawn_Room_PLM.lines",
+      "symbol": "Spawn_Room_PLM",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHY"
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve the caller's room-population cursor."
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $84 for PLM headers and local code."
+        },
+        {
+          "expectedCode": "LDY.W #$004E",
+          "comment": "Begin at the last of forty even array-slot offsets."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W PLM_IDs,Y",
+          "comment": "A zero ID marks this parallel-array slot free."
+        },
+        {
+          "expectedCode": "BEQ .found"
+        },
+        {
+          "expectedCode": "DEY"
+        },
+        {
+          "expectedCode": "DEY",
+          "comment": "Each PLM array entry is one word."
+        },
+        {
+          "expectedCode": "BPL .loop"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Report that all forty runtime slots were occupied."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".found:"
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Population X and Y coordinates are bytes."
+        },
+        {
+          "expectedCode": "LDA.L PLMPopulations_Y,X",
+          "comment": "Read the row from the six-byte room-population entry."
+        },
+        {
+          "expectedCode": "STA.W $4202",
+          "comment": "Use Y as the hardware multiplier multiplicand."
+        },
+        {
+          "expectedCode": "LDA.W RoomWidthBlocks"
+        },
+        {
+          "expectedCode": "STA.W $4203",
+          "comment": "Multiply the row by room width in blocks."
+        },
+        {
+          "expectedCode": "LDA.L PLMPopulations_X,X",
+          "comment": "Read the population's column byte."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W $4216",
+          "comment": "Add X to Y times width for the linear block index."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the block number to a word-array byte offset."
+        },
+        {
+          "expectedCode": "STA.W PLM_BlockIndices,Y",
+          "comment": "Store the level-data offset in the free runtime slot."
+        },
+        {
+          "expectedCode": "LDA.L PLMPopulations_param,X",
+          "comment": "Read the population's word-sized room argument."
+        },
+        {
+          "expectedCode": "STA.W PLM_RoomArgs,Y",
+          "comment": "Keep the item flag, scroll pointer or PLM-specific parameter."
+        },
+        {
+          "expectedCode": "LDA.L PLMPopulations_PLM,X",
+          "comment": "Read the bank-$84 PLM header address."
+        },
+        {
+          "expectedCode": "STA.W PLM_IDs,Y",
+          "comment": "Claim the slot before running PLM-specific setup."
+        },
+        {
+          "expectedCode": "TYX",
+          "comment": "X now selects the runtime PLM slot."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Y now points at the selected PLM header."
+        },
+        {
+          "expectedCode": "LDA.W #$0000"
+        },
+        {
+          "expectedCode": "STA.L PLMExtra_Vars,X",
+          "comment": "Clear the PLM's extra per-slot variable."
+        },
+        {
+          "expectedCode": "LDA.W #.return"
+        },
+        {
+          "expectedCode": "STA.W PLM_PreInstructions,X",
+          "comment": "Default to the local no-op pre-instruction."
+        },
+        {
+          "expectedCode": "LDA.W $0002,Y",
+          "comment": "The PLM header's second word is its initial instruction list."
+        },
+        {
+          "expectedCode": "STA.W PLM_InstListPointers,X"
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Make the new instruction list eligible on the next handler pass."
+        },
+        {
+          "expectedCode": "STA.L PLMExtra_InstructionTimers,X"
+        },
+        {
+          "expectedCode": "LDA.W #InstList_PLM_DefaultPLMDrawInstruction"
+        },
+        {
+          "expectedCode": "STA.L PLMExtra_DrawInstructionPointers,X",
+          "comment": "Install a safe empty drawing record before setup."
+        },
+        {
+          "expectedCode": "STZ.W PLM_Timers,X",
+          "comment": "Clear the instruction-command loop counter."
+        },
+        {
+          "expectedCode": "STX.W PLM_Index",
+          "comment": "Publish the slot identity across setup's register use."
+        },
+        {
+          "expectedCode": "TYX",
+          "comment": "X becomes the PLM header address."
+        },
+        {
+          "expectedCode": "LDY.W PLM_Index",
+          "comment": "Y becomes the runtime slot offset for setup."
+        },
+        {
+          "expectedCode": "JSR.W ($0000,X)",
+          "comment": "Call the setup routine stored in the header's first word."
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Report a successful spawn regardless of setup's incidental carry."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Default pre-instruction and setup-safe local return."
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.PLM_Handler.lines",
+      "symbol": "PLM_Handler",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select bank $84 for near PLM code and data."
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "BIT.W PLM_Flag",
+          "comment": "Test the master PLM enable flag without changing it."
+        },
+        {
+          "expectedCode": "BPL .return",
+          "comment": "Skip all PLMs unless bit 15 is set."
+        },
+        {
+          "expectedCode": "STZ.W PLM_DrawTilemapIndex",
+          "comment": "Restart the shared visible-tilemap queue for this pass."
+        },
+        {
+          "expectedCode": "LDX.W #$004E",
+          "comment": "Process the highest runtime slot first."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "STX.W PLM_Index",
+          "comment": "Preserve the current slot across dispatched code."
+        },
+        {
+          "expectedCode": "LDA.W PLM_IDs,X"
+        },
+        {
+          "expectedCode": "BEQ .next",
+          "comment": "A zero ID means the slot is free."
+        },
+        {
+          "expectedCode": "JSR.W Process_PLM",
+          "comment": "Run this occupied slot's pre-instruction and script."
+        },
+        {
+          "expectedCode": "LDX.W PLM_Index",
+          "comment": "Recover the slot after arbitrary PLM code reused X."
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Move to the preceding word-sized slot."
+        },
+        {
+          "expectedCode": "BPL .loop"
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.Process_PLM.lines",
+      "symbol": "Process_PLM",
+      "lines": [
+        {
+          "expectedCode": "JSR.W (PLM_PreInstructions,X)",
+          "comment": "Run this slot's pre-instruction on every eligible handler pass."
+        },
+        {
+          "expectedCode": "LDX.W PLM_Index",
+          "comment": "Restore the slot after the pre-instruction reused registers."
+        },
+        {
+          "expectedCode": "LDA.L PLMExtra_InstructionTimers,X",
+          "comment": "Read the 16-bit frame timer for this PLM script."
+        },
+        {
+          "expectedCode": "DEC",
+          "comment": "Pre-decrement; zero therefore wraps to $FFFF."
+        },
+        {
+          "expectedCode": "STA.L PLMExtra_InstructionTimers,X"
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Only an expiry to exactly zero advances the script."
+        },
+        {
+          "expectedCode": "LDY.W PLM_InstListPointers,X",
+          "comment": "Load the saved bank-$84 instruction-list cursor."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Fetch either a command address or a graphical duration."
+        },
+        {
+          "expectedCode": "BPL .nonZeroTimer",
+          "comment": "Bit 15 clear identifies a duration/draw-pointer pair."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Keep the bank-local command address for indirect dispatch."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Y is the command's parameter cursor when it begins."
+        },
+        {
+          "expectedCode": "PEA.W .loop-1",
+          "comment": "Create a synthetic near return to fetch another list word."
+        },
+        {
+          "expectedCode": "JMP.W (DP_Temp12)",
+          "comment": "Dispatch the bank-$84 command; ordinary RTS resumes the loop."
+        },
+        {
+          "expectedCode": ".nonZeroTimer:"
+        },
+        {
+          "expectedCode": "STA.L PLMExtra_InstructionTimers,X",
+          "comment": "Install the graphical record's frame duration."
+        },
+        {
+          "expectedCode": "LDA.W $0002,Y",
+          "comment": "Read its following draw-instruction pointer."
+        },
+        {
+          "expectedCode": "STA.L PLMExtra_DrawInstructionPointers,X",
+          "comment": "Make that drawing record current for this slot."
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0004",
+          "comment": "Advance past duration and draw pointer."
+        },
+        {
+          "expectedCode": "STA.W PLM_InstListPointers,X",
+          "comment": "Save the next script cursor before drawing."
+        },
+        {
+          "expectedCode": "JSR.W Process_PLM_Draw_Instruction",
+          "comment": "Apply the drawing record to the room's level data."
+        },
+        {
+          "expectedCode": "LDX.W PLM_Index",
+          "comment": "Recover the slot after level-data drawing."
+        },
+        {
+          "expectedCode": "JSL.L Calculate_PLM_Block_Coordinates",
+          "comment": "Derive block X/Y for visible tilemap generation."
+        },
+        {
+          "expectedCode": "JSR.W DrawPLM_HardCoded",
+          "comment": "Queue the PLM's on-screen tilemap immediately."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.Instruction_PLM_Sleep.lines",
+      "symbol": "Instruction_PLM_Sleep",
+      "lines": [
+        {
+          "expectedCode": "DEY",
+          "comment": "Rewind from the parameter cursor toward the command word."
+        },
+        {
+          "expectedCode": "DEY"
+        },
+        {
+          "expectedCode": "TYA",
+          "comment": "Recover the sleep command's own address."
+        },
+        {
+          "expectedCode": "STA.W PLM_InstListPointers,X",
+          "comment": "Leave the saved script cursor parked on sleep."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Discard the fetch loop's synthetic near return."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Return directly from Process_PLM to the outer slot handler."
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.Instruction_PLM_Delete.lines",
+      "symbol": "Instruction_PLM_Delete",
+      "lines": [
+        {
+          "expectedCode": "STZ.W PLM_IDs,X",
+          "comment": "A zero ID releases this runtime slot."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Remove the synthetic script-loop return word."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Exit Process_PLM immediately after deleting the slot."
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.Instruction_PLM_GotoY_ifRoomArg_ItemIsCollected.lines",
+      "symbol": "Instruction_PLM_GotoY_ifRoomArg_ItemIsCollected",
+      "lines": [
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve the runtime PLM slot offset."
+        },
+        {
+          "expectedCode": "LDA.W PLM_RoomArgs,X",
+          "comment": "Read this placement's global item-bit index."
+        },
+        {
+          "expectedCode": "BMI .pullX",
+          "comment": "A negative argument deliberately behaves as uncollected."
+        },
+        {
+          "expectedCode": "JSL.L BitIndexToByteIndexAndBitmask",
+          "comment": "Convert the bit index to an SRAM byte offset and mask."
+        },
+        {
+          "expectedCode": "LDA.L SRAMMirror_Items,X",
+          "comment": "Read the byte containing this item's collected flag."
+        },
+        {
+          "expectedCode": "PLX",
+          "comment": "Restore the PLM slot before continuing its script."
+        },
+        {
+          "expectedCode": "AND.W Bitmask",
+          "comment": "Isolate this placement's collected bit."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "An uncollected item skips the two-byte branch target."
+        },
+        {
+          "expectedCode": "JMP.W Instruction_PLM_GotoY",
+          "comment": "A collected item follows the supplied instruction-list target."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Skip the target word and continue the visible-item path."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".pullX:"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "BRA .return"
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.Instruction_PLM_SetRoomArg_ItemCollected.lines",
+      "symbol": "Instruction_PLM_SetRoomArg_ItemCollected",
+      "lines": [
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve the runtime PLM slot offset."
+        },
+        {
+          "expectedCode": "LDA.W PLM_RoomArgs,X",
+          "comment": "Read the placement's global item-bit index."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Negative arguments opt out of persistent item tracking."
+        },
+        {
+          "expectedCode": "JSL.L BitIndexToByteIndexAndBitmask",
+          "comment": "Resolve the SRAM byte and one-bit mask."
+        },
+        {
+          "expectedCode": "LDA.L SRAMMirror_Items,X",
+          "comment": "Read the current collected-item byte."
+        },
+        {
+          "expectedCode": "ORA.W Bitmask",
+          "comment": "Set this item without changing neighbouring flags."
+        },
+        {
+          "expectedCode": "STA.L SRAMMirror_Items,X",
+          "comment": "Persist the collected state in the SRAM mirror."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "plm-runtime.InstList_PLM_MissileTank_0.lines",
+      "symbol": "InstList_PLM_MissileTank_0",
+      "lines": [
+        {
+          "expectedCode": "dw Instruction_PLM_GotoY_ifRoomArg_ItemIsCollected",
+          "comment": "Test this placement's room-argument item bit."
+        },
+        {
+          "expectedCode": "dw InstList_PLM_MissileTank_3",
+          "comment": "Already-collected placements branch to the empty-item path."
+        },
+        {
+          "expectedCode": "dw Instruction_PLM_LinkInstruction_Y",
+          "comment": "An available item installs its pickup continuation."
+        },
+        {
+          "expectedCode": "dw InstList_PLM_MissileTank_2"
+        },
+        {
+          "expectedCode": "dw Instruction_PLM_PreInstruction_inY",
+          "comment": "Install the trigger-wait pre-instruction for the visible pickup."
+        },
+        {
+          "expectedCode": "dw PreInstruction_PLM_GotoLinkInstructionIfTriggered"
+        }
+      ]
+    },
+    {
+      "id": "plm-draw.Process_PLM_Draw_Instruction.lines",
+      "symbol": "Process_PLM_Draw_Instruction",
+      "lines": [
+        {
+          "expectedCode": "LDA.L PLMExtra_DrawInstructionPointers,X",
+          "comment": "Read this slot's current level-data draw instruction."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Y becomes the draw-data cursor in bank $84."
+        },
+        {
+          "expectedCode": "LDA.W PLM_BlockIndices,X",
+          "comment": "Read the PLM's original level-data byte offset."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Keep that origin for every relative draw entry."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X selects the first destination level word."
+        },
+        {
+          "expectedCode": ".loopDrawEntry:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the orientation bit and low-byte block count."
+        },
+        {
+          "expectedCode": "BMI .column",
+          "comment": "Bit 15 set selects a vertical run."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "A horizontal run uses the low byte as its count."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp16"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance from the run header to its block words."
+        },
+        {
+          "expectedCode": ".loopRow:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read one complete level-data block word."
+        },
+        {
+          "expectedCode": "STA.L LevelData,X",
+          "comment": "Replace the destination block, including type and metatile bits."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Consume one source word."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Move one word to the right in level data."
+        },
+        {
+          "expectedCode": "DEC.B DP_Temp16"
+        },
+        {
+          "expectedCode": "BNE .loopRow"
+        },
+        {
+          "expectedCode": "JMP.W .next"
+        },
+        {
+          "expectedCode": ".column:"
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "A vertical run also takes its count from the low byte."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp16"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": ".loopColumn:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the next block for this column."
+        },
+        {
+          "expectedCode": "STA.L LevelData,X"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W RoomWidthBlocks"
+        },
+        {
+          "expectedCode": "ADC.W RoomWidthBlocks",
+          "comment": "Advance one row of word-sized room blocks."
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "DEC.B DP_Temp16"
+        },
+        {
+          "expectedCode": "BNE .loopColumn"
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Peek at the signed X/Y offset pair following this run."
+        },
+        {
+          "expectedCode": "BNE +",
+          "comment": "Any nonzero offset byte begins another entry."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "A zero pair terminates the complete draw instruction."
+        },
+        {
+          "expectedCode": "+ DEY",
+          "comment": "Back up one byte to isolate signed X with an unaligned word load."
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y"
+        },
+        {
+          "expectedCode": "XBA",
+          "comment": "Move the X offset byte into the sign-tested high byte."
+        },
+        {
+          "expectedCode": "BPL .positive"
+        },
+        {
+          "expectedCode": "ORA.W #$FF00",
+          "comment": "Sign-extend a negative X block offset."
+        },
+        {
+          "expectedCode": "BRA +"
+        },
+        {
+          "expectedCode": ".positive:"
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Zero-extend a nonnegative X block offset."
+        },
+        {
+          "expectedCode": "+ ASL",
+          "comment": "Scale signed X from blocks to level-data bytes."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp12",
+          "comment": "Apply X relative to the PLM's original block."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Keep the horizontally adjusted byte offset."
+        },
+        {
+          "expectedCode": "LDA.W $0001,Y",
+          "comment": "Use the overlapping load that places signed Y in the high byte."
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "BPL +"
+        },
+        {
+          "expectedCode": "ORA.W #$FF00",
+          "comment": "Sign-extend negative Y."
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC",
+          "comment": "Convert negative Y to its positive magnitude."
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.W #$0000"
+        },
+        {
+          "expectedCode": "- SEC"
+        },
+        {
+          "expectedCode": "SBC.W RoomWidthBlocks",
+          "comment": "Accumulate a negative row displacement."
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "BNE -"
+        },
+        {
+          "expectedCode": "BRA .setX"
+        },
+        {
+          "expectedCode": "+ AND.W #$00FF",
+          "comment": "Zero-extend nonnegative Y."
+        },
+        {
+          "expectedCode": "BEQ .setX"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.W #$0000"
+        },
+        {
+          "expectedCode": "- CLC"
+        },
+        {
+          "expectedCode": "ADC.W RoomWidthBlocks",
+          "comment": "Accumulate a positive row displacement."
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "BNE -"
+        },
+        {
+          "expectedCode": ".setX:"
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the signed row displacement to level-data bytes."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp14",
+          "comment": "Combine relative X, relative Y and the original PLM block."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X selects the next draw entry's first destination word."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance from the backed-up cursor past both offset bytes."
+        },
+        {
+          "expectedCode": "JMP.W .loopDrawEntry"
+        }
+      ]
+    },
+    {
+      "id": "plm-draw.Calculate_PLMDrawTilemap_VRAMDestination.lines",
+      "symbol": "Calculate_PLMDrawTilemap_VRAMDestination",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Temp1A",
+          "comment": "Read the visible block row selected for this run."
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Wrap the row within the 16-block-high BG1 screen."
+        },
+        {
+          "expectedCode": "ORA.W #$4000",
+          "comment": "Scale it by 64 tilemap bytes through the hardware multiplier."
+        },
+        {
+          "expectedCode": "STA.W $4202"
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp18",
+          "comment": "Read the run's first visible block column."
+        },
+        {
+          "expectedCode": "AND.W #$001F",
+          "comment": "Wrap it within the two-screen 32-block span."
+        },
+        {
+          "expectedCode": "CMP.W #$0010"
+        },
+        {
+          "expectedCode": "BCS .greaterThanF",
+          "comment": "Columns $10..1F use the second BG1 screen base."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Each block starts two tilemap words apart."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp09",
+          "comment": "Add the first BG1 tilemap base."
+        },
+        {
+          "expectedCode": "ADC.W $4216",
+          "comment": "Add the row product from the hardware multiplier."
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "LDA.W BG1XOffset",
+          "comment": "Inspect which horizontal screen half is currently displayed."
+        },
+        {
+          "expectedCode": "AND.W #$0100"
+        },
+        {
+          "expectedCode": "BEQ .fallthrough"
+        },
+        {
+          "expectedCode": "PLA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0400",
+          "comment": "Swap this column into the other $400-word screen half."
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "BRA .fallthrough"
+        },
+        {
+          "expectedCode": ".greaterThanF:"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp0C",
+          "comment": "Add the pre-adjusted second-screen tilemap base."
+        },
+        {
+          "expectedCode": "ADC.W $4216"
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "LDA.W BG1XOffset"
+        },
+        {
+          "expectedCode": "AND.W #$0100"
+        },
+        {
+          "expectedCode": "BEQ .fallthrough"
+        },
+        {
+          "expectedCode": "PLA"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W #$0400",
+          "comment": "Swap the second-screen column back when scroll bit 8 is set."
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": ".fallthrough:"
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Leave the computed VRAM destination in A for the setup helper."
+        }
+      ]
+    },
+    {
+      "id": "plm-draw.PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap.lines",
+      "symbol": "PartiallySetupVRAMWriteTableEntries_SingleScrnPLMDrawTilemap",
+      "lines": [
+        {
+          "expectedCode": "ORA.B DP_Temp1C",
+          "comment": "Add the vertical column-increment flag when requested."
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite.dest,X",
+          "comment": "Store the first row or column destination."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Read the clipped metatile count."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Each metatile contributes two word tiles, or four bytes, per record."
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite.size,X"
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite[1].size,X",
+          "comment": "The paired tile row/column has the same byte count."
+        },
+        {
+          "expectedCode": "LDA.W #PLMDrawTilemap",
+          "comment": "Use the shared bank-$7E expansion buffer."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W PLM_DrawTilemapIndex",
+          "comment": "Append after tilemap data queued by earlier PLMs this pass."
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite.src,X"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp00",
+          "comment": "Publish the first staging pointer for metatile expansion."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B VRAMWrite.size,X",
+          "comment": "The second half follows the first record's bytes."
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite[1].src,X"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp06",
+          "comment": "Publish the paired staging pointer."
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "LDA.B #$7E",
+          "comment": "Both staging sources live in WRAM bank $7E."
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite.src+2,X"
+        },
+        {
+          "expectedCode": "STA.B VRAMWrite[1].src+2,X"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp02"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp08"
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": "if !FEATURE_KEEP_UNREFERENCED"
+        }
+      ]
+    }
+  ]
+}

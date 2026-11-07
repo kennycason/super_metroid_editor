@@ -10,7 +10,7 @@ class AsmProjectileRuntimeEnrichmentTest {
     private val current get() = AsmSourceAugmentation.bundled()
     private val prefix = "projectile-runtime."
     private val groups get() = current.lineDocumentation.filter { it.id.startsWith(prefix) }
-    private fun previous() = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-20.json"))
+    private fun frozen(revision: Int) = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-$revision.json"))
         .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
     private fun recipe() = current.copy(revision = "projectile-runtime-test", upstreamSourceSha256 = "", renames = emptyList(),
         documentation = current.documentation.filter { it.id.startsWith(prefix) }, lineDocumentation = groups)
@@ -23,12 +23,16 @@ class AsmProjectileRuntimeEnrichmentTest {
     }
 
     @Test fun `v21 adds projectile interpretation and drawing without changing frozen v20`() {
-        val v20 = previous()
-        assertEquals("super-metroid-ntsc-21", current.revision)
-        assertEquals(v20, current.copy(revision = v20.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith(prefix) },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith(prefix) }))
-        assertEquals(7, current.documentation.count { it.id.startsWith(prefix) })
+        val v20 = frozen(20); val v21 = frozen(21)
+        assertEquals("super-metroid-ntsc-21", v21.revision)
+        assertEquals(v20, v21.copy(revision = v20.revision,
+            documentation = v21.documentation.filterNot { it.id.startsWith(prefix) },
+            lineDocumentation = v21.lineDocumentation.filterNot { it.id.startsWith(prefix) }))
+        assertEquals(v21.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id })
+        assertEquals(v21.lineDocumentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            groups.sortedBy { it.id })
+        assertEquals(7, v21.documentation.count { it.id.startsWith(prefix) })
         assertEquals(5, groups.size)
         assertEquals(178, groups.sumOf { it.lines.size })
         assertEquals(94, groups.flatMap { it.lines }.count { it.comment != null })

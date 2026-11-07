@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "revision": "super-metroid-ntsc-57",
+  "updatedAt": "2026-11-07",
+  "upstreamRevision": "11c906f547edc1b57f5a5923cf977fe7b50a3694",
+  "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
+  "renames": [
+    {
+      "symbol": "SpeedBoostTimerResetValues",
+      "replacement": "SpeedBoostTimerReloadTable"
+    }
+  ],
+  "banks": [
+    "bank_80.json",
+    "bank_81.json",
+    "bank_82.json",
+    "bank_84.json",
+    "bank_85.json",
+    "bank_8F.json",
+    "bank_90.json",
+    "bank_91.json",
+    "bank_93.json",
+    "bank_9B.json",
+    "bank_A0.json",
+    "bank_A3.json"
+  ]
+}

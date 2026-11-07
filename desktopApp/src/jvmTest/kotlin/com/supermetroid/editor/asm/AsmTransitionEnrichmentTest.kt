@@ -29,8 +29,9 @@ class AsmTransitionEnrichmentTest {
         assertEquals(previous, v6.copy(revision = previous.revision,
             documentation = v6.documentation.filterNot { it.id.startsWith("transitions.") },
             lineDocumentation = v6.lineDocumentation.filterNot { it.id.startsWith("transitions.") }))
-        assertEquals(v6.documentation.filter { it.id.startsWith("transitions.") }, current.documentation.filter { it.id.startsWith("transitions.") })
-        assertEquals(v6.lineDocumentation.filter { it.id.startsWith("transitions.") }, groups)
+        assertEquals(v6.documentation.filter { it.id.startsWith("transitions.") }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith("transitions.") }.sortedBy { it.id })
+        assertEquals(v6.lineDocumentation.filter { it.id.startsWith("transitions.") }.sortedBy { it.id }, groups.sortedBy { it.id })
         assertEquals(23, current.documentation.count { it.id.startsWith("transitions.") })
         assertEquals(19, groups.size)
         assertEquals(251, groups.flatMap { it.lines }.count { it.comment != null })

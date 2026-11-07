@@ -1,0 +1,1831 @@
+{
+  "fileId": "bank_91.asm",
+  "documentation": [
+    {
+      "id": "speed-booster.stage-timers",
+      "symbol": "SpeedBoostTimerResetValues",
+      "expectedCode": "dw $0001,$0001,$0001,$0001,$0002",
+      "paragraphs": [
+        "Five timer reload words, indexed by the Speed Booster counter times two.",
+        "The first word also initializes the adjacent timer/counter pair: its low",
+        "byte is the initial delay and its high byte is the starting counter.",
+        "Later reloads are ORed into the low timer byte while preserving the counter."
+      ]
+    },
+    {
+      "id": "samus-health.restore",
+      "symbol": "Restore_A_Energy_ToSamus",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Add the requested energy to the main tank. Overflow beyond MaxEnergy is redirected",
+        "into reserve energy up to MaxReserveEnergy; any nonzero reserve fill also changes",
+        "an off reserve-tank mode to auto before clamping the main tank."
+      ]
+    },
+    {
+      "id": "samus-health.direct-damage",
+      "symbol": "Deal_A_Damage_to_Samus",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Apply raw damage without suit reduction. Negative input enters the crash handler,",
+        "$012C is a retained no-damage sentinel, frozen time suppresses subtraction, and",
+        "a result below zero is clamped to exactly zero."
+      ]
+    },
+    {
+      "id": "ammo-restoration.missiles",
+      "symbol": "Restore_A_Missiles_ToSamus",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Add the requested missiles to the live count. Values beyond normal capacity spill",
+        "into the otherwise rarely used reserve-missile word before the live count clamps",
+        "to maximum. An under-capacity result leaves reserve missiles untouched."
+      ]
+    },
+    {
+      "id": "ammo-restoration.missile-reserve-cap",
+      "symbol": "Restore_A_Missiles_ToSamus",
+      "localLabel": ".lessThan99",
+      "expectedCode": "LDA.B DP_Temp12",
+      "paragraphs": [
+        "Reserve missiles cap at the lesser of 99 and maximum missile capacity. Maximums",
+        "below 99 use the equipment capacity; maximums of 99 or more use the hard 99 cap."
+      ]
+    },
+    {
+      "id": "ammo-restoration.super-missiles",
+      "symbol": "Restore_A_SuperMissiles_ToSamus",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Add the requested super missiles and clamp only values strictly above maximum.",
+        "Equality returns directly because the provisional live count is already correct."
+      ]
+    },
+    {
+      "id": "ammo-restoration.power-bombs",
+      "symbol": "Restore_A_PowerBombs_ToSamus",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Add the requested power bombs and clamp only values strictly above maximum, using",
+        "the same equality-preserving structure as super-missile restoration."
+      ]
+    },
+    {
+      "id": "xray-runtime.entry",
+      "symbol": "XrayHandler",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Run only while time is not already frozen and Dash is held. XraySetup returns carry set after",
+        "claiming the X-ray state; only that success path spawns the window HDMA object. A rejected setup",
+        "leaves the current gameplay and rendering owners unchanged."
+      ]
+    },
+    {
+      "id": "xray-runtime.setup-gates",
+      "symbol": "XraySetup",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Reject the special bomb-spread/liquid combination, landing poses A4..A7 and E0..E7, non-gameplay",
+        "states, an active power-bomb effect, vertical movement, and unsupported previous/current movement",
+        "types. Carry clear means no X-ray state was installed."
+      ]
+    },
+    {
+      "id": "xray-runtime.setup-state",
+      "symbol": "XraySetup",
+      "localLabel": ".merge",
+      "expectedCode": "LDA.W #$0001",
+      "paragraphs": [
+        "Freeze time, request the facing-specific standing/crouching X-ray pose, clear both 256-line window",
+        "tables to FF, and disable enemy projectiles, PLMs, animated tiles and palette FX. Then build the",
+        "three-segment indirect HDMA table and seed angle 40h right or C0h left."
+      ]
+    },
+    {
+      "id": "xray-runtime.allowed-movement",
+      "symbol": "XraySetup",
+      "localLabel": ".allowedPoses",
+      "expectedCode": "db $01",
+      "paragraphs": [
+        "Movement-type table entries classify standing-compatible modes as 1 and crouching as 2. Only",
+        "standing, running, crouching and ran-into-a-wall are accepted; the previous movement type must also",
+        "have a nonzero entry so X-ray cannot start directly after an incompatible transition."
+      ]
+    },
+    {
+      "id": "xray-runtime.restore",
+      "symbol": "Set_NonXray_SamusPose",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Restore standing or crouching pose from movement type and facing, reinitialize animation/history,",
+        "return movement and pose input to their normal handlers, mark the beam closed and compensate Y for",
+        "a reduced pose radius. Turning is treated as standing, preserving the known X-ray stand-up glitch."
+      ]
+    },
+    {
+      "id": "xray-runtime.restore-owners",
+      "symbol": "Set_NonXray_SamusPose",
+      "localLabel": ".unfreezeEnvironment",
+      "expectedCode": "JSL.L Enable_Enemy_Projectiles",
+      "paragraphs": [
+        "Release every gameplay subsystem paused by setup: enemy projectiles, PLMs, animated-tile objects",
+        "and palette-FX objects. The X-ray HDMA teardown owns the remaining frozen-time/window state."
+      ]
+    },
+    {
+      "id": "xray-runtime.pose-input",
+      "symbol": "XraySamusPoseInputHandler",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Pressing the direction opposite Samus starts the matching standing/crouching turn pose and mirrors",
+        "the X-ray angle around 100h. Pose initialization immediately refreshes the previous/last-different",
+        "history fields used by the rest of Samus movement."
+      ]
+    },
+    {
+      "id": "xray-runtime.turn-completion",
+      "symbol": "XraySamusPoseInputHandler",
+      "localLabel": ".turningOnGround",
+      "expectedCode": "LDA.W SamusAnimationFrame",
+      "paragraphs": [
+        "Complete the ground turn only at animation frame two with timer one. The source pose determines",
+        "standing versus crouching X-ray pose D5/D6 or D9/DA for the new facing, after which pose animation",
+        "and history are reinitialized together."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "samus-health.RestoreEnergy.lines",
+      "symbol": "Restore_A_Energy_ToSamus",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Preserve status/bank and select bank $91 for health state."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit health and reserve arithmetic."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Preserve the requested restoration amount."
+        },
+        {
+          "expectedCode": "LDA.W Energy",
+          "comment": "Read current main-tank energy."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp12",
+          "comment": "Add the pickup or restoration amount."
+        },
+        {
+          "expectedCode": "STA.W Energy",
+          "comment": "Publish the provisional main-tank result."
+        },
+        {
+          "expectedCode": "CMP.W MaxEnergy",
+          "comment": "Compare it with main-tank capacity."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Keep an under-capacity result without touching reserves."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W MaxEnergy",
+          "comment": "Calculate energy beyond the main-tank maximum."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W ReserveEnergy",
+          "comment": "Redirect that overflow into current reserve energy."
+        },
+        {
+          "expectedCode": "CMP.W MaxReserveEnergy",
+          "comment": "Compare with reserve capacity."
+        },
+        {
+          "expectedCode": "BMI .maxReserve",
+          "comment": "Keep an under-capacity reserve result."
+        },
+        {
+          "expectedCode": "LDA.W MaxReserveEnergy",
+          "comment": "Clamp reserve overflow to its maximum."
+        },
+        {
+          "expectedCode": ".maxReserve:"
+        },
+        {
+          "expectedCode": "STA.W ReserveEnergy",
+          "comment": "Publish the resulting reserve amount."
+        },
+        {
+          "expectedCode": "BEQ .maxEnergy",
+          "comment": "Do not enable auto mode when reserve capacity is zero."
+        },
+        {
+          "expectedCode": "LDA.W ReserveTankMode",
+          "comment": "Read the current off/manual/auto mode."
+        },
+        {
+          "expectedCode": "BNE .maxEnergy",
+          "comment": "Preserve either already-enabled mode."
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Select automatic reserve mode."
+        },
+        {
+          "expectedCode": "STA.W ReserveTankMode",
+          "comment": "Enable it after the first nonzero reserve fill."
+        },
+        {
+          "expectedCode": ".maxEnergy:"
+        },
+        {
+          "expectedCode": "LDA.W MaxEnergy",
+          "comment": "Recover main-tank capacity."
+        },
+        {
+          "expectedCode": "STA.W Energy",
+          "comment": "Clamp provisional main energy to its maximum."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "samus-health.DealDamage.lines",
+      "symbol": "Deal_A_Damage_to_Samus",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use signed 16-bit damage and energy checks."
+        },
+        {
+          "expectedCode": "PHX"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Preserve the raw damage amount."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Copy it to X only to set signed processor flags."
+        },
+        {
+          "expectedCode": "BPL .noCrash",
+          "comment": "Continue for nonnegative damage."
+        },
+        {
+          "expectedCode": "JML Crash_Handler",
+          "comment": "Treat negative raw damage as invalid data."
+        },
+        {
+          "expectedCode": ".noCrash:"
+        },
+        {
+          "expectedCode": "CMP.W #$012C",
+          "comment": "Test the retained 300-damage no-op sentinel."
+        },
+        {
+          "expectedCode": "BEQ .noDamage"
+        },
+        {
+          "expectedCode": "LDA.W TimeIsFrozenFlag",
+          "comment": "Read the global time-freeze state."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Suppress raw damage while time is frozen."
+        },
+        {
+          "expectedCode": "LDA.W Energy",
+          "comment": "Read current whole energy."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp12",
+          "comment": "Subtract raw damage without suit reduction."
+        },
+        {
+          "expectedCode": "STA.W Energy",
+          "comment": "Publish the provisional result."
+        },
+        {
+          "expectedCode": "BPL .return",
+          "comment": "Keep zero or positive energy."
+        },
+        {
+          "expectedCode": "STZ.W Energy",
+          "comment": "Clamp an underflowed result to zero."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".noDamage:"
+        },
+        {
+          "expectedCode": "NOP",
+          "comment": "Retain the original empty 300-damage case."
+        },
+        {
+          "expectedCode": "BRA .return"
+        }
+      ]
+    },
+    {
+      "id": "ammo-restoration.RestoreMissiles.lines",
+      "symbol": "Restore_A_Missiles_ToSamus",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select bank $91 while preserving the caller's data bank."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit ammunition and capacity arithmetic."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W Missiles",
+          "comment": "Add the requested amount to live missiles."
+        },
+        {
+          "expectedCode": "STA.W Missiles",
+          "comment": "Publish the provisional count."
+        },
+        {
+          "expectedCode": "CMP.W MaxMissiles",
+          "comment": "Compare it with normal missile capacity."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "An under-capacity result needs no reserve or clamp work."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W MaxMissiles",
+          "comment": "Calculate the amount beyond normal capacity."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Preserve that overflow for reserve missiles."
+        },
+        {
+          "expectedCode": "LDA.W MaxMissiles",
+          "comment": "Read capacity to choose the reserve cap."
+        },
+        {
+          "expectedCode": "CMP.W #$0063",
+          "comment": "Use 99 as the hard reserve cap when capacity is at least 99."
+        },
+        {
+          "expectedCode": "BMI .lessThan99"
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp12",
+          "comment": "Recover overflow beyond normal capacity."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W ReserveMissiles",
+          "comment": "Add it to the existing reserve-missile count."
+        },
+        {
+          "expectedCode": "STA.W ReserveMissiles",
+          "comment": "Publish the provisional reserve count."
+        },
+        {
+          "expectedCode": "CMP.W #$0063",
+          "comment": "Compare with the hard reserve cap of 99."
+        },
+        {
+          "expectedCode": "BMI .maxMissiles"
+        },
+        {
+          "expectedCode": "LDA.W #$0063"
+        },
+        {
+          "expectedCode": "STA.W ReserveMissiles",
+          "comment": "Clamp reserve missiles to 99."
+        },
+        {
+          "expectedCode": "BRA .maxMissiles"
+        },
+        {
+          "expectedCode": ".lessThan99:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp12",
+          "comment": "Recover overflow for a sub-99-capacity save."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W ReserveMissiles",
+          "comment": "Add it to reserve missiles."
+        },
+        {
+          "expectedCode": "STA.W ReserveMissiles"
+        },
+        {
+          "expectedCode": "CMP.W MaxMissiles",
+          "comment": "Use normal missile capacity as the reserve cap."
+        },
+        {
+          "expectedCode": "BMI .maxMissiles"
+        },
+        {
+          "expectedCode": "LDA.W MaxMissiles"
+        },
+        {
+          "expectedCode": "STA.W ReserveMissiles",
+          "comment": "Clamp reserve missiles to that smaller capacity."
+        },
+        {
+          "expectedCode": ".maxMissiles:"
+        },
+        {
+          "expectedCode": "LDA.W MaxMissiles"
+        },
+        {
+          "expectedCode": "STA.W Missiles",
+          "comment": "Clamp the live missile count to normal capacity."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "ammo-restoration.RestoreSuperMissiles.lines",
+      "symbol": "Restore_A_SuperMissiles_ToSamus",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select bank $91 while preserving the caller's data bank."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit ammunition and capacity arithmetic."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W SuperMissiles",
+          "comment": "Add the requested amount to live super missiles."
+        },
+        {
+          "expectedCode": "STA.W SuperMissiles",
+          "comment": "Publish the provisional count."
+        },
+        {
+          "expectedCode": "CMP.W MaxSuperMissiles",
+          "comment": "Compare with super-missile capacity."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Keep an under-capacity result."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "An exactly full result already needs no clamp store."
+        },
+        {
+          "expectedCode": "LDA.W MaxSuperMissiles"
+        },
+        {
+          "expectedCode": "STA.W SuperMissiles",
+          "comment": "Clamp an over-capacity result to maximum."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "ammo-restoration.RestorePowerBombs.lines",
+      "symbol": "Restore_A_PowerBombs_ToSamus",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select bank $91 while preserving the caller's data bank."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit ammunition and capacity arithmetic."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W PowerBombs",
+          "comment": "Add the requested amount to live power bombs."
+        },
+        {
+          "expectedCode": "STA.W PowerBombs",
+          "comment": "Publish the provisional count."
+        },
+        {
+          "expectedCode": "CMP.W MaxPowerBombs",
+          "comment": "Compare with power-bomb capacity."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Keep an under-capacity result."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "An exactly full result already needs no clamp store."
+        },
+        {
+          "expectedCode": "LDA.W MaxPowerBombs"
+        },
+        {
+          "expectedCode": "STA.W PowerBombs",
+          "comment": "Clamp an over-capacity result to maximum."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "xray-runtime.Handler.lines",
+      "symbol": "XrayHandler",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $91 for X-ray state and setup tables."
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDA.W TimeIsFrozenFlag",
+          "comment": "Do not re-enter X-ray while another owner has frozen time."
+        },
+        {
+          "expectedCode": "BNE .return"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W DashBinding",
+          "comment": "X-ray remains requested only while the configured Dash input is held."
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "JSL.L XraySetup",
+          "comment": "Validate pose/gameplay state and claim frozen X-ray ownership."
+        },
+        {
+          "expectedCode": "BCC .return",
+          "comment": "Carry clear means setup rejected the request without side effects."
+        },
+        {
+          "expectedCode": "JSL.L Spawn_HDMAObject",
+          "comment": "Spawn the scan-window HDMA object only after successful setup."
+        },
+        {
+          "expectedCode": "db $41,$28",
+          "comment": "Supply bank $88 and indirect HDMA control $41 to the long helper."
+        },
+        {
+          "expectedCode": "dw InstList_HDMAObject_Xray_0",
+          "comment": "Begin the X-ray object's setup-stage instruction list."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "xray-runtime.Setup.lines",
+      "symbol": "XraySetup",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_CooldownTimer",
+          "comment": "Inspect the special bomb-spread cooldown state."
+        },
+        {
+          "expectedCode": "CMP.W #$0007"
+        },
+        {
+          "expectedCode": "BNE +"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_BombCounter"
+        },
+        {
+          "expectedCode": "CMP.W #$0005",
+          "comment": "Five bombs plus cooldown seven identifies the active spread case."
+        },
+        {
+          "expectedCode": "BNE +"
+        },
+        {
+          "expectedCode": "LDA.W XSpeedDivisor"
+        },
+        {
+          "expectedCode": "CMP.W #$0002",
+          "comment": "Reject that spread only under liquid-speed divisor two."
+        },
+        {
+          "expectedCode": "BEQ .returnCarryClear"
+        },
+        {
+          "expectedCode": "+ LDA.W Pose",
+          "comment": "Reject landing animation ranges before movement-type checks."
+        },
+        {
+          "expectedCode": "CMP.W #$00A4"
+        },
+        {
+          "expectedCode": "BMI .notLanding"
+        },
+        {
+          "expectedCode": "CMP.W #$00A8"
+        },
+        {
+          "expectedCode": "BMI .returnCarryClear",
+          "comment": "Poses $A4..A7 cannot start X-ray."
+        },
+        {
+          "expectedCode": "CMP.W #$00E0"
+        },
+        {
+          "expectedCode": "BMI .notLanding"
+        },
+        {
+          "expectedCode": "CMP.W #$00E8"
+        },
+        {
+          "expectedCode": "BMI .returnCarryClear",
+          "comment": "Poses $E0..E7 cannot start X-ray."
+        },
+        {
+          "expectedCode": ".notLanding:"
+        },
+        {
+          "expectedCode": "LDA.W GameState"
+        },
+        {
+          "expectedCode": "CMP.W #$0008",
+          "comment": "Require normal gameplay state eight."
+        },
+        {
+          "expectedCode": "BNE .returnCarryClear"
+        },
+        {
+          "expectedCode": "LDA.W PowerBombExplosionStatus",
+          "comment": "Do not overlap X-ray with a power-bomb effect."
+        },
+        {
+          "expectedCode": "BNE .returnCarryClear"
+        },
+        {
+          "expectedCode": "LDA.W SamusYSpeed"
+        },
+        {
+          "expectedCode": "BNE .returnCarryClear"
+        },
+        {
+          "expectedCode": "LDA.W SamusYSubSpeed",
+          "comment": "Both integer and fractional vertical speed must be zero."
+        },
+        {
+          "expectedCode": "BNE .returnCarryClear"
+        },
+        {
+          "expectedCode": "LDA.W PreviousMovementTypeXray",
+          "comment": "Validate the movement type captured before this X-ray request."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.W .allowedPoses,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "BEQ .returnCarryClear",
+          "comment": "A zero table entry rejects the previous movement type."
+        },
+        {
+          "expectedCode": "LDA.W MovementType",
+          "comment": "Classify the current movement type separately."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.W .allowedPoses,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0001"
+        },
+        {
+          "expectedCode": "BEQ .standing",
+          "comment": "Class 1 selects a standing X-ray pose."
+        },
+        {
+          "expectedCode": "CMP.W #$0002"
+        },
+        {
+          "expectedCode": "BEQ .crouching",
+          "comment": "Class 2 selects a crouching X-ray pose."
+        },
+        {
+          "expectedCode": ".returnCarryClear:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Report setup rejection without claiming X-ray state."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".standing:"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .standingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$00D5"
+        },
+        {
+          "expectedCode": "STA.W SpecialProspectivePose",
+          "comment": "Request standing X-ray facing right."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".standingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$00D6"
+        },
+        {
+          "expectedCode": "STA.W SpecialProspectivePose",
+          "comment": "Request standing X-ray facing left."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".crouching:"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .crouchingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$00D9"
+        },
+        {
+          "expectedCode": "STA.W SpecialProspectivePose",
+          "comment": "Request crouching X-ray facing right."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".crouchingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$00DA"
+        },
+        {
+          "expectedCode": "STA.W SpecialProspectivePose",
+          "comment": "Request crouching X-ray facing left."
+        },
+        {
+          "expectedCode": ".merge:"
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W TimeIsFrozenFlag",
+          "comment": "Freeze gameplay systems for the scan."
+        },
+        {
+          "expectedCode": "LDA.W #$0005"
+        },
+        {
+          "expectedCode": "STA.W SpecialProspectivePoseChangeCommand",
+          "comment": "Attach command five to the X-ray pose transition."
+        },
+        {
+          "expectedCode": "LDX.W #$01FE",
+          "comment": "Start at the final word of the 512-byte window table."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.L XrayWindow2HDMADataTable,X",
+          "comment": "Initialize each two-byte scanline window entry to $00FF."
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "BPL .loop",
+          "comment": "Clear all 256 scanline entries."
+        },
+        {
+          "expectedCode": "JSL.L Disable_Enemy_Projectiles",
+          "comment": "Pause enemy-projectile processing during X-ray."
+        },
+        {
+          "expectedCode": "JSL.L Disable_PLMs",
+          "comment": "Pause PLM processing during X-ray."
+        },
+        {
+          "expectedCode": "JSL.L Disable_AnimatedTilesObjects",
+          "comment": "Pause animated-tile objects during X-ray."
+        },
+        {
+          "expectedCode": "JSL.L Disable_PaletteFXObjects",
+          "comment": "Pause palette-FX objects during X-ray."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W Xray_IndirectHDMATable",
+          "comment": "Emit one indirect scanline before the first table pointer."
+        },
+        {
+          "expectedCode": "LDA.W #XrayWindow2HDMADataTable"
+        },
+        {
+          "expectedCode": "STA.W Xray_IndirectHDMATable+1",
+          "comment": "Point the first region at window-table offset zero."
+        },
+        {
+          "expectedCode": "STZ.W Xray_IndirectHDMATable+3",
+          "comment": "Terminate that one-line region."
+        },
+        {
+          "expectedCode": "LDA.W #XrayWindow2HDMADataTable+$C8"
+        },
+        {
+          "expectedCode": "STA.W Xray_IndirectHDMATable+4",
+          "comment": "Point the next region at scanline-table offset $C8."
+        },
+        {
+          "expectedCode": "LDA.W #$0098"
+        },
+        {
+          "expectedCode": "STA.W Xray_IndirectHDMATable+6",
+          "comment": "Give the lower region $98 scanlines."
+        },
+        {
+          "expectedCode": "LDA.W #XrayWindow2HDMADataTable+$190"
+        },
+        {
+          "expectedCode": "STA.W Xray_IndirectHDMATable+7",
+          "comment": "Point it at window-table offset $190."
+        },
+        {
+          "expectedCode": "STZ.W Xray_IndirectHDMATable+9",
+          "comment": "Terminate the indirect HDMA list."
+        },
+        {
+          "expectedCode": "STZ.W Xray_State",
+          "comment": "Begin at X-ray state zero."
+        },
+        {
+          "expectedCode": "STZ.W Xray_AngularWidthDelta"
+        },
+        {
+          "expectedCode": "STZ.W Xray_AngularSubWidthDelta"
+        },
+        {
+          "expectedCode": "STZ.W Xray_AngularWidth"
+        },
+        {
+          "expectedCode": "STZ.W Xray_AngularSubWidth",
+          "comment": "Start with a closed beam and no angular growth."
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ +"
+        },
+        {
+          "expectedCode": "LDA.W #$0040"
+        },
+        {
+          "expectedCode": "STA.W Xray_Angle",
+          "comment": "Seed a right-facing beam at angle $40."
+        },
+        {
+          "expectedCode": "BRA .returnCarrySet"
+        },
+        {
+          "expectedCode": "+ LDA.W #$00C0"
+        },
+        {
+          "expectedCode": ".facingLeft:"
+        },
+        {
+          "expectedCode": "STA.W Xray_Angle",
+          "comment": "Seed a left-facing beam at angle $C0."
+        },
+        {
+          "expectedCode": ".returnCarrySet:"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Report that X-ray state is fully installed."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".allowedPoses:"
+        },
+        {
+          "expectedCode": "db $01",
+          "comment": "0 standing: standing-compatible."
+        },
+        {
+          "expectedCode": "db $01",
+          "comment": "1 running: normalize to standing X-ray."
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $02",
+          "comment": "5 crouching: select crouching X-ray."
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $01",
+          "comment": "15 ran into a wall: normalize to standing X-ray."
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        },
+        {
+          "expectedCode": "db $00"
+        }
+      ]
+    },
+    {
+      "id": "xray-runtime.Restore.lines",
+      "symbol": "Set_NonXray_SamusPose",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDA.W MovementType",
+          "comment": "Choose the restored pose from current movement type."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0005"
+        },
+        {
+          "expectedCode": "BEQ .crouching",
+          "comment": "Only exact crouching type five retains crouching."
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .facingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Restore standing facing right."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".facingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Restore standing facing left."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".crouching:"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .crouchingFacingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$0027"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Restore crouching facing right."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".crouchingFacingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0028"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Restore crouching facing left."
+        },
+        {
+          "expectedCode": ".merge:"
+        },
+        {
+          "expectedCode": "JSL.L InitializeSamusPose_1",
+          "comment": "Rebuild pose-dependent movement/radius state."
+        },
+        {
+          "expectedCode": "JSL.L Set_Samus_AnimationFrame_if_PoseChanged",
+          "comment": "Select the restored pose's initial frame."
+        },
+        {
+          "expectedCode": "LDA.W PreviousPose"
+        },
+        {
+          "expectedCode": "STA.W LastDifferentPose"
+        },
+        {
+          "expectedCode": "LDA.W PreviousPoseXDirection"
+        },
+        {
+          "expectedCode": "STA.W LastDifferentPoseXDirection"
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "STA.W PreviousPose"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "STA.W PreviousPoseXDirection",
+          "comment": "Commit restored pose history as one transition."
+        },
+        {
+          "expectedCode": "LDA.W #SamusMovementHandler_Normal"
+        },
+        {
+          "expectedCode": "STA.W MovementHandler",
+          "comment": "Return movement ownership to normal gameplay."
+        },
+        {
+          "expectedCode": "LDA.W #SamusPoseInputHandler_Normal"
+        },
+        {
+          "expectedCode": "STA.W PoseInputHandler",
+          "comment": "Return input ownership to normal pose handling."
+        },
+        {
+          "expectedCode": "LDA.W #$FFFF"
+        },
+        {
+          "expectedCode": "STA.W Xray_BeamSizeFlag",
+          "comment": "Mark the X-ray beam as closed/finished."
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Index the eight-byte restored pose definition."
+        },
+        {
+          "expectedCode": "LDA.L PoseDefinitions_YRadius,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W SamusYRadius",
+          "comment": "Measure the restored radius against the X-ray radius."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12"
+        },
+        {
+          "expectedCode": "BMI .unfreezeEnvironment",
+          "comment": "A larger restored radius needs no upward correction here."
+        },
+        {
+          "expectedCode": "LDA.W SamusYPosition"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp12",
+          "comment": "Move Samus upward by the radius reduction."
+        },
+        {
+          "expectedCode": "STA.W SamusYPosition"
+        },
+        {
+          "expectedCode": "STA.W SamusPreviousYPosition",
+          "comment": "Keep current and previous Y synchronized."
+        },
+        {
+          "expectedCode": ".unfreezeEnvironment:"
+        },
+        {
+          "expectedCode": "JSL.L Enable_Enemy_Projectiles",
+          "comment": "Resume enemy projectiles."
+        },
+        {
+          "expectedCode": "JSL.L Enable_PLMs",
+          "comment": "Resume PLMs."
+        },
+        {
+          "expectedCode": "JSL.L Enable_AnimatedTilesObjects",
+          "comment": "Resume animated tiles."
+        },
+        {
+          "expectedCode": "JSL.L Enable_PaletteFXObjects",
+          "comment": "Resume palette effects."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        }
+      ]
+    },
+    {
+      "id": "xray-runtime.PoseInput.lines",
+      "symbol": "XraySamusPoseInputHandler",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDA.W MovementType",
+          "comment": "Use a separate completion path while already turning on ground."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$000E"
+        },
+        {
+          "expectedCode": "BNE .notTurningOnGround"
+        },
+        {
+          "expectedCode": "JMP.W .turningOnGround"
+        },
+        {
+          "expectedCode": ".notTurningOnGround:"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .notTurningFacingLeft"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W LeftBinding",
+          "comment": "A right-facing Samus turns only while Left is held."
+        },
+        {
+          "expectedCode": "BEQ .returnMiddle"
+        },
+        {
+          "expectedCode": "LDA.W #$0100"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W Xray_Angle"
+        },
+        {
+          "expectedCode": "STA.W Xray_Angle",
+          "comment": "Mirror the scan angle around $100 for the new facing."
+        },
+        {
+          "expectedCode": "LDA.W MovementType"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0005"
+        },
+        {
+          "expectedCode": "BEQ ..crouching"
+        },
+        {
+          "expectedCode": "LDA.W #$0025"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Start standing turn-to-left pose $25."
+        },
+        {
+          "expectedCode": "BRA .notTurningMerge"
+        },
+        {
+          "expectedCode": "..crouching:"
+        },
+        {
+          "expectedCode": "LDA.W #$0043"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Start crouching turn-to-left pose $43."
+        },
+        {
+          "expectedCode": "BRA .notTurningMerge"
+        },
+        {
+          "expectedCode": ".notTurningFacingLeft:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W RightBinding",
+          "comment": "A left-facing Samus turns only while Right is held."
+        },
+        {
+          "expectedCode": "BEQ .returnMiddle"
+        },
+        {
+          "expectedCode": "LDA.W #$0100"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W Xray_Angle"
+        },
+        {
+          "expectedCode": "STA.W Xray_Angle",
+          "comment": "Mirror the angle before switching back to right-facing."
+        },
+        {
+          "expectedCode": "LDA.W MovementType"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0005"
+        },
+        {
+          "expectedCode": "BEQ ..crouching"
+        },
+        {
+          "expectedCode": "LDA.W #$0026"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Start standing turn-to-right pose $26."
+        },
+        {
+          "expectedCode": "BRA .notTurningMerge"
+        },
+        {
+          "expectedCode": "..crouching:"
+        },
+        {
+          "expectedCode": "LDA.W #$0044"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Start crouching turn-to-right pose $44."
+        },
+        {
+          "expectedCode": ".notTurningMerge:"
+        },
+        {
+          "expectedCode": "JSL.L InitializeSamusPose_1",
+          "comment": "Apply the chosen turning pose."
+        },
+        {
+          "expectedCode": "JSL.L Set_Samus_AnimationFrame_if_PoseChanged"
+        },
+        {
+          "expectedCode": "LDA.W PreviousPose"
+        },
+        {
+          "expectedCode": "STA.W LastDifferentPose"
+        },
+        {
+          "expectedCode": "LDA.W PreviousPoseXDirection"
+        },
+        {
+          "expectedCode": "STA.W LastDifferentPoseXDirection"
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "STA.W PreviousPose"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "STA.W PreviousPoseXDirection",
+          "comment": "Commit pose history for the turn start."
+        },
+        {
+          "expectedCode": ".returnMiddle:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".turningOnGround:"
+        },
+        {
+          "expectedCode": "LDA.W SamusAnimationFrame",
+          "comment": "Wait for the exact turning handoff frame."
+        },
+        {
+          "expectedCode": "CMP.W #$0002"
+        },
+        {
+          "expectedCode": "BNE .returnLower"
+        },
+        {
+          "expectedCode": "LDA.W SamusAnimationFrameTimer"
+        },
+        {
+          "expectedCode": "CMP.W #$0001"
+        },
+        {
+          "expectedCode": "BNE .returnLower",
+          "comment": "Complete only on frame two's final tick."
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .turningFacingLeft"
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "CMP.W #$0026"
+        },
+        {
+          "expectedCode": "BNE ..crouching"
+        },
+        {
+          "expectedCode": "LDA.W #$00D5"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Finish right-facing standing X-ray pose."
+        },
+        {
+          "expectedCode": "BRA .turningMerge"
+        },
+        {
+          "expectedCode": "..crouching:"
+        },
+        {
+          "expectedCode": "LDA.W #$00D9"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Finish right-facing crouching X-ray pose."
+        },
+        {
+          "expectedCode": "BRA .turningMerge"
+        },
+        {
+          "expectedCode": ".turningFacingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "CMP.W #$0025"
+        },
+        {
+          "expectedCode": "BNE ..XrayCrouching"
+        },
+        {
+          "expectedCode": "LDA.W #$00D6"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Finish left-facing standing X-ray pose."
+        },
+        {
+          "expectedCode": "BRA .turningMerge"
+        },
+        {
+          "expectedCode": "..XrayCrouching:"
+        },
+        {
+          "expectedCode": "LDA.W #$00DA"
+        },
+        {
+          "expectedCode": "STA.W Pose",
+          "comment": "Finish left-facing crouching X-ray pose."
+        },
+        {
+          "expectedCode": ".turningMerge:"
+        },
+        {
+          "expectedCode": "JSL.L InitializeSamusPose_1",
+          "comment": "Install the completed X-ray pose."
+        },
+        {
+          "expectedCode": "JSL.L Set_Samus_AnimationFrame_if_PoseChanged"
+        },
+        {
+          "expectedCode": "LDA.W PreviousPose"
+        },
+        {
+          "expectedCode": "STA.W LastDifferentPose"
+        },
+        {
+          "expectedCode": "LDA.W PreviousPoseXDirection"
+        },
+        {
+          "expectedCode": "STA.W LastDifferentPoseXDirection"
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "STA.W PreviousPose"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "STA.W PreviousPoseXDirection",
+          "comment": "Commit pose history for the turn completion."
+        },
+        {
+          "expectedCode": ".returnLower:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    }
+  ]
+}

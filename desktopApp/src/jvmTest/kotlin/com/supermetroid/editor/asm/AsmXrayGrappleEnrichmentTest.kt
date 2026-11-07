@@ -28,8 +28,10 @@ class AsmXrayGrappleEnrichmentTest {
         assertEquals(before, revision.copy(revision = before.revision,
             documentation = revision.documentation.filterNot { it.id.startsWith(prefix) },
             lineDocumentation = revision.lineDocumentation.filterNot { it.id.startsWith(prefix) }))
-        assertEquals(revision.documentation.filter { it.id.startsWith(prefix) }, current.documentation.filter { it.id.startsWith(prefix) })
-        assertEquals(revision.lineDocumentation.filter { it.id.startsWith(prefix) }, current.lineDocumentation.filter { it.id.startsWith(prefix) })
+        assertEquals(revision.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id })
+        assertEquals(revision.lineDocumentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            current.lineDocumentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id })
         assertEquals(documents, revision.documentation.count { it.id.startsWith(prefix) })
         val added = revision.lineDocumentation.filter { it.id.startsWith(prefix) }
         assertEquals(scopes, added.size); assertEquals(lines, added.sumOf { it.lines.size })

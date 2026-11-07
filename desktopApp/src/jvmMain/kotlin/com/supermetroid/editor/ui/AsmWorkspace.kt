@@ -828,7 +828,7 @@ private fun AsmWorkspaceControls(
             val unsaved = state.unsavedSourceFileIds.size
             "Project ASM enabled" + when {
                 unsaved > 0 -> " · $unsaved unsaved"
-                modified > 0 -> " · $modified saved source file${if (modified == 1) "" else "s"}"
+                modified > 0 -> " · $modified modified source file${if (modified == 1) "" else "s"}"
                 else -> " · clean"
             } + if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) " · source build" else ""
         }
@@ -956,24 +956,55 @@ private fun AsmWorkspaceControls(
                     Divider()
                     Spacer(Modifier.height(7.dp))
                     Text("Project ASM enabled", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+                    val modified = state.projectModifiedFileIds.size
+                    val unsaved = state.unsavedSourceFileIds.size
                     Text(
-                        "${state.projectModifiedFileIds.size} saved edits · ${state.unsavedSourceFileIds.size} unsaved buffers",
+                        "$modified modified source file${if (modified == 1) "" else "s"} · " +
+                            if (unsaved == 0) "all saved" else "$unsaved unsaved buffer${if (unsaved == 1) "" else "s"}",
                         fontSize = fs.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val revision = state.projectWorkspace?.baselineRevision.orEmpty()
+                    val documentationBaseline = revision.removePrefix("super-metroid-ntsc-").ifBlank { "Unknown" }
+                    val upstreamCommit = state.projectWorkspace?.referenceWorkspace?.metadata?.commit
+                        ?.let { it.take(8) + if (it.length > 8) "…" else "" } ?: "Unavailable"
                     Text(
-                        "ASM version ${state.projectWorkspace?.baselineRevision} · ${state.projectWorkspace?.referenceWorkspace?.metadata?.commit?.take(12)}",
+                        "Documentation baseline: $documentationBaseline",
                         fontSize = fs.detail,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedButton(onClick = onUpdateBaseline,
-                        enabled = referenceReady && romAvailable && !state.busy && state.projectAsmUpdateAvailable,
-                        modifier = Modifier.fillMaxWidth(), shape = ASM_CONTROL_SHAPE) {
-                        Text(
-                            if (state.projectAsmUpdateAvailable) "Update ASM Version…" else "ASM Version Is Current",
-                            fontSize = fs.detail,
-                        )
+                    Text(
+                        "Upstream source: $upstreamCommit",
+                        fontSize = fs.detail,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (state.projectAsmUpdateAvailable) {
+                        OutlinedButton(
+                            onClick = onUpdateBaseline,
+                            enabled = referenceReady && romAvailable && !state.busy,
+                            modifier = Modifier.fillMaxWidth().testTag("asm-baseline-update"),
+                            shape = ASM_CONTROL_SHAPE,
+                        ) {
+                            Text("Update ASM Version…", fontSize = fs.detail)
+                        }
+                    } else {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                            shape = ASM_CONTROL_SHAPE,
+                            modifier = Modifier.fillMaxWidth().testTag("asm-baseline-current-status"),
+                        ) {
+                            Text(
+                                "Up to date",
+                                fontSize = fs.detail,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+                            )
+                        }
                     }
                     state.baselineUpdateMessage?.let { Text(it, fontSize = fs.detail, color = MaterialTheme.colorScheme.primary) }
                     TextButton(onClick = onShowBaselineBackups, enabled = !state.busy,

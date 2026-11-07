@@ -1,0 +1,4771 @@
+{
+  "fileId": "bank_80.asm",
+  "documentation": [
+    {
+      "id": "escape-timer.ceres-encoding",
+      "symbol": "ProcessTimer_CeresStart",
+      "expectedCode": "JSL.L ClearTimerRAM",
+      "paragraphs": [
+        "SetTimer takes packed BCD minutes and seconds ($MMSS), not binary seconds.",
+        "Clear the old countdown before loading the duration and startup state."
+      ]
+    },
+    {
+      "id": "escape-timer.zebes-encoding",
+      "symbol": "ProcessTimer_MotherBrainStart",
+      "expectedCode": "JSL.L ClearTimerRAM",
+      "paragraphs": [
+        "SetTimer takes packed BCD minutes and seconds ($MMSS), not binary seconds.",
+        "Startup begins with an initial delay before the timer display moves into place."
+      ]
+    },
+    {
+      "id": "core.boot",
+      "symbol": "Boot",
+      "expectedCode": "SEI",
+      "paragraphs": [
+        "The reset vector enters in emulation mode. Switch to native mode and the",
+        "bank-$80 FastROM mirror, establish the stack and direct page, then initialise",
+        "low RAM and the display. Upload the SPC engine before joining CommonBootSection.",
+        "The polling delay below is retained as written; its original purpose is unknown."
+      ]
+    },
+    {
+      "id": "core.boot-common",
+      "symbol": "CommonBootSection",
+      "expectedCode": "SEP #$20",
+      "paragraphs": [
+        "Cold boot and SoftReset converge here. Force blank, clear bank $7E and initialise",
+        "CPU/PPU shadows, sound queues and sprite-transfer state before enabling NMI.",
+        "Finish the SRAM/demo checks, then jump to MainGameLoop without a return address.",
+        "NMI may run before the first frame request; its no-request path skips uploads."
+      ]
+    },
+    {
+      "id": "core.frame-handshake",
+      "symbol": "WaitForNMI",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Set NMI_Request only after the caller's frame buffers and transfer queues are",
+        "ready. NMI clears it after uploads and controller sampling, releasing this",
+        "busy-wait. An NMI with no request takes the lag path instead of consuming",
+        "partially prepared data. NMI must be enabled or this routine cannot finish.",
+        "Processor flags and the data bank are restored; A is used by the polling loop",
+        "and byte-index mode truncates the high bytes of X and Y."
+      ]
+    },
+    {
+      "id": "core.enable-nmi",
+      "symbol": "EnableNMI",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Set bit 7 in both $4200 and its shared DP_IRQAutoJoy shadow. Preserve the",
+        "h/v-counter interrupt and auto-joypad bits. This is separate from CLI/SEI:",
+        "the CPU's IRQ-disable flag does not enable or disable NMI."
+      ]
+    },
+    {
+      "id": "core.disable-nmi",
+      "symbol": "DisableNMI",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Clear bit 7 in both $4200 and DP_IRQAutoJoy, preserving the other control bits.",
+        "Keeping the shadow in sync matters because Update_IO_Registers uploads it again.",
+        "A subsequent WaitForNMI requires NMI to be re-enabled."
+      ]
+    },
+    {
+      "id": "core.nmi",
+      "symbol": "NMI",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "The native NMI vector enters through bank $00; jump to the bank-$80 mirror,",
+        "save full-width registers and establish direct page $0000 before doing work.",
+        "A nonzero NMI_Request gates the prepared-frame transfers and input sampling.",
+        "Servicing it clears the request and lag count and advances NMI_8bitFrameCounter",
+        "and NMI_FrameCounter. NMI_Counter advances on both serviced and lag paths.",
+        "RTI restores the interrupted processor status as well as its program address."
+      ]
+    },
+    {
+      "id": "core.nmi-hdma",
+      "symbol": "NMI",
+      "expectedCode": "LDA.W HDMAObject_ChannelBitflags,X",
+      "paragraphs": [
+        "Refresh the table-address registers for six HDMA-object slots. The object index",
+        "steps by two; each active slot supplies a DMA-channel offset and a word pointer.",
+        "Later, DP_HDMAEnable is written to $420C after the queued VRAM transfers."
+      ],
+      "localLabel": ".handleHDMAQueue"
+    },
+    {
+      "id": "core.nmi-lag",
+      "symbol": "NMI",
+      "expectedCode": "LDX.W NMI_LagCounter",
+      "paragraphs": [
+        "No frame is ready. Leave transfer queues and sampled controller state untouched;",
+        "increment the byte-sized consecutive lag count and its unsigned high-water mark.",
+        "The count wraps at $100; the high-water mark is retained across that wrap.",
+        "Rejoin the common exit to count this NMI and restore the interrupted context",
+        "without advancing the serviced-frame counters."
+      ],
+      "localLabel": ".lag"
+    },
+    {
+      "id": "core.scanline-irq",
+      "symbol": "IRQ",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Dispatch h/v-counter IRQ commands for scanline effects such as the HUD split",
+        "and door-transition drawing. DP_IRQCmd is already a word-table byte offset.",
+        "The command returns its successor in A, the next horizontal target in X and",
+        "vertical target in Y. Store all three before restoring the interrupted registers.",
+        "Unlike NMI, this entry does not change the direct-page base; direct-page command",
+        "state uses the engine's existing direct page."
+      ]
+    },
+    {
+      "id": "core.input-sampling",
+      "symbol": "ReadControllerInput",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Called near the end of a serviced NMI, after the graphics work. Wait until the",
+        "auto-joypad busy bit clears before reading the controller result. Derive newly",
+        "pressed buttons from current AND (current XOR previous), then maintain held",
+        "button repeat state. The no-request NMI path does not call this routine."
+      ]
+    },
+    {
+      "id": "transitions.resume-graphics",
+      "symbol": "ResumeGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Reload gameplay graphics while interrupts are controlled for direct VRAM work.",
+        "Mask IRQs, stop DMA, disable NMI and h/v-counter interrupts, then rebuild CRE,",
+        "tileset, background, visible-room and PLM graphics. Re-enable the interrupt",
+        "sources and restore the caller's saved bank and processor status before RTL."
+      ]
+    },
+    {
+      "id": "vram-upload.write-table",
+      "symbol": "HandleVRAMWriteTable_ScrollingDMAs",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Consume the seven-byte VRAMWrite records prepared by main-thread systems.",
+        "VRAMWriteStack is the byte offset after the last record; write a zero-size",
+        "terminator there, then walk records from offset zero. Each record supplies a",
+        "word size, 24-bit source and VRAM destination to DMA channel 1 in mode 1."
+      ]
+    },
+    {
+      "id": "vram-upload.destination-mode",
+      "symbol": "HandleVRAMWriteTable_ScrollingDMAs",
+      "localLabel": ".skip",
+      "expectedCode": "STA.W $2115",
+      "paragraphs": [
+        "The destination word's sign bit selects the VRAM increment mode. A clear bit",
+        "uses $80, advancing one word after the high-byte write; a set bit uses $81,",
+        "advancing 32 words for column uploads. Write the same destination to VMADD,",
+        "trigger channel 1, then advance seven bytes to the next software record."
+      ]
+    },
+    {
+      "id": "vram-upload.scrolling-tail",
+      "symbol": "HandleVRAMWriteTable_ScrollingDMAs",
+      "localLabel": ".done",
+      "expectedCode": "STZ.W VRAMWriteStack",
+      "paragraphs": [
+        "Reset the ordinary write-table stack after consuming it. Horizontal and",
+        "vertical scrolling buffers are independent flag-driven queues, so process",
+        "both even when VRAMWriteStack was already zero. The caller's processor",
+        "status is restored after all three upload paths finish."
+      ]
+    },
+    {
+      "id": "vram-upload.horizontal-columns",
+      "symbol": "ExecuteHorizontalScrollingDMAs",
+      "expectedCode": "LDA.B #$81",
+      "paragraphs": [
+        "Upload newly exposed BG1 columns with VMAIN $81: DMA writes each word's low",
+        "and high bytes, then advances 32 VRAM words to the next tilemap row. Separate",
+        "left/right staging buffers target adjacent columns. Upload the unwrapped",
+        "segment first, followed by the optional segment that wrapped in tilemap VRAM."
+      ]
+    },
+    {
+      "id": "vram-upload.horizontal-bg2",
+      "symbol": "ExecuteHorizontalScrollingDMAs",
+      "localLabel": ".BG2",
+      "expectedCode": "LDA.W BG2Col_updateVRAMTilemapFlag",
+      "paragraphs": [
+        "BG2 repeats the BG1 column geometry with its own flag, sizes, destinations and",
+        "bank-$7E staging buffers. Clear the flag before DMA so this prepared update is",
+        "consumed once. A zero wrapped size skips only the wrapped pair; the unwrapped",
+        "left/right transfers have already completed."
+      ]
+    },
+    {
+      "id": "vram-upload.vertical-rows",
+      "symbol": "ExecuteVerticalScrollingDMAs",
+      "expectedCode": "LDA.B #$80",
+      "paragraphs": [
+        "Upload newly exposed BG1 rows with VMAIN $80, advancing one VRAM word after",
+        "each tilemap word. The top-half buffer uses the prepared destination; OR $20",
+        "selects the next 32-word tile row for the bottom-half buffer. Repeat that pair",
+        "from adjusted sources and a second destination when the row wraps in VRAM."
+      ]
+    },
+    {
+      "id": "vram-upload.vertical-bg2",
+      "symbol": "ExecuteVerticalScrollingDMAs",
+      "localLabel": ".BG2",
+      "expectedCode": "LDA.W BG2Row_updateVRAMTilemapFlag",
+      "paragraphs": [
+        "BG2 has the same top/bottom and unwrapped/wrapped row layout as BG1, using its",
+        "own prepared buffers. Every transfer uses WRAM bank $7E and DMA channel 1.",
+        "Clear the update flag once, then a zero wrapped size bypasses the wrapped pair",
+        "without affecting the unwrapped upload already sent."
+      ]
+    },
+    {
+      "id": "vram-upload.vertical-status-guard",
+      "symbol": "ExecuteVerticalScrollingDMAs",
+      "localLabel": ".crash",
+      "expectedCode": "BRA .crash",
+      "paragraphs": [
+        "The preceding SEP #$02 sets the processor's zero flag, so BEQ always skips",
+        "this self-loop on a conforming 65816. Preserve the loop as an unreachable",
+        "status-flag sentinel from the original program; it is not a data-dependent",
+        "failure check in the normal BG2 wrapped-row transfer."
+      ]
+    },
+    {
+      "id": "audio-runtime.vram-read-table",
+      "symbol": "HandleVRAMReadTable",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Consume nine-byte VRAMRead records during the serviced NMI path. A record",
+        "provides the VRAM word address, DMA mode and B-bus target, 24-bit WRAM",
+        "destination and byte count. Channel 1 performs the VRAM-to-WRAM transfer,",
+        "then the reader advances by the exact nine-byte software-record stride."
+      ]
+    },
+    {
+      "id": "audio-runtime.vram-read-terminator",
+      "symbol": "HandleVRAMReadTable",
+      "localLabel": ".readTable",
+      "expectedCode": "STZ.W VRAMRead.src,X",
+      "paragraphs": [
+        "VRAMReadStack is the byte offset after the final record. With the accumulator",
+        "still eight-bit, STZ writes only one zero byte at that offset, but the loop",
+        "later tests a word source after REP #$20. This retained mismatch is safe only",
+        "when the following byte is already zero; normal producers queue one read."
+      ]
+    },
+    {
+      "id": "audio-runtime.music-queued-test",
+      "symbol": "CheckIfMusicIsQueued",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Scan all eight word-sized timer slots from offset $0E down to zero. Carry is",
+        "set when any slot has a nonzero timer and clear only when every timer is zero.",
+        "This reports queued countdowns; it does not inspect the active music timer,",
+        "the ring indices or whether the SPC is currently playing a track."
+      ]
+    },
+    {
+      "id": "audio-runtime.music-consumer",
+      "symbol": "HandleMusicQueue",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Advance the active music countdown and the eight-slot word-indexed ring.",
+        "A positive timer keeps waiting, zero dispatches the active entry, and a",
+        "negative timer loads the next queued entry. When the ring is empty, store",
+        "zero so the next call underflows and checks the queue again."
+      ]
+    },
+    {
+      "id": "audio-runtime.music-track-request",
+      "symbol": "HandleMusicQueue",
+      "localLabel": ".positive",
+      "expectedCode": "LDA.W APU_MusicEntry",
+      "paragraphs": [
+        "A nonnegative entry is an SPC track request. Send its low seven bits through",
+        "$2140, mirror the track number and suppress sound-effect handshakes for eight",
+        "calls. Clear the consumed ring slot, advance its byte offset by two modulo",
+        "$10, then immediately load the next queued entry if one exists."
+      ]
+    },
+    {
+      "id": "audio-runtime.music-data-upload",
+      "symbol": "HandleMusicQueue",
+      "localLabel": ".musicData",
+      "expectedCode": "AND.W #$00FF",
+      "paragraphs": [
+        "A negative entry selects a music-data upload by its low byte. Build the",
+        "24-bit source from overlapping words in Music_Pointers and synchronously",
+        "upload it to the SPC. Mark $FF while uploading, then clear the marker, consume",
+        "the ring slot and impose eight calls of sound-effect downtime before returning."
+      ]
+    },
+    {
+      "id": "audio-queue.music-fixed-delay",
+      "symbol": "QueueMusicDataOrTrack_8FrameDelay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Queue a word-sized track or music-data request with an eight-call delay.",
+        "Reject demo game states ($28 and above), and reserve one of the eight ring",
+        "slots so the wrapped next index can never equal the consumer index. A full",
+        "ring drops this request without changing entries or either cursor."
+      ]
+    },
+    {
+      "id": "audio-queue.music-variable-delay",
+      "symbol": "QueueMusicDataOrTrack_YFrameDelay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Queue the request at the current producer offset with max(Y, 8) calls of",
+        "delay. Demo states are still rejected, but this variant does not compare the",
+        "next and start indices before writing. It can overwrite an unread slot and",
+        "always advances the producer by one word modulo the eight-slot ring."
+      ]
+    },
+    {
+      "id": "audio-queue.music-minimum-delay",
+      "symbol": "QueueMusicDataOrTrack_YFrameDelay",
+      "localLabel": ".setTimer",
+      "expectedCode": "STA.W APU_MusicQueueTimers,X",
+      "paragraphs": [
+        "Store either Y or the clamped minimum of eight in the timer slot paired with",
+        "the request. Advance the word offset by two and mask with $000E, producing",
+        "the ring sequence $00, $02, ... $0E, $00 without a capacity check."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-wrapper-lib1",
+      "symbol": "QueueSound",
+      "expectedCode": "PHX",
+      "paragraphs": [
+        "The library-1 wrappers preserve X, Y and status, switch to byte registers and",
+        "move the caller's sound ID into A high. Loading 15, 9, 6, 3 or 1 into A low",
+        "selects the maximum outstanding count before branching into the common body.",
+        "The common return restores the stack frame created by whichever wrapper ran."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib1",
+      "symbol": "QueueSound_Lib1",
+      "expectedCode": "STA.W APU_MaxQueuedSoundsAllowedLib1",
+      "paragraphs": [
+        "Queue one library-1 sound when its modulo-16 outstanding count is below the",
+        "wrapper's threshold. XBA recovers the sound ID after the count check. Global",
+        "sound disable, demo states and an active power-bomb explosion each reject the",
+        "request before any ring byte or producer index changes."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib1-insert",
+      "symbol": "QueueSound_Lib1",
+      "localLabel": ".queueSound",
+      "expectedCode": "CPX.W APU_SoundQueueStartIndexLib1",
+      "paragraphs": [
+        "Y is the current producer slot and X is its wrapped successor. When advancing",
+        "would not collide with the consumer, store the sound at Y, publish X as the",
+        "new producer and clear that next slot as the queue sentinel."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib1-overflow",
+      "symbol": "QueueSound_Lib1",
+      "localLabel": ".queueFull",
+      "expectedCode": "JSR.W NOPRTS_8091A7",
+      "paragraphs": [
+        "The retained physical-full path calls an empty hook, then compares the new",
+        "sound ID with the byte at the current producer slot. Only a numerically lower",
+        "ID replaces that byte, and the producer index remains unchanged. Official",
+        "threshold wrappers normally reject a consistent full ring before this path."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-wrapper-lib2",
+      "symbol": "QueueSound_Lib2_Max15",
+      "expectedCode": "PHX",
+      "paragraphs": [
+        "Library-2 wrappers use the same packed A convention and thresholds as library",
+        "1: the sound ID moves into A high and the maximum outstanding count occupies",
+        "A low. The common library-2 body restores X, Y and status on every exit."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib2",
+      "symbol": "QueueSound_Lib2",
+      "expectedCode": "STA.W APU_MaxQueuedSoundsAllowedLib2",
+      "paragraphs": [
+        "Apply the threshold and global sound gates to library 2's independent start,",
+        "next and 16-byte ring. The arithmetic and control flow mirror library 1, but",
+        "all capacity state and payload bytes belong exclusively to library 2."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib2-insert",
+      "symbol": "QueueSound_Lib2",
+      "localLabel": ".queueSound",
+      "expectedCode": "CPX.W APU_SoundQueueStartIndexLib2",
+      "paragraphs": [
+        "Commit a library-2 request only when the wrapped successor does not equal its",
+        "consumer index. The published next slot is cleared after insertion, retaining",
+        "the zero sentinel expected by subsequent producers."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib2-overflow",
+      "symbol": "QueueSound_Lib2",
+      "localLabel": ".queueFull",
+      "expectedCode": "JSR.W NOPRTS_8091A7",
+      "paragraphs": [
+        "The library-2 full-ring branch shares the empty hook and numeric comparison.",
+        "A lower ID may replace the current producer byte without advancing the ring;",
+        "an equal or higher ID is discarded through the common restoring return."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-wrapper-lib3",
+      "symbol": "QueueSound_Lib3_Max15",
+      "expectedCode": "PHX",
+      "paragraphs": [
+        "Library-3 wrappers repeat the packed sound/threshold ABI and shared restore",
+        "frame. Their only data difference is the independent library-3 metadata and",
+        "payload ring selected by the common body below."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib3",
+      "symbol": "QueueSound_Lib3",
+      "expectedCode": "STA.W APU_MaxQueuedSoundsAllowedLib3",
+      "paragraphs": [
+        "Apply the same modulo-16 threshold, global-disable, demo and power-bomb gates",
+        "to library 3. Successful requests modify only its producer index and 16-byte",
+        "queue; the consumer later sends them through SPC port $2143."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib3-insert",
+      "symbol": "QueueSound_Lib3",
+      "localLabel": ".queueSound",
+      "expectedCode": "CPX.W APU_SoundQueueStartIndexLib3",
+      "paragraphs": [
+        "Store the library-3 sound at its current producer slot, advance modulo 16 and",
+        "clear the new producer slot when that advance does not collide with the start."
+      ]
+    },
+    {
+      "id": "audio-queue.sound-lib3-overflow",
+      "symbol": "QueueSound_Lib3",
+      "localLabel": ".queueFull",
+      "expectedCode": "JSR.W NOPRTS_8091A7",
+      "paragraphs": [
+        "On the retained library-3 collision path, keep the producer fixed and replace",
+        "its current byte only when the new sound ID is numerically lower. All exits",
+        "restore the wrapper's processor status, Y and X in that order."
+      ]
+    },
+    {
+      "id": "nmi-presentation.inline-dma-descriptor",
+      "symbol": "SetupHDMATransfer",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Decode the eight data bytes placed immediately after the caller's JSL:",
+        "channel, DMA mode, B-bus target, 24-bit source and 16-bit byte count.",
+        "The helper selects that channel's $43x0 register block, writes the descriptor",
+        "without starting DMA, then advances the stacked return address past the data."
+      ]
+    },
+    {
+      "id": "nmi-presentation.dma-channel-offsets",
+      "symbol": "SetupHDMATransfer",
+      "localLabel": ".table",
+      "expectedCode": "db $00,$10,$20,$30,$40,$50,$60,$70",
+      "paragraphs": [
+        "Map channel numbers 0..7 to the corresponding $4300..$4370 register-block",
+        "offset. Callers still start the configured transfer through $420B or $420C."
+      ]
+    },
+    {
+      "id": "nmi-presentation.ppu-shadow-upload",
+      "symbol": "Update_IO_Registers",
+      "expectedCode": "LDX.B DP_IRQAutoJoy",
+      "paragraphs": [
+        "Publish the prepared CPU/PPU shadow bytes during the serviced NMI. Ordinary",
+        "registers are copied once; scroll and Mode 7 words are sent low byte then high",
+        "byte through the hardware write latches. Gameplay screen and colour-math copies",
+        "retain the values actually presented by this frame."
+      ]
+    },
+    {
+      "id": "nmi-presentation.mode7-upload",
+      "symbol": "Update_IO_Registers",
+      "localLabel": ".mode7",
+      "expectedCode": "LDX.B DP_Mode7TransMatrixA",
+      "paragraphs": [
+        "Upload the four Mode 7 matrix coefficients and two origins only when either the",
+        "real or fake BG-mode shadow selects mode 7. Each word uses the PPU register's",
+        "two-write latch, preserving the matrix/origin state prepared outside NMI."
+      ]
+    },
+    {
+      "id": "nmi-presentation.oam-cgram",
+      "symbol": "UpdateOAM_CGRAM",
+      "expectedCode": "LDA.W #$0400",
+      "paragraphs": [
+        "Configure channel 0 to copy all $220 bytes of the software OAM image to $2104",
+        "and channel 1 to copy the full $200-byte palette image to $2122. Reset both",
+        "hardware destinations to zero, then start the two independent DMAs together."
+      ]
+    },
+    {
+      "id": "nmi-presentation.samus-tiles",
+      "symbol": "TransferSamusTilesToVRAM",
+      "expectedCode": "PHB",
+      "paragraphs": [
+        "Consume pending top- and bottom-half Samus tile definitions with DMA channel 1.",
+        "Each seven-byte definition supplies a 24-bit source followed by two byte counts;",
+        "the second part is optional and begins immediately after the first source range.",
+        "Top data targets VRAM $6000/$6100 and bottom data targets $6080/$6180."
+      ]
+    },
+    {
+      "id": "nmi-presentation.samus-bottom-tiles",
+      "symbol": "TransferSamusTilesToVRAM",
+      "localLabel": ".bottom",
+      "expectedCode": "LDY.W SamusTiles_BottomHalfFlag",
+      "paragraphs": [
+        "Independently test the bottom-half request and repeat the same one- or two-part",
+        "descriptor transfer at the bottom-half VRAM destinations. A zero second size",
+        "skips only the optional second DMA."
+      ]
+    },
+    {
+      "id": "nmi-presentation.animated-tiles",
+      "symbol": "ProcessAnimatedTilesObjectVRAMTransfers",
+      "expectedCode": "PHB",
+      "paragraphs": [
+        "When animated-tile objects are enabled, scan their six word-indexed slots from",
+        "$0A down to zero. A live object with a pending source address uploads its bank-$87",
+        "graphics through DMA channel 0 to the prepared VRAM word address."
+      ]
+    },
+    {
+      "id": "nmi-presentation.animated-tile-consume",
+      "symbol": "ProcessAnimatedTilesObjectVRAMTransfers",
+      "localLabel": ".loop",
+      "expectedCode": "LDA.W AnimatedTilesObject_IDs,X",
+      "paragraphs": [
+        "Skip empty objects and slots with no newly prepared graphics. After a transfer,",
+        "clear only the source address so the request is consumed once while the animated",
+        "tile object itself remains active."
+      ]
+    },
+    {
+      "id": "controller-bindings.input-repeat",
+      "symbol": "ReadControllerInput",
+      "localLabel": ".unheld",
+      "expectedCode": "LDA.B DP_AutoPressInitialDelay",
+      "paragraphs": [
+        "Any release or change in the complete input word reloads the initial repeat delay.",
+        "After that delay expires, the unchanged input word is copied to fake-new and the",
+        "shorter subsequent delay is reloaded. Real new-input remains edge-only."
+      ]
+    },
+    {
+      "id": "controller-bindings.debug-input",
+      "symbol": "ReadControllerInput",
+      "localLabel": ".debug",
+      "expectedCode": "LDA.W $421A",
+      "paragraphs": [
+        "The retained conditional debug path repeats the same edge/repeat bookkeeping for",
+        "controller 2, handles the four-button soft-reset chord when audio is not uploading,",
+        "and then interprets controller-1 debug chords without changing the ordinary sampler."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "core.WaitForNMI.lines",
+      "symbol": "WaitForNMI",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK",
+          "comment": "Use bank $80 for the low-RAM request flag."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "SEP #$30",
+          "comment": "Use byte-sized registers for the request handshake."
+        },
+        {
+          "expectedCode": "LDA.B #$01",
+          "comment": "Mark the caller's prepared frame as ready."
+        },
+        {
+          "expectedCode": "STA.W NMI_Request",
+          "comment": "Publish readiness to the NMI handler."
+        },
+        {
+          "expectedCode": ".wait:"
+        },
+        {
+          "expectedCode": "LDA.W NMI_Request",
+          "comment": "Poll the same byte that NMI clears after its frame work."
+        },
+        {
+          "expectedCode": "BNE .wait",
+          "comment": "Busy-wait for acknowledgement, not merely an interrupt edge."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the caller's data bank."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the caller's processor flags and register widths."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Resume only after the requested NMI work completes."
+        }
+      ]
+    },
+    {
+      "id": "core.EnableNMI.lines",
+      "symbol": "EnableNMI",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "LDA.B DP_IRQAutoJoy",
+          "comment": "Read the shared NMI, IRQ and auto-joypad control shadow."
+        },
+        {
+          "expectedCode": "ORA.B #$80",
+          "comment": "Set only the NMI-enable bit, preserving IRQ and joypad settings."
+        },
+        {
+          "expectedCode": "STA.W $4200",
+          "comment": "Enable NMI in the CPU I/O register."
+        },
+        {
+          "expectedCode": "STA.B DP_IRQAutoJoy",
+          "comment": "Keep the shadow consistent with the hardware write."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "core.DisableNMI.lines",
+      "symbol": "DisableNMI",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "LDA.B DP_IRQAutoJoy",
+          "comment": "Read the shared NMI, IRQ and auto-joypad control shadow."
+        },
+        {
+          "expectedCode": "AND.B #$7F",
+          "comment": "Clear only the NMI-enable bit, preserving IRQ and joypad settings."
+        },
+        {
+          "expectedCode": "STA.W $4200",
+          "comment": "Disable NMI without changing the CPU's IRQ mask."
+        },
+        {
+          "expectedCode": "STA.B DP_IRQAutoJoy",
+          "comment": "Keep later shadow-register uploads from re-enabling NMI."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "core.NMI.lines",
+      "symbol": "NMI",
+      "lines": [
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Save and restore full-width registers even if interrupted in byte mode."
+        },
+        {
+          "expectedCode": "JML .bank80",
+          "comment": "Enter the bank-$80 mirror explicitly; the native vector supplies only a word."
+        },
+        {
+          "expectedCode": ".bank80:"
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the interrupted data bank."
+        },
+        {
+          "expectedCode": "PHD",
+          "comment": "Preserve the interrupted direct-page base."
+        },
+        {
+          "expectedCode": "PHA",
+          "comment": "Save the full accumulator, including its hidden high byte in byte mode."
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve X before using it for byte-sized I/O and object indices."
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve Y before using it for HDMA channel offsets."
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $80 for hardware registers and mirrored low RAM."
+        },
+        {
+          "expectedCode": "LDA.W #$0000",
+          "comment": "Select the engine's low-RAM direct page."
+        },
+        {
+          "expectedCode": "TCD",
+          "comment": "Make direct-page operands relative to $0000 during NMI."
+        },
+        {
+          "expectedCode": "SEP #$10",
+          "comment": "Use byte-sized X and Y while leaving A word-sized."
+        },
+        {
+          "expectedCode": "LDX.W $4210",
+          "comment": "Read RDNMI to clear the latched NMI status bit."
+        },
+        {
+          "expectedCode": "LDX.W NMI_Request",
+          "comment": "Check whether the main thread has finished preparing a frame."
+        },
+        {
+          "expectedCode": "BEQ .lag",
+          "comment": "With no request, skip uploads, controller sampling and frame counters."
+        },
+        {
+          "expectedCode": "JSR.W UpdateOAM_CGRAM",
+          "comment": "Transfer the prepared sprite attributes and palette to OAM and CGRAM."
+        },
+        {
+          "expectedCode": "JSR.W TransferSamusTilesToVRAM",
+          "comment": "Upload the Samus tile data selected by the main thread."
+        },
+        {
+          "expectedCode": "JSR.W ProcessAnimatedTilesObjectVRAMTransfers",
+          "comment": "Consume pending animated-tile VRAM transfers."
+        },
+        {
+          "expectedCode": "JSR.W Update_IO_Registers",
+          "comment": "Copy the CPU and PPU register shadows into hardware."
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Start at the first of six HDMA-object slots."
+        },
+        {
+          "expectedCode": ".handleHDMAQueue:"
+        },
+        {
+          "expectedCode": "LDA.W HDMAObject_ChannelBitflags,X",
+          "comment": "Check whether this HDMA-object slot is in use."
+        },
+        {
+          "expectedCode": "BEQ .next",
+          "comment": "Leave unused slots' channel pointers alone."
+        },
+        {
+          "expectedCode": "LDY.W HDMAObject_ChannelIndicesBanks,X",
+          "comment": "Read the slot's DMA-channel register offset."
+        },
+        {
+          "expectedCode": "LDA.W HDMAObject_TablePointers,X",
+          "comment": "Load the object's current HDMA table address."
+        },
+        {
+          "expectedCode": "STA.W $4302,Y",
+          "comment": "Write the two-byte table pointer to that channel's A1T registers."
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance through word-indexed HDMA-object fields."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "CPX.B #$0C",
+          "comment": "Stop after offsets $00, $02, $04, $06, $08 and $0A."
+        },
+        {
+          "expectedCode": "BNE .handleHDMAQueue",
+          "comment": "Visit the remaining HDMA-object slots."
+        },
+        {
+          "expectedCode": "LDX.B DP_BGModeSize",
+          "comment": "Test the actual background-mode shadow."
+        },
+        {
+          "expectedCode": "CPX.B #$07",
+          "comment": "Mode 7 needs its additional transfer handler."
+        },
+        {
+          "expectedCode": "BEQ .mode7Enabled",
+          "comment": "Run Mode 7 transfers when the actual mode is 7."
+        },
+        {
+          "expectedCode": "LDX.B DP_FakeBGModeSize",
+          "comment": "Also test the alternate background-mode shadow."
+        },
+        {
+          "expectedCode": "CPX.B #$07",
+          "comment": "Either mode shadow may request Mode 7 transfers."
+        },
+        {
+          "expectedCode": "BNE .mode7Disabled",
+          "comment": "Skip Mode 7 transfers only when neither shadow is 7."
+        },
+        {
+          "expectedCode": ".mode7Enabled:"
+        },
+        {
+          "expectedCode": "JSL.L HandleMode7Transfers",
+          "comment": "Perform the Mode 7-specific queued transfers."
+        },
+        {
+          "expectedCode": ".mode7Disabled:"
+        },
+        {
+          "expectedCode": "JSL.L HandleVRAMWriteTable_ScrollingDMAs",
+          "comment": "Process queued VRAM writes and scrolling DMA transfers."
+        },
+        {
+          "expectedCode": "JSL.L HandleVRAMReadTable",
+          "comment": "Process queued VRAM reads."
+        },
+        {
+          "expectedCode": "SEP #$10",
+          "comment": "Re-establish byte-sized channel and control-register accesses."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Keep accumulator operations word-sized for the remaining work."
+        },
+        {
+          "expectedCode": "LDX.B DP_HDMAEnable",
+          "comment": "Load the HDMA channels prepared by the main thread."
+        },
+        {
+          "expectedCode": "STX.W $420C",
+          "comment": "Enable those channels for the coming drawing period."
+        },
+        {
+          "expectedCode": "JSL.L ReadControllerInput",
+          "comment": "Wait out auto-joypad reading and sample input near the end of NMI."
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Use a byte-sized zero for the request and lag fields."
+        },
+        {
+          "expectedCode": "STX.W NMI_Request",
+          "comment": "Acknowledge the prepared frame so WaitForNMI can finish."
+        },
+        {
+          "expectedCode": "STX.W NMI_LagCounter",
+          "comment": "Reset the consecutive unrequested-NMI count."
+        },
+        {
+          "expectedCode": "LDX.W NMI_8bitFrameCounter",
+          "comment": "Read the byte counter for serviced frame requests."
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance modulo $100 because X is byte-sized."
+        },
+        {
+          "expectedCode": "STX.W NMI_8bitFrameCounter",
+          "comment": "Store only the frame-counter byte, not its word-sized neighbor."
+        },
+        {
+          "expectedCode": "INC.W NMI_FrameCounter",
+          "comment": "Advance the separate word counter for serviced frame requests."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Restore word widths before pulling the saved registers."
+        },
+        {
+          "expectedCode": "INC.W NMI_Counter",
+          "comment": "Count every NMI, including the no-request lag path."
+        },
+        {
+          "expectedCode": "PLY",
+          "comment": "Restore the interrupted Y register."
+        },
+        {
+          "expectedCode": "PLX",
+          "comment": "Restore the interrupted X register."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Restore the interrupted accumulator."
+        },
+        {
+          "expectedCode": "PLD",
+          "comment": "Restore the interrupted direct-page base."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the interrupted data bank."
+        },
+        {
+          "expectedCode": "RTI",
+          "comment": "Restore the interrupted status and program address from the CPU's stack frame."
+        },
+        {
+          "expectedCode": ".lag:"
+        },
+        {
+          "expectedCode": "LDX.W NMI_LagCounter",
+          "comment": "Read the byte count of consecutive NMIs without a frame request."
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Increment with byte wraparound; this is not an unbounded timer."
+        },
+        {
+          "expectedCode": "STX.W NMI_LagCounter",
+          "comment": "Record one more NMI without a prepared frame."
+        },
+        {
+          "expectedCode": "LDX.W NMI_LagCounter",
+          "comment": "Compare the updated byte count with its recorded maximum."
+        },
+        {
+          "expectedCode": "CPX.W NMI_MaximumLag",
+          "comment": "Use an unsigned comparison for the lag high-water mark."
+        },
+        {
+          "expectedCode": "BCC .return",
+          "comment": "Keep the old maximum when the current count is smaller."
+        },
+        {
+          "expectedCode": "STX.W NMI_MaximumLag",
+          "comment": "Record the current count when it equals or exceeds the old maximum."
+        },
+        {
+          "expectedCode": "BRA .return",
+          "comment": "Join the common NMI counter and register-restoration path."
+        }
+      ]
+    },
+    {
+      "id": "core.IRQ.lines",
+      "symbol": "IRQ",
+      "lines": [
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use full-width registers for the command's return values."
+        },
+        {
+          "expectedCode": "JML .bank80",
+          "comment": "Enter the bank-$80 mirror explicitly from the native interrupt vector."
+        },
+        {
+          "expectedCode": ".bank80:"
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the interrupted data bank."
+        },
+        {
+          "expectedCode": "PHA",
+          "comment": "Preserve the full accumulator."
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve X before it becomes the next horizontal counter target."
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve Y before it becomes the next vertical counter target."
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $80 for interrupt registers and the command-pointer table."
+        },
+        {
+          "expectedCode": "LDA.W $4211",
+          "comment": "Read TIMEUP to acknowledge the h/v-counter interrupt."
+        },
+        {
+          "expectedCode": "LDX.B DP_IRQCmd",
+          "comment": "Load the command's existing word-table byte offset; do not double it."
+        },
+        {
+          "expectedCode": "JSR.W (InterruptCommandPointers,X)",
+          "comment": "Run the scanline command selected by that offset."
+        },
+        {
+          "expectedCode": "STA.B DP_IRQCmd",
+          "comment": "Use the returned A value as the next interrupt command."
+        },
+        {
+          "expectedCode": "STY.W $4209",
+          "comment": "Program the next vertical counter target returned in Y."
+        },
+        {
+          "expectedCode": "STX.W $4207",
+          "comment": "Program the next horizontal counter target returned in X."
+        },
+        {
+          "expectedCode": "PLY",
+          "comment": "Restore the interrupted Y register."
+        },
+        {
+          "expectedCode": "PLX",
+          "comment": "Restore the interrupted X register."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Restore the interrupted accumulator."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the interrupted data bank."
+        },
+        {
+          "expectedCode": "RTI",
+          "comment": "Resume the interrupted code with its original processor status."
+        }
+      ]
+    },
+    {
+      "id": "vram-upload.HandleVRAMWriteTable_ScrollingDMAs.lines",
+      "symbol": "HandleVRAMWriteTable_ScrollingDMAs",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's accumulator and index widths."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized A, X and Y while reading software records."
+        },
+        {
+          "expectedCode": "LDX.W VRAMWriteStack",
+          "comment": "Read the byte offset immediately after the final queued record."
+        },
+        {
+          "expectedCode": "BEQ .done",
+          "comment": "Even an empty ordinary queue still proceeds to scrolling uploads."
+        },
+        {
+          "expectedCode": "STZ.B VRAMWrite.size,X",
+          "comment": "Place a zero-size terminator at the current end of the table."
+        },
+        {
+          "expectedCode": "LDA.W #$1801",
+          "comment": "Select DMA mode 1 with B-bus target $2118/$2119."
+        },
+        {
+          "expectedCode": "STA.W $4310",
+          "comment": "Configure channel 1's transfer mode and VRAM-data port together."
+        },
+        {
+          "expectedCode": "LDY.W #$0000",
+          "comment": "Begin with the first seven-byte VRAMWrite record."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W VRAMWrite.size,Y",
+          "comment": "Read this record's transfer size in bytes."
+        },
+        {
+          "expectedCode": "BEQ .done",
+          "comment": "A zero size marks the end written above."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Program channel 1's DMA byte count."
+        },
+        {
+          "expectedCode": "LDA.W VRAMWrite.src,Y",
+          "comment": "Read the source address low and high bytes."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Write those bytes to channel 1's A-bus address."
+        },
+        {
+          "expectedCode": "LDA.W VRAMWrite.src+1,Y",
+          "comment": "Overlap the high byte with the following source-bank byte."
+        },
+        {
+          "expectedCode": "STA.W $4313",
+          "comment": "Finish the 24-bit source across $4313/$4314."
+        },
+        {
+          "expectedCode": "LDA.W #$0080",
+          "comment": "Default to one-word VRAM address increments after high-byte writes."
+        },
+        {
+          "expectedCode": "LDX.B VRAMWrite.dest,Y",
+          "comment": "Read the destination and its encoded column-mode sign bit."
+        },
+        {
+          "expectedCode": "BPL .skip",
+          "comment": "A nonnegative destination keeps increment mode $80."
+        },
+        {
+          "expectedCode": "INC",
+          "comment": "A negative destination selects $81, or 32-word column increments."
+        },
+        {
+          "expectedCode": ".skip:"
+        },
+        {
+          "expectedCode": "STA.W $2115",
+          "comment": "Install the selected VRAM increment mode."
+        },
+        {
+          "expectedCode": "STX.W $2116",
+          "comment": "Set the record's VRAM word destination."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Use an eight-bit DMA-channel trigger."
+        },
+        {
+          "expectedCode": "LDA.B #$02",
+          "comment": "Bit 1 selects DMA channel 1."
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Run this record's transfer synchronously."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0007",
+          "comment": "Advance by the exact seven-byte software-record stride."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "BRA .loop",
+          "comment": "Consume the next queued record."
+        },
+        {
+          "expectedCode": ".done:"
+        },
+        {
+          "expectedCode": "STZ.W VRAMWriteStack",
+          "comment": "Release every ordinary write-table record for the next frame."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Scrolling DMA helpers expect an eight-bit accumulator."
+        },
+        {
+          "expectedCode": "REP #$10",
+          "comment": "Keep X and Y word-sized for WRAM pointers and transfer sizes."
+        },
+        {
+          "expectedCode": "JSR.W ExecuteHorizontalScrollingDMAs",
+          "comment": "Consume prepared BG1/BG2 column updates."
+        },
+        {
+          "expectedCode": "JSR.W ExecuteVerticalScrollingDMAs",
+          "comment": "Then consume prepared BG1/BG2 row updates."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the caller's original register widths and flags."
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "vram-upload.ExecuteHorizontalScrollingDMAs.lines",
+      "symbol": "ExecuteHorizontalScrollingDMAs",
+      "lines": [
+        {
+          "expectedCode": "LDA.B #$81",
+          "comment": "Increment VMADD by 32 words after each high-byte write."
+        },
+        {
+          "expectedCode": "STA.W $2115",
+          "comment": "Configure column-wise tilemap DMA."
+        },
+        {
+          "expectedCode": "LDA.W BG1Col_updateVRAMTilemapFlag",
+          "comment": "Check for a prepared BG1 column update."
+        },
+        {
+          "expectedCode": "BEQ .BG2",
+          "comment": "Skip BG1 when its producer queued no column."
+        },
+        {
+          "expectedCode": "STZ.W BG1Col_updateVRAMTilemapFlag",
+          "comment": "Consume this BG1 request exactly once."
+        },
+        {
+          "expectedCode": "LDY.W BG1Col_unwrappedTilemapVRAMUpdateDest",
+          "comment": "Load the first segment's VRAM destination."
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDX.W #$1801",
+          "comment": "Use DMA mode 1 to write alternating low/high tilemap bytes."
+        },
+        {
+          "expectedCode": "STX.W $4310"
+        },
+        {
+          "expectedCode": "LDX.W #BG1ColumnUpdateTilemapLeftHalves",
+          "comment": "Begin with the staged left tile column in WRAM."
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$7E",
+          "comment": "All scrolling tilemap staging buffers live in WRAM bank $7E."
+        },
+        {
+          "expectedCode": "STA.W $4314"
+        },
+        {
+          "expectedCode": "LDX.W BG1Col_unwrappedTilemapVRAMUpdateSize",
+          "comment": "Read the unwrapped segment's byte count."
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the left halves through DMA channel 1."
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "The matching right tile column is one VRAM word to the right."
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "STX.W $4315",
+          "comment": "Reuse the same byte count for the right halves."
+        },
+        {
+          "expectedCode": "LDX.W #BG1ColumnUpdateTilemapRightHalves"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the paired right tile column."
+        },
+        {
+          "expectedCode": "LDX.W BG1Col_wrappedTilemapVRAMUpdateLeftHalvesSrc",
+          "comment": "Select the staged start of the wrapped left segment."
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDX.W BG1Col_wrappedTilemapVRAMUpdateSize",
+          "comment": "Read how many wrapped bytes remain."
+        },
+        {
+          "expectedCode": "BEQ .BG2",
+          "comment": "No wrapped segment means BG1 is complete."
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDY.W BG1Col_wrappedTilemapVRAMUpdateDest",
+          "comment": "Restart at the wrapped VRAM destination."
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the wrapped left halves."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDX.W BG1Col_wrappedTilemapVRAMUpdateRightHalvesSrc"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the wrapped right halves."
+        },
+        {
+          "expectedCode": ".BG2:"
+        },
+        {
+          "expectedCode": "LDA.W BG2Col_updateVRAMTilemapFlag",
+          "comment": "Check the independent BG2 column request."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Return when no BG2 column is pending."
+        },
+        {
+          "expectedCode": "STZ.W BG2Col_updateVRAMTilemapFlag",
+          "comment": "Consume this BG2 request once."
+        },
+        {
+          "expectedCode": "LDY.W BG2Col_unwrappedTilemapVRAMUpdateDest"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDX.W #$1801"
+        },
+        {
+          "expectedCode": "STX.W $4310"
+        },
+        {
+          "expectedCode": "LDX.W #BG2ColumnUpdateTilemapLeftHalves",
+          "comment": "Use BG2's separate staged left column."
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$7E"
+        },
+        {
+          "expectedCode": "STA.W $4314"
+        },
+        {
+          "expectedCode": "LDX.W BG2Col_unwrappedTilemapVRAMUpdateSize"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's unwrapped left halves."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDX.W #BG2ColumnUpdateTilemapRightHalves"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's unwrapped right halves."
+        },
+        {
+          "expectedCode": "LDX.W BG2Col_wrappedTilemapVRAMUpdateLeftHalvesSrc"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDX.W BG2Col_wrappedTilemapVRAMUpdateSize"
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Finish when BG2 has no wrapped segment."
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDY.W BG2Col_wrappedTilemapVRAMUpdateDest"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's wrapped left halves."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDX.W BG2Col_wrappedTilemapVRAMUpdateRightHalvesSrc"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's wrapped right halves."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "vram-upload.ExecuteVerticalScrollingDMAs.lines",
+      "symbol": "ExecuteVerticalScrollingDMAs",
+      "lines": [
+        {
+          "expectedCode": "LDA.B #$80",
+          "comment": "Increment VMADD by one word after each high-byte write."
+        },
+        {
+          "expectedCode": "STA.W $2115",
+          "comment": "Configure row-wise tilemap DMA."
+        },
+        {
+          "expectedCode": "LDA.W BG1Row_updateVRAMTilemapFlag",
+          "comment": "Check for a prepared BG1 row update."
+        },
+        {
+          "expectedCode": "BEQ .BG2",
+          "comment": "Skip BG1 when no row is pending."
+        },
+        {
+          "expectedCode": "STZ.W BG1Row_updateVRAMTilemapFlag",
+          "comment": "Consume this BG1 row request once."
+        },
+        {
+          "expectedCode": "LDY.W BG1Row_unwrappedTilemapVRAMUpdateDest",
+          "comment": "Load the top half's first VRAM destination."
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDX.W #$1801",
+          "comment": "Use DMA mode 1 for word-sized tilemap entries."
+        },
+        {
+          "expectedCode": "STX.W $4310"
+        },
+        {
+          "expectedCode": "LDX.W #BG1RowUpdateTilemapTopHalves",
+          "comment": "Begin with BG1's staged top tile row."
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$7E",
+          "comment": "The row staging buffers live in WRAM bank $7E."
+        },
+        {
+          "expectedCode": "STA.W $4314"
+        },
+        {
+          "expectedCode": "LDX.W BG1Row_unwrappedTilemapVRAMUpdateSize",
+          "comment": "Read the unwrapped segment's byte count."
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the unwrapped top tile row."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "ORA.W #$0020",
+          "comment": "Select the tilemap row 32 VRAM words below the top half."
+        },
+        {
+          "expectedCode": "STA.W $2116"
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "STX.W $4315",
+          "comment": "Reuse the same byte count for the bottom half."
+        },
+        {
+          "expectedCode": "LDX.W #BG1RowUpdateTilemapBottomHalves"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the paired bottom tile row."
+        },
+        {
+          "expectedCode": "LDX.W BG1Row_wrappedTilemapVRAMUpdateLeftHalvesSrc",
+          "comment": "Select the adjusted source for the wrapped top segment."
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDX.W BG1Row_wrappedTilemapVRAMUpdateSize",
+          "comment": "Read the optional wrapped segment size."
+        },
+        {
+          "expectedCode": "BEQ .BG2",
+          "comment": "No wrapped segment means BG1 is complete."
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDY.W BG1Row_wrappedTilemapVRAMUpdateDest",
+          "comment": "Restart at the wrapped top-row destination."
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the wrapped top segment."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "ORA.W #$0020",
+          "comment": "Select the wrapped segment's bottom tile row."
+        },
+        {
+          "expectedCode": "STA.W $2116"
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDX.W BG1Row_wrappedTilemapVRAMUpdateRightHalvesSrc"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload the wrapped bottom segment."
+        },
+        {
+          "expectedCode": ".BG2:"
+        },
+        {
+          "expectedCode": "LDA.W BG2Row_updateVRAMTilemapFlag",
+          "comment": "Check the independent BG2 row request."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Return when BG2 has no prepared row."
+        },
+        {
+          "expectedCode": "STZ.W BG2Row_updateVRAMTilemapFlag",
+          "comment": "Consume this BG2 request once."
+        },
+        {
+          "expectedCode": "LDY.W BG2Row_unwrappedTilemapVRAMUpdateDest"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDX.W #$1801"
+        },
+        {
+          "expectedCode": "STX.W $4310"
+        },
+        {
+          "expectedCode": "LDX.W #BG2RowUpdateTilemapTopHalves",
+          "comment": "Use BG2's separate staged top row."
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$7E"
+        },
+        {
+          "expectedCode": "STA.W $4314"
+        },
+        {
+          "expectedCode": "LDX.W BG2Row_unwrappedTilemapVRAMUpdateSize"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's unwrapped top row."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "ORA.W #$0020"
+        },
+        {
+          "expectedCode": "STA.W $2116"
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDX.W #BG2RowUpdateTilemapBottomHalves"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's unwrapped bottom row."
+        },
+        {
+          "expectedCode": "LDX.W BG2Row_wrappedTilemapVRAMUpdateLeftHalvesSrc"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDX.W BG2Row_wrappedTilemapVRAMUpdateSize"
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Finish when BG2 has no wrapped segment."
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDY.W BG2Row_wrappedTilemapVRAMUpdateDest"
+        },
+        {
+          "expectedCode": "STY.W $2116"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's wrapped top segment."
+        },
+        {
+          "expectedCode": "SEP #$02",
+          "comment": "Set the processor zero flag explicitly."
+        },
+        {
+          "expectedCode": "BEQ .continue",
+          "comment": "The forced zero flag makes this branch unconditional on a 65816."
+        },
+        {
+          "expectedCode": ".crash:"
+        },
+        {
+          "expectedCode": "BRA .crash",
+          "comment": "Retain the unreachable self-loop from the original program."
+        },
+        {
+          "expectedCode": ".continue:"
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "ORA.W #$0020",
+          "comment": "Select BG2's wrapped bottom tile row."
+        },
+        {
+          "expectedCode": "STA.W $2116"
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "STX.W $4315"
+        },
+        {
+          "expectedCode": "LDX.W BG2Row_wrappedTilemapVRAMUpdateRighttHalvesSrc"
+        },
+        {
+          "expectedCode": "STX.W $4312"
+        },
+        {
+          "expectedCode": "LDA.B #$02"
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Upload BG2's wrapped bottom segment."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.HandleVRAMReadTable.lines",
+      "symbol": "HandleVRAMReadTable",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's register widths and flags."
+        },
+        {
+          "expectedCode": "SEP #$30",
+          "comment": "Use byte-sized A and X for the queue-presence check and terminator write."
+        },
+        {
+          "expectedCode": "LDX.W VRAMReadStack",
+          "comment": "Read the byte offset immediately after the final nine-byte record."
+        },
+        {
+          "expectedCode": "BNE .readTable",
+          "comment": "Only configure DMA when at least one read is pending."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Leave an empty queue without changing its stack."
+        },
+        {
+          "expectedCode": ".readTable:"
+        },
+        {
+          "expectedCode": "STZ.W VRAMRead.src,X",
+          "comment": "Write the retained one-byte terminator at the queue end."
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Begin with the first record at offset zero."
+        },
+        {
+          "expectedCode": "LDA.B #$80",
+          "comment": "Increment VMADD after high-byte VRAM reads."
+        },
+        {
+          "expectedCode": "STA.W $2115",
+          "comment": "Install the VRAM read increment mode."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Read record fields and DMA registers as words."
+        },
+        {
+          "expectedCode": "LDA.W VRAMRead.src,X",
+          "comment": "Read this record's VRAM word address, or the word terminator."
+        },
+        {
+          "expectedCode": "BEQ .done",
+          "comment": "A zero source word ends the table."
+        },
+        {
+          "expectedCode": "STA.W $2116",
+          "comment": "Set the VRAM read address."
+        },
+        {
+          "expectedCode": "LDA.W $2139",
+          "comment": "Prime the VRAM read buffer before starting DMA."
+        },
+        {
+          "expectedCode": "LDA.W VRAMRead.control,X",
+          "comment": "Read the adjacent DMA-control and B-bus-target bytes together."
+        },
+        {
+          "expectedCode": "STA.W $4310",
+          "comment": "Configure channel 1's transfer direction, mode and VRAM read port."
+        },
+        {
+          "expectedCode": "LDA.W VRAMRead.dest,X",
+          "comment": "Read the destination address low and high bytes."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Write those bytes to channel 1's A-bus destination."
+        },
+        {
+          "expectedCode": "LDA.W VRAMRead.dest+1,X",
+          "comment": "Overlap the high byte with the following destination-bank byte."
+        },
+        {
+          "expectedCode": "STA.W $4313",
+          "comment": "Complete the 24-bit WRAM destination across $4313/$4314."
+        },
+        {
+          "expectedCode": "LDA.W VRAMRead.size,X",
+          "comment": "Read this record's transfer size in bytes."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Program channel 1's DMA byte count."
+        },
+        {
+          "expectedCode": "STZ.W $4317",
+          "comment": "Clear the first pair of remaining channel/HDMA registers."
+        },
+        {
+          "expectedCode": "STZ.W $4319",
+          "comment": "Clear the final pair of remaining channel/HDMA registers."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Use an eight-bit DMA-channel trigger."
+        },
+        {
+          "expectedCode": "LDA.B #$02",
+          "comment": "Bit 1 selects DMA channel 1."
+        },
+        {
+          "expectedCode": "STA.W $420B",
+          "comment": "Run this VRAM-to-WRAM transfer synchronously."
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B #$09",
+          "comment": "Advance by the exact nine-byte VRAMRead record stride."
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "BRA .loop",
+          "comment": "Consume the next queued record."
+        },
+        {
+          "expectedCode": ".done:"
+        },
+        {
+          "expectedCode": "STZ.W VRAMReadStack",
+          "comment": "Release every read-table record for the next frame."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the caller's original register widths and flags."
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.CheckIfMusicIsQueued.lines",
+      "symbol": "CheckIfMusicIsQueued",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's flags and register widths."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized A and X for timer slots and offsets."
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve the caller's X."
+        },
+        {
+          "expectedCode": "LDX.W #$000E",
+          "comment": "Start at the eighth word timer's byte offset."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W APU_MusicQueueTimers,X",
+          "comment": "Inspect this queued entry's countdown."
+        },
+        {
+          "expectedCode": "BNE .nonZeroTimer",
+          "comment": "Any nonzero countdown makes the result true."
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Move backward by one word-sized timer slot."
+        },
+        {
+          "expectedCode": "BPL .loop",
+          "comment": "Continue through offset zero while X remains nonnegative."
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Report that all eight queued timer words are zero."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".nonZeroTimer:"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Report at least one nonzero queued timer."
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.HandleMusicQueue.lines",
+      "symbol": "HandleMusicQueue",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's processor status."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Use word-sized music entries, timers and ring offsets."
+        },
+        {
+          "expectedCode": "DEC.W APU_MusicTimer",
+          "comment": "Advance the active entry's signed countdown by one call."
+        },
+        {
+          "expectedCode": "BMI .negative",
+          "comment": "A negative timer means no active entry; inspect the ring."
+        },
+        {
+          "expectedCode": "BEQ .positive",
+          "comment": "Zero means the active entry is ready to dispatch."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "A positive timer continues waiting."
+        },
+        {
+          "expectedCode": ".positive:"
+        },
+        {
+          "expectedCode": "LDA.W APU_MusicEntry",
+          "comment": "Read the active track or music-data request."
+        },
+        {
+          "expectedCode": "BMI .musicData",
+          "comment": "Bit 15 set selects a music-data upload."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Track requests and SPC ports are byte-sized."
+        },
+        {
+          "expectedCode": "AND.B #$7F",
+          "comment": "Strip the entry's high flag bit from the track number."
+        },
+        {
+          "expectedCode": "STA.W MusicTrackIndex",
+          "comment": "Publish the new gameplay music-track index."
+        },
+        {
+          "expectedCode": "STZ.W MusicTrackIndex+1",
+          "comment": "Keep the word-sized track index's high byte clear."
+        },
+        {
+          "expectedCode": "STA.W $2140",
+          "comment": "Send the track request to SPC port 0."
+        },
+        {
+          "expectedCode": "STA.W APU_CurrentMusicTrack",
+          "comment": "Mirror the outstanding track request."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Pause sound-effect handshakes for eight handler calls."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundHandlerDowntime"
+        },
+        {
+          "expectedCode": "LDX.W APU_MusicQueueStartIndex",
+          "comment": "Select the consumed entry's word offset."
+        },
+        {
+          "expectedCode": "STZ.W APU_MusicQueueEntries,X",
+          "comment": "Clear the consumed request word."
+        },
+        {
+          "expectedCode": "STZ.W APU_MusicQueueTimers,X",
+          "comment": "Clear its queued countdown word."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance to the next word-sized ring slot."
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "AND.W #$000E",
+          "comment": "Wrap the byte offset across eight slots."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueStartIndex",
+          "comment": "Commit the advanced ring start."
+        },
+        {
+          "expectedCode": ".negative:"
+        },
+        {
+          "expectedCode": "LDX.W APU_MusicQueueStartIndex",
+          "comment": "Read the next entry's ring offset."
+        },
+        {
+          "expectedCode": "CPX.W APU_MusicQueueNextIndex",
+          "comment": "Compare the read and insertion cursors."
+        },
+        {
+          "expectedCode": "BEQ .clearTimer",
+          "comment": "Equal cursors mean the ring is empty."
+        },
+        {
+          "expectedCode": "LDA.W APU_MusicQueueEntries,X",
+          "comment": "Load the next track or music-data request."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicEntry",
+          "comment": "Make it the active entry."
+        },
+        {
+          "expectedCode": "LDA.W APU_MusicQueueTimers,X",
+          "comment": "Load that entry's requested delay."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicTimer",
+          "comment": "Begin its active countdown."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".clearTimer:"
+        },
+        {
+          "expectedCode": "STZ.W APU_MusicTimer",
+          "comment": "Leave zero so the next call underflows and checks again."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".musicData:"
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Use the negative entry's low byte as the data index."
+        },
+        {
+          "expectedCode": "STA.W MusicDataIndex",
+          "comment": "Publish the selected music-data index."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use the encoded index as the pointer-table byte offset."
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "LDA.B #$FF",
+          "comment": "Mark that music data is being uploaded."
+        },
+        {
+          "expectedCode": "STA.W APU_CurrentMusicTrack"
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "LDA.L Music_Pointers,X",
+          "comment": "Read the source pointer's low and high bytes."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp00",
+          "comment": "Store those bytes in direct-page pointer scratch."
+        },
+        {
+          "expectedCode": "LDA.L Music_Pointers+1,X",
+          "comment": "Overlap the high byte with the following source-bank byte."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp01",
+          "comment": "Complete the 24-bit upload source across $00..$02."
+        },
+        {
+          "expectedCode": "JSL.L UploadToAPU_long",
+          "comment": "Synchronously transfer the selected music data to the SPC."
+        },
+        {
+          "expectedCode": "SEP #$20"
+        },
+        {
+          "expectedCode": "STZ.W APU_CurrentMusicTrack",
+          "comment": "Clear the upload-in-progress marker."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "LDX.W APU_MusicQueueStartIndex",
+          "comment": "Return to the consumed ring slot."
+        },
+        {
+          "expectedCode": "STZ.W APU_MusicQueueEntries,X",
+          "comment": "Clear its request word."
+        },
+        {
+          "expectedCode": "STZ.W APU_MusicQueueTimers,X",
+          "comment": "Clear its delay word."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "AND.W #$000E",
+          "comment": "Wrap to the next of eight word slots."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueStartIndex",
+          "comment": "Consume the uploaded entry."
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Keep sound-effect requests quiet after the upload."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundHandlerDowntime"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Load any following music entry on a later call."
+        },
+        {
+          "expectedCode": "if !FEATURE_KEEP_UNREFERENCED"
+        }
+      ]
+    },
+    {
+      "id": "audio-queue.QueueMusicFixed.lines",
+      "symbol": "QueueMusicDataOrTrack_8FrameDelay",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's processor status."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized requests, cursors and ring entries."
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve the caller's X."
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve the caller's Y."
+        },
+        {
+          "expectedCode": "LDX.W GameState",
+          "comment": "Read the current game-state number."
+        },
+        {
+          "expectedCode": "CPX.W #$0028",
+          "comment": "States $28 and above are demo playback states."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Do not enqueue music while a demo state is active."
+        },
+        {
+          "expectedCode": "PHA",
+          "comment": "Preserve the caller's track or music-data request."
+        },
+        {
+          "expectedCode": "LDA.W APU_MusicQueueNextIndex",
+          "comment": "Read the current word-sized producer offset."
+        },
+        {
+          "expectedCode": "INC"
+        },
+        {
+          "expectedCode": "INC",
+          "comment": "Calculate the following two-byte ring slot."
+        },
+        {
+          "expectedCode": "AND.W #$000E",
+          "comment": "Wrap that offset across eight entries."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Keep the prospective producer offset in X."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Recover the request before the capacity branch."
+        },
+        {
+          "expectedCode": "CPX.W APU_MusicQueueStartIndex",
+          "comment": "Test whether advancing would collide with the consumer."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Drop the request and retain one empty slot when the ring is full."
+        },
+        {
+          "expectedCode": "LDX.W APU_MusicQueueNextIndex",
+          "comment": "Return to the current insertion offset."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueEntries,X",
+          "comment": "Store the track or negative music-data request."
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Use the fixed eight-call delay."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueTimers,X",
+          "comment": "Pair the delay with the request in the parallel timer ring."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance by one word-sized entry."
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "AND.W #$000E",
+          "comment": "Wrap $10 back to producer offset zero."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueNextIndex",
+          "comment": "Publish the new insertion cursor after both words are written."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the caller's status after its index registers."
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "audio-queue.QueueMusicVariable.lines",
+      "symbol": "QueueMusicDataOrTrack_YFrameDelay",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's processor status."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized request, delay and cursor arithmetic."
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve X; Y remains the caller-supplied delay."
+        },
+        {
+          "expectedCode": "LDX.W GameState",
+          "comment": "Read the current game-state number."
+        },
+        {
+          "expectedCode": "CPX.W #$0028",
+          "comment": "Compare against the first demo state."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Reject requests throughout demo playback."
+        },
+        {
+          "expectedCode": "LDX.W APU_MusicQueueNextIndex",
+          "comment": "Select the current insertion offset without a capacity check."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueEntries,X",
+          "comment": "Write without checking whether this slot still holds an unread request."
+        },
+        {
+          "expectedCode": "TYA",
+          "comment": "Copy the caller's requested delay from Y."
+        },
+        {
+          "expectedCode": "CMP.W #$0008",
+          "comment": "Enforce a minimum of eight handler calls."
+        },
+        {
+          "expectedCode": "BCS .setTimer",
+          "comment": "Keep delays of eight or greater unchanged."
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Clamp smaller delays to eight."
+        },
+        {
+          "expectedCode": ".setTimer:"
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueTimers,X",
+          "comment": "Store the chosen delay beside the request's parallel slot."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance to the following word entry."
+        },
+        {
+          "expectedCode": "TXA"
+        },
+        {
+          "expectedCode": "AND.W #$000E",
+          "comment": "Wrap the producer across offsets $00..$0E."
+        },
+        {
+          "expectedCode": "STA.W APU_MusicQueueNextIndex",
+          "comment": "Publish the producer even if it catches the consumer."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "audio-queue.QueueSoundLib1.lines",
+      "symbol": "QueueSound_Lib1",
+      "lines": [
+        {
+          "expectedCode": "STA.W APU_MaxQueuedSoundsAllowedLib1",
+          "comment": "Store the wrapper's low-byte outstanding-count limit."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueNextIndexLib1",
+          "comment": "Read library 1's producer index."
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Prepare an unsigned modulo-distance subtraction."
+        },
+        {
+          "expectedCode": "SBC.W APU_SoundQueueStartIndexLib1",
+          "comment": "Subtract the consumer index from the producer."
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Convert the result to a modulo-16 outstanding count."
+        },
+        {
+          "expectedCode": "CMP.W APU_MaxQueuedSoundsAllowedLib1",
+          "comment": "Compare occupancy with the caller-selected threshold."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Reject when the ring already holds at least that many requests."
+        },
+        {
+          "expectedCode": "XBA",
+          "comment": "Recover the sound ID from A high into the low byte."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized X for the global eligibility fields."
+        },
+        {
+          "expectedCode": "LDX.W DisableSounds",
+          "comment": "Read the global sound-disable flag."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Reject all library-1 sounds while globally disabled."
+        },
+        {
+          "expectedCode": "LDX.W GameState",
+          "comment": "Read the game state without disturbing the packed sound in A."
+        },
+        {
+          "expectedCode": "CPX.W #$0028",
+          "comment": "Compare against the first demo state."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Do not add sound effects during demo playback."
+        },
+        {
+          "expectedCode": "LDX.W PowerBombExplosionStatus",
+          "comment": "Read the active power-bomb explosion status."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Its negative active flag suppresses ordinary sound requests."
+        },
+        {
+          "expectedCode": "SEP #$30",
+          "comment": "Return to byte-sized sound IDs and ring indices."
+        },
+        {
+          "expectedCode": "LDY.W APU_SoundQueueNextIndexLib1",
+          "comment": "Y selects the current library-1 insertion slot."
+        },
+        {
+          "expectedCode": "TYX",
+          "comment": "Copy that index to calculate its successor."
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance by one byte-sized sound entry."
+        },
+        {
+          "expectedCode": "CPX.B #$10",
+          "comment": "Test the end of the 16-byte ring."
+        },
+        {
+          "expectedCode": "BCC .queueSound",
+          "comment": "Keep successors $01..$0F without wrapping."
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Wrap the successor after slot $0F to zero."
+        },
+        {
+          "expectedCode": ".queueSound:"
+        },
+        {
+          "expectedCode": "CPX.W APU_SoundQueueStartIndexLib1",
+          "comment": "Test whether the successor collides with the consumer."
+        },
+        {
+          "expectedCode": "BEQ .queueFull",
+          "comment": "Use the retained collision path when no sentinel slot remains."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueLib1,Y",
+          "comment": "Write the sound ID at the current producer slot."
+        },
+        {
+          "expectedCode": "STX.W APU_SoundQueueNextIndexLib1",
+          "comment": "Publish the wrapped successor as the new producer."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundQueueLib1,X",
+          "comment": "Clear the new producer slot as a zero sentinel."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the wrapper's saved status first."
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".queueFull:"
+        },
+        {
+          "expectedCode": "JSR.W NOPRTS_8091A7",
+          "comment": "Call the retained empty overflow hook."
+        },
+        {
+          "expectedCode": "CMP.W APU_SoundQueueLib1,Y",
+          "comment": "Compare the new ID with the current producer-slot byte."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Discard an equal or numerically higher sound ID."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueLib1,Y",
+          "comment": "Replace that byte with a numerically lower sound ID."
+        },
+        {
+          "expectedCode": "BRA .return",
+          "comment": "Keep both ring indices unchanged on replacement."
+        }
+      ]
+    },
+    {
+      "id": "audio-queue.QueueSoundLib2.lines",
+      "symbol": "QueueSound_Lib2",
+      "lines": [
+        {
+          "expectedCode": "STA.W APU_MaxQueuedSoundsAllowedLib2",
+          "comment": "Store the library-2 wrapper's outstanding-count limit."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueNextIndexLib2",
+          "comment": "Read library 2's producer index."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W APU_SoundQueueStartIndexLib2",
+          "comment": "Measure producer distance from the consumer."
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Reduce the distance to modulo-16 occupancy."
+        },
+        {
+          "expectedCode": "CMP.W APU_MaxQueuedSoundsAllowedLib2",
+          "comment": "Apply the caller-selected library-2 threshold."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Reject when occupancy has reached the threshold."
+        },
+        {
+          "expectedCode": "XBA",
+          "comment": "Move the preserved sound ID back into A low."
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDX.W DisableSounds",
+          "comment": "Check the global sound-disable flag."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Reject while sound effects are globally disabled."
+        },
+        {
+          "expectedCode": "LDX.W GameState"
+        },
+        {
+          "expectedCode": "CPX.W #$0028",
+          "comment": "Compare with the first demo state."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Reject library-2 sounds during demos."
+        },
+        {
+          "expectedCode": "LDX.W PowerBombExplosionStatus"
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Reject while a power-bomb explosion is active."
+        },
+        {
+          "expectedCode": "SEP #$30",
+          "comment": "Use byte-sized sound and ring values."
+        },
+        {
+          "expectedCode": "LDY.W APU_SoundQueueNextIndexLib2",
+          "comment": "Y selects library 2's current producer slot."
+        },
+        {
+          "expectedCode": "TYX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Calculate the next byte slot."
+        },
+        {
+          "expectedCode": "CPX.B #$10"
+        },
+        {
+          "expectedCode": "BCC .queueSound",
+          "comment": "Use the in-range successor without wrapping."
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Wrap slot $0F's successor to zero."
+        },
+        {
+          "expectedCode": ".queueSound:"
+        },
+        {
+          "expectedCode": "CPX.W APU_SoundQueueStartIndexLib2",
+          "comment": "Protect the library-2 consumer slot."
+        },
+        {
+          "expectedCode": "BEQ .queueFull",
+          "comment": "Branch when the successor would collide with it."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueLib2,Y",
+          "comment": "Write the new library-2 sound ID."
+        },
+        {
+          "expectedCode": "STX.W APU_SoundQueueNextIndexLib2",
+          "comment": "Publish its wrapped successor."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundQueueLib2,X",
+          "comment": "Clear the new insertion slot as a zero sentinel."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".queueFull:"
+        },
+        {
+          "expectedCode": "JSR.W NOPRTS_8091A7",
+          "comment": "Call the shared empty overflow hook."
+        },
+        {
+          "expectedCode": "CMP.W APU_SoundQueueLib2,Y",
+          "comment": "Compare IDs at the unchanged producer slot."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Keep the existing byte for an equal or higher new ID."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueLib2,Y",
+          "comment": "Replace it only with a numerically lower ID."
+        },
+        {
+          "expectedCode": "BRA .return",
+          "comment": "Restore through the common wrapper return."
+        }
+      ]
+    },
+    {
+      "id": "audio-queue.QueueSoundLib3.lines",
+      "symbol": "QueueSound_Lib3",
+      "lines": [
+        {
+          "expectedCode": "STA.W APU_MaxQueuedSoundsAllowedLib3",
+          "comment": "Store the library-3 wrapper's outstanding-count limit."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueNextIndexLib3",
+          "comment": "Read library 3's producer index."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W APU_SoundQueueStartIndexLib3",
+          "comment": "Measure its outstanding producer distance."
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Wrap the distance into the 16-slot range."
+        },
+        {
+          "expectedCode": "CMP.W APU_MaxQueuedSoundsAllowedLib3",
+          "comment": "Apply the selected library-3 capacity threshold."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Reject at or above that outstanding count."
+        },
+        {
+          "expectedCode": "XBA",
+          "comment": "Recover the sound ID preserved in A high."
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDX.W DisableSounds"
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Reject while sound effects are disabled."
+        },
+        {
+          "expectedCode": "LDX.W GameState"
+        },
+        {
+          "expectedCode": "CPX.W #$0028"
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Reject throughout demo playback."
+        },
+        {
+          "expectedCode": "LDX.W PowerBombExplosionStatus"
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Reject during an active power-bomb explosion."
+        },
+        {
+          "expectedCode": "SEP #$30",
+          "comment": "Return to byte-sized payload and cursor operations."
+        },
+        {
+          "expectedCode": "LDY.W APU_SoundQueueNextIndexLib3",
+          "comment": "Y selects library 3's current insertion slot."
+        },
+        {
+          "expectedCode": "TYX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Calculate its successor."
+        },
+        {
+          "expectedCode": "CPX.B #$10",
+          "comment": "Test for wrap after slot $0F."
+        },
+        {
+          "expectedCode": "BCC .queueSound"
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Wrap the successor to slot zero."
+        },
+        {
+          "expectedCode": ".queueSound:"
+        },
+        {
+          "expectedCode": "CPX.W APU_SoundQueueStartIndexLib3",
+          "comment": "Check for collision with library 3's consumer."
+        },
+        {
+          "expectedCode": "BEQ .queueFull",
+          "comment": "Use the collision path rather than advancing into it."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueLib3,Y",
+          "comment": "Store the new sound at the producer slot."
+        },
+        {
+          "expectedCode": "STX.W APU_SoundQueueNextIndexLib3",
+          "comment": "Publish the successor as library 3's producer."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundQueueLib3,X",
+          "comment": "Clear that new producer slot as the sentinel."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "PLX"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".queueFull:"
+        },
+        {
+          "expectedCode": "JSR.W NOPRTS_8091A7",
+          "comment": "Call the retained empty overflow hook."
+        },
+        {
+          "expectedCode": "CMP.W APU_SoundQueueLib3,Y",
+          "comment": "Compare the new and current producer-slot IDs."
+        },
+        {
+          "expectedCode": "BCS .return",
+          "comment": "Discard an equal or numerically higher new request."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueLib3,Y",
+          "comment": "Replace the byte only for a lower new ID."
+        },
+        {
+          "expectedCode": "BRA .return",
+          "comment": "Leave both indices fixed and restore the wrapper frame."
+        }
+      ]
+    },
+    {
+      "id": "nmi-presentation.SetupHDMATransfer.lines",
+      "symbol": "SetupHDMATransfer",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's processor-width and flag state."
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the caller's data bank."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized descriptor pointers and DMA values."
+        },
+        {
+          "expectedCode": "LDA.B $04,S",
+          "comment": "Read the return PC high byte together with the caller's program bank."
+        },
+        {
+          "expectedCode": "PHA",
+          "comment": "Push those bytes for two byte-sized bank pulls."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Discard the return PC high byte."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Select the caller's program bank so the inline descriptor is data-bank addressable."
+        },
+        {
+          "expectedCode": "LDA.B $03,S",
+          "comment": "Read the return PC, which points immediately before the descriptor."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Use Y as the base for fields following the JSL."
+        },
+        {
+          "expectedCode": "LDA.W $0001,Y",
+          "comment": "Read the descriptor's first byte: DMA channel 0..7."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Discard the adjacent DMA-options byte."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use the channel number to index the offset table."
+        },
+        {
+          "expectedCode": "LDA.L .table,X",
+          "comment": "Translate the channel to its $43x0 register-block offset."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "X now selects one of the eight DMA register blocks."
+        },
+        {
+          "expectedCode": "LDA.W $0002,Y",
+          "comment": "Read DMA options and B-bus target as one word."
+        },
+        {
+          "expectedCode": "STA.W $4300,X",
+          "comment": "Set DMAPx and BBADx for the selected channel."
+        },
+        {
+          "expectedCode": "LDA.W $0004,Y",
+          "comment": "Read the low word of the 24-bit source address."
+        },
+        {
+          "expectedCode": "STA.W $4302,X",
+          "comment": "Set the channel's A-bus source offset."
+        },
+        {
+          "expectedCode": "LDA.W $0006,Y",
+          "comment": "Read source bank followed by the byte count's low byte."
+        },
+        {
+          "expectedCode": "STA.W $4304,X",
+          "comment": "Set A1Bx; the overlapping next write replaces the temporary DASx low byte."
+        },
+        {
+          "expectedCode": "LDA.W $0007,Y",
+          "comment": "Read the complete 16-bit transfer byte count."
+        },
+        {
+          "expectedCode": "STA.W $4305,X",
+          "comment": "Set DASx without starting the configured transfer."
+        },
+        {
+          "expectedCode": "TYA",
+          "comment": "Recover the stacked inline-data base address."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0008",
+          "comment": "Skip the eight descriptor bytes after the JSL."
+        },
+        {
+          "expectedCode": "STA.B $03,S",
+          "comment": "Replace the return PC so RTL resumes after the descriptor."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the caller's data bank."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore its processor status."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return to the first instruction after the inline descriptor."
+        },
+        {
+          "expectedCode": ".table:"
+        },
+        {
+          "expectedCode": "db $00,$10,$20,$30,$40,$50,$60,$70",
+          "comment": "Channel register blocks are spaced $10 bytes apart."
+        }
+      ]
+    },
+    {
+      "id": "nmi-presentation.UpdateIORegisters.lines",
+      "symbol": "Update_IO_Registers",
+      "lines": [
+        {
+          "expectedCode": "LDX.B DP_IRQAutoJoy",
+          "comment": "Read the NMI, IRQ and automatic-joypad control shadow."
+        },
+        {
+          "expectedCode": "STX.W $4200",
+          "comment": "Publish it to NMITIMEN."
+        },
+        {
+          "expectedCode": "LDX.B DP_Brightness",
+          "comment": "Read forced-blank and display-brightness state."
+        },
+        {
+          "expectedCode": "STX.W $2100",
+          "comment": "Publish it to INIDISP."
+        },
+        {
+          "expectedCode": "LDX.B DP_SpriteSizeAddr",
+          "comment": "Read sprite size and object-tile base selection."
+        },
+        {
+          "expectedCode": "STX.W $2101",
+          "comment": "Publish it to OBSEL."
+        },
+        {
+          "expectedCode": "LDX.B DP_BGModeSize",
+          "comment": "Read BG mode and tile-size bits."
+        },
+        {
+          "expectedCode": "STX.W $2105",
+          "comment": "Publish them to BGMODE."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mosaic",
+          "comment": "Read mosaic size and per-BG enables."
+        },
+        {
+          "expectedCode": "STX.W $2106",
+          "comment": "Publish them to MOSAIC."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG1TilemapAddrSize",
+          "comment": "Read BG1 tilemap base and size."
+        },
+        {
+          "expectedCode": "STX.W $2107",
+          "comment": "Publish it to BG1SC."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG2TilemapAddrSize",
+          "comment": "Read BG2 tilemap base and size."
+        },
+        {
+          "expectedCode": "STX.W $2108",
+          "comment": "Publish it to BG2SC."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG3TilemapAddrSize",
+          "comment": "Read BG3 tilemap base and size."
+        },
+        {
+          "expectedCode": "STX.W $2109",
+          "comment": "Publish it to BG3SC."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG4TilemapAddrSize",
+          "comment": "Read BG4 tilemap base and size."
+        },
+        {
+          "expectedCode": "STX.W $210A",
+          "comment": "Publish it to BG4SC."
+        },
+        {
+          "expectedCode": "LDX.B DP_BGTilesAddr",
+          "comment": "Read the BG1/BG2 character-data base byte."
+        },
+        {
+          "expectedCode": "STX.W $210B",
+          "comment": "Publish it to BG12NBA."
+        },
+        {
+          "expectedCode": "LDX.B DP_BGTilesAddr+1",
+          "comment": "Read the BG3/BG4 character-data base byte."
+        },
+        {
+          "expectedCode": "STX.W $210C",
+          "comment": "Publish it to BG34NBA."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7Settings",
+          "comment": "Read Mode 7 repeat and flip settings."
+        },
+        {
+          "expectedCode": "STX.W $211A",
+          "comment": "Publish them to M7SEL."
+        },
+        {
+          "expectedCode": "LDX.B DP_WindowMaskBG12",
+          "comment": "Read window selection for BG1 and BG2."
+        },
+        {
+          "expectedCode": "STX.W $2123",
+          "comment": "Publish it to W12SEL."
+        },
+        {
+          "expectedCode": "LDX.B DP_WindowMaskBG34",
+          "comment": "Read window selection for BG3 and BG4."
+        },
+        {
+          "expectedCode": "STX.W $2124",
+          "comment": "Publish it to W34SEL."
+        },
+        {
+          "expectedCode": "LDX.B DP_WindowMaskSprite",
+          "comment": "Read window selection for sprites and colour math."
+        },
+        {
+          "expectedCode": "STX.W $2125",
+          "comment": "Publish it to WOBJSEL."
+        },
+        {
+          "expectedCode": "LDX.B DP_Window1Left",
+          "comment": "Read window 1's left edge."
+        },
+        {
+          "expectedCode": "STX.W $2126",
+          "comment": "Publish it to WH0."
+        },
+        {
+          "expectedCode": "LDX.B DP_Window1Right",
+          "comment": "Read window 1's right edge."
+        },
+        {
+          "expectedCode": "STX.W $2127",
+          "comment": "Publish it to WH1."
+        },
+        {
+          "expectedCode": "LDX.B DP_Window2Left",
+          "comment": "Read window 2's left edge."
+        },
+        {
+          "expectedCode": "STX.W $2128",
+          "comment": "Publish it to WH2."
+        },
+        {
+          "expectedCode": "LDX.B DP_Window2Right",
+          "comment": "Read window 2's right edge."
+        },
+        {
+          "expectedCode": "STX.W $2129",
+          "comment": "Publish it to WH3."
+        },
+        {
+          "expectedCode": "LDX.B DP_Window12BGMaskLogic",
+          "comment": "Read BG window-mask combination logic."
+        },
+        {
+          "expectedCode": "STX.W $212A",
+          "comment": "Publish it to WBGLOG."
+        },
+        {
+          "expectedCode": "LDX.B DP_Window12SpriteMaskLogic",
+          "comment": "Read sprite/colour window-mask combination logic."
+        },
+        {
+          "expectedCode": "STX.W $212B",
+          "comment": "Publish it to WOBJLOG."
+        },
+        {
+          "expectedCode": "LDX.B DP_MainScreenLayers",
+          "comment": "Read the prepared main-screen layer mask."
+        },
+        {
+          "expectedCode": "STX.B DP_GameplayMainScreenLayers",
+          "comment": "Remember the layer mask actually presented this frame."
+        },
+        {
+          "expectedCode": "STX.W $212C",
+          "comment": "Publish it to the main-screen designation register."
+        },
+        {
+          "expectedCode": "LDX.B DP_WindowAreaMainScreen",
+          "comment": "Read main-screen window masking enables."
+        },
+        {
+          "expectedCode": "STX.W $212E",
+          "comment": "Publish them to TMW."
+        },
+        {
+          "expectedCode": "LDX.B DP_SubScreenLayers",
+          "comment": "Read the prepared subscreen layer mask."
+        },
+        {
+          "expectedCode": "STX.W $212D",
+          "comment": "Publish it to the subscreen designation register."
+        },
+        {
+          "expectedCode": "LDX.B DP_WindowAreaSubScreen",
+          "comment": "Read subscreen window masking enables."
+        },
+        {
+          "expectedCode": "STX.W $212F",
+          "comment": "Publish them to TSW."
+        },
+        {
+          "expectedCode": "LDX.B DP_ColorMathA",
+          "comment": "Read direct-colour and colour-window control."
+        },
+        {
+          "expectedCode": "STX.W $2130",
+          "comment": "Publish it to CGWSEL."
+        },
+        {
+          "expectedCode": "LDX.B DP_ColorMathB",
+          "comment": "Read colour-math layer, halve and add/subtract control."
+        },
+        {
+          "expectedCode": "STX.W $2131",
+          "comment": "Publish it to CGADSUB."
+        },
+        {
+          "expectedCode": "LDX.B DP_NextGameplayColorMathA",
+          "comment": "Read the next gameplay copy of CGWSEL state."
+        },
+        {
+          "expectedCode": "STX.B DP_GameplayColorMathA",
+          "comment": "Commit it as the gameplay state presented by NMI."
+        },
+        {
+          "expectedCode": "LDX.B DP_NextGameplayColorMathB",
+          "comment": "Read the next gameplay copy of CGADSUB state."
+        },
+        {
+          "expectedCode": "STX.B DP_GameplayColorMathB",
+          "comment": "Commit it as the gameplay state presented by NMI."
+        },
+        {
+          "expectedCode": "LDX.B DP_ColorMathSubScreenBackdropColor0",
+          "comment": "Read the encoded fixed-colour red component."
+        },
+        {
+          "expectedCode": "STX.W $2132",
+          "comment": "Write the red component through COLDATA."
+        },
+        {
+          "expectedCode": "LDX.B DP_ColorMathSubScreenBackdropColor1",
+          "comment": "Read the encoded fixed-colour green component."
+        },
+        {
+          "expectedCode": "STX.W $2132",
+          "comment": "Write the green component through COLDATA."
+        },
+        {
+          "expectedCode": "LDX.B DP_ColorMathSubScreenBackdropColor2",
+          "comment": "Read the encoded fixed-colour blue component."
+        },
+        {
+          "expectedCode": "STX.W $2132",
+          "comment": "Write the blue component through COLDATA."
+        },
+        {
+          "expectedCode": "LDX.B DP_DisplayResolution",
+          "comment": "Read interlace, overscan and high-resolution state."
+        },
+        {
+          "expectedCode": "STX.W $2133",
+          "comment": "Publish it to SETINI."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG1XScroll",
+          "comment": "Read BG1 horizontal scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $210D",
+          "comment": "Write the first BG1 horizontal scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG1XScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $210D",
+          "comment": "Complete the BG1 horizontal scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG1YScroll",
+          "comment": "Read BG1 vertical scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $210E",
+          "comment": "Write the first BG1 vertical scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG1YScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $210E",
+          "comment": "Complete the BG1 vertical scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG2XScroll",
+          "comment": "Read BG2 horizontal scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $210F",
+          "comment": "Write the first BG2 horizontal scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG2XScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $210F",
+          "comment": "Complete the BG2 horizontal scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG2YScroll",
+          "comment": "Read BG2 vertical scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2110",
+          "comment": "Write the first BG2 vertical scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG2YScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2110",
+          "comment": "Complete the BG2 vertical scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG3XScroll",
+          "comment": "Read BG3 horizontal scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2111",
+          "comment": "Write the first BG3 horizontal scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG3XScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2111",
+          "comment": "Complete the BG3 horizontal scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG3YScroll",
+          "comment": "Read BG3 vertical scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2112",
+          "comment": "Write the first BG3 vertical scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG3YScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2112",
+          "comment": "Complete the BG3 vertical scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG4XScroll",
+          "comment": "Read BG4 horizontal scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2113",
+          "comment": "Write the first BG4 horizontal scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG4XScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2113",
+          "comment": "Complete the BG4 horizontal scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG4YScroll",
+          "comment": "Read BG4 vertical scroll's first latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2114",
+          "comment": "Write the first BG4 vertical scroll byte."
+        },
+        {
+          "expectedCode": "LDX.B DP_BG4YScroll+1",
+          "comment": "Read its second latch byte."
+        },
+        {
+          "expectedCode": "STX.W $2114",
+          "comment": "Complete the BG4 vertical scroll word."
+        },
+        {
+          "expectedCode": "LDX.B DP_FakeBGModeSize",
+          "comment": "Read the fake BG-mode byte used by Ceres HDMA."
+        },
+        {
+          "expectedCode": "STX.W CeresMode7HDMATables+1",
+          "comment": "Patch that byte into the Ceres scanline table."
+        },
+        {
+          "expectedCode": "LDA.B DP_BGModeSize",
+          "comment": "Read the real BG-mode shadow."
+        },
+        {
+          "expectedCode": "AND.W #$0007",
+          "comment": "Keep only its mode number."
+        },
+        {
+          "expectedCode": "CMP.W #$0007",
+          "comment": "Test for Mode 7."
+        },
+        {
+          "expectedCode": "BEQ .mode7",
+          "comment": "Upload the Mode 7 transform when the real mode uses it."
+        },
+        {
+          "expectedCode": "LDA.B DP_FakeBGModeSize",
+          "comment": "Otherwise inspect the fake Ceres mode."
+        },
+        {
+          "expectedCode": "AND.W #$0007",
+          "comment": "Keep only its mode number."
+        },
+        {
+          "expectedCode": "CMP.W #$0007",
+          "comment": "Test the fake mode for Mode 7."
+        },
+        {
+          "expectedCode": "BEQ .mode7",
+          "comment": "Upload the transform when Ceres HDMA will expose Mode 7."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Skip unused Mode 7 registers for ordinary BG modes."
+        },
+        {
+          "expectedCode": ".mode7:"
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixA",
+          "comment": "Read matrix coefficient A's low byte."
+        },
+        {
+          "expectedCode": "STX.W $211B",
+          "comment": "Send its first byte to M7A."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixA+1",
+          "comment": "Read coefficient A's high byte."
+        },
+        {
+          "expectedCode": "STX.W $211B",
+          "comment": "Complete coefficient A through the write-twice latch."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixB",
+          "comment": "Read matrix coefficient B's low byte."
+        },
+        {
+          "expectedCode": "STX.W $211C",
+          "comment": "Send its first byte to M7B."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixB+1",
+          "comment": "Read coefficient B's high byte."
+        },
+        {
+          "expectedCode": "STX.W $211C",
+          "comment": "Complete coefficient B."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixC",
+          "comment": "Read matrix coefficient C's low byte."
+        },
+        {
+          "expectedCode": "STX.W $211D",
+          "comment": "Send its first byte to M7C."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixC+1",
+          "comment": "Read coefficient C's high byte."
+        },
+        {
+          "expectedCode": "STX.W $211D",
+          "comment": "Complete coefficient C."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixD",
+          "comment": "Read matrix coefficient D's low byte."
+        },
+        {
+          "expectedCode": "STX.W $211E",
+          "comment": "Send its first byte to M7D."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransMatrixD+1",
+          "comment": "Read coefficient D's high byte."
+        },
+        {
+          "expectedCode": "STX.W $211E",
+          "comment": "Complete coefficient D."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransOriginX",
+          "comment": "Read the Mode 7 centre X low byte."
+        },
+        {
+          "expectedCode": "STX.W $211F",
+          "comment": "Send its first byte to M7X."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransOriginX+1",
+          "comment": "Read the centre X high byte."
+        },
+        {
+          "expectedCode": "STX.W $211F",
+          "comment": "Complete the Mode 7 centre X value."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransOriginY",
+          "comment": "Read the Mode 7 centre Y low byte."
+        },
+        {
+          "expectedCode": "STX.W $2120",
+          "comment": "Send its first byte to M7Y."
+        },
+        {
+          "expectedCode": "LDX.B DP_Mode7TransOriginY+1",
+          "comment": "Read the centre Y high byte."
+        },
+        {
+          "expectedCode": "STX.W $2120",
+          "comment": "Complete the Mode 7 centre Y value."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "nmi-presentation.UpdateOAMCGRAM.lines",
+      "symbol": "UpdateOAM_CGRAM",
+      "lines": [
+        {
+          "expectedCode": "LDA.W #$0400",
+          "comment": "Pack DMA mode 0 with OAMDATA target $04."
+        },
+        {
+          "expectedCode": "STA.W $4300",
+          "comment": "Configure channel 0 to write one byte repeatedly to $2104."
+        },
+        {
+          "expectedCode": "LDA.W #OAMLow",
+          "comment": "Select the low word of the software OAM image."
+        },
+        {
+          "expectedCode": "STA.W $4302",
+          "comment": "Set channel 0's A-bus source offset."
+        },
+        {
+          "expectedCode": "LDX.B #$00",
+          "comment": "Use the low-RAM mirror as the OAM source bank."
+        },
+        {
+          "expectedCode": "STX.W $4304",
+          "comment": "Set channel 0's source bank to $00."
+        },
+        {
+          "expectedCode": "LDA.W #$0220",
+          "comment": "Cover 512 low-table bytes and 32 high-table bytes."
+        },
+        {
+          "expectedCode": "STA.W $4305",
+          "comment": "Set the full software OAM transfer size."
+        },
+        {
+          "expectedCode": "STZ.W $2102",
+          "comment": "Reset the hardware OAM destination address to zero."
+        },
+        {
+          "expectedCode": "LDA.W #$2200",
+          "comment": "Pack DMA mode 0 with CGDATA target $22."
+        },
+        {
+          "expectedCode": "STA.W $4310",
+          "comment": "Configure channel 1 to write palette bytes to $2122."
+        },
+        {
+          "expectedCode": "LDA.W #Palettes",
+          "comment": "Select the low word of the 256-colour software palette."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Set channel 1's A-bus source offset."
+        },
+        {
+          "expectedCode": "LDX.B #Palettes>>16",
+          "comment": "Select the palette buffer's source bank."
+        },
+        {
+          "expectedCode": "STX.W $4314",
+          "comment": "Set channel 1's A-bus source bank."
+        },
+        {
+          "expectedCode": "LDA.W #$0200",
+          "comment": "Transfer all 512 CGRAM bytes."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Set channel 1's palette byte count."
+        },
+        {
+          "expectedCode": "LDX.B #$00"
+        },
+        {
+          "expectedCode": "STX.W $2121",
+          "comment": "Reset the CGRAM colour destination to index zero."
+        },
+        {
+          "expectedCode": "LDX.B #$03",
+          "comment": "Select DMA channels 0 and 1."
+        },
+        {
+          "expectedCode": "STX.W $420B",
+          "comment": "Run the OAM and CGRAM transfers together during v-blank."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "nmi-presentation.TransferSamusTiles.lines",
+      "symbol": "TransferSamusTilesToVRAM",
+      "lines": [
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve bank $80 before selecting the tile-definition bank."
+        },
+        {
+          "expectedCode": "LDX.B #SamusTopTiles_Set0_CBEE>>16",
+          "comment": "Select the bank shared by Samus tile-definition records."
+        },
+        {
+          "expectedCode": "PHX"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Make descriptor pointers readable through data-bank indirect addressing."
+        },
+        {
+          "expectedCode": "LDX.B #$02",
+          "comment": "Use DMA channel 1 for every Samus tile upload."
+        },
+        {
+          "expectedCode": "LDY.B #$80",
+          "comment": "Select increment-after-high-byte VRAM writes."
+        },
+        {
+          "expectedCode": "STY.W $2115",
+          "comment": "Set VMAIN for mode-1 word transfers to $2118/$2119."
+        },
+        {
+          "expectedCode": "LDY.W SamusTiles_TopHalfFlag",
+          "comment": "Read the pending top-half upload flag."
+        },
+        {
+          "expectedCode": "BEQ .bottom",
+          "comment": "Skip directly to the independent bottom-half request when clear."
+        },
+        {
+          "expectedCode": "LDY.B #$02",
+          "comment": "Start descriptor indexing at its source-bank byte."
+        },
+        {
+          "expectedCode": "LDA.W SamusTiles_TopHalfTilesDef",
+          "comment": "Read the top-half definition pointer."
+        },
+        {
+          "expectedCode": "STA.B DP_SamusTilesDefinition",
+          "comment": "Keep it in direct page for indirect descriptor reads."
+        },
+        {
+          "expectedCode": "LDA.W #$6000",
+          "comment": "Select Samus top-half part 1's VRAM word address."
+        },
+        {
+          "expectedCode": "STA.W $2116",
+          "comment": "Set VMADD for the first top-half transfer."
+        },
+        {
+          "expectedCode": "LDA.W #$1801",
+          "comment": "Pack DMA mode 1 with VRAM-data target $18."
+        },
+        {
+          "expectedCode": "STA.W $4310",
+          "comment": "Configure channel 1 to alternate $2118 and $2119."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition)",
+          "comment": "Read the source address low word from descriptor bytes 0..1."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Set channel 1's source offset."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Retain that offset to derive part 2's contiguous source."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition),Y",
+          "comment": "Read source bank together with the following size byte."
+        },
+        {
+          "expectedCode": "STA.W $4314",
+          "comment": "Set the source bank; the next write replaces the adjacent temporary byte."
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance from descriptor byte 2 to part 1's size word."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition),Y",
+          "comment": "Read the first transfer's 16-bit byte count."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Set part 1's size; a zero DMA count denotes $10000 bytes, not an empty part."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp14",
+          "comment": "Advance the source offset by the first part's byte count."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Keep the contiguous part 2 source offset."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance to the descriptor's part 2 size word."
+        },
+        {
+          "expectedCode": "STX.W $420B",
+          "comment": "Run top-half part 1 on DMA channel 1."
+        },
+        {
+          "expectedCode": "LDA.W #$6100",
+          "comment": "Select top-half part 2's VRAM word address."
+        },
+        {
+          "expectedCode": "STA.W $2116",
+          "comment": "Set VMADD for the optional second part."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Recover the source immediately following part 1."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Replace channel 1's source offset for part 2."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition),Y",
+          "comment": "Read the optional part 2 byte count."
+        },
+        {
+          "expectedCode": "BEQ .bottom",
+          "comment": "Skip the second top-half DMA when its size is zero."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Set the second top-half transfer size."
+        },
+        {
+          "expectedCode": "STX.W $420B",
+          "comment": "Run top-half part 2 on DMA channel 1."
+        },
+        {
+          "expectedCode": ".bottom:"
+        },
+        {
+          "expectedCode": "LDY.W SamusTiles_BottomHalfFlag",
+          "comment": "Read the independent bottom-half upload flag."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Return when no bottom-half tiles are pending."
+        },
+        {
+          "expectedCode": "LDY.B #$02",
+          "comment": "Start at the bottom descriptor's source-bank byte."
+        },
+        {
+          "expectedCode": "LDA.W SamusTiles_BottomHalfTilesDef",
+          "comment": "Read the bottom-half definition pointer."
+        },
+        {
+          "expectedCode": "STA.B DP_SamusTilesDefinition",
+          "comment": "Select it for indirect descriptor reads."
+        },
+        {
+          "expectedCode": "LDA.W #$6080",
+          "comment": "Select Samus bottom-half part 1's VRAM word address."
+        },
+        {
+          "expectedCode": "STA.W $2116",
+          "comment": "Set VMADD for the first bottom-half transfer."
+        },
+        {
+          "expectedCode": "LDA.W #$1801",
+          "comment": "Pack DMA mode 1 with VRAM-data target $18."
+        },
+        {
+          "expectedCode": "STA.W $4310",
+          "comment": "Configure channel 1 for the bottom-half upload."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition)",
+          "comment": "Read the bottom source address low word."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Set channel 1's source offset."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Retain it for the contiguous second-part source."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition),Y",
+          "comment": "Read the source-bank byte with the adjacent size byte."
+        },
+        {
+          "expectedCode": "STA.W $4314",
+          "comment": "Set the source bank before replacing the size register."
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance to part 1's size word."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition),Y",
+          "comment": "Read the first bottom-half byte count."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Set bottom part 1's size; zero denotes a full $10000-byte DMA."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp14",
+          "comment": "Advance the source offset past bottom part 1."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Keep the resulting part 2 source offset."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance to the second bottom-half size word."
+        },
+        {
+          "expectedCode": "STX.W $420B",
+          "comment": "Run bottom-half part 1 on DMA channel 1."
+        },
+        {
+          "expectedCode": "LDA.W #$6180",
+          "comment": "Select bottom-half part 2's VRAM word address."
+        },
+        {
+          "expectedCode": "STA.W $2116",
+          "comment": "Set VMADD for the optional second bottom part."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Recover the source immediately following bottom part 1."
+        },
+        {
+          "expectedCode": "STA.W $4312",
+          "comment": "Set channel 1's part 2 source offset."
+        },
+        {
+          "expectedCode": "LDA.B (DP_SamusTilesDefinition),Y",
+          "comment": "Read the optional second bottom-half byte count."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Finish when that optional part is empty."
+        },
+        {
+          "expectedCode": "STA.W $4315",
+          "comment": "Set the second bottom-half transfer size."
+        },
+        {
+          "expectedCode": "STX.W $420B",
+          "comment": "Run bottom-half part 2 on DMA channel 1."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore bank $80 for the remaining NMI work."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "nmi-presentation.ProcessAnimatedTiles.lines",
+      "symbol": "ProcessAnimatedTilesObjectVRAMTransfers",
+      "lines": [
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve bank $80 before selecting the animated-tile bank."
+        },
+        {
+          "expectedCode": "LDX.B #Process_AnimatedTilesObject>>16",
+          "comment": "Select bank $87, which owns these objects and their graphics."
+        },
+        {
+          "expectedCode": "PHX"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $87 for object-array mirrors and DMA sources."
+        },
+        {
+          "expectedCode": "LDA.W AnimatedTilesObject_Enable",
+          "comment": "Read the animated-tile subsystem enable word."
+        },
+        {
+          "expectedCode": "BPL .return",
+          "comment": "Skip all slots unless its high-bit enable flag is set."
+        },
+        {
+          "expectedCode": "LDX.B #$0A",
+          "comment": "Start at word-indexed object slot 5."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W AnimatedTilesObject_IDs,X",
+          "comment": "Check whether this animated-tile object slot is live."
+        },
+        {
+          "expectedCode": "BEQ .next",
+          "comment": "An empty ID has no transfer to consume."
+        },
+        {
+          "expectedCode": "LDA.W AnimatedTilesObject_SrcAddr,X",
+          "comment": "Read the source offset prepared by the object interpreter."
+        },
+        {
+          "expectedCode": "BEQ .next",
+          "comment": "Zero means this live object has no new graphics this frame."
+        },
+        {
+          "expectedCode": "STA.W $4302",
+          "comment": "Set DMA channel 0's source offset."
+        },
+        {
+          "expectedCode": "LDY.B #$87",
+          "comment": "Use the animated-tile graphics bank as the source bank."
+        },
+        {
+          "expectedCode": "STY.W $4304",
+          "comment": "Set channel 0's A-bus source bank."
+        },
+        {
+          "expectedCode": "LDA.W #$1801",
+          "comment": "Pack DMA mode 1 with VRAM-data target $18."
+        },
+        {
+          "expectedCode": "STA.W $4300",
+          "comment": "Configure channel 0 to alternate writes to $2118/$2119."
+        },
+        {
+          "expectedCode": "LDA.W AnimatedTilesObject_Sizes,X",
+          "comment": "Read this object's fixed transfer byte count."
+        },
+        {
+          "expectedCode": "STA.W $4305",
+          "comment": "Set channel 0's DMA size."
+        },
+        {
+          "expectedCode": "LDA.W AnimatedTilesObject_VRAMAddr,X",
+          "comment": "Read this object's destination VRAM word address."
+        },
+        {
+          "expectedCode": "STA.W $2116",
+          "comment": "Set VMADD to that prepared destination."
+        },
+        {
+          "expectedCode": "LDY.B #$80",
+          "comment": "Select increment-after-high-byte VRAM writes."
+        },
+        {
+          "expectedCode": "STY.W $2115",
+          "comment": "Set VMAIN for sequential mode-1 words."
+        },
+        {
+          "expectedCode": "LDY.B #$01",
+          "comment": "Select DMA channel 0."
+        },
+        {
+          "expectedCode": "STY.W $420B",
+          "comment": "Run this object's graphics upload synchronously."
+        },
+        {
+          "expectedCode": "STZ.W AnimatedTilesObject_SrcAddr,X",
+          "comment": "Consume the pending source while leaving the object ID alive."
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Move to the preceding word-indexed object slot."
+        },
+        {
+          "expectedCode": "BPL .loop",
+          "comment": "Visit all six slots from offsets $0A through $00."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore bank $80 for the rest of NMI."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.ReadControllerInput.lines",
+      "symbol": "ReadControllerInput",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the NMI handler's accumulator-width and flag state."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Use byte reads while polling the automatic-joypad busy flag."
+        },
+        {
+          "expectedCode": ".wait:"
+        },
+        {
+          "expectedCode": "LDA.W $4212",
+          "comment": "Read HVBJOY status."
+        },
+        {
+          "expectedCode": "AND.B #$01",
+          "comment": "Keep the automatic joypad-read busy bit."
+        },
+        {
+          "expectedCode": "BNE .wait",
+          "comment": "Wait until the hardware has finished latching both controllers."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Switch to 16-bit button masks."
+        },
+        {
+          "expectedCode": "LDA.W $4218",
+          "comment": "Read controller 1's full automatic-poll result."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller1Input",
+          "comment": "Publish the currently held button mask."
+        },
+        {
+          "expectedCode": "EOR.B DP_Controller1Prev",
+          "comment": "Mark every button whose state changed since the last serviced NMI."
+        },
+        {
+          "expectedCode": "AND.B DP_Controller1Input",
+          "comment": "Keep only changed buttons that are now pressed."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller1New",
+          "comment": "Publish real rising-edge button presses."
+        },
+        {
+          "expectedCode": "STA.B DP_FakeController1New",
+          "comment": "Begin the repeat-aware field with the same new presses."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input",
+          "comment": "Read the complete current chord for repeat handling."
+        },
+        {
+          "expectedCode": "BEQ .unheld",
+          "comment": "No held buttons reload the initial delay."
+        },
+        {
+          "expectedCode": "CMP.B DP_Controller1Prev",
+          "comment": "Require the complete chord to match the previous sample."
+        },
+        {
+          "expectedCode": "BNE .unheld",
+          "comment": "Any newly pressed or released button restarts repeat timing."
+        },
+        {
+          "expectedCode": "DEC.B DP_Controller1AutoPressTimer",
+          "comment": "Count down one serviced input sample."
+        },
+        {
+          "expectedCode": "BNE .heldEnd",
+          "comment": "Do not synthesize a repeat before the timer expires."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input",
+          "comment": "Recover the unchanged held chord."
+        },
+        {
+          "expectedCode": "STA.B DP_FakeController1New",
+          "comment": "Expose the whole chord as a repeat event."
+        },
+        {
+          "expectedCode": "LDA.B DP_AutoPressSubsequentDelay",
+          "comment": "Read the shorter between-repeat delay."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller1AutoPressTimer",
+          "comment": "Schedule the next repeat event."
+        },
+        {
+          "expectedCode": "BRA .heldEnd"
+        },
+        {
+          "expectedCode": ".unheld:"
+        },
+        {
+          "expectedCode": "LDA.B DP_AutoPressInitialDelay",
+          "comment": "Read the longer delay before the first repeat."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller1AutoPressTimer",
+          "comment": "Restart repeat timing after any chord change."
+        },
+        {
+          "expectedCode": ".heldEnd:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input",
+          "comment": "Read this sample once more."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller1Prev",
+          "comment": "Make it the comparison baseline for the next serviced NMI."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "LDA.W Debug_Enable",
+          "comment": "Check whether the retained controller-2 debug path is enabled."
+        },
+        {
+          "expectedCode": "BNE .debug",
+          "comment": "Process controller 2 and debug chords only when requested."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the interrupted accumulator width and flags."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": ".debug:"
+        },
+        {
+          "expectedCode": "LDA.W $421A",
+          "comment": "Read controller 2's full automatic-poll result."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller2Input",
+          "comment": "Publish controller 2's held mask."
+        },
+        {
+          "expectedCode": "EOR.B DP_Controller2Prev",
+          "comment": "Calculate its changed buttons."
+        },
+        {
+          "expectedCode": "AND.B DP_Controller2Input",
+          "comment": "Keep controller-2 rising edges."
+        },
+        {
+          "expectedCode": "STA.B DP_Controller2New",
+          "comment": "Publish its real new presses."
+        },
+        {
+          "expectedCode": "STA.B DP_FakeController2New",
+          "comment": "Seed its repeat-aware new field."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller2Input",
+          "comment": "Read the complete controller-2 chord."
+        },
+        {
+          "expectedCode": "BEQ .unheld2"
+        },
+        {
+          "expectedCode": "CMP.B DP_Controller2Prev",
+          "comment": "Compare it with the prior chord."
+        },
+        {
+          "expectedCode": "BNE .unheld2",
+          "comment": "Restart repeat timing when any button changes."
+        },
+        {
+          "expectedCode": "DEC.B DP_Controller2AutoPressTimer",
+          "comment": "Count down controller 2's repeat timer."
+        },
+        {
+          "expectedCode": "BNE .held2End"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller2Input"
+        },
+        {
+          "expectedCode": "STA.B DP_FakeController2New",
+          "comment": "Emit the unchanged controller-2 chord as a repeat."
+        },
+        {
+          "expectedCode": "LDA.B DP_AutoPressSubsequentDelay"
+        },
+        {
+          "expectedCode": "STA.B DP_Controller2AutoPressTimer",
+          "comment": "Reload the subsequent repeat delay."
+        },
+        {
+          "expectedCode": "BRA .held2End"
+        },
+        {
+          "expectedCode": ".unheld2:"
+        },
+        {
+          "expectedCode": "LDA.B DP_AutoPressInitialDelay"
+        },
+        {
+          "expectedCode": "STA.B DP_Controller2AutoPressTimer",
+          "comment": "Reload controller 2's initial repeat delay."
+        },
+        {
+          "expectedCode": ".held2End:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller2Input"
+        },
+        {
+          "expectedCode": "STA.B DP_Controller2Prev",
+          "comment": "Save controller 2's current chord for the next sample."
+        },
+        {
+          "expectedCode": "LDA.W APU_UploadingFlag",
+          "comment": "Check whether an SPC upload makes reset unsafe."
+        },
+        {
+          "expectedCode": "BNE .checkDebug",
+          "comment": "Suppress the soft-reset chord during an upload."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input",
+          "comment": "Read controller 1's held chord."
+        },
+        {
+          "expectedCode": "CMP.W #$3030",
+          "comment": "Test exactly Start + Select + L + R."
+        },
+        {
+          "expectedCode": "BNE .checkDebug"
+        },
+        {
+          "expectedCode": "STZ.W DisableSounds",
+          "comment": "Clear the sound-disable word before resetting."
+        },
+        {
+          "expectedCode": "JMP.W SoftReset",
+          "comment": "Restart through the software-reset entry point."
+        },
+        {
+          "expectedCode": ".checkDebug:"
+        },
+        {
+          "expectedCode": "LDA.W Debug_Enable",
+          "comment": "Recheck whether debug input interpretation is active."
+        },
+        {
+          "expectedCode": "BNE .debugEnabled"
+        },
+        {
+          "expectedCode": "STZ.W Debug_InputL",
+          "comment": "Clear the captured left debug input."
+        },
+        {
+          "expectedCode": "STZ.W Debug_InputR",
+          "comment": "Clear the captured right debug input."
+        },
+        {
+          "expectedCode": "LDA.W #$FFEF",
+          "comment": "Select every controller-2 bit except R for clearing."
+        },
+        {
+          "expectedCode": "TRB.B DP_Controller2Input",
+          "comment": "Retain only controller 2's R bit in held input."
+        },
+        {
+          "expectedCode": "TRB.B DP_Controller2New",
+          "comment": "Retain only its newly pressed R bit."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".debugEnabled:"
+        },
+        {
+          "expectedCode": "STZ.W Debug_InputL",
+          "comment": "Clear last frame's captured left-side command."
+        },
+        {
+          "expectedCode": "STZ.W Debug_InputR",
+          "comment": "Clear last frame's captured right-side command."
+        },
+        {
+          "expectedCode": "BIT.W Debug_Options",
+          "comment": "Load debug-option status into the processor flags."
+        },
+        {
+          "expectedCode": "BVC .debugInputEnabled",
+          "comment": "Bit 14 clear permits controller-1 debug chords."
+        },
+        {
+          "expectedCode": "JMP.W .return",
+          "comment": "Otherwise bypass chord interpretation."
+        },
+        {
+          "expectedCode": ".debugInputEnabled:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "AND.W #$2020",
+          "comment": "Keep Select + L."
+        },
+        {
+          "expectedCode": "CMP.W #$2020",
+          "comment": "Require both buttons held."
+        },
+        {
+          "expectedCode": "BNE .checkSelectR"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1New",
+          "comment": "Capture this frame's new presses for the left debug command."
+        },
+        {
+          "expectedCode": "STA.W Debug_InputL"
+        },
+        {
+          "expectedCode": "STZ.B DP_Controller1Input",
+          "comment": "Consume ordinary held input after the debug chord."
+        },
+        {
+          "expectedCode": "STZ.B DP_Controller1New",
+          "comment": "Consume its ordinary new presses too."
+        },
+        {
+          "expectedCode": ".checkSelectR:"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "AND.W #$2010",
+          "comment": "Keep Select + R."
+        },
+        {
+          "expectedCode": "CMP.W #$2010",
+          "comment": "Require both buttons held."
+        },
+        {
+          "expectedCode": "BNE .checkToggleHUD"
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1New"
+        },
+        {
+          "expectedCode": "STA.W Debug_InputR",
+          "comment": "Capture new presses for the right debug command."
+        },
+        {
+          "expectedCode": "LDA.W #$E0F0"
+        },
+        {
+          "expectedCode": "STZ.B DP_Controller1Input",
+          "comment": "Consume the ordinary held chord."
+        },
+        {
+          "expectedCode": "STZ.B DP_Controller1New",
+          "comment": "Consume the ordinary edge field."
+        },
+        {
+          "expectedCode": ".checkToggleHUD:"
+        },
+        {
+          "expectedCode": "LDA.W Debug_InputR"
+        },
+        {
+          "expectedCode": "BIT.W #$0080",
+          "comment": "Test captured A input."
+        },
+        {
+          "expectedCode": "BEQ .checkAmmoSwap"
+        },
+        {
+          "expectedCode": "LDA.B DP_IRQAutoJoy",
+          "comment": "Read the IRQ/automatic-joypad control shadow."
+        },
+        {
+          "expectedCode": "EOR.W #$0030",
+          "comment": "Toggle its horizontal and vertical IRQ-enable bits."
+        },
+        {
+          "expectedCode": "STA.B DP_IRQAutoJoy",
+          "comment": "Publish the toggled shadow for the next I/O upload."
+        },
+        {
+          "expectedCode": ".checkAmmoSwap:"
+        },
+        {
+          "expectedCode": "LDA.W Debug_InputR"
+        },
+        {
+          "expectedCode": "BIT.W #$8000",
+          "comment": "Test captured B input."
+        },
+        {
+          "expectedCode": "BEQ .swapEnd"
+        },
+        {
+          "expectedCode": "LDA.W Debug_Options"
+        },
+        {
+          "expectedCode": "EOR.W #$8000",
+          "comment": "Toggle the debug ammo-swap state."
+        },
+        {
+          "expectedCode": "STA.W Debug_Options"
+        },
+        {
+          "expectedCode": "BPL .swapAmmo",
+          "comment": "The cleared state restores the saved ammo counts."
+        },
+        {
+          "expectedCode": "LDA.W Missiles"
+        },
+        {
+          "expectedCode": "STA.W Debug_MissileSwap",
+          "comment": "Save current missiles."
+        },
+        {
+          "expectedCode": "LDA.W SuperMissiles"
+        },
+        {
+          "expectedCode": "STA.W Debug_SuperMissileSwap",
+          "comment": "Save current super missiles."
+        },
+        {
+          "expectedCode": "LDA.W PowerBombs"
+        },
+        {
+          "expectedCode": "STA.W Debug_PowerBombSwap",
+          "comment": "Save current power bombs."
+        },
+        {
+          "expectedCode": "STZ.W Missiles",
+          "comment": "Hide missiles while the swap state is active."
+        },
+        {
+          "expectedCode": "STZ.W SuperMissiles",
+          "comment": "Hide super missiles too."
+        },
+        {
+          "expectedCode": "STZ.W PowerBombs",
+          "comment": "Hide power bombs too."
+        },
+        {
+          "expectedCode": "BRA .swapEnd"
+        },
+        {
+          "expectedCode": ".swapAmmo:"
+        },
+        {
+          "expectedCode": "LDA.W Debug_MissileSwap"
+        },
+        {
+          "expectedCode": "STA.W Missiles",
+          "comment": "Restore saved missiles."
+        },
+        {
+          "expectedCode": "LDA.W Debug_SuperMissileSwap"
+        },
+        {
+          "expectedCode": "STA.W SuperMissiles",
+          "comment": "Restore saved super missiles."
+        },
+        {
+          "expectedCode": "LDA.W Debug_PowerBombSwap"
+        },
+        {
+          "expectedCode": "STA.W PowerBombs",
+          "comment": "Restore saved power bombs."
+        },
+        {
+          "expectedCode": ".swapEnd:"
+        },
+        {
+          "expectedCode": "LDA.W Debug_InputR"
+        },
+        {
+          "expectedCode": "BIT.W #$0040",
+          "comment": "Test captured X input."
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "LDA.W Debug_Options"
+        },
+        {
+          "expectedCode": "EOR.W #$2000",
+          "comment": "Toggle debug option bit 13."
+        },
+        {
+          "expectedCode": "STA.W Debug_Options"
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the NMI handler's saved status."
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": "endif"
+        }
+      ]
+    }
+  ]
+}

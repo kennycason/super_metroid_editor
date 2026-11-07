@@ -10,8 +10,10 @@ Revision `super-metroid-ntsc-4` preserves that pass unchanged and adds the Waver
 slice described below: ten block explanations and 139 instruction/data-line
 comments across nine complete scopes. It introduces no additional renames.
 
-The recipe is in
-[`augmentation.json`](../../desktopApp/src/jvmMain/resources/asm-reference/augmentation.json).
+The current recipe begins at
+[`documentation/manifest.json`](../../desktopApp/src/jvmMain/resources/asm-reference/documentation/manifest.json),
+with the records themselves in the adjacent per-bank JSON files. The crawler
+records are in `bank_A0.json` and `bank_A3.json`.
 There are no new renames in this pass. Shared `DP_Temp` storage remains shared
 scratch storage, not an enemy-specific variable.
 

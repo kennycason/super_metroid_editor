@@ -3,6 +3,7 @@ package com.supermetroid.editor.asm
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.time.LocalDate
 
 private val augmentationNamespace = Regex("^\\s*namespace\\b", RegexOption.IGNORE_CASE)
 private val documentationLocalLabel = Regex("\\.[A-Za-z_][A-Za-z0-9_]*")
@@ -11,7 +12,7 @@ private val documentationDeclaration = Regex("\\s*(?:[A-Za-z_][A-Za-z0-9_]*:|\\.
 @Serializable
 internal data class AsmSourceDocumentation(
     val id: String,
-    val fileId: String,
+    val fileId: String = "",
     val symbol: String,
     val expectedCode: String,
     val paragraphs: List<String>,
@@ -21,6 +22,24 @@ internal data class AsmSourceDocumentation(
 
 @Serializable
 internal data class AsmSourceRename(val symbol: String, val replacement: String)
+
+@Serializable
+private data class AsmSourceDocumentationManifest(
+    val schemaVersion: Int,
+    val revision: String,
+    val updatedAt: String,
+    val upstreamRevision: String,
+    val upstreamSourceSha256: String,
+    val renames: List<AsmSourceRename> = emptyList(),
+    val banks: List<String>,
+)
+
+@Serializable
+private data class AsmSourceBankDocumentation(
+    val fileId: String,
+    val documentation: List<AsmSourceDocumentation> = emptyList(),
+    val lineDocumentation: List<AsmSourceLineDocumentation> = emptyList(),
+)
 
 /** An engineering-owned recipe. Projects retain its result, never replay a newer recipe on open. */
 @Serializable
@@ -198,8 +217,71 @@ internal data class AsmSourceAugmentation(
 
     companion object {
         val NONE = AsmSourceAugmentation("unmodified")
-        fun bundled(): AsmSourceAugmentation = checkNotNull(AsmSourceAugmentation::class.java.getResourceAsStream("/asm-reference/augmentation.json"))
-            .bufferedReader().use { Json.decodeFromString(serializer(), it.readText()) }
+        private const val DOCUMENTATION_RESOURCE_ROOT = "/asm-reference/documentation"
+        private val bundledRecipe by lazy { loadDocumentation { name ->
+            checkNotNull(AsmSourceAugmentation::class.java.getResourceAsStream("$DOCUMENTATION_RESOURCE_ROOT/$name")) {
+                "Missing bundled ASM documentation resource $name"
+            }.bufferedReader().use { it.readText() }
+        } }
+
+        internal fun loadDocumentation(resource: (String) -> String): AsmSourceAugmentation {
+            val manifest = Json.decodeFromString<AsmSourceDocumentationManifest>(resource("manifest.json"))
+            require(manifest.schemaVersion == 1) { "Unsupported ASM documentation schema ${manifest.schemaVersion}" }
+            require(Regex("super-metroid-ntsc-\\d+").matches(manifest.revision)) {
+                "Invalid ASM documentation revision ${manifest.revision}"
+            }
+            require(runCatching { LocalDate.parse(manifest.updatedAt) }.isSuccess) {
+                "ASM documentation updatedAt must use YYYY-MM-DD"
+            }
+            require(Regex("[0-9a-f]{40}").matches(manifest.upstreamRevision)) {
+                "Invalid ASM documentation upstream revision ${manifest.upstreamRevision}"
+            }
+            require(Regex("[0-9a-f]{64}").matches(manifest.upstreamSourceSha256)) {
+                "Invalid ASM documentation upstream source hash"
+            }
+            require(manifest.banks.isNotEmpty() && manifest.banks.distinct().size == manifest.banks.size) {
+                "ASM documentation manifest requires unique bank files"
+            }
+            val banks = manifest.banks.map { name ->
+                require(Regex("bank_[0-9A-F]{2}\\.json").matches(name)) {
+                    "Invalid ASM documentation bank resource $name"
+                }
+                Json.decodeFromString<AsmSourceBankDocumentation>(resource(name)).also { bank ->
+                    require(bank.fileId == name.removeSuffix(".json") + ".asm") {
+                        "$name declares unexpected fileId ${bank.fileId}"
+                    }
+                    require(bank.documentation.isNotEmpty() || bank.lineDocumentation.isNotEmpty()) {
+                        "$name contains no ASM documentation"
+                    }
+                    require(bank.documentation.all { it.fileId.isEmpty() || it.fileId == bank.fileId } &&
+                        bank.lineDocumentation.all { it.fileId.isEmpty() || it.fileId == bank.fileId }) {
+                        "$name contains documentation assigned to another bank"
+                    }
+                }
+            }
+            val result = AsmSourceAugmentation(
+                revision = manifest.revision,
+                upstreamRevision = manifest.upstreamRevision,
+                upstreamSourceSha256 = manifest.upstreamSourceSha256,
+                renames = manifest.renames,
+                documentation = banks.flatMap { bank -> bank.documentation.map { it.copy(fileId = bank.fileId) } },
+                lineDocumentation = banks.flatMap { bank -> bank.lineDocumentation.map { it.copy(fileId = bank.fileId) } },
+            )
+            val ids = result.documentation.map { it.id } + result.lineDocumentation.map { it.id }
+            require(ids.distinct().size == ids.size) { "Duplicate ASM documentation identity" }
+            require(result.renames.map { it.symbol }.distinct().size == result.renames.size) {
+                "Duplicate ASM rename identity"
+            }
+            require(result.documentation.map { Triple(it.fileId, it.symbol, it.localLabel) }.distinct().size == result.documentation.size) {
+                "Duplicate ASM documentation target"
+            }
+            require(result.lineDocumentation.map { it.fileId to it.symbol }.distinct().size == result.lineDocumentation.size) {
+                "Duplicate ASM line documentation target"
+            }
+            return result
+        }
+
+        fun bundled(): AsmSourceAugmentation = bundledRecipe
     }
 }
 

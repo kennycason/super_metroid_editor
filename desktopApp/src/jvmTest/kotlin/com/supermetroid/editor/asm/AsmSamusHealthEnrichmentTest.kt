@@ -40,9 +40,9 @@ class AsmSamusHealthEnrichmentTest {
             documentation = v17.documentation.filterNot { it.id.startsWith(prefix) },
             lineDocumentation = v17.lineDocumentation.filterNot { it.id.startsWith(prefix) },
         ))
-        assertEquals(v17.documentation.filter { it.id.startsWith(prefix) },
-            current.documentation.filter { it.id.startsWith(prefix) })
-        assertEquals(v17.lineDocumentation.filter { it.id.startsWith(prefix) }, groups)
+        assertEquals(v17.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id })
+        assertEquals(v17.lineDocumentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id }, groups.sortedBy { it.id })
         assertEquals(9, v17.documentation.count { it.id.startsWith(prefix) })
         assertEquals(7, groups.size)
         assertEquals(285, groups.sumOf { it.lines.size })

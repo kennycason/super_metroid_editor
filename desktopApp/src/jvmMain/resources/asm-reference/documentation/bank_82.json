@@ -1,0 +1,4589 @@
+{
+  "fileId": "bank_82.asm",
+  "documentation": [
+    {
+      "id": "core.main-loop",
+      "symbol": "MainGameLoop",
+      "expectedCode": "PHK",
+      "paragraphs": [
+        "Prepare one game-state iteration, then publish it through WaitForNMI.",
+        "Music/HDMA logic and the random seed advance before the state handler; sound",
+        "queues and RAM OAM are finalised afterwards. The state-specific handlers choose",
+        "which simulation systems run; this loop is also used by menus and cinematics.",
+        "The low state byte indexes 45 bank-local word pointers ($00..$2C), with no bounds",
+        "check. A state change inside a handler affects the next dispatch, not this call."
+      ]
+    },
+    {
+      "id": "core.reset-state",
+      "symbol": "GameState_0_ResetStart",
+      "expectedCode": "STZ.W unknown0DF8",
+      "paragraphs": [
+        "Schedule the title-sequence loader and choose the initial attract-mode demo set.",
+        "The count found during boot normally starts at set 0; a count of four selects",
+        "set 3. Increment GameState to 1 and return to the outer frame loop."
+      ]
+    },
+    {
+      "id": "core.fade-in",
+      "symbol": "GameState_7_MainGameplayFadingIn",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Run the normal gameplay handler before advancing the fade-in. Actors and room",
+        "logic therefore continue while the screen brightens. When the brightness shadow",
+        "is exactly $0F, clear the fade timers and increment GameState (normally 7 to 8)."
+      ]
+    },
+    {
+      "id": "core.gameplay",
+      "symbol": "GameState_8_MainGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Order the gameplay subsystems, rather than running every entity from one loop.",
+        "Select enemy lists first; Samus's current-state phase precedes interactions and",
+        "enemy AI, and her new-state phase follows the main enemy routine. Projectiles,",
+        "PLMs, tile animation and collision passes run before scrolling and sprite drawing.",
+        "Individual handlers still control their own frozen/disabled behavior. The debug",
+        "skip below bypasses this simulation block, but not the shared housekeeping tail."
+      ]
+    },
+    {
+      "id": "core.gameplay-tail",
+      "symbol": "GameState_8_MainGameplay",
+      "expectedCode": "JSL.L HandleHUDTilemap_PausedAndRunning",
+      "paragraphs": [
+        "This tail also runs after the debug skip: HUD and background scroll calculations,",
+        "room main ASM, energy/game-time handling, shaking and hurt-timer/list cleanup.",
+        "The in-game clock is updated by the called helper, not by counting all NMIs.",
+        "Return to MainGameLoop for sound processing, OAM finalisation and publication."
+      ],
+      "localLabel": ".skipProcessing"
+    },
+    {
+      "id": "transitions.pause-darken",
+      "symbol": "GameState_C_Pausing_NormalGameplayDarkening",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Gameplay continues while brightness decreases. Test only the low brightness",
+        "nibble for zero, then advance to pause graphics setup. This differs from the",
+        "unpause menu fade-out, which waits for the full brightness shadow to equal $80."
+      ]
+    },
+    {
+      "id": "transitions.pause-setup",
+      "symbol": "GameState_D_Pausing_LoadingPauseScreen",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Replace the gameplay display while dark: suspend HDMA and animated tiles, back",
+        "up graphics state, run the room's pause hook, then load menu tilemaps and colors.",
+        "PHP/PHB protect the hook caller; PHK plus PEA form a synthetic long return frame.",
+        "The indirect JML uses a 24-bit hook pointer. Its RTL consumes that frame before",
+        "PLB/PLP restore the separately saved bank and status."
+      ]
+    },
+    {
+      "id": "transitions.pause-fade-in",
+      "symbol": "GameState_E_Paused_LoadingPauseScreen",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Draw the pause menu while increasing brightness. An exact $0F shadow means",
+        "full brightness with forced blank clear; then clear fade timers and advance",
+        "to the interactive paused state. No ordinary gameplay handler is called here."
+      ]
+    },
+    {
+      "id": "transitions.pause-active",
+      "symbol": "GameState_F_Paused_MapAndItemScreens",
+      "expectedCode": "PHB",
+      "paragraphs": [
+        "Maintain timed held/new input, the selected pause page, HUD and palette animation.",
+        "This uses MainPauseRoutine, not GameState_8_MainGameplay. The outer main loop",
+        "still services music/HDMA logic, sound queues, OAM and the NMI frame handshake."
+      ]
+    },
+    {
+      "id": "transitions.pause-pages",
+      "symbol": "MainPauseRoutine",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Dispatch the pause menu's own eight-state machine, independently of GameState.",
+        "Indices 0 and 1 are the interactive map and equipment pages; 2..4 switch from",
+        "map to equipment, and 5..7 switch back. Double the index for bank-local word",
+        "pointers. The table has no bounds check; handlers return with RTS, this entry RTL."
+      ]
+    },
+    {
+      "id": "transitions.pause-start",
+      "symbol": "Handle_PauseScreen_StartButton",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Use the pause menu's timed held/new input stream, unlike PauseCheck's new-only",
+        "controller input. Start queues confirmation, primes fade-out and flashes the",
+        "button label before incrementing GameState, normally $0F to unpausing state $10.",
+        "Refresh the L/R/Start tilemap even when no Start input was accepted."
+      ]
+    },
+    {
+      "id": "transitions.unpause-darken",
+      "symbol": "GameState_10_Unpausing_LoadingNormalGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Keep drawing the selected pause page and pressed-Start highlight while fading",
+        "out. Wait for exactly $80 (forced blank set, brightness zero), not just a zero",
+        "brightness nibble, before advancing to gameplay graphics restoration."
+      ]
+    },
+    {
+      "id": "transitions.unpause-restore",
+      "symbol": "GameState_11_Unpausing_LoadingNormalGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Rebuild the gameplay display before fading it in: restore saved colors and",
+        "graphics state, reload gameplay assets, then run the room's long unpause hook.",
+        "PHK/PEA build the hook's RTL return frame; the separate saved bank and status",
+        "remain on the stack until after HDMA, animated tiles and movement sounds resume.",
+        "Advance GameState before restoring the handler's outer saved processor status."
+      ]
+    },
+    {
+      "id": "transitions.unpause-brighten",
+      "symbol": "GameState_12_Unpausing_NormalGameplayBrightening",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Run gameplay while the restored display brightens. On an exact $0F brightness",
+        "shadow, clear fade timers and explicitly select gameplay state $08.",
+        "This state resets to $08 instead of advancing to the next numeric game state."
+      ]
+    },
+    {
+      "id": "transitions.door-delay-dispatch",
+      "symbol": "GameState_9_HitADoorBlock",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Call the bank-$82 preliminary door/elevator phase using a synthetic near return:",
+        "PEA pushes .manualReturn-1 and the indirect JMP reaches a phase ending in RTS.",
+        "Carry clear keeps state $09; carry set advances the state and tail-calls",
+        "GameState_A_LoadingNextRoom immediately in the same outer-loop iteration."
+      ]
+    },
+    {
+      "id": "transitions.door-elevator",
+      "symbol": "DoorTransitionFunction_HandleElevator",
+      "expectedCode": "LDA.W ElevatorProperties",
+      "paragraphs": [
+        "Ordinary doors and elevators with negative direction finish this preliminary",
+        "phase immediately with carry set. The other elevator path selects the regional",
+        "downward delay and executes its first timer decrement in the same call."
+      ]
+    },
+    {
+      "id": "transitions.door-elevator-wait",
+      "symbol": "DoorTransitionFunction_Wait48FramesForDownElevator",
+      "expectedCode": "DEC.W DownwardsElevatorDelayTimer",
+      "paragraphs": [
+        "Decrement the regional delay before testing its sign. A resulting zero still",
+        "runs enemies and draws the scene with carry clear; only a negative result",
+        "returns carry set to release game state $09. This path draws inanimate Samus",
+        "rather than calling her ordinary gameplay state handlers."
+      ]
+    },
+    {
+      "id": "transitions.door-setup",
+      "symbol": "GameState_A_LoadingNextRoom",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Prepare the room transition once before entering the phase dispatcher. Set the",
+        "transition flags, choose fade target colors while retaining selected HUD/timer",
+        "colors, queue the door sound and inhibit further ordinary sound requests.",
+        "Select WaitForSoundsToFinish and advance GameState, normally $0A to $0B.",
+        "Later phases return to the main frame loop; the room is not loaded in one call."
+      ]
+    },
+    {
+      "id": "transitions.door-phase-dispatch",
+      "symbol": "GameState_B_LoadingNextRoom",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Dispatch one saved DoorTransitionFunction per call through an indirect near JMP.",
+        "PEA supplies the return word minus one expected by the phase's RTS. Phases may",
+        "select another data bank; save and restore the caller's bank around dispatch.",
+        "After the phase returns, draw an active countdown timer before the common exit."
+      ]
+    },
+    {
+      "id": "transitions.door-sound-queues",
+      "symbol": "DoorTransitionFunction_WaitForSoundsToFinish",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Keep running enemies and drawing while all three sound-library queues drain.",
+        "Each queue is empty when (next index - consumed index) AND $0F is zero.",
+        "This checks queued requests, not whether a sound has finished playing on the SPC.",
+        "Only after all three rings are empty select the palette fade-out phase."
+      ]
+    },
+    {
+      "id": "transitions.door-palette-out",
+      "symbol": "DoorTransitionFunction_FadeOutTheScreen",
+      "expectedCode": "JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C",
+      "paragraphs": [
+        "Fade palette entries toward the targets prepared by state $0A. This is palette",
+        "interpolation, not HandleFadingOut's display-brightness fade. While unfinished,",
+        "run enemies and draw the scene; on carry set, schedule door-header/HDMA setup."
+      ]
+    },
+    {
+      "id": "transitions.door-hdma-irq",
+      "symbol": "DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ",
+      "expectedCode": "JSR.W Load_Door_Header",
+      "paragraphs": [
+        "Load door metadata, remove old HDMA objects and clear their processing-enable",
+        "bit. Request scanline IRQ command $08 through DP_NextIRQCmd, allowing the",
+        "interrupt chain to adopt it, then schedule camera alignment."
+      ]
+    },
+    {
+      "id": "transitions.door-alignment",
+      "symbol": "DoorTransitionFunction_ScrollScreenToAlignment",
+      "expectedCode": "PEA.W $8F00",
+      "paragraphs": [
+        "Align the camera axis perpendicular to travel: Y for horizontal doors, X for",
+        "vertical doors. Each unfinished call moves that coordinate by one pixel toward",
+        "a $100-pixel boundary; low bytes $80..$FF increment, $01..$7F decrement.",
+        "The unaligned word load places the coordinate's pixel low byte in A's high byte.",
+        "Immediate BIT #$FF00 tests it for zero but preserves the load's N flag for BMI.",
+        "Both paths refresh scrolling. A step reaching alignment still returns first;",
+        "only an already-aligned entry selects FixDoorsMovingUp."
+      ]
+    },
+    {
+      "id": "transitions.door-load-room",
+      "symbol": "DoorTransitionFunction_LoadRoomHeader_SetupMap_Decompress",
+      "expectedCode": "PEA.W RoomHeaders>>8",
+      "paragraphs": [
+        "Select the room-data bank and preserve elevator-related explored-map state",
+        "around loading the destination room and state headers. Initialise room effects",
+        "and decompress level/scroll/CRE data before scheduling scrolling setup.",
+        "This is one phase of state $0B, not the complete destination-room setup."
+      ]
+    },
+    {
+      "id": "transitions.door-music-wait",
+      "symbol": "DoorTransitionFunction_WaitForMusicQueueClear_and_LoadMusic",
+      "expectedCode": "JSL.L CheckIfMusicIsQueued",
+      "paragraphs": [
+        "Wait for all music-queue timer words to clear; this is not a test that the",
+        "currently playing track has ended. Once clear, select the Samus-placement",
+        "correction phase and request the destination music only if the track changed."
+      ]
+    },
+    {
+      "id": "transitions.door-finish",
+      "symbol": "DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish",
+      "expectedCode": "JSL.L AnimatedTilesObject_Handler",
+      "paragraphs": [
+        "Run destination-room animated tiles, enemies and enemy projectiles while",
+        "interpolating colors toward the room's target palette. Draw Samus through the",
+        "inanimate path rather than her ordinary state handlers. When the palette helper",
+        "returns carry set, restore sound queuing, clear transition flags and select",
+        "gameplay state $08. This is distinct from the pause/unpause brightness fades."
+      ]
+    },
+    {
+      "id": "rooms.header",
+      "symbol": "Load_Room_Header",
+      "expectedCode": "PEA.W RoomHeaders>>8",
+      "paragraphs": [
+        "Read the fixed eleven-byte room header in bank $8F, then select a room state",
+        "from the condition-function stream that follows it. Width and height are stored",
+        "in screen units and multiplied by sixteen for block dimensions. The hardware",
+        "multiplier uses only each block dimension's low byte; double its word result",
+        "to obtain LevelDataSize in bytes. This routine does not decompress level data."
+      ]
+    },
+    {
+      "id": "rooms.state-header",
+      "symbol": "Load_State_Header",
+      "expectedCode": "PEA.W RoomStates>>8&$FF00",
+      "paragraphs": [
+        "Load the selected state's resource pointers, music, FX, enemy population/set,",
+        "layer-2 scroll-control bytes and cached room-main callback. Long pointers are",
+        "assembled with overlapping word stores: high word first, then the low word.",
+        "The population chooses placements/parameters; the enemy set chooses graphics",
+        "and palettes. PLMs, library backgrounds and setup ASM are read by later loaders."
+      ]
+    },
+    {
+      "id": "rooms.plm-and-hooks",
+      "symbol": "CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus",
+      "expectedCode": "PEA.W $8F00",
+      "paragraphs": [
+        "Read the optional PLM list from state offset $14. Six-byte records contain a",
+        "PLM ID, X/Y block bytes and argument word; a zero ID terminates the list.",
+        "Attempt each spawn without checking its carry result, then execute door ASM",
+        "and room setup ASM in that order, even when the PLM list was absent or empty.",
+        "Finally set ElevatorStatus to 2 only when the door's elevator property is set."
+      ]
+    },
+    {
+      "id": "rooms.destination-loading",
+      "symbol": "DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Prepare destination graphics and objects, executing PLMs/door/setup ASM before",
+        "loading and initialising enemies. The room-main callback is not invoked here.",
+        "This phase can wait inside one call: IRQ handles the pending FX transfer and",
+        "door scrolling, and their flags release the two busy loops. After scrolling,",
+        "run PLMs and explicitly wait for NMI before selecting the next transition phase.",
+        "PLMs run after the final scroll update; see the visibility caveat below."
+      ]
+    },
+    {
+      "id": "rooms.destination-scroll-wait",
+      "symbol": "DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM",
+      "expectedCode": "LDA.W DoorTransitionFinishScrolling",
+      "paragraphs": [
+        "Do not return to state $0B while waiting here. IRQ scrolling continues to run",
+        "and sets bit 15 on completion. Only then restore scrolling HDMA, process PLMs",
+        "and wait for NMI. These IRQ-driven waits are not the WaitForNMI request handshake."
+      ],
+      "localLabel": ".waitDoor"
+    },
+    {
+      "id": "audio-runtime.sound-dispatch",
+      "symbol": "HandleSounds",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Service the three independent sound-library handshakes after game-state logic.",
+        "Each library owns one SPC port ($2141..$2143), a 16-byte ring and a state byte.",
+        "When music has imposed downtime, decrement that counter and keep all three",
+        "request ports and current-sound mirrors clear instead of advancing states."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-state-table",
+      "symbol": "HandleSounds",
+      "localLabel": ".pointers",
+      "expectedCode": "dw SoundState_0_SendAPUSoundRequestFromQueue",
+      "paragraphs": [
+        "The per-library state byte indexes this word-pointer table. States send a",
+        "queued request, wait for the SPC to echo it, delay before clearing the port,",
+        "wait for the echoed clear, or perform the separate delayed reset path. The",
+        "selected bank-$82 handler returns with RTS to the three-library dispatch loop."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-send",
+      "symbol": "SoundState_0_SendAPUSoundRequestFromQueue",
+      "expectedCode": "TYX",
+      "paragraphs": [
+        "For library index 0, 1 or 2, compare its ring start and next indices. The",
+        "$00/$10/$20 table selects that library's 16-byte queue while X selects its",
+        "adjacent metadata and SPC port. Send one sound, advance the start modulo $10",
+        "and enter acknowledgement state 1; an empty queue remains in state 0."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-request-ack",
+      "symbol": "SoundState_1_WaitForAPUSoundRequestAcknowledgement",
+      "expectedCode": "TYX",
+      "paragraphs": [
+        "Wait until the selected SPC port echoes the current sound ID. Reassert the",
+        "request while it differs. On acknowledgement, enter state 2 and install a",
+        "two-call clear delay; the queue entry was already consumed when it was sent."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-clear-delay",
+      "symbol": "SoundState_2_ClearSoundRequest",
+      "expectedCode": "TYX",
+      "paragraphs": [
+        "Count down the selected library's two-call hold after request acknowledgement.",
+        "When it expires, clear both the SPC request port and its current-sound mirror,",
+        "then enter state 3 to wait for the SPC to echo that clear."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-clear-ack",
+      "symbol": "SoudnState_3_WaitForAPUClearRequestAcknowledgement",
+      "expectedCode": "TYX",
+      "paragraphs": [
+        "Wait until the selected SPC port matches the now-zero current-sound mirror,",
+        "rewriting zero while it does not. Once acknowledged, reset to state 0 and",
+        "tail-branch into the sender so another queued sound can begin in this call."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-reset-state",
+      "symbol": "SoundState_4_ResetSoundState",
+      "expectedCode": "TYX",
+      "paragraphs": [
+        "If state 4 is selected, it uses the same per-library clear counter as state 2.",
+        "It returns to state 0 only when that counter reaches zero; unlike the normal",
+        "state-2 path, it does not write the SPC port or current-sound mirror here."
+      ]
+    },
+    {
+      "id": "audio-runtime.sound-queue-reset",
+      "symbol": "ResetSoundQueues",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Clear the three adjacent start bytes, next bytes and state bytes with four",
+        "overlapping word stores plus the final state-3 byte store. Queue payloads and",
+        "SPC ports are not erased here; equal zero indices make every ring logically",
+        "empty, and state 0 leaves each library idle until a new request is queued."
+      ]
+    },
+    {
+      "id": "controller-bindings.reset-defaults",
+      "symbol": "GameOptions_ControllerSettings_ResetToDefault",
+      "expectedCode": "LDA.B DP_Controller1New",
+      "paragraphs": [
+        "A new Start or A press restores the seven configurable gameplay bindings to the",
+        "vanilla X/A/B/Y/Select/R/L masks, then rebuilds and redraws the menu's temporary",
+        "binding-index array."
+      ]
+    },
+    {
+      "id": "controller-bindings.load-menu-indices",
+      "symbol": "GameOptionsMenu_ControllerBindings",
+      "expectedCode": "LDX.W #$0000",
+      "paragraphs": [
+        "Convert each live gameplay button mask to the menu's compact index representation:",
+        "X=0, A=1, B=2, Select=3, Y=4, L=5 and R=6. The seven entries remain ordered by",
+        "action: shot, jump, dash, item select, item cancel, aim up and aim down."
+      ]
+    },
+    {
+      "id": "controller-bindings.action-addresses",
+      "symbol": "Configurable_Controller_Binding_RAM_Addresses",
+      "expectedCode": "dw ShotBinding",
+      "paragraphs": [
+        "This table is the shared action order used while loading and saving the controller",
+        "settings menu. Item Select precedes Item Cancel even though their default masks are",
+        "Select and Y respectively."
+      ]
+    },
+    {
+      "id": "controller-bindings.save-menu-indices",
+      "symbol": "Save_GameOptionsMenu_ControllerBindings",
+      "expectedCode": "LDX.W #$0000",
+      "paragraphs": [
+        "Convert all seven temporary menu indices back to SNES button masks and write them",
+        "through the parallel action-address table. This is the point where an options-menu",
+        "swap becomes the live gameplay binding state."
+      ]
+    },
+    {
+      "id": "controller-bindings.button-mask-table",
+      "symbol": "Controller_Input_Bitmasks",
+      "expectedCode": "dw $0040",
+      "paragraphs": [
+        "Map compact menu indices to hardware joypad bits. The first seven entries are valid",
+        "configurable action buttons; Left and Right follow for other menu input uses."
+      ]
+    },
+    {
+      "id": "controller-bindings.choose-button",
+      "symbol": "GameOptions_ControllerSettings_SetBinding",
+      "expectedCode": "LDX.W #$000C",
+      "paragraphs": [
+        "Scan newly pressed configurable buttons from R back through X, convert the selected",
+        "table offset to its compact index and search the six other actions for its owner."
+      ]
+    },
+    {
+      "id": "controller-bindings.swap-owner",
+      "symbol": "GameOptions_ControllerSettings_SetBinding",
+      "localLabel": ".found",
+      "expectedCode": "PHY",
+      "paragraphs": [
+        "Bindings form a seven-button permutation, so the selected button already belongs to",
+        "exactly one row. Exchange that row's index with the current action instead of creating",
+        "a duplicate; this is why assigning Select to Item Cancel moves Y to Item Select."
+      ]
+    },
+    {
+      "id": "samus-health.zero-energy",
+      "symbol": "HandleSamusRunningOutOfEnergy_and_IncrementGameTime",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "At zero or negative energy, automatic reserve mode with reserve energy freezes time",
+        "and enters game state $1B. Otherwise normal gameplay locks Samus for death and enters",
+        "state $13. Non-gameplay states return instead of repeatedly starting death."
+      ]
+    },
+    {
+      "id": "samus-health.game-time",
+      "symbol": "HandleSamusRunningOutOfEnergy_and_IncrementGameTime",
+      "localLabel": ".tickGameTime",
+      "expectedCode": "LDA.W IGTFrames",
+      "paragraphs": [
+        "Independently tick in-game time using the regional FPS constant, cascading through",
+        "seconds and minutes at 60 and hours thereafter. Values at or above 100 hours clamp",
+        "to 99:59:59 plus the final frame value 59."
+      ]
+    },
+    {
+      "id": "samus-health.reserve-refill",
+      "symbol": "Reserve_Tank_Auto_Refill",
+      "expectedCode": "LDA.W ReserveEnergy",
+      "paragraphs": [
+        "Transfer one reserve-energy unit to the main tank per call, queueing the refill sound",
+        "every eight serviced NMI frames. Stop and zero reserve when the main tank reaches its",
+        "maximum or reserve is exhausted; carry reports completion."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "core.MainGameLoop.lines",
+      "symbol": "MainGameLoop",
+      "lines": [
+        {
+          "expectedCode": "PHK",
+          "comment": "Select the game-loop bank for near data accesses."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Set the data bank to $82."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Use a word accumulator for the initial state."
+        },
+        {
+          "expectedCode": "STZ.W GameState",
+          "comment": "Begin in state 0, which schedules the title sequence."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "STZ.W DebugSpareCPUDisplayFlag",
+          "comment": "Start with the spare-CPU display disabled."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "CLI",
+          "comment": "Allow maskable IRQs; NMI enabling is controlled separately by $4200."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve this iteration's processor status across its handlers."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Start the iteration with word-sized A, X and Y."
+        },
+        {
+          "expectedCode": "JSL.L HDMAObjectHandler_HandleMusicQueue",
+          "comment": "Advance music and HDMA-object logic before dispatching the game state."
+        },
+        {
+          "expectedCode": "JSL.L GenerateRandomNumber",
+          "comment": "Advance the shared random seed once on this loop path."
+        },
+        {
+          "expectedCode": "JSL.L ClearHighOAM",
+          "comment": "Clear the RAM high-OAM bits before rebuilding sprite attributes."
+        },
+        {
+          "expectedCode": "STZ.W OAMStack",
+          "comment": "Start writing this iteration's sprite entries at the beginning of OAM."
+        },
+        {
+          "expectedCode": "STZ.W SamusTiles_TopHalfFlag",
+          "comment": "Clear the pending Samus top-half tile-transfer flag."
+        },
+        {
+          "expectedCode": "STZ.W SamusTiles_TopHalfTilesDef",
+          "comment": "Discard the previous top-half tile definition."
+        },
+        {
+          "expectedCode": "STZ.W SamusTiles_BottomHalfTilesDef",
+          "comment": "Discard the previous bottom-half tile definition."
+        },
+        {
+          "expectedCode": "LDA.W GameState",
+          "comment": "Read the current game-state selector."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Only the low byte selects a game-mode entry."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the state number to a word-table byte offset."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use that byte offset for the indexed indirect call."
+        },
+        {
+          "expectedCode": "JSR.W (.gamemodes,X)",
+          "comment": "Run the selected bank-$82 state handler; it returns with RTS."
+        },
+        {
+          "expectedCode": "JSL.L HandleSounds",
+          "comment": "Service sound queues after the state's logic has run."
+        },
+        {
+          "expectedCode": "JSL.L Finalise_OAM",
+          "comment": "Move unused RAM OAM sprites offscreen and reset the write pointer."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "JSL.L ShowSpareCPUDebug_UpdatePrevCtrl1Input",
+          "comment": "Update the optional spare-CPU display and previous drawing-input snapshot."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "JSL.L WaitForNMI",
+          "comment": "Publish the completed frame and wait for NMI's acknowledgement."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the status saved at the start of this iteration."
+        },
+        {
+          "expectedCode": "BRA .loop",
+          "comment": "Prepare the next frame using the input sampled by the serviced NMI."
+        },
+        {
+          "expectedCode": ".gamemodes:"
+        },
+        {
+          "expectedCode": "dw GameState_0_ResetStart",
+          "comment": "State $00: schedule title-sequence initialisation."
+        },
+        {
+          "expectedCode": "dw GameState_1_TitleSequence"
+        },
+        {
+          "expectedCode": "dw GameState_2_GameOptionsMenu"
+        },
+        {
+          "expectedCode": "dw GameState_3_Nothing"
+        },
+        {
+          "expectedCode": "dw GameState_4_FileSelectMenus"
+        },
+        {
+          "expectedCode": "dw GameState_5_FileSelectMap"
+        },
+        {
+          "expectedCode": "dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData"
+        },
+        {
+          "expectedCode": "dw GameState_7_MainGameplayFadingIn",
+          "comment": "State $07: run gameplay while fading in."
+        },
+        {
+          "expectedCode": "dw GameState_8_MainGameplay",
+          "comment": "State $08: run the normal gameplay update."
+        },
+        {
+          "expectedCode": "dw GameState_9_HitADoorBlock"
+        },
+        {
+          "expectedCode": "dw GameState_A_LoadingNextRoom"
+        },
+        {
+          "expectedCode": "dw GameState_B_LoadingNextRoom"
+        },
+        {
+          "expectedCode": "dw GameState_C_Pausing_NormalGameplayDarkening"
+        },
+        {
+          "expectedCode": "dw GameState_D_Pausing_LoadingPauseScreen"
+        },
+        {
+          "expectedCode": "dw GameState_E_Paused_LoadingPauseScreen"
+        },
+        {
+          "expectedCode": "dw GameState_F_Paused_MapAndItemScreens"
+        },
+        {
+          "expectedCode": "dw GameState_10_Unpausing_LoadingNormalGameplay"
+        },
+        {
+          "expectedCode": "dw GameState_11_Unpausing_LoadingNormalGameplay"
+        },
+        {
+          "expectedCode": "dw GameState_12_Unpausing_NormalGameplayBrightening"
+        },
+        {
+          "expectedCode": "dw GameState_13_DeathSequence_Start"
+        },
+        {
+          "expectedCode": "dw GameState_14_DeathSequence_BlackOutSurroundings"
+        },
+        {
+          "expectedCode": "dw GameState_15_DeathSequence_WaitForMusic"
+        },
+        {
+          "expectedCode": "dw GameState_16_DeathSequence_PreFlashing"
+        },
+        {
+          "expectedCode": "dw GameState_17_DeathSequence_Flashing"
+        },
+        {
+          "expectedCode": "dw GameState_18_DeathSequence_ExplosionWhiteOut"
+        },
+        {
+          "expectedCode": "dw GameState_19_DeathSequence_BlackOut"
+        },
+        {
+          "expectedCode": "dw GameState_1A_GameOverScreen"
+        },
+        {
+          "expectedCode": "dw GameState_1B_ReserveTankAuto"
+        },
+        {
+          "expectedCode": "dw UNUSED_GameState_1C_828B3F"
+        },
+        {
+          "expectedCode": "dw GameState_1D_DebugGameOverMenu"
+        },
+        {
+          "expectedCode": "dw GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes"
+        },
+        {
+          "expectedCode": "dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData"
+        },
+        {
+          "expectedCode": "dw GameState_20_MadeItToCeresElevator"
+        },
+        {
+          "expectedCode": "dw GameState_21_BlackoutFromCeres"
+        },
+        {
+          "expectedCode": "dw GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes"
+        },
+        {
+          "expectedCode": "dw GameState_23_TimeUpWhiteOut"
+        },
+        {
+          "expectedCode": "dw GameState_23_TimeUpBlackOut"
+        },
+        {
+          "expectedCode": "dw GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes"
+        },
+        {
+          "expectedCode": "dw GameState_26_SamusEscapesFromZebes"
+        },
+        {
+          "expectedCode": "dw GameState_27_EndingAndCredits"
+        },
+        {
+          "expectedCode": "dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData"
+        },
+        {
+          "expectedCode": "dw GameState_29_TransitionToDemo"
+        },
+        {
+          "expectedCode": "dw GameState_2A_PlayingDemo"
+        },
+        {
+          "expectedCode": "dw GameState_2B_UnloadGameData"
+        },
+        {
+          "expectedCode": "dw GameState_2C_TransitionFromDemo"
+        }
+      ]
+    },
+    {
+      "id": "core.GameState_0_ResetStart.lines",
+      "symbol": "GameState_0_ResetStart",
+      "lines": [
+        {
+          "expectedCode": "STZ.W unknown0DF8"
+        },
+        {
+          "expectedCode": "STZ.W neverRead0DFA"
+        },
+        {
+          "expectedCode": "STZ.W neverRead0DFC"
+        },
+        {
+          "expectedCode": "LDA.W #CinematicFunction_LoadTitleSequence"
+        },
+        {
+          "expectedCode": "STA.W CinematicFunction",
+          "comment": "Schedule the cinematic function that loads the title sequence."
+        },
+        {
+          "expectedCode": "STZ.W DemoSet",
+          "comment": "Default to the first attract-mode demo set."
+        },
+        {
+          "expectedCode": "LDA.W NumberOfDemoSets",
+          "comment": "Use the demo-set count determined from SRAM during boot."
+        },
+        {
+          "expectedCode": "CMP.W #$0004",
+          "comment": "The four-set case starts at the final set instead."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep demo set 0 for all other counts."
+        },
+        {
+          "expectedCode": "LDA.W #$0003",
+          "comment": "Select demo set 3 when four demo sets were found."
+        },
+        {
+          "expectedCode": "STA.W DemoSet",
+          "comment": "Store the attract-mode starting set."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance from reset/start to title-sequence state 1."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Return to the main loop's sound, OAM and NMI stages."
+        }
+      ]
+    },
+    {
+      "id": "core.GameState_7_MainGameplayFadingIn.lines",
+      "symbol": "GameState_7_MainGameplayFadingIn",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Run gameplay and fade bookkeeping with word-sized registers."
+        },
+        {
+          "expectedCode": "JSR.W GameState_8_MainGameplay",
+          "comment": "Update gameplay even while the screen is still fading in."
+        },
+        {
+          "expectedCode": "JSL.L HandleFadingIn",
+          "comment": "Advance the brightness fade after the gameplay update."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Test the byte-sized display-brightness shadow."
+        },
+        {
+          "expectedCode": "LDA.B DP_Brightness",
+          "comment": "Read brightness together with its forced-blank bit."
+        },
+        {
+          "expectedCode": "CMP.B #$0F",
+          "comment": "Require exactly full brightness with forced blank clear."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Return without advancing the fade-completion state until brightness is $0F."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Return to word-sized fade timers and state accesses."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeDelay",
+          "comment": "Clear the delay used by the completed fade."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeCounter",
+          "comment": "Clear the completed fade's counter."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Increment the current game state, normally from fade-in 7 to gameplay 8."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Return to the main loop's shared end-of-frame stages."
+        }
+      ]
+    },
+    {
+      "id": "core.GameState_8_MainGameplay.lines",
+      "symbol": "GameState_8_MainGameplay",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized registers for gameplay dispatch."
+        },
+        {
+          "expectedCode": "JSL.L Determine_Which_Enemies_to_Process",
+          "comment": "Build the active and interactive enemy lists before Samus and enemy logic."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "JSL.L DebugHandler",
+          "comment": "Let the debug handler decide whether normal processing should be skipped."
+        },
+        {
+          "expectedCode": "AND.W #$FFFF",
+          "comment": "Set the zero flag from the debug handler's result without changing A."
+        },
+        {
+          "expectedCode": "BNE .skipProcessing",
+          "comment": "Skip the main simulation block, but still run the common housekeeping tail."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "JSL.L PaletteFXObject_Handler",
+          "comment": "Advance palette-effect objects before the actor updates."
+        },
+        {
+          "expectedCode": "JSL.L SamusCurrentStateHandler",
+          "comment": "Run Samus's current-state phase before projectile interactions and enemy AI."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "LDA.W DebugDisableSpriteInteractions",
+          "comment": "Check the debug override for the following interaction call."
+        },
+        {
+          "expectedCode": "BNE +",
+          "comment": "Skip Samus/projectile interactions, not the main enemy routine."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "JSL.L Samus_Projectiles_Interaction_Handling",
+          "comment": "Resolve Samus and projectile interactions before enemy AI."
+        },
+        {
+          "expectedCode": "+   JSL.L Main_Enemy_Routine",
+          "comment": "Run the main enemy routine using the lists selected earlier."
+        },
+        {
+          "expectedCode": "JSL.L SamusNewStateHandler",
+          "comment": "Run Samus's new-state phase after the enemy routine."
+        },
+        {
+          "expectedCode": "JSL.L Enemy_Projectile_Handler",
+          "comment": "Advance enemy projectiles after Samus's two state phases."
+        },
+        {
+          "expectedCode": "JSL.L PLM_Handler",
+          "comment": "Run PLM logic for room objects such as doors and pickups."
+        },
+        {
+          "expectedCode": "JSL.L AnimatedTilesObject_Handler",
+          "comment": "Advance animated-tile objects; their pending uploads are handled by NMI."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "LDA.W DebugDisableSpriteInteractions",
+          "comment": "Check the debug override for the following three collision handlers."
+        },
+        {
+          "expectedCode": "BNE +",
+          "comment": "Skip projectile collisions and power-bomb enemy interactions when requested."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "JSL.L EnemyProjectile_Samus_Collision_Handling",
+          "comment": "Resolve enemy-projectile hits against Samus."
+        },
+        {
+          "expectedCode": "JSL.L Projectile_vs_Projectile_Collision_Handling",
+          "comment": "Resolve projectile-versus-projectile collisions."
+        },
+        {
+          "expectedCode": "JSL.L Process_Enemy_PowerBomb_Interaction",
+          "comment": "Apply the enemy-side power-bomb interaction pass."
+        },
+        {
+          "expectedCode": "+   JSL.L Main_Scrolling_Routine",
+          "comment": "Update the camera after actor movement and interactions."
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        },
+        {
+          "expectedCode": "LDA.L DebugConst_DebugScrolling",
+          "comment": "Read the ROM debug setting for saved camera positions."
+        },
+        {
+          "expectedCode": "BEQ +",
+          "comment": "Keep the normal camera position when debug scrolling is disabled."
+        },
+        {
+          "expectedCode": "JSL.L Debug_Layer1Position_Saving_Loading",
+          "comment": "Apply the debug layer-1 position save/load behavior when enabled."
+        },
+        {
+          "expectedCode": "endif"
+        },
+        {
+          "expectedCode": "+   JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles",
+          "comment": "Build the sprite display from the updated actors and projectiles."
+        },
+        {
+          "expectedCode": "JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer",
+          "comment": "Queue any required enemy background tilemap transfer rather than doing it here."
+        },
+        {
+          "expectedCode": ".skipProcessing:"
+        },
+        {
+          "expectedCode": "JSL.L HandleHUDTilemap_PausedAndRunning",
+          "comment": "Update the HUD even when the debug skip bypassed the main simulation."
+        },
+        {
+          "expectedCode": "JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling",
+          "comment": "Calculate layer-2 scrolling and prepare scrolling background updates."
+        },
+        {
+          "expectedCode": "JSL.L Execute_Room_Main_ASM",
+          "comment": "Execute this room's main ASM after the HUD and scrolling calculations."
+        },
+        {
+          "expectedCode": "JSR.W HandleSamusRunningOutOfEnergy_and_IncrementGameTime",
+          "comment": "Handle energy depletion and tick in-game time on the helper's eligible paths."
+        },
+        {
+          "expectedCode": "JSL.L Handle_Room_Shaking",
+          "comment": "Apply room shaking after the room's main ASM."
+        },
+        {
+          "expectedCode": "JSL.L DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists",
+          "comment": "Tick Samus's hurt timers and terminate the active/interactive enemy lists."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Return to the outer loop; this handler does not publish the frame itself."
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_C_Pausing_NormalGameplayDarkening.lines",
+      "symbol": "GameState_C_Pausing_NormalGameplayDarkening",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "JSR.W GameState_8_MainGameplay",
+          "comment": "Keep gameplay running while the display darkens."
+        },
+        {
+          "expectedCode": "JSL.L HandleFadingOut",
+          "comment": "Advance the display-brightness fade after the gameplay update."
+        },
+        {
+          "expectedCode": "LDA.B DP_Brightness",
+          "comment": "Read the brightness shadow; the following mask ignores adjacent data."
+        },
+        {
+          "expectedCode": "AND.W #$000F",
+          "comment": "Test just the brightness nibble, not the forced-blank bit."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Wait for brightness zero before replacing gameplay graphics."
+        },
+        {
+          "expectedCode": "JSL.L EnableNMI",
+          "comment": "Keep NMI enabled for the upcoming pause-menu setup."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeDelay",
+          "comment": "Clear the completed fade's delay."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeCounter",
+          "comment": "Clear the completed fade's counter."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance the current state, normally from $0C to pause-menu setup $0D."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_D_Pausing_LoadingPauseScreen.lines",
+      "symbol": "GameState_D_Pausing_LoadingPauseScreen",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $82 while calling the pause setup routines."
+        },
+        {
+          "expectedCode": "JSL.L Disable_HDMAObjects",
+          "comment": "Stop HDMA-object processing before repurposing the display."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Use byte writes for the HDMA enable shadow and register."
+        },
+        {
+          "expectedCode": "LDA.B #$00"
+        },
+        {
+          "expectedCode": "STA.B DP_HDMAEnable",
+          "comment": "Clear the channels that future NMI register work would enable."
+        },
+        {
+          "expectedCode": "STA.W $420C",
+          "comment": "Disable HDMA in hardware immediately as well."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Restore word-sized accumulator operations."
+        },
+        {
+          "expectedCode": "JSL.L Disable_AnimatedTilesObjects",
+          "comment": "Suspend animated-tile object processing during the pause menu."
+        },
+        {
+          "expectedCode": "JSR.W Backup_BG2Tilemap_for_PauseMenu",
+          "comment": "Back up the gameplay BG2 tilemap before loading pause graphics."
+        },
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's processor status around the room's pause hook."
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the data bank independently of the synthetic return address."
+        },
+        {
+          "expectedCode": "PHK",
+          "comment": "Push bank $82 as the bank byte of the hook's RTL return frame."
+        },
+        {
+          "expectedCode": "PEA.W .returnPEA-1",
+          "comment": "Push the return word minus one because RTL increments it."
+        },
+        {
+          "expectedCode": "JML.W [PauseHook_Pause]",
+          "comment": "Jump through the room's 24-bit pause-hook pointer; the hook returns with RTL."
+        },
+        {
+          "expectedCode": ".returnPEA:"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the data bank after the hook's RTL consumed its return frame."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the status saved around the hook."
+        },
+        {
+          "expectedCode": "JSL.L Cancel_Sound_Effects",
+          "comment": "Cancel gameplay sound effects before showing the pause menu."
+        },
+        {
+          "expectedCode": "JSR.W Backup_SomeGraphicsState_for_PauseScreen",
+          "comment": "Save the graphics shadows needed when gameplay resumes."
+        },
+        {
+          "expectedCode": "JSL.L LoadPauseMenuTiles_ClearBG2Tilemap",
+          "comment": "Load pause graphics and clear its BG2 tilemap."
+        },
+        {
+          "expectedCode": "JSL.L LoadPauseScreen_BaseTilemaps",
+          "comment": "Load the pause screen's base tilemaps."
+        },
+        {
+          "expectedCode": "JSL.L Load_PauseMenuMapTilemap_and_AreaLabel",
+          "comment": "Build the current area's map and area-name display."
+        },
+        {
+          "expectedCode": "JSR.W BackupGameplayPalettes_LoadPauseScreenPalettes",
+          "comment": "Keep the gameplay palette and install pause-screen colors."
+        },
+        {
+          "expectedCode": "JSR.W ContinueInitializingPauseMenu",
+          "comment": "Finish pause-menu state and scroll initialisation."
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Prime both timers for the pause-menu fade-in."
+        },
+        {
+          "expectedCode": "STA.W ScreenFadeDelay"
+        },
+        {
+          "expectedCode": "STA.W ScreenFadeCounter"
+        },
+        {
+          "expectedCode": "STZ.W PauseMenu_MapScrollLeftArrowAnimationFrame",
+          "comment": "Restart the map's left-arrow animation."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W PauseMenu_PaletteAnimationTimer",
+          "comment": "Prime pause-palette animation with a one-tick timer."
+        },
+        {
+          "expectedCode": "STZ.W MapScrolling_Direction",
+          "comment": "Start with no map-scroll direction selected."
+        },
+        {
+          "expectedCode": "STZ.W MapScrolling_SpeedIndex",
+          "comment": "Start the map-scroll speed sequence from its first entry."
+        },
+        {
+          "expectedCode": "JSL.L QueueClearingOfFXTilemap",
+          "comment": "Queue clearing of the gameplay FX tilemap."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance from setup to the pause-menu fade-in state."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_E_Paused_LoadingPauseScreen.lines",
+      "symbol": "GameState_E_Paused_LoadingPauseScreen",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "JSL.L Draw_PauseMenu_during_FadeIn",
+          "comment": "Draw the pause screen while it is fading in."
+        },
+        {
+          "expectedCode": "JSL.L HandleFadingIn",
+          "comment": "Advance the brightness fade after drawing the menu."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Read the byte-sized brightness shadow."
+        },
+        {
+          "expectedCode": "LDA.B DP_Brightness"
+        },
+        {
+          "expectedCode": "CMP.B #$0F",
+          "comment": "Require full brightness with forced blank clear."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep fading until the shadow is exactly $0F."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeDelay",
+          "comment": "Clear the completed fade's delay."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeCounter",
+          "comment": "Clear the completed fade's counter."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance to the interactive paused state, normally $0E to $0F."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_F_Paused_MapAndItemScreens.lines",
+      "symbol": "GameState_F_Paused_MapAndItemScreens",
+      "lines": [
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "LDA.W #$0003",
+          "comment": "Select the pause menu's held-input repeat mode."
+        },
+        {
+          "expectedCode": "JSL.L UpdateHeldInput",
+          "comment": "Update timed held/new input before processing the pause page."
+        },
+        {
+          "expectedCode": "JSL.L MainPauseRoutine",
+          "comment": "Dispatch the active map, equipment or page-transition handler."
+        },
+        {
+          "expectedCode": "JSL.L HandleHUDTilemap_PausedAndRunning",
+          "comment": "Maintain the HUD without running the ordinary gameplay handler."
+        },
+        {
+          "expectedCode": "JSR.W Handle_PauseScreen_PaletteAnimation",
+          "comment": "Advance the pause-screen palette animation."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.MainPauseRoutine.lines",
+      "symbol": "MainPauseRoutine",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized registers for the pause page selector."
+        },
+        {
+          "expectedCode": "LDA.W PauseMenu_MenuIndex",
+          "comment": "Read the pause menu's own state index, separate from GameState."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the page-state index into a word-pointer byte offset."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Index the bank-local pause-handler table."
+        },
+        {
+          "expectedCode": "JSR.W (.pointers,X)",
+          "comment": "Run one pause-page handler using a near return."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the caller's data bank."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the caller's processor status."
+        },
+        {
+          "expectedCode": "RTL",
+          "comment": "Return to the long caller after the selected near handler finishes."
+        },
+        {
+          "expectedCode": ".pointers:"
+        },
+        {
+          "expectedCode": "dw PauseMenu_0_MapScreen",
+          "comment": "Index 0: interactive map page."
+        },
+        {
+          "expectedCode": "dw PauseScreen_1_EquipmentScreen",
+          "comment": "Index 1: interactive equipment page."
+        },
+        {
+          "expectedCode": "dw PauseMenu_2_MapScreenToEquipmentScreen_FadingOut",
+          "comment": "Index 2: darken the map before switching to equipment."
+        },
+        {
+          "expectedCode": "dw PauseMenu_3_MapScreenToEquipmentScreen_LoadEquipmentScreen",
+          "comment": "Index 3: load the equipment page while dark."
+        },
+        {
+          "expectedCode": "dw PauseMenu_4_MapScreenToEquipmentScreen_FadingIn",
+          "comment": "Index 4: brighten the equipment page."
+        },
+        {
+          "expectedCode": "dw PauseMenu_5_EquipmentScreenToMapScreen_FadingOut",
+          "comment": "Index 5: darken equipment before switching to the map."
+        },
+        {
+          "expectedCode": "dw PauseMenu_6_EquipmentScreenToMapScreen_LoadMapScreen",
+          "comment": "Index 6: load the map page while dark."
+        },
+        {
+          "expectedCode": "dw PauseMenu_7_EquipmentScreenToMapScreen_FadingIn",
+          "comment": "Index 7: brighten the map page."
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_10_Unpausing_LoadingNormalGameplay.lines",
+      "symbol": "GameState_10_Unpausing_LoadingNormalGameplay",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "JSL.L Handle_PauseMenu_StartPressedHighlight",
+          "comment": "Keep the pressed-Start highlight active during menu fade-out."
+        },
+        {
+          "expectedCode": "JSR.W Draw_PauseMenu_During_FadeOut",
+          "comment": "Draw the currently selected pause page while darkening it."
+        },
+        {
+          "expectedCode": "JSL.L HandleFadingOut",
+          "comment": "Advance the display-brightness fade."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Test the byte-sized brightness and forced-blank shadow."
+        },
+        {
+          "expectedCode": "LDA.B DP_Brightness"
+        },
+        {
+          "expectedCode": "CMP.B #$80",
+          "comment": "Wait for exactly $80: brightness zero and forced blank set."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep the pause screen active until the fade reaches forced blank."
+        },
+        {
+          "expectedCode": "JSL.L EnableNMI",
+          "comment": "Keep NMI enabled before the gameplay restoration phase."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeDelay",
+          "comment": "Clear the completed fade's delay."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeCounter",
+          "comment": "Clear the completed fade's counter."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance to gameplay graphics restoration, normally state $11."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_11_Unpausing_LoadingNormalGameplay.lines",
+      "symbol": "GameState_11_Unpausing_LoadingNormalGameplay",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "JSR.W Clear_Samus_Beam_Tiles",
+          "comment": "Clear the Samus beam graphics before reloading gameplay assets."
+        },
+        {
+          "expectedCode": "JSR.W ContinueInitialising_GameplayResume",
+          "comment": "Restore saved colors, PPU setup, scrolling, beam graphics and pause state."
+        },
+        {
+          "expectedCode": "JSL.L ResumeGameplay",
+          "comment": "Reload gameplay graphics with the interrupt handling provided by ResumeGameplay."
+        },
+        {
+          "expectedCode": "JSR.W Restore_SomeGraphicsState_from_PauseScreen",
+          "comment": "Restore the gameplay graphics-register shadows saved on pause."
+        },
+        {
+          "expectedCode": "JSR.W Restore_BG2Tilemap_from_PauseMenu",
+          "comment": "Restore the backed-up BG2 tilemap."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Re-establish word-sized registers before setting timers and calling the hook."
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Prime the gameplay fade-in timers."
+        },
+        {
+          "expectedCode": "STA.W ScreenFadeDelay"
+        },
+        {
+          "expectedCode": "STA.W ScreenFadeCounter"
+        },
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve processor status around the room's unpause hook."
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the data bank separately from the hook's return frame."
+        },
+        {
+          "expectedCode": "PHK",
+          "comment": "Supply bank $82 for the synthetic RTL return."
+        },
+        {
+          "expectedCode": "PEA.W .returnPEA-1",
+          "comment": "Supply the hook's return word minus one for RTL."
+        },
+        {
+          "expectedCode": "JML.W [PauseHook_Unpause]",
+          "comment": "Jump through the room's 24-bit unpause-hook pointer."
+        },
+        {
+          "expectedCode": ".returnPEA:"
+        },
+        {
+          "expectedCode": "JSL.L Enable_HDMAObjects",
+          "comment": "Re-enable HDMA-object processing after the room's hook completes."
+        },
+        {
+          "expectedCode": "JSL.L Enable_AnimatedTilesObjects",
+          "comment": "Resume animated-tile object processing."
+        },
+        {
+          "expectedCode": "JSL.L Queue_Samus_Movement_SoundEffects",
+          "comment": "Queue movement sounds appropriate to Samus's resumed state."
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the data bank saved around the unpause hook."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the status saved around the unpause hook."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance to gameplay fade-in, normally state $12."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the status saved on entry to the game-state handler."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_12_Unpausing_NormalGameplayBrightening.lines",
+      "symbol": "GameState_12_Unpausing_NormalGameplayBrightening",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "JSR.W GameState_8_MainGameplay",
+          "comment": "Resume gameplay simulation before applying each fade-in step."
+        },
+        {
+          "expectedCode": "JSL.L HandleFadingIn",
+          "comment": "Brighten the gameplay display after its update."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Check the byte-sized display-brightness shadow."
+        },
+        {
+          "expectedCode": "LDA.B DP_Brightness"
+        },
+        {
+          "expectedCode": "CMP.B #$0F",
+          "comment": "Require exactly $0F, including forced blank being clear."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep using the gameplay fade-in handler until fully bright."
+        },
+        {
+          "expectedCode": "REP #$20"
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeDelay",
+          "comment": "Clear the completed fade's delay."
+        },
+        {
+          "expectedCode": "STZ.W ScreenFadeCounter",
+          "comment": "Clear the completed fade's counter."
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Select ordinary gameplay explicitly rather than incrementing the state."
+        },
+        {
+          "expectedCode": "STA.W GameState",
+          "comment": "Return the outer dispatcher to state $08."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.Handle_PauseScreen_StartButton.lines",
+      "symbol": "Handle_PauseScreen_StartButton",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDA.W Input_TimedHeldNew",
+          "comment": "Read the pause menu's timed held/new button stream."
+        },
+        {
+          "expectedCode": "BIT.W #$1000",
+          "comment": "Test the Start button's $1000 bit."
+        },
+        {
+          "expectedCode": "BEQ +",
+          "comment": "Without Start, only refresh the menu button-label tilemap."
+        },
+        {
+          "expectedCode": "LDA.W #$0038",
+          "comment": "Select the pause-menu confirmation sound."
+        },
+        {
+          "expectedCode": "JSL.L QueueSound_Lib1_Max6",
+          "comment": "Queue confirmation in sound library 1."
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Prime the pause-screen fade-out timers."
+        },
+        {
+          "expectedCode": "STA.W ScreenFadeDelay",
+          "comment": "Set the brightness-step interval to one."
+        },
+        {
+          "expectedCode": "STA.W ScreenFadeCounter",
+          "comment": "Prime the first brightness step."
+        },
+        {
+          "expectedCode": "LDA.W PauseMenu_ButtonLabelMode",
+          "comment": "Remember the existing button-label palette mode."
+        },
+        {
+          "expectedCode": "PHA",
+          "comment": "Keep that mode while temporarily selecting the Start-label colors."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W PauseMenu_ButtonLabelMode",
+          "comment": "Use label mode 1 for the Start-button palette update."
+        },
+        {
+          "expectedCode": "JSR.W Set_PauseScreen_ButtonLabelPalettes",
+          "comment": "Apply the temporary label-palette selection."
+        },
+        {
+          "expectedCode": "PLA",
+          "comment": "Recover the previous button-label mode."
+        },
+        {
+          "expectedCode": "STA.W PauseMenu_ButtonLabelMode",
+          "comment": "Restore the selection used by the normal pause page."
+        },
+        {
+          "expectedCode": "LDA.W #$000B",
+          "comment": "Give the pressed-button highlight an eleven-tick lifetime."
+        },
+        {
+          "expectedCode": "STA.W PauseMenu_ButtonPressedHighlightTimer",
+          "comment": "Store the highlight lifetime before beginning unpause."
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance the game state, normally from paused $0F to fade-out $10."
+        },
+        {
+          "expectedCode": "+   JSR.W Update_PauseMenu_L_R_Start_VRAMTilemap",
+          "comment": "Refresh the L/R/Start label tilemap on both input paths."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_9_HitADoorBlock.lines",
+      "symbol": "GameState_9_HitADoorBlock",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized registers for the transition function and carry result."
+        },
+        {
+          "expectedCode": "PEA.W .manualReturn-1",
+          "comment": "Build the near RTS return frame for the indirect transition call."
+        },
+        {
+          "expectedCode": "JMP.W (DoorTransitionFunction)",
+          "comment": "Run the current bank-$82 transition phase without pushing a second return."
+        },
+        {
+          "expectedCode": ".manualReturn:"
+        },
+        {
+          "expectedCode": "BCS .gameStateA",
+          "comment": "Carry set means the elevator/pre-door delay has finished."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Carry clear keeps this game state active for the next iteration."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".gameStateA:"
+        },
+        {
+          "expectedCode": "INC.W GameState",
+          "comment": "Advance the current state, normally from $09 to $0A."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "JMP.W GameState_A_LoadingNextRoom",
+          "comment": "Tail-call room-transition setup immediately instead of waiting another frame."
+        }
+      ]
+    },
+    {
+      "id": "transitions.GameState_B_LoadingNextRoom.lines",
+      "symbol": "GameState_B_LoadingNextRoom",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB",
+          "comment": "Preserve the data bank across phases that select room-data banks."
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use word-sized registers for the indirect phase dispatch."
+        },
+        {
+          "expectedCode": "PEA.W .manualReturn-1",
+          "comment": "Push a near return word minus one for the phase's RTS."
+        },
+        {
+          "expectedCode": "JMP.W (DoorTransitionFunction)",
+          "comment": "Jump to the saved transition phase; it returns to .manualReturn."
+        },
+        {
+          "expectedCode": ".manualReturn:"
+        },
+        {
+          "expectedCode": "LDA.W TimerStatus",
+          "comment": "Check whether an escape/countdown timer must still be drawn."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Skip timer drawing when no timer is active."
+        },
+        {
+          "expectedCode": "JSL.L DrawTimer",
+          "comment": "Keep the active countdown visible during room loading."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Restore the data bank used by the outer frame loop."
+        },
+        {
+          "expectedCode": "PLP",
+          "comment": "Restore the outer caller's processor status."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_HandleElevator.lines",
+      "symbol": "DoorTransitionFunction_HandleElevator",
+      "lines": [
+        {
+          "expectedCode": "LDA.W ElevatorProperties",
+          "comment": "Check whether this door is associated with an elevator."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Ordinary doors finish this preliminary phase immediately."
+        },
+        {
+          "expectedCode": "LDA.W #$0000",
+          "comment": "Select Samus command 0 for the elevator path."
+        },
+        {
+          "expectedCode": "JSL.L Run_Samus_Command",
+          "comment": "Run the elevator path's Samus command before testing its direction."
+        },
+        {
+          "expectedCode": "LDA.W ElevatorDirection",
+          "comment": "Read the elevator's signed direction field."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "A negative direction needs no down-elevator waiting phase."
+        },
+        {
+          "expectedCode": "LDA.W #$0030*!FPS",
+          "comment": "Load the region-scaled downward-elevator delay."
+        },
+        {
+          "expectedCode": "STA.W DownwardsElevatorDelayTimer",
+          "comment": "Initialise the delay timer before its first decrement."
+        },
+        {
+          "expectedCode": "LDA.W #DoorTransitionFunction_Wait48FramesForDownElevator",
+          "comment": "Select the dedicated down-elevator waiting phase."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionFunction",
+          "comment": "Save that phase for later outer-loop iterations."
+        },
+        {
+          "expectedCode": "JMP.W DoorTransitionFunction_Wait48FramesForDownElevator",
+          "comment": "Run the first timer step immediately in this same call."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Report completion through carry rather than changing GameState here."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_Wait48FramesForDownElevator.lines",
+      "symbol": "DoorTransitionFunction_Wait48FramesForDownElevator",
+      "lines": [
+        {
+          "expectedCode": "DEC.W DownwardsElevatorDelayTimer",
+          "comment": "Decrement first; a zero result still takes the waiting path."
+        },
+        {
+          "expectedCode": "BMI .return",
+          "comment": "Finish only after the timer becomes negative."
+        },
+        {
+          "expectedCode": "JSL.L Determine_Which_Enemies_to_Process",
+          "comment": "Refresh the enemy lists while the elevator delay is active."
+        },
+        {
+          "expectedCode": "JSL.L Main_Enemy_Routine",
+          "comment": "Run the main enemy routine during the waiting phase."
+        },
+        {
+          "expectedCode": "JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles",
+          "comment": "Draw the actors and projectiles during the delay."
+        },
+        {
+          "expectedCode": "JSR.W Draw_Inanimate_Samus_Bank82",
+          "comment": "Draw Samus through the inanimate drawing path."
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Tell game state $09 to stay in this waiting phase."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Tell game state $09 that transition setup may begin."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_WaitForSoundsToFinish.lines",
+      "symbol": "DoorTransitionFunction_WaitForSoundsToFinish",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "JSL.L Determine_Which_Enemies_to_Process",
+          "comment": "Keep selecting and running enemies while queued sounds drain."
+        },
+        {
+          "expectedCode": "JSL.L Main_Enemy_Routine",
+          "comment": "Run the main enemy routine on this transition path."
+        },
+        {
+          "expectedCode": "JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles",
+          "comment": "Draw actors and projectiles while waiting for the queues."
+        },
+        {
+          "expectedCode": "JSR.W Draw_Inanimate_Samus_Bank82",
+          "comment": "Draw Samus without advancing her ordinary state handlers here."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Compare the sound-ring indices as bytes."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueNextIndexLib1",
+          "comment": "Read sound library 1's next insertion index."
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Subtract the consumed index without an incoming borrow."
+        },
+        {
+          "expectedCode": "SBC.W APU_SoundQueueStartIndexLib1",
+          "comment": "Measure outstanding entries in sound library 1."
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Reduce the difference modulo the sixteen-entry ring."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep waiting while library 1 has queued entries."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueNextIndexLib2",
+          "comment": "Check library 2 only after library 1's queue is empty."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W APU_SoundQueueStartIndexLib2",
+          "comment": "Measure outstanding entries in sound library 2."
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Apply the same sixteen-entry ring mask to library 2."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep waiting while library 2 has queued entries."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueNextIndexLib3",
+          "comment": "Check library 3 only after the first two queues are empty."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W APU_SoundQueueStartIndexLib3",
+          "comment": "Measure outstanding entries in sound library 3."
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Apply the same sixteen-entry ring mask to library 3."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Do not advance until all three queue-index differences are zero."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Restore word-sized access for the transition-function pointer."
+        },
+        {
+          "expectedCode": "LDA.W #DoorTransitionFunction_FadeOutTheScreen",
+          "comment": "Select palette fade-out as the next transition phase."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionFunction",
+          "comment": "Schedule that phase for the next state-$0B dispatch."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_FadeOutTheScreen.lines",
+      "symbol": "DoorTransitionFunction_FadeOutTheScreen",
+      "lines": [
+        {
+          "expectedCode": "JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C",
+          "comment": "Advance palette interpolation toward the target colors, not display brightness."
+        },
+        {
+          "expectedCode": "BCS +",
+          "comment": "Carry set means the palette transition has completed."
+        },
+        {
+          "expectedCode": "JSL.L Determine_Which_Enemies_to_Process",
+          "comment": "Continue enemy-list selection while the palette fade is unfinished."
+        },
+        {
+          "expectedCode": "JSL.L Main_Enemy_Routine",
+          "comment": "Run the main enemy routine during the palette fade."
+        },
+        {
+          "expectedCode": "JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles",
+          "comment": "Draw actors and projectiles during the fade."
+        },
+        {
+          "expectedCode": "JSR.W Draw_Inanimate_Samus_Bank82",
+          "comment": "Draw Samus through the inanimate path."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Return without changing phases while palette interpolation is unfinished."
+        },
+        {
+          "expectedCode": "+   LDA.W #DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ",
+          "comment": "Select the door-header and HDMA/IRQ setup phase."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionFunction",
+          "comment": "Schedule the next phase rather than running it recursively here."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ.lines",
+      "symbol": "DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ",
+      "lines": [
+        {
+          "expectedCode": "JSR.W Load_Door_Header",
+          "comment": "Load the destination door header before aligning the old room's camera."
+        },
+        {
+          "expectedCode": "JSL.L Delete_HDMAObjects",
+          "comment": "Delete the old room's HDMA objects."
+        },
+        {
+          "expectedCode": "LDA.W #$8000",
+          "comment": "Select the HDMA-object processing enable bit."
+        },
+        {
+          "expectedCode": "TRB.W HDMAObject_Enable",
+          "comment": "Clear that processing bit without replacing the remaining flags."
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Request IRQ command $08, the door-transition HUD drawing entry."
+        },
+        {
+          "expectedCode": "STA.B DP_NextIRQCmd",
+          "comment": "Queue the command for the IRQ chain rather than replacing its current command."
+        },
+        {
+          "expectedCode": "LDA.W #DoorTransitionFunction_ScrollScreenToAlignment",
+          "comment": "Select perpendicular-axis camera alignment as the next phase."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionFunction",
+          "comment": "Save the next transition-function pointer."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_ScrollScreenToAlignment.lines",
+      "symbol": "DoorTransitionFunction_ScrollScreenToAlignment",
+      "lines": [
+        {
+          "expectedCode": "PEA.W $8F00",
+          "comment": "Prepare bank $8F as the data bank used by this phase."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "The second pull selects $8F after the low byte was discarded."
+        },
+        {
+          "expectedCode": "LDA.W DoorDirection",
+          "comment": "Read the transition direction."
+        },
+        {
+          "expectedCode": "BIT.W #$0002",
+          "comment": "Bit 1 distinguishes vertical doors from horizontal doors."
+        },
+        {
+          "expectedCode": "BNE .vertical",
+          "comment": "For a vertical door, align the camera's X axis."
+        },
+        {
+          "expectedCode": "LDA.W Layer1YPosition-1",
+          "comment": "Read Y position one byte early so its pixel low byte occupies A's high byte."
+        },
+        {
+          "expectedCode": "BIT.W #$FF00",
+          "comment": "Test that pixel byte for zero; immediate BIT preserves the load's N flag."
+        },
+        {
+          "expectedCode": "BEQ .done",
+          "comment": "A zero pixel low byte is already aligned to a $100-pixel boundary."
+        },
+        {
+          "expectedCode": "BMI .scrollUp",
+          "comment": "Use the loaded pixel byte's bit 7 to choose incrementing rather than decrementing."
+        },
+        {
+          "expectedCode": "DEC.W Layer1YPosition",
+          "comment": "Move Y one pixel toward the lower $100-pixel boundary."
+        },
+        {
+          "expectedCode": "BRA .return",
+          "comment": "Update background scrolling without changing the transition phase yet."
+        },
+        {
+          "expectedCode": ".scrollUp:"
+        },
+        {
+          "expectedCode": "INC.W Layer1YPosition",
+          "comment": "Move Y one pixel toward the upper $100-pixel boundary."
+        },
+        {
+          "expectedCode": "BRA .return"
+        },
+        {
+          "expectedCode": ".vertical:"
+        },
+        {
+          "expectedCode": "LDA.W Layer1XPosition-1",
+          "comment": "Read X position one byte early to inspect its pixel low byte in A's high byte."
+        },
+        {
+          "expectedCode": "BIT.W #$FF00",
+          "comment": "Test X's pixel low byte for zero without replacing the load's N flag."
+        },
+        {
+          "expectedCode": "BEQ .done",
+          "comment": "Advance only when X is already aligned to a $100-pixel boundary."
+        },
+        {
+          "expectedCode": "BMI .scrollRight",
+          "comment": "Choose increasing X when that pixel byte has bit 7 set."
+        },
+        {
+          "expectedCode": "DEC.W Layer1XPosition",
+          "comment": "Move X one pixel toward the lower alignment boundary."
+        },
+        {
+          "expectedCode": "BRA .return",
+          "comment": "Keep the current phase active while camera alignment is in progress."
+        },
+        {
+          "expectedCode": ".scrollRight:"
+        },
+        {
+          "expectedCode": "INC.W Layer1XPosition",
+          "comment": "Move X one pixel toward the upper alignment boundary."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling",
+          "comment": "Recalculate layer-2 position and background updates after this one-pixel step."
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Return for another iteration, even if this step just reached alignment."
+        },
+        {
+          "expectedCode": ".done:"
+        },
+        {
+          "expectedCode": "JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling",
+          "comment": "Refresh background scrolling for the already-aligned camera."
+        },
+        {
+          "expectedCode": "LDA.W #DoorTransitionFunction_FixDoorsMovingUp",
+          "comment": "Select the upward-door preparation phase."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionFunction",
+          "comment": "Advance phases only on the aligned entry path."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish.lines",
+      "symbol": "DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish",
+      "lines": [
+        {
+          "expectedCode": "JSL.L AnimatedTilesObject_Handler",
+          "comment": "Advance animated-tile objects during the destination-room fade."
+        },
+        {
+          "expectedCode": "JSL.L Determine_Which_Enemies_to_Process",
+          "comment": "Select the destination room's active enemies."
+        },
+        {
+          "expectedCode": "JSL.L Main_Enemy_Routine",
+          "comment": "Run the main enemy routine while fading in."
+        },
+        {
+          "expectedCode": "JSL.L Enemy_Projectile_Handler",
+          "comment": "Advance enemy projectiles on this final transition path."
+        },
+        {
+          "expectedCode": "JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles",
+          "comment": "Draw the destination room's actors and projectiles."
+        },
+        {
+          "expectedCode": "JSR.W Draw_Inanimate_Samus_Bank82",
+          "comment": "Draw Samus through the inanimate drawing path."
+        },
+        {
+          "expectedCode": "JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer",
+          "comment": "Queue enemy BG2 tilemap updates produced by the new room."
+        },
+        {
+          "expectedCode": "JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C",
+          "comment": "Advance the palette interpolation toward the new room's target palette."
+        },
+        {
+          "expectedCode": "BCC .return",
+          "comment": "Keep the transition active until the palette helper reports completion."
+        },
+        {
+          "expectedCode": "STZ.W DisableSounds",
+          "comment": "Allow ordinary sound queuing again."
+        },
+        {
+          "expectedCode": "JSL.L Play_SpinJumpSound_if_SpinJumping",
+          "comment": "Restore Samus's spin-jump sound if appropriate."
+        },
+        {
+          "expectedCode": "STZ.W DoorTransitionFlagElevatorsZebetites",
+          "comment": "Clear the transition flag used by elevators and zebetites."
+        },
+        {
+          "expectedCode": "STZ.W DoorTransitionFlagEnemiesPause",
+          "comment": "Clear the transition flag that also blocks new pause requests."
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Select normal gameplay explicitly after the final palette step."
+        },
+        {
+          "expectedCode": "STA.W GameState",
+          "comment": "Return the outer dispatcher to game state $08."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "rooms.Load_Room_Header.lines",
+      "symbol": "Load_Room_Header",
+      "lines": [
+        {
+          "expectedCode": "PEA.W RoomHeaders>>8",
+          "comment": "Select bank $8F for the room header and its state-check stream."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "LDX.W RoomPointer",
+          "comment": "Use the destination room's bank-local header pointer."
+        },
+        {
+          "expectedCode": "LDA.W $0000,X",
+          "comment": "Read the room index byte through a word load."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Discard the adjacent area byte."
+        },
+        {
+          "expectedCode": "STA.W RoomIndex",
+          "comment": "Store the room's within-area index."
+        },
+        {
+          "expectedCode": "LDA.W $0001,X",
+          "comment": "Read the area byte from header offset $01."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W AreaIndex",
+          "comment": "Select the area's maps, boss bits and room resources."
+        },
+        {
+          "expectedCode": "LDA.W $0002,X",
+          "comment": "Read the room's map X byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W RoomMapX",
+          "comment": "Store the horizontal map-cell origin."
+        },
+        {
+          "expectedCode": "LDA.W $0003,X",
+          "comment": "Read the room's map Y byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W RoomMapY",
+          "comment": "Store the vertical map-cell origin."
+        },
+        {
+          "expectedCode": "LDA.W $0004,X",
+          "comment": "Read width in screen/scroll cells."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W RoomWidthScrolls",
+          "comment": "Keep the width in its original screen units."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Begin converting screen width to sixteen-block units."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "STA.W RoomWidthBlocks",
+          "comment": "Store width in 16-pixel blocks after four left shifts."
+        },
+        {
+          "expectedCode": "LDA.W $0005,X",
+          "comment": "Read height in screen/scroll cells."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W RoomHeightScrolls",
+          "comment": "Keep the height in its original screen units."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Begin converting screen height to sixteen-block units."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "STA.W RoomHeightBlocks",
+          "comment": "Store height in 16-pixel blocks after four left shifts."
+        },
+        {
+          "expectedCode": "LDA.W $0006,X",
+          "comment": "Read the up-scroller threshold byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W UpScroller",
+          "comment": "Keep the room's up-scroller value."
+        },
+        {
+          "expectedCode": "LDA.W $0007,X",
+          "comment": "Read the down-scroller threshold byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W DownScroller",
+          "comment": "Keep the room's down-scroller value."
+        },
+        {
+          "expectedCode": "LDA.W $0009,X",
+          "comment": "Read the word pointer to this room's door list."
+        },
+        {
+          "expectedCode": "STA.W DoorListPointer",
+          "comment": "Keep that bank-$8F door-list pointer."
+        },
+        {
+          "expectedCode": "JSL.L Room_State_Checking_Handler",
+          "comment": "Select a state by walking the condition stream after the eleven-byte header."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "Use byte writes for the hardware multiplication operands."
+        },
+        {
+          "expectedCode": "LDA.W RoomWidthBlocks",
+          "comment": "Take the low byte of the block width for multiplication."
+        },
+        {
+          "expectedCode": "STA.W $4202",
+          "comment": "Write the first unsigned eight-bit multiplier input."
+        },
+        {
+          "expectedCode": "LDA.W RoomHeightBlocks",
+          "comment": "Take the low byte of the block height for multiplication."
+        },
+        {
+          "expectedCode": "STA.W $4203",
+          "comment": "Start hardware multiplication by writing the second input."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Return to a word accumulator before reading the product."
+        },
+        {
+          "expectedCode": "NOP",
+          "comment": "Allow the multiplication result time to become available."
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "NOP"
+        },
+        {
+          "expectedCode": "LDA.W $4216",
+          "comment": "Read the sixteen-bit product of the two byte-sized dimensions."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert a block count to two-byte level-data entries."
+        },
+        {
+          "expectedCode": "STA.W LevelDataSize",
+          "comment": "Store the resulting level-data byte count."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "rooms.Load_State_Header.lines",
+      "symbol": "Load_State_Header",
+      "lines": [
+        {
+          "expectedCode": "PEA.W RoomStates>>8&$FF00",
+          "comment": "Select bank $8F, where room states and tileset pointer tables reside."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "LDX.W RoomStatePointer",
+          "comment": "Read the state selected by the room condition stream."
+        },
+        {
+          "expectedCode": "LDA.W $0003,X",
+          "comment": "Read the state's tileset index byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Discard the adjacent music byte."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the tileset index to a word-pointer byte offset."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDX.W Tileset_Pointers,Y",
+          "comment": "Find the tileset's record of three long resource pointers."
+        },
+        {
+          "expectedCode": "LDA.W $0001,X",
+          "comment": "Read the overlapping high word of the tile-table pointer."
+        },
+        {
+          "expectedCode": "STA.W TilesetTileTablePointer+1",
+          "comment": "Write pointer bytes 1 and 2 before its low word."
+        },
+        {
+          "expectedCode": "LDA.W $0000,X",
+          "comment": "Read the tile-table pointer's low word."
+        },
+        {
+          "expectedCode": "STA.W TilesetTileTablePointer",
+          "comment": "Complete the three-byte tile-table pointer with an overlapping store."
+        },
+        {
+          "expectedCode": "LDA.W $0004,X",
+          "comment": "Read the high word of the compressed tile-graphics pointer."
+        },
+        {
+          "expectedCode": "STA.W TilesetTilesPointer+1",
+          "comment": "Store the graphics pointer's middle and bank bytes."
+        },
+        {
+          "expectedCode": "LDA.W $0003,X",
+          "comment": "Read the graphics pointer's low word."
+        },
+        {
+          "expectedCode": "STA.W TilesetTilesPointer",
+          "comment": "Complete the compressed tile-graphics pointer."
+        },
+        {
+          "expectedCode": "LDA.W $0007,X",
+          "comment": "Read the high word of the compressed palette pointer."
+        },
+        {
+          "expectedCode": "STA.W TilesetPalettePointer+1",
+          "comment": "Store the palette pointer's middle and bank bytes."
+        },
+        {
+          "expectedCode": "LDA.W $0006,X",
+          "comment": "Read the palette pointer's low word."
+        },
+        {
+          "expectedCode": "STA.W TilesetPalettePointer",
+          "comment": "Complete the compressed palette pointer."
+        },
+        {
+          "expectedCode": "LDX.W RoomStatePointer",
+          "comment": "Return X from the tileset record to the room-state header."
+        },
+        {
+          "expectedCode": "LDA.W $0001,X",
+          "comment": "Read the level-data pointer's middle and bank bytes."
+        },
+        {
+          "expectedCode": "STA.W LevelDataPointer+1",
+          "comment": "Store the level-data pointer's high word first."
+        },
+        {
+          "expectedCode": "LDA.W $0000,X",
+          "comment": "Read the level-data pointer's low word."
+        },
+        {
+          "expectedCode": "STA.W LevelDataPointer",
+          "comment": "Complete the three-byte compressed level-data pointer."
+        },
+        {
+          "expectedCode": "LDA.W $0004,X",
+          "comment": "Read the room's music-data index byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W RoomMusicDataIndex",
+          "comment": "Keep the music-data selection separately from its track."
+        },
+        {
+          "expectedCode": "LDA.W $0005,X",
+          "comment": "Read the room's music-track index byte."
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W RoomMusicTrackIndex",
+          "comment": "Keep the selected track within that music data."
+        },
+        {
+          "expectedCode": "LDA.W $0006,X",
+          "comment": "Read the bank-local FX header pointer."
+        },
+        {
+          "expectedCode": "STA.W FXPointer",
+          "comment": "Select this state's FX definitions."
+        },
+        {
+          "expectedCode": "LDA.W $0008,X",
+          "comment": "Read the enemy-population pointer at state offset $08."
+        },
+        {
+          "expectedCode": "STA.W EnemyPopulationPointer",
+          "comment": "Select placements and per-spawn enemy parameters."
+        },
+        {
+          "expectedCode": "LDA.W $000A,X",
+          "comment": "Read the enemy-set pointer at state offset $0A."
+        },
+        {
+          "expectedCode": "STA.W EnemySetPointer",
+          "comment": "Select enemy graphics/palette resources, not the placement list."
+        },
+        {
+          "expectedCode": "LDA.W $000C,X",
+          "comment": "Read both adjacent layer-2 scroll-control bytes as one word."
+        },
+        {
+          "expectedCode": "STA.W Layer2ScrollX",
+          "comment": "Store the X/Y scroll-control byte pair together."
+        },
+        {
+          "expectedCode": "LDA.W $0012,X",
+          "comment": "Read the room-main-ASM word at state offset $12."
+        },
+        {
+          "expectedCode": "STA.W RoomMainASMPointer",
+          "comment": "Keep the per-gameplay-update room callback separate from setup ASM."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "rooms.CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus.lines",
+      "symbol": "CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus",
+      "lines": [
+        {
+          "expectedCode": "PEA.W $8F00",
+          "comment": "Use bank $8F for room-state and PLM-population records."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "LDX.W RoomStatePointer",
+          "comment": "Find this state's optional PLM-population pointer."
+        },
+        {
+          "expectedCode": "LDA.W $0014,X",
+          "comment": "Read the PLM list pointer at state offset $14."
+        },
+        {
+          "expectedCode": "BEQ .noPLMs",
+          "comment": "A zero pointer skips the list but still executes door and setup ASM."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use X as the six-byte PLM-record cursor."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W $0000,X",
+          "comment": "Read the current PLM ID word."
+        },
+        {
+          "expectedCode": "BEQ .noPLMs",
+          "comment": "A zero ID terminates the room PLM list."
+        },
+        {
+          "expectedCode": "JSL.L Spawn_Room_PLM",
+          "comment": "Attempt to spawn this entry; this walker does not test the returned carry."
+        },
+        {
+          "expectedCode": "TXA",
+          "comment": "Recover the preserved list cursor for advancing to the next record."
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Ignore spawn carry when calculating the next record's address."
+        },
+        {
+          "expectedCode": "ADC.W #$0006",
+          "comment": "Each PLM record is six bytes: ID, X/Y bytes and argument word."
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Advance the room PLM-list cursor."
+        },
+        {
+          "expectedCode": "BRA .loop",
+          "comment": "Continue until the zero-ID terminator."
+        },
+        {
+          "expectedCode": ".noPLMs:"
+        },
+        {
+          "expectedCode": "JSL.L Execute_Door_ASM",
+          "comment": "Execute optional door ASM after processing the PLM list."
+        },
+        {
+          "expectedCode": "JSL.L Execute_Room_Setup_ASM",
+          "comment": "Execute optional room setup ASM after the door callback."
+        },
+        {
+          "expectedCode": "LDA.W ElevatorProperties",
+          "comment": "Check the elevator property loaded from the door header."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Leave elevator status unchanged for an ordinary door."
+        },
+        {
+          "expectedCode": "LDA.W #$0002",
+          "comment": "Select elevator status 2 for an elevator entrance."
+        },
+        {
+          "expectedCode": "STA.W ElevatorStatus",
+          "comment": "Store elevator status only on that elevator path."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "rooms.DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM.lines",
+      "symbol": "DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "JSR.W Load_EnemyGFX_to_VRAM",
+          "comment": "Transfer the destination enemy graphics to VRAM before runtime enemy setup."
+        },
+        {
+          "expectedCode": "JSL.L Queue_Room_Music_Data",
+          "comment": "Queue the room's music data before later waiting for its music queue."
+        },
+        {
+          "expectedCode": "JSL.L Clear_Enemy_Projectiles",
+          "comment": "Clear enemy projectiles left by the previous room."
+        },
+        {
+          "expectedCode": "JSL.L Clear_AnimatedTilesObjects",
+          "comment": "Clear the previous room's animated-tile objects."
+        },
+        {
+          "expectedCode": "JSL.L Clear_PaletteFXObjects",
+          "comment": "Clear the previous room's palette-effect objects."
+        },
+        {
+          "expectedCode": "JSL.L Clear_PLMs",
+          "comment": "Remove the previous room's PLMs before creating the destination list."
+        },
+        {
+          "expectedCode": "JSL.L CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus",
+          "comment": "Create destination PLMs, then execute door ASM and room setup ASM."
+        },
+        {
+          "expectedCode": "JSL.L Load_FX_Header",
+          "comment": "Load the destination room's FX header after its setup callbacks."
+        },
+        {
+          "expectedCode": "JSR.W Spawn_Door_Closing_PLM",
+          "comment": "Create the closing-door PLM after the room's own PLM list."
+        },
+        {
+          "expectedCode": "JSL.L Update_Beam_Tiles_and_Palette",
+          "comment": "Restore Samus beam graphics and colors for the new room."
+        },
+        {
+          "expectedCode": "JSL.L Load_Target_Colors_for_Common_SpritesBeamsFlashingEnemies",
+          "comment": "Install target colors shared by sprites, beams and flashing enemies."
+        },
+        {
+          "expectedCode": "JSL.L Load_Enemies",
+          "comment": "Prepare enemy-set graphics/palettes and clear the runtime enemy records."
+        },
+        {
+          "expectedCode": "JSL.L Initialise_Enemies",
+          "comment": "Populate enemy slots and call each enemy's Init AI."
+        },
+        {
+          "expectedCode": "JSL.L Reset_Projectile_Data",
+          "comment": "Reset Samus projectile data after enemy initialisation."
+        },
+        {
+          "expectedCode": "JSL.L LoadSamusSuitTargetPalette",
+          "comment": "Select Samus's suit target palette."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "PEA.W LibraryBGs>>8",
+          "comment": "Select the library-background data bank for the remaining phase."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "JSR.W Clear_FX_Tilemap",
+          "comment": "Prepare a cleared FX tilemap before loading a room-specific one."
+        },
+        {
+          "expectedCode": "LDA.W #FXTilemaps>>8&$FF00",
+          "comment": "Select the FX tilemap source bank."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionVRAM_Src+1",
+          "comment": "Store the source pointer's high word for the IRQ-driven transfer."
+        },
+        {
+          "expectedCode": "LDA.W FX_TilemapPointer",
+          "comment": "Check whether this room supplies an FX tilemap."
+        },
+        {
+          "expectedCode": "BEQ +",
+          "comment": "Skip this transfer when the FX tilemap pointer is zero."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionVRAM_Src",
+          "comment": "Complete the FX tilemap source pointer."
+        },
+        {
+          "expectedCode": "LDA.W #$5BE0",
+          "comment": "Select VRAM word address $5BE0 for the FX tilemap."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionVRAM_Dest",
+          "comment": "Store the transfer destination."
+        },
+        {
+          "expectedCode": "LDA.W #$0840",
+          "comment": "Request $0840 bytes of FX tilemap data."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionVRAM_Size",
+          "comment": "Store the DMA byte count."
+        },
+        {
+          "expectedCode": "LDA.W #$8000",
+          "comment": "Select the pending-transfer sign bit."
+        },
+        {
+          "expectedCode": "TSB.W DoorTransitionVRAM_Flag",
+          "comment": "Publish the prepared transfer to the door-transition IRQ handler."
+        },
+        {
+          "expectedCode": ".waitVRAM:"
+        },
+        {
+          "expectedCode": "BIT.W DoorTransitionVRAM_Flag",
+          "comment": "Test the pending-transfer flag without changing its contents."
+        },
+        {
+          "expectedCode": "BMI .waitVRAM",
+          "comment": "Busy-wait until the IRQ transfer clears bit 15."
+        },
+        {
+          "expectedCode": "+   LDX.W RoomStatePointer",
+          "comment": "Return to this room's selected state header."
+        },
+        {
+          "expectedCode": "LDY.W $0016,X",
+          "comment": "Read the library-background stream pointer at state offset $16."
+        },
+        {
+          "expectedCode": "BPL .noLibraryBackground",
+          "comment": "Skip library-background commands when the word is not a high-ROM pointer."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDX.W $0000,Y",
+          "comment": "Read a library command's existing pointer-table byte offset."
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance the background-stream cursor past that command word."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "JSR.W (Library_Background_Function_Pointers,X)",
+          "comment": "Run the bank-local background command; it advances the remaining stream data."
+        },
+        {
+          "expectedCode": "BCC .loop",
+          "comment": "Carry clear continues the command stream; carry set ends it."
+        },
+        {
+          "expectedCode": ".noLibraryBackground:"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Re-establish word-sized registers before waiting for scrolling."
+        },
+        {
+          "expectedCode": ".waitDoor:"
+        },
+        {
+          "expectedCode": "LDA.W DoorTransitionFinishScrolling",
+          "comment": "Read the completion flag updated by door-transition IRQ scrolling."
+        },
+        {
+          "expectedCode": "BPL .waitDoor",
+          "comment": "Remain inside this phase until bit 15 signals scrolling completion."
+        },
+        {
+          "expectedCode": "LDA.W #$3BE0",
+          "comment": "Select the sprite palette color installed at the end of scrolling."
+        },
+        {
+          "expectedCode": "STA.L Palettes_SpriteP4C4",
+          "comment": "Write that color to sprite palette 4, color 4."
+        },
+        {
+          "expectedCode": "JSL.L Spawn_BG3_Scroll_HDMA_Object",
+          "comment": "Spawn the destination room's BG3 scrolling HDMA object."
+        },
+        {
+          "expectedCode": "LDA.W #$8000",
+          "comment": "Select the HDMA-object processing enable bit."
+        },
+        {
+          "expectedCode": "TSB.W HDMAObject_Enable",
+          "comment": "Resume HDMA-object processing after scrolling completes."
+        },
+        {
+          "expectedCode": "JSL.L PLM_Handler",
+          "comment": "Run PLMs before publishing the first post-scroll frame."
+        },
+        {
+          "expectedCode": "JSL.L WaitForNMI",
+          "comment": "Service the prepared frame through NMI before continuing this phase."
+        },
+        {
+          "expectedCode": "LDA.W DoorDirection",
+          "comment": "Read the door direction for the final horizontal position adjustment."
+        },
+        {
+          "expectedCode": "BIT.W #$0002",
+          "comment": "Bit 1 identifies vertical doors, which skip this X adjustment."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep X unchanged for vertical doors."
+        },
+        {
+          "expectedCode": "AND.W #$0003",
+          "comment": "Use the low direction bits to distinguish right from left."
+        },
+        {
+          "expectedCode": "BEQ .right",
+          "comment": "Direction zero takes the rightward adjustment."
+        },
+        {
+          "expectedCode": "LDA.W #$0007",
+          "comment": "Select Samus X position's low three bits."
+        },
+        {
+          "expectedCode": "TRB.W SamusXPosition",
+          "comment": "Clear those bits for the non-rightward horizontal path."
+        },
+        {
+          "expectedCode": "BRA .return"
+        },
+        {
+          "expectedCode": ".right:"
+        },
+        {
+          "expectedCode": "LDA.W #$0007",
+          "comment": "Select the same three X-position bits for the rightward path."
+        },
+        {
+          "expectedCode": "TSB.W SamusXPosition",
+          "comment": "Set those bits on the rightward horizontal path."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "LDA.W #DoorTransitionFunction_HandleAnimatedTiles",
+          "comment": "Select the animated-tile transition phase after all loading and waits."
+        },
+        {
+          "expectedCode": "STA.W DoorTransitionFunction",
+          "comment": "Save that next phase for a later state-$0B dispatch."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.HandleSounds.lines",
+      "symbol": "HandleSounds",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's register widths and flags."
+        },
+        {
+          "expectedCode": "SEP #$30",
+          "comment": "Sound states, indices, requests and SPC ports are byte-sized."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundHandlerDowntime",
+          "comment": "Read the low-byte music-imposed suppression counter."
+        },
+        {
+          "expectedCode": "DEC",
+          "comment": "Advance the suppression counter before testing it."
+        },
+        {
+          "expectedCode": "BPL .downtime",
+          "comment": "Values that remain nonnegative keep sound requests suppressed."
+        },
+        {
+          "expectedCode": "LDY.B #$00",
+          "comment": "Begin with sound library 1 at adjacent-field index zero."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve the library index across its state handler."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundStateLib1,Y",
+          "comment": "Read this library's handshake state."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert the state number to a word-pointer offset."
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "JSR.W (.pointers,X)",
+          "comment": "Run the selected bank-$82 state handler."
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance across the adjacent library metadata bytes."
+        },
+        {
+          "expectedCode": "CPY.B #$03",
+          "comment": "There are three independent sound libraries."
+        },
+        {
+          "expectedCode": "BCC .loop",
+          "comment": "Service every library in this call."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".downtime:"
+        },
+        {
+          "expectedCode": "STA.W APU_SoundHandlerDowntime",
+          "comment": "Store the decremented suppression count."
+        },
+        {
+          "expectedCode": "STZ.W $2141",
+          "comment": "Keep library 1's SPC request port clear."
+        },
+        {
+          "expectedCode": "STZ.W APU_CurrentSoundLib1",
+          "comment": "Clear its mirrored outstanding request."
+        },
+        {
+          "expectedCode": "STZ.W $2142",
+          "comment": "Keep library 2's request port clear."
+        },
+        {
+          "expectedCode": "STZ.W APU_CurrentSoundLib2"
+        },
+        {
+          "expectedCode": "STZ.W $2143",
+          "comment": "Keep library 3's request port clear."
+        },
+        {
+          "expectedCode": "STZ.W APU_CurrentSoundLib3"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".pointers:"
+        },
+        {
+          "expectedCode": "dw SoundState_0_SendAPUSoundRequestFromQueue",
+          "comment": "State 0 sends the next queued request."
+        },
+        {
+          "expectedCode": "dw SoundState_1_WaitForAPUSoundRequestAcknowledgement",
+          "comment": "State 1 waits for the SPC to echo the sound ID."
+        },
+        {
+          "expectedCode": "dw SoundState_2_ClearSoundRequest",
+          "comment": "State 2 delays, then clears the request port."
+        },
+        {
+          "expectedCode": "dw SoudnState_3_WaitForAPUClearRequestAcknowledgement",
+          "comment": "State 3 waits for the SPC to echo zero."
+        },
+        {
+          "expectedCode": "dw SoundState_4_ResetSoundState",
+          "comment": "State 4 performs a delayed state reset."
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.SoundState0.lines",
+      "symbol": "SoundState_0_SendAPUSoundRequestFromQueue",
+      "lines": [
+        {
+          "expectedCode": "TYX",
+          "comment": "Use the library index for its adjacent metadata and SPC port."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueStartIndexLib1,X",
+          "comment": "Read this library's ring-consumer index."
+        },
+        {
+          "expectedCode": "CMP.W APU_SoundQueueNextIndexLib1,X",
+          "comment": "Compare it with the ring-producer index."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "Equal indices leave an empty library in state 0."
+        },
+        {
+          "expectedCode": "LDA.L .data,X",
+          "comment": "Select queue base offset $00, $10 or $20 for this library."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W APU_SoundQueueStartIndexLib1,X",
+          "comment": "Add its current 0..15 ring index."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Address the selected byte in the three contiguous queues."
+        },
+        {
+          "expectedCode": "LDA.W APU_SoundQueueLib1,Y",
+          "comment": "Read the queued sound ID."
+        },
+        {
+          "expectedCode": "STA.W $2141,X",
+          "comment": "Send it through this library's SPC request port."
+        },
+        {
+          "expectedCode": "STA.W APU_CurrentSoundLib1,X",
+          "comment": "Mirror the request while waiting for acknowledgement."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "AND.B #$0F",
+          "comment": "Discard the queue-base offset and wrap the index modulo 16."
+        },
+        {
+          "expectedCode": "STA.W APU_SoundQueueStartIndexLib1,X",
+          "comment": "Consume the queued byte."
+        },
+        {
+          "expectedCode": "INC.W APU_SoundStateLib1,X",
+          "comment": "Enter request-acknowledgement state 1."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".data:"
+        },
+        {
+          "expectedCode": "db $00,$10,$20",
+          "comment": "Map library indices to their contiguous 16-byte queue regions."
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.SoundState1.lines",
+      "symbol": "SoundState_1_WaitForAPUSoundRequestAcknowledgement",
+      "lines": [
+        {
+          "expectedCode": "TYX",
+          "comment": "Select this library's adjacent request fields and port."
+        },
+        {
+          "expectedCode": "LDA.W APU_CurrentSoundLib1,X",
+          "comment": "Read the mirrored outstanding sound ID."
+        },
+        {
+          "expectedCode": "CMP.W $2141,X",
+          "comment": "Test whether the SPC port has echoed it."
+        },
+        {
+          "expectedCode": "BEQ .incState",
+          "comment": "A matching echo acknowledges the request."
+        },
+        {
+          "expectedCode": "STA.W $2141,X",
+          "comment": "Reassert the request while the port differs."
+        },
+        {
+          "expectedCode": "BRA .return"
+        },
+        {
+          "expectedCode": ".incState:"
+        },
+        {
+          "expectedCode": "INC.W APU_SoundStateLib1,X",
+          "comment": "Enter the delayed-clear state."
+        },
+        {
+          "expectedCode": "LDA.B #$02",
+          "comment": "Hold the acknowledged request for two handler calls."
+        },
+        {
+          "expectedCode": "STA.W APU_ClearSoundDelayLib1,X",
+          "comment": "Store this library's clear countdown."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.SoundState2.lines",
+      "symbol": "SoundState_2_ClearSoundRequest",
+      "lines": [
+        {
+          "expectedCode": "TYX",
+          "comment": "Select this library's clear delay, request mirror and port."
+        },
+        {
+          "expectedCode": "DEC.W APU_ClearSoundDelayLib1,X",
+          "comment": "Advance the post-acknowledgement hold."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Keep the request asserted until the delay expires."
+        },
+        {
+          "expectedCode": "STZ.W $2141,X",
+          "comment": "Clear this library's SPC request port."
+        },
+        {
+          "expectedCode": "STZ.W APU_CurrentSoundLib1,X",
+          "comment": "Make zero the value expected back from the SPC."
+        },
+        {
+          "expectedCode": "INC.W APU_SoundStateLib1,X",
+          "comment": "Enter clear-acknowledgement state 3."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.SoundState3.lines",
+      "symbol": "SoudnState_3_WaitForAPUClearRequestAcknowledgement",
+      "lines": [
+        {
+          "expectedCode": "TYX",
+          "comment": "Select this library's cleared request mirror and SPC port."
+        },
+        {
+          "expectedCode": "LDA.W APU_CurrentSoundLib1,X",
+          "comment": "Read the expected zero acknowledgement."
+        },
+        {
+          "expectedCode": "CMP.W $2141,X",
+          "comment": "Test whether the SPC port has also cleared."
+        },
+        {
+          "expectedCode": "BEQ .state0",
+          "comment": "A matching zero completes the handshake."
+        },
+        {
+          "expectedCode": "STA.W $2141,X",
+          "comment": "Reassert zero while the port differs."
+        },
+        {
+          "expectedCode": "BRA .return"
+        },
+        {
+          "expectedCode": ".state0:"
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundStateLib1,X",
+          "comment": "Return this library to sender state 0."
+        },
+        {
+          "expectedCode": "BRA SoundState_0_SendAPUSoundRequestFromQueue",
+          "comment": "Try to send another queued sound in the same handler call."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.SoundState4.lines",
+      "symbol": "SoundState_4_ResetSoundState",
+      "lines": [
+        {
+          "expectedCode": "TYX",
+          "comment": "Select this library's reset countdown and state byte."
+        },
+        {
+          "expectedCode": "DEC.W APU_ClearSoundDelayLib1,X",
+          "comment": "Advance the state-4 delay."
+        },
+        {
+          "expectedCode": "BNE .return",
+          "comment": "Remain in state 4 until the counter expires."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundStateLib1,X",
+          "comment": "Return to sender state 0 without touching the SPC port."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "audio-runtime.ResetSoundQueues.lines",
+      "symbol": "ResetSoundQueues",
+      "lines": [
+        {
+          "expectedCode": "PHP",
+          "comment": "Preserve the caller's register widths and flags."
+        },
+        {
+          "expectedCode": "REP #$20",
+          "comment": "Use overlapping word clears across adjacent byte fields."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundQueueStartIndexLib1",
+          "comment": "Clear library 1 and 2 start indices together."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundQueueStartIndexLib3",
+          "comment": "Clear library 3's start and library 1's next index."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundQueueNextIndexLib2",
+          "comment": "Clear library 2 and 3 next indices together."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundStateLib1",
+          "comment": "Clear library 1 and 2 state bytes together."
+        },
+        {
+          "expectedCode": "SEP #$20",
+          "comment": "The final adjacent state is one byte."
+        },
+        {
+          "expectedCode": "STZ.W APU_SoundStateLib3",
+          "comment": "Return library 3 to sender state 0."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": "if !DEBUG"
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.ResetDefaults.lines",
+      "symbol": "GameOptions_ControllerSettings_ResetToDefault",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Controller1New",
+          "comment": "Read edge-only controller input."
+        },
+        {
+          "expectedCode": "BIT.W #$1080",
+          "comment": "Test Start or A without requiring both."
+        },
+        {
+          "expectedCode": "BNE .reset",
+          "comment": "Either new press confirms the reset action."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".reset:"
+        },
+        {
+          "expectedCode": "LDA.W #$0040",
+          "comment": "Select X's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W ShotBinding",
+          "comment": "Restore shot to X."
+        },
+        {
+          "expectedCode": "LDA.W #$0080",
+          "comment": "Select A's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W JumpBinding",
+          "comment": "Restore jump to A."
+        },
+        {
+          "expectedCode": "LDA.W #$8000",
+          "comment": "Select B's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W DashBinding",
+          "comment": "Restore dash to B."
+        },
+        {
+          "expectedCode": "LDA.W #$4000",
+          "comment": "Select Y's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W ItemCancelBinding",
+          "comment": "Restore item cancel to Y."
+        },
+        {
+          "expectedCode": "LDA.W #$2000",
+          "comment": "Select Select's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W ItemSelectBinding",
+          "comment": "Restore item select to Select."
+        },
+        {
+          "expectedCode": "LDA.W #$0010",
+          "comment": "Select R's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W AimUpBinding",
+          "comment": "Restore aim up to R."
+        },
+        {
+          "expectedCode": "LDA.W #$0020",
+          "comment": "Select L's hardware bit."
+        },
+        {
+          "expectedCode": "STA.W AimDownBinding",
+          "comment": "Restore aim down to L."
+        },
+        {
+          "expectedCode": "JSR.W GameOptionsMenu_ControllerBindings",
+          "comment": "Rebuild compact menu indices from the restored live masks."
+        },
+        {
+          "expectedCode": "JSR.W Draw_GameOptionsMenu_ControllerBindings",
+          "comment": "Redraw every binding row."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.LoadMenuIndices.lines",
+      "symbol": "GameOptionsMenu_ControllerBindings",
+      "lines": [
+        {
+          "expectedCode": "LDX.W #$0000",
+          "comment": "Begin with the shot-action entry."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "LDA.W Configurable_Controller_Binding_RAM_Addresses,X",
+          "comment": "Read this action's live binding-word address."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Use Y to dereference the binding in low RAM."
+        },
+        {
+          "expectedCode": "LDA.W $0000,Y",
+          "comment": "Read the action's SNES button mask."
+        },
+        {
+          "expectedCode": "BIT.W #$0040",
+          "comment": "Test X."
+        },
+        {
+          "expectedCode": "BNE .X"
+        },
+        {
+          "expectedCode": "BIT.W #$0080",
+          "comment": "Test A."
+        },
+        {
+          "expectedCode": "BNE .A"
+        },
+        {
+          "expectedCode": "BIT.W #$8000",
+          "comment": "Test B."
+        },
+        {
+          "expectedCode": "BNE .B"
+        },
+        {
+          "expectedCode": "BIT.W #$2000",
+          "comment": "Test Select."
+        },
+        {
+          "expectedCode": "BNE .Select"
+        },
+        {
+          "expectedCode": "BIT.W #$4000",
+          "comment": "Test Y."
+        },
+        {
+          "expectedCode": "BNE .Y"
+        },
+        {
+          "expectedCode": "BIT.W #$0020",
+          "comment": "Test L."
+        },
+        {
+          "expectedCode": "BNE .L"
+        },
+        {
+          "expectedCode": "BIT.W #$0010",
+          "comment": "Test R."
+        },
+        {
+          "expectedCode": "BNE .R"
+        },
+        {
+          "expectedCode": ".X:"
+        },
+        {
+          "expectedCode": "LDA.W #$0000",
+          "comment": "Represent X as compact index 0; invalid masks also fall through here."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X",
+          "comment": "Store the menu representation for this action."
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".A:"
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Represent A as index 1."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X"
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".B:"
+        },
+        {
+          "expectedCode": "LDA.W #$0002",
+          "comment": "Represent B as index 2."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X"
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".Select:"
+        },
+        {
+          "expectedCode": "LDA.W #$0003",
+          "comment": "Represent Select as index 3."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X"
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".Y:"
+        },
+        {
+          "expectedCode": "LDA.W #$0004",
+          "comment": "Represent Y as index 4."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X"
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".L:"
+        },
+        {
+          "expectedCode": "LDA.W #$0005",
+          "comment": "Represent L as index 5."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X"
+        },
+        {
+          "expectedCode": "BRA .next"
+        },
+        {
+          "expectedCode": ".R:"
+        },
+        {
+          "expectedCode": "LDA.W #$0006",
+          "comment": "Represent R as index 6."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,X"
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance to the next word-sized action entry."
+        },
+        {
+          "expectedCode": "CPX.W #$000E",
+          "comment": "Stop after all seven configurable actions."
+        },
+        {
+          "expectedCode": "BPL .return"
+        },
+        {
+          "expectedCode": "JMP.W .loop"
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.ActionAddresses.lines",
+      "symbol": "Configurable_Controller_Binding_RAM_Addresses",
+      "lines": [
+        {
+          "expectedCode": "dw ShotBinding",
+          "comment": "Menu row 0 edits shot."
+        },
+        {
+          "expectedCode": "dw JumpBinding",
+          "comment": "Menu row 1 edits jump."
+        },
+        {
+          "expectedCode": "dw DashBinding",
+          "comment": "Menu row 2 edits dash."
+        },
+        {
+          "expectedCode": "dw ItemSelectBinding",
+          "comment": "Menu row 3 edits item select."
+        },
+        {
+          "expectedCode": "dw ItemCancelBinding",
+          "comment": "Menu row 4 edits item cancel."
+        },
+        {
+          "expectedCode": "dw AimUpBinding",
+          "comment": "Menu row 5 edits aim up."
+        },
+        {
+          "expectedCode": "dw AimDownBinding",
+          "comment": "Menu row 6 edits aim down."
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.SaveMenuIndices.lines",
+      "symbol": "Save_GameOptionsMenu_ControllerBindings",
+      "lines": [
+        {
+          "expectedCode": "LDX.W #$0000",
+          "comment": "Begin with the shot-action entry."
+        },
+        {
+          "expectedCode": ".loop:"
+        },
+        {
+          "expectedCode": "PHX",
+          "comment": "Preserve the word offset into both seven-entry action arrays."
+        },
+        {
+          "expectedCode": "LDA.W Configurable_Controller_Binding_RAM_Addresses,X",
+          "comment": "Read this action's live binding address."
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Keep the destination address in Y."
+        },
+        {
+          "expectedCode": "LDA.W GameOptionsMenuObject_ControllerBindings,X",
+          "comment": "Read the action's compact button index."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert that index to a word-table byte offset."
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.W Controller_Input_Bitmasks,X",
+          "comment": "Translate it back to a hardware joypad bit."
+        },
+        {
+          "expectedCode": "STA.W $0000,Y",
+          "comment": "Publish the selected mask to the live gameplay binding."
+        },
+        {
+          "expectedCode": "PLX",
+          "comment": "Recover the action-array offset."
+        },
+        {
+          "expectedCode": "INX"
+        },
+        {
+          "expectedCode": "INX",
+          "comment": "Advance to the next word entry."
+        },
+        {
+          "expectedCode": "CPX.W #$000E",
+          "comment": "Test the end of seven actions."
+        },
+        {
+          "expectedCode": "BMI .loop"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Report successful persistence with carry clear."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.ButtonMasks.lines",
+      "symbol": "Controller_Input_Bitmasks",
+      "lines": [
+        {
+          "expectedCode": "dw $0040",
+          "comment": "Index 0 is X."
+        },
+        {
+          "expectedCode": "dw $0080",
+          "comment": "Index 1 is A."
+        },
+        {
+          "expectedCode": "dw $8000",
+          "comment": "Index 2 is B."
+        },
+        {
+          "expectedCode": "dw $2000",
+          "comment": "Index 3 is Select."
+        },
+        {
+          "expectedCode": "dw $4000",
+          "comment": "Index 4 is Y."
+        },
+        {
+          "expectedCode": "dw $0020",
+          "comment": "Index 5 is L."
+        },
+        {
+          "expectedCode": "dw $0010",
+          "comment": "Index 6 is R."
+        },
+        {
+          "expectedCode": "dw $0200",
+          "comment": "Index 7 is Left, outside the configurable action set."
+        },
+        {
+          "expectedCode": "dw $0100",
+          "comment": "Index 8 is Right, outside the configurable action set."
+        }
+      ]
+    },
+    {
+      "id": "controller-bindings.SetBinding.lines",
+      "symbol": "GameOptions_ControllerSettings_SetBinding",
+      "lines": [
+        {
+          "expectedCode": "LDX.W #$000C",
+          "comment": "Start at configurable mask index 6, R."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1New",
+          "comment": "Use edge-only presses so holding a button cannot reassign repeatedly."
+        },
+        {
+          "expectedCode": ".loopInput:"
+        },
+        {
+          "expectedCode": "BIT.W Controller_Input_Bitmasks,X",
+          "comment": "Test the candidate button at this word offset."
+        },
+        {
+          "expectedCode": "BNE +",
+          "comment": "Select the first newly pressed button in reverse table order."
+        },
+        {
+          "expectedCode": "DEX"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Move to the preceding configurable mask."
+        },
+        {
+          "expectedCode": "BPL .loopInput"
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Do nothing when no configurable button was newly pressed."
+        },
+        {
+          "expectedCode": "+ TXA",
+          "comment": "Copy the selected mask-table byte offset."
+        },
+        {
+          "expectedCode": "LSR",
+          "comment": "Convert it to compact button index 0..6."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Preserve the selected button index."
+        },
+        {
+          "expectedCode": "LDA.W MenuOptionIndex",
+          "comment": "Read the action row being edited."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert its row number to a word offset."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0002",
+          "comment": "Begin searching at the following action row."
+        },
+        {
+          "expectedCode": "CMP.W #$000E",
+          "comment": "Test for wrap after row 6."
+        },
+        {
+          "expectedCode": "BMI +"
+        },
+        {
+          "expectedCode": "LDA.W #$0000",
+          "comment": "Wrap the search to row 0."
+        },
+        {
+          "expectedCode": "+ TAY",
+          "comment": "Use Y as the circular action-row offset."
+        },
+        {
+          "expectedCode": "LDX.W #$0005",
+          "comment": "Search exactly the six other actions."
+        },
+        {
+          "expectedCode": ".loopFindExisting:"
+        },
+        {
+          "expectedCode": "LDA.W GameOptionsMenuObject_ControllerBindings,Y",
+          "comment": "Read the candidate owner's compact button index."
+        },
+        {
+          "expectedCode": "CMP.B DP_Temp12",
+          "comment": "Compare it with the newly selected button."
+        },
+        {
+          "expectedCode": "BEQ .found",
+          "comment": "Stop at the action that currently owns this button."
+        },
+        {
+          "expectedCode": "INY"
+        },
+        {
+          "expectedCode": "INY",
+          "comment": "Advance to the next word-sized action row."
+        },
+        {
+          "expectedCode": "CPY.W #$000E",
+          "comment": "Test for wrap after all seven rows."
+        },
+        {
+          "expectedCode": "BMI .next"
+        },
+        {
+          "expectedCode": "LDY.W #$0000",
+          "comment": "Wrap the circular search to row 0."
+        },
+        {
+          "expectedCode": ".next:"
+        },
+        {
+          "expectedCode": "DEX",
+          "comment": "Count one of the six other rows."
+        },
+        {
+          "expectedCode": "BPL .loopFindExisting"
+        },
+        {
+          "expectedCode": ".found:"
+        },
+        {
+          "expectedCode": "PHY",
+          "comment": "Preserve the existing owner's row offset."
+        },
+        {
+          "expectedCode": "LDA.W MenuOptionIndex",
+          "comment": "Return to the action row being edited."
+        },
+        {
+          "expectedCode": "ASL",
+          "comment": "Convert it to a word offset."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "LDA.W GameOptionsMenuObject_ControllerBindings,Y",
+          "comment": "Read the current action's old button index."
+        },
+        {
+          "expectedCode": "STA.B DP_Temp14",
+          "comment": "Hold that displaced button for the swap."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp12",
+          "comment": "Recover the newly selected button index."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,Y",
+          "comment": "Assign it to the current action."
+        },
+        {
+          "expectedCode": "PLY",
+          "comment": "Recover the previous owner's row."
+        },
+        {
+          "expectedCode": "LDA.B DP_Temp14",
+          "comment": "Recover the current action's displaced button."
+        },
+        {
+          "expectedCode": "STA.W GameOptionsMenuObject_ControllerBindings,Y",
+          "comment": "Give that button to the previous owner, preserving a permutation."
+        },
+        {
+          "expectedCode": "JSR.W Draw_GameOptionsMenu_ControllerBindings",
+          "comment": "Redraw the two affected logical assignments through the full menu renderer."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "samus-health.ZeroEnergyAndIGT.lines",
+      "symbol": "HandleSamusRunningOutOfEnergy_and_IncrementGameTime",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "REP #$30",
+          "comment": "Use 16-bit health, state and clock arithmetic."
+        },
+        {
+          "expectedCode": "LDA.W Energy",
+          "comment": "Read current whole energy."
+        },
+        {
+          "expectedCode": "BEQ .zeroEnergy"
+        },
+        {
+          "expectedCode": "BPL .tickGameTime",
+          "comment": "Positive energy skips reserve/death handling."
+        },
+        {
+          "expectedCode": ".zeroEnergy:"
+        },
+        {
+          "expectedCode": "LDA.W ReserveTankMode",
+          "comment": "Read off/manual/automatic reserve mode."
+        },
+        {
+          "expectedCode": "BIT.W #$0001",
+          "comment": "Test the automatic-refill bit."
+        },
+        {
+          "expectedCode": "BEQ .noAutoReserve",
+          "comment": "Without auto mode, continue toward death."
+        },
+        {
+          "expectedCode": "LDA.W ReserveEnergy",
+          "comment": "Read remaining reserve energy."
+        },
+        {
+          "expectedCode": "BEQ .noAutoReserve",
+          "comment": "An empty reserve cannot prevent death."
+        },
+        {
+          "expectedCode": "LDA.W #$8000"
+        },
+        {
+          "expectedCode": "STA.W TimeIsFrozenFlag",
+          "comment": "Freeze ordinary gameplay during automatic refill."
+        },
+        {
+          "expectedCode": "LDA.W #$001B"
+        },
+        {
+          "expectedCode": "STA.W GameState",
+          "comment": "Enter reserve-tank auto-refill state $1B."
+        },
+        {
+          "expectedCode": "LDA.W #$001B",
+          "comment": "Select Samus command $1B for reserve lock/setup."
+        },
+        {
+          "expectedCode": "JSL.L Run_Samus_Command"
+        },
+        {
+          "expectedCode": "BRA .tickGameTime"
+        },
+        {
+          "expectedCode": ".noAutoReserve:"
+        },
+        {
+          "expectedCode": "LDA.W GameState",
+          "comment": "Read the current outer game state."
+        },
+        {
+          "expectedCode": "CMP.W #$0008",
+          "comment": "Death starts only from normal gameplay."
+        },
+        {
+          "expectedCode": "BEQ .normalGameplay"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS",
+          "comment": "Do not re-enter death from pause, transitions or another special state."
+        },
+        {
+          "expectedCode": ".normalGameplay:"
+        },
+        {
+          "expectedCode": "LDA.W #$8000"
+        },
+        {
+          "expectedCode": "STA.W TimeIsFrozenFlag",
+          "comment": "Freeze ordinary gameplay for the death sequence."
+        },
+        {
+          "expectedCode": "LDA.W #$0011",
+          "comment": "Select Samus command $11: lock Samus for death."
+        },
+        {
+          "expectedCode": "JSL.L Run_Samus_Command"
+        },
+        {
+          "expectedCode": "LDA.W #$0013"
+        },
+        {
+          "expectedCode": "STA.W GameState",
+          "comment": "Enter death-sequence start state $13."
+        },
+        {
+          "expectedCode": ".tickGameTime:"
+        },
+        {
+          "expectedCode": "LDA.W IGTFrames",
+          "comment": "Read the regional frame-within-second counter."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0001",
+          "comment": "Count this gameplay update."
+        },
+        {
+          "expectedCode": "STA.W IGTFrames"
+        },
+        {
+          "expectedCode": "CMP.W #$003C*!FPS",
+          "comment": "Compare with 60 adjusted by the region FPS factor."
+        },
+        {
+          "expectedCode": "BMI .checkGameTime",
+          "comment": "Keep an incomplete second."
+        },
+        {
+          "expectedCode": "STZ.W IGTFrames",
+          "comment": "Wrap frames at one region-adjusted second."
+        },
+        {
+          "expectedCode": "LDA.W IGTSeconds"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0001",
+          "comment": "Carry one elapsed second."
+        },
+        {
+          "expectedCode": "STA.W IGTSeconds"
+        },
+        {
+          "expectedCode": "CMP.W #$003C",
+          "comment": "Test 60 seconds."
+        },
+        {
+          "expectedCode": "BMI .checkGameTime"
+        },
+        {
+          "expectedCode": "STZ.W IGTSeconds",
+          "comment": "Wrap seconds to zero."
+        },
+        {
+          "expectedCode": "LDA.W IGTMinutes"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0001",
+          "comment": "Carry one elapsed minute."
+        },
+        {
+          "expectedCode": "STA.W IGTMinutes"
+        },
+        {
+          "expectedCode": "CMP.W #$003C",
+          "comment": "Test 60 minutes."
+        },
+        {
+          "expectedCode": "BMI .checkGameTime"
+        },
+        {
+          "expectedCode": "STZ.W IGTMinutes",
+          "comment": "Wrap minutes to zero."
+        },
+        {
+          "expectedCode": "LDA.W IGTHours"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0001",
+          "comment": "Carry one elapsed hour."
+        },
+        {
+          "expectedCode": "STA.W IGTHours"
+        },
+        {
+          "expectedCode": ".checkGameTime:"
+        },
+        {
+          "expectedCode": "LDA.W IGTHours"
+        },
+        {
+          "expectedCode": "CMP.W #$0064",
+          "comment": "Test the 100-hour overflow boundary."
+        },
+        {
+          "expectedCode": "BPL .capGameTime"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".capGameTime:"
+        },
+        {
+          "expectedCode": "LDA.W #$003B",
+          "comment": "Select decimal 59 for frames, seconds and minutes."
+        },
+        {
+          "expectedCode": "STA.W IGTFrames"
+        },
+        {
+          "expectedCode": "STA.W IGTSeconds"
+        },
+        {
+          "expectedCode": "STA.W IGTMinutes"
+        },
+        {
+          "expectedCode": "LDA.W #$0063",
+          "comment": "Select decimal 99 hours."
+        },
+        {
+          "expectedCode": "STA.W IGTHours",
+          "comment": "Clamp the displayed clock to 99:59:59.59."
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "samus-health.ReserveAutoRefill.lines",
+      "symbol": "Reserve_Tank_Auto_Refill",
+      "lines": [
+        {
+          "expectedCode": "LDA.W ReserveEnergy",
+          "comment": "Read remaining automatic reserve energy."
+        },
+        {
+          "expectedCode": "BEQ .return",
+          "comment": "An empty reserve is already complete."
+        },
+        {
+          "expectedCode": "LDA.W NMI_FrameCounter",
+          "comment": "Read the serviced-NMI frame counter."
+        },
+        {
+          "expectedCode": "BIT.W #$0007",
+          "comment": "Test every eighth presented frame."
+        },
+        {
+          "expectedCode": "BNE +"
+        },
+        {
+          "expectedCode": "LDA.W #$002D",
+          "comment": "Select the reserve-refill tick sound."
+        },
+        {
+          "expectedCode": "JSL.L QueueSound_Lib3_Max3",
+          "comment": "Attempt to queue it at the three-sound threshold."
+        },
+        {
+          "expectedCode": "+ LDA.W Energy",
+          "comment": "Read current main-tank energy."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W #$0001",
+          "comment": "Transfer one unit into the main tank."
+        },
+        {
+          "expectedCode": "STA.W Energy"
+        },
+        {
+          "expectedCode": "CMP.W MaxEnergy",
+          "comment": "Compare with main-tank capacity."
+        },
+        {
+          "expectedCode": "BMI +",
+          "comment": "Below capacity, consume one reserve unit."
+        },
+        {
+          "expectedCode": "LDA.W MaxEnergy"
+        },
+        {
+          "expectedCode": "STA.W Energy",
+          "comment": "Clamp a full main tank to its maximum."
+        },
+        {
+          "expectedCode": "BRA .zeroReserve",
+          "comment": "Finishing by capacity discards no extra displayed energy."
+        },
+        {
+          "expectedCode": "+ LDA.W ReserveEnergy",
+          "comment": "Read reserve energy to consume."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.W #$0001",
+          "comment": "Pay for the unit just added to main energy."
+        },
+        {
+          "expectedCode": "STA.W ReserveEnergy"
+        },
+        {
+          "expectedCode": "BEQ .zeroReserve",
+          "comment": "Finish exactly at zero."
+        },
+        {
+          "expectedCode": "BPL .return",
+          "comment": "A positive reserve continues on the next call."
+        },
+        {
+          "expectedCode": "LDA.W Energy",
+          "comment": "Recover from an underflowed reserve count."
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W ReserveEnergy",
+          "comment": "Remove the overdrawn amount from main energy."
+        },
+        {
+          "expectedCode": "STA.W Energy"
+        },
+        {
+          "expectedCode": ".zeroReserve:"
+        },
+        {
+          "expectedCode": "STZ.W ReserveEnergy",
+          "comment": "Canonicalize every finished path to zero reserve."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "LDA.W ReserveEnergy",
+          "comment": "Derive completion solely from remaining reserve."
+        },
+        {
+          "expectedCode": "BNE .notDoneRefilling"
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Carry set reports refill complete."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".notDoneRefilling:"
+        },
+        {
+          "expectedCode": "CLC",
+          "comment": "Carry clear reports more reserve remains."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    }
+  ]
+}

@@ -10,8 +10,8 @@ class AsmProjectileLifecycleEnrichmentTest {
     private val current get() = AsmSourceAugmentation.bundled()
     private val prefix = "projectile-lifecycle."
     private val groups get() = current.lineDocumentation.filter { it.id.startsWith(prefix) }
-    private fun previous() = checkNotNull(
-        javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-17.json")
+    private fun frozen(revision: Int) = checkNotNull(
+        javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-$revision.json")
     ).bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
     private fun recipe() = current.copy(
         revision = "projectile-lifecycle-test",
@@ -32,14 +32,18 @@ class AsmProjectileLifecycleEnrichmentTest {
         }
 
     @Test fun `v18 adds projectile lifecycle notes without changing frozen v17`() {
-        val v17 = previous()
-        assertEquals("super-metroid-ntsc-18", current.revision)
-        assertEquals(v17, current.copy(
+        val v17 = frozen(17); val v18 = frozen(18)
+        assertEquals("super-metroid-ntsc-18", v18.revision)
+        assertEquals(v17, v18.copy(
             revision = v17.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith(prefix) },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith(prefix) },
+            documentation = v18.documentation.filterNot { it.id.startsWith(prefix) },
+            lineDocumentation = v18.lineDocumentation.filterNot { it.id.startsWith(prefix) },
         ))
-        assertEquals(9, current.documentation.count { it.id.startsWith(prefix) })
+        assertEquals(v18.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            current.documentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id })
+        assertEquals(v18.lineDocumentation.filter { it.id.startsWith(prefix) }.sortedBy { it.id },
+            groups.sortedBy { it.id })
+        assertEquals(9, v18.documentation.count { it.id.startsWith(prefix) })
         assertEquals(7, groups.size)
         assertEquals(287, groups.sumOf { it.lines.size })
         assertEquals(175, groups.flatMap { it.lines }.count { it.comment != null })

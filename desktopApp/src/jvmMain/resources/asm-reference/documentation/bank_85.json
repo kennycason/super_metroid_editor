@@ -1,0 +1,15 @@
+{
+  "fileId": "bank_85.asm",
+  "documentation": [
+    {
+      "id": "item-fanfare.message-wait",
+      "symbol": "Handle_MessageBox_Interaction",
+      "expectedCode": "SEP #$20",
+      "paragraphs": [
+        "Item messages wait for lag frames before accepting input. The collecting",
+        "PLM schedules the music-resume delay separately from this message wait."
+      ]
+    }
+  ],
+  "lineDocumentation": []
+}

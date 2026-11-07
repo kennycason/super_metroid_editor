@@ -1,0 +1,2863 @@
+{
+  "fileId": "bank_9B.asm",
+  "documentation": [
+    {
+      "id": "grapple-control.dispatch",
+      "symbol": "GrappleBeamHandler",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Tick pose-change auto-fire, clear the per-update connected bit, cancel incompatible poses, then",
+        "dispatch GrappleBeam_Function through a synthetic near return. Every state returns with RTS to the",
+        "handler, which restores bank/status and exits long."
+      ]
+    },
+    {
+      "id": "grapple-control.liquid",
+      "symbol": "GrappleBeamHandler",
+      "localLabel": ".manualReturn",
+      "expectedCode": "LDA.W GrappleBeam_Function",
+      "paragraphs": [
+        "Set grapple liquid-physics flag bit 0 only for active pre-cancel states, without Gravity Suit,",
+        "with nonzero FX whose surface is above Samus's bottom boundary. All other states and environments",
+        "clear the bit after their state handler returns."
+      ]
+    },
+    {
+      "id": "grapple-control.inactive",
+      "symbol": "GrappleBeamFunction_Inactive",
+      "expectedCode": "LDA.B DP_Controller1New",
+      "paragraphs": [
+        "A new Shot edge from live or retained drawing input tail-enters grapple firing. Otherwise any",
+        "ordinary beam-charge/flare presentation is cleared and the suit palette restored, keeping inactive",
+        "grapple ownership separate from charge-beam visuals."
+      ]
+    },
+    {
+      "id": "grapple-control.firing",
+      "symbol": "GrappleBeamFunction_Firing",
+      "expectedCode": "LDA.B DP_Controller1Input",
+      "paragraphs": [
+        "While Shot is held, extend by LengthDelta up to but not including 80h and test enemy collision",
+        "before block collision. A valid connection runs HandleConnectingGrapple, reverses LengthDelta to",
+        "signed -8 and publishes connected bit 0; release, maximum length or invalid collision cancels."
+      ]
+    },
+    {
+      "id": "grapple-control.locked",
+      "symbol": "GrappleBeamFunction_Connected_LockedInPlace",
+      "expectedCode": "LDA.B DP_Controller1Input",
+      "paragraphs": [
+        "A locked connection persists only while Shot is held and either an enemy grapple result remains",
+        "nonzero or the endpoint is still attached to a grapple block. The retained connection returns carry",
+        "clear through the bank-$94 helper; a lost block or released input enters common cancellation."
+      ]
+    },
+    {
+      "id": "grapple-control.swing-release",
+      "symbol": "GrappleBeamFunction_Connected_Swinging",
+      "expectedCode": "LDA.B DP_Controller1Input",
+      "paragraphs": [
+        "Releasing Shot with zero angular velocity at angle 8000h drops without momentum. Every other release",
+        "converts swing angle/velocity into Samus motion, installs the released-from-swing grapple function",
+        "and gives movement ownership to SamusMovementHandler_ReleasedFromGrappleSwing."
+      ]
+    },
+    {
+      "id": "grapple-control.swing-update",
+      "symbol": "GrappleBeamFunction_Connected_Swinging",
+      "localLabel": ".firing",
+      "expectedCode": "JSR.W HandleGrappleDpadInput",
+      "paragraphs": [
+        "Process D-pad length control, angular acceleration, velocity, kick and world movement in order.",
+        "Special-angle handling can finish the update early. Then revalidate enemy/block attachment, refresh",
+        "beam origin, report carry clear and synchronize Samus animation/position to the swing."
+      ]
+    },
+    {
+      "id": "grapple-control.wall-grab",
+      "symbol": "GrappleBeamFunction_WallGrab",
+      "expectedCode": "LDA.B DP_Controller1Input",
+      "paragraphs": [
+        "Holding Shot preserves a verified block attachment. Releasing Shot or losing the block starts a",
+        "thirty-update wall-jump opportunity and changes to WallGrabRelease; a retained grab reports carry",
+        "clear through the shared bank-$94 helper."
+      ]
+    },
+    {
+      "id": "grapple-control.wall-release",
+      "symbol": "GrappleBeamFunction_WallGrabRelease",
+      "expectedCode": "LDA.W GrappleWalljumpTimer",
+      "paragraphs": [
+        "Pre-decrement the wall-jump window. Expiry drops Samus; while nonnegative, test a 16-pixel wall-jump",
+        "probe and switch to GrappleBeamFunction_WallJumping only when the shared collision helper returns",
+        "carry set."
+      ]
+    },
+    {
+      "id": "grapple-control.cancel",
+      "symbol": "GrappleBeamFunction_HitNothing_Cancel",
+      "expectedCode": "LDA.W #$0007",
+      "paragraphs": [
+        "Queue grapple-end sound, resolve the current grapple pose, clear beam/flare/timer state, restore the",
+        "equipped beam palette and default drawing, then run post-grapple collision correction. Auto-cancel",
+        "also clears the selected HUD item and its owner before returning to the inactive function."
+      ]
+    },
+    {
+      "id": "grapple-launch.pose-direction",
+      "symbol": "GrappleBeamFunction_Fire_GotoCancel",
+      "expectedCode": "LDA.W Pose",
+      "paragraphs": [
+        "Ordinary poses provide an eight-byte pose record containing Y offset and shot direction. A nonzero",
+        "direction high nibble means grapple cannot fire and enters common cancellation. Draygon-held poses",
+        "BE/F0 instead derive one of three facing-relative directions directly from held D-pad input."
+      ]
+    },
+    {
+      "id": "grapple-launch.velocity-angle",
+      "symbol": "GrappleBeamFunction_Fire_GotoCancel",
+      "localLabel": ".fire",
+      "expectedCode": "STA.W GrappleBeam_DirectionFired",
+      "paragraphs": [
+        "Store the accepted direction, then load its X/Y extension subvelocity and initial endpoint angle.",
+        "Both angle copies start equal and a ten-update pose-change auto-fire timer keeps the launch active",
+        "across the immediate pose transition."
+      ]
+    },
+    {
+      "id": "grapple-launch.origin",
+      "symbol": "GrappleBeamFunction_Fire_GotoCancel",
+      "localLabel": ".moonwalkingNotRunning",
+      "expectedCode": "LDA.W GrappleBeamFireOffsets_NotRunning_OriginX,X",
+      "paragraphs": [
+        "Moonwalking and non-running poses use the ordinary origin/flare tables; movement type one uses the",
+        "running tables. Subtract the pose Y offset before applying table Y values, and initialize beam start",
+        "and endpoint together while keeping the flare at its independent visual offset."
+      ]
+    },
+    {
+      "id": "grapple-launch.initialize",
+      "symbol": "GrappleBeamFunction_Fire_GotoCancel",
+      "localLabel": ".merge",
+      "expectedCode": "STZ.W GrappleBeam_EndXSubPosition",
+      "paragraphs": [
+        "Clear endpoint offsets, swing/collision history and wall-jump state; start length at zero with delta",
+        "twelve and initialize segment animation. Grapple takes Samus drawing, installs the firing function,",
+        "loads beam palette two, queues sound five and cancels stale released-from-swing movement ownership."
+      ]
+    },
+    {
+      "id": "grapple-launch.draygon-direction",
+      "symbol": "GetDirectionGrappleIsFiredWhenHeldByDraygon",
+      "expectedCode": "CMP.W #$00BE",
+      "paragraphs": [
+        "Pose BE selects left-facing logic; the other held pose selects right-facing. A six-pixel Y origin",
+        "offset is shared, horizontal input gates diagonal tests, and the helper returns right/up-right/",
+        "down-right as 2/1/3 or left/up-left/down-left as 7/8/6, always with carry set."
+      ]
+    },
+    {
+      "id": "grapple-exit.dropped-pose",
+      "symbol": "GrappleBeamFunction_Dropped",
+      "expectedCode": "LDA.W #$0007",
+      "paragraphs": [
+        "Choose a safe post-grapple pose after a zero-momentum drop or missed wall jump. Swing poses B2/B3",
+        "map directly by rotation; otherwise Y radius selects standing/crouching direction tables, with",
+        "facing-based fallback when the current pose has no ordinary projectile direction."
+      ]
+    },
+    {
+      "id": "grapple-exit.dropped-cleanup",
+      "symbol": "GrappleBeamFunction_Dropped",
+      "localLabel": ".merge",
+      "expectedCode": "STZ.W SuperSpecialProspectivePoseChangeCommand",
+      "paragraphs": [
+        "Request the selected pose with command zero, publish solid vertical collision and clear all X/Y",
+        "speed. Then release grapple/flare/drawing ownership, restore palette and collision, consume any",
+        "auto-cancel HUD owner, and leave standing/crouching direction lookup tables inline."
+      ]
+    },
+    {
+      "id": "grapple-exit.wall-jump",
+      "symbol": "GrappleBeamFunction_WallJumping",
+      "expectedCode": "LDA.W #$0007",
+      "paragraphs": [
+        "Request wall-jump pose 83/84 from facing with command six, clear existing horizontal/vertical motion",
+        "and falling/collision state, then perform the same grapple/flare/palette/drawing teardown used by",
+        "other terminal states. The pose command supplies the actual wall-jump motion afterward."
+      ]
+    },
+    {
+      "id": "grapple-exit.propel-vertical",
+      "symbol": "PropelSamusFromGrappleSwing",
+      "expectedCode": "LDA.W GrappleBeam_SwingAngularVelocity",
+      "paragraphs": [
+        "Use angular-velocity magnitude and the sign-extended sine of the endpoint angle to produce 16.16",
+        "Samus Y speed. The sine sign selects down direction one or up direction two; negative and positive",
+        "angular velocity follow mirrored branches. Extra kick velocity is intentionally not included."
+      ]
+    },
+    {
+      "id": "grapple-exit.propel-horizontal",
+      "symbol": "PropelSamusFromGrappleSwing",
+      "localLabel": ".decelerating",
+      "expectedCode": "LDA.W #$0002",
+      "paragraphs": [
+        "Select deceleration mode two, derive a velocity-dependent angular offset, sample the absolute sine",
+        "of the adjusted endpoint angle and multiply by angular magnitude. Store the 32-bit result as Samus",
+        "base X sub-speed/speed; the positive branch repeats the same transform at its nested label."
+      ]
+    },
+    {
+      "id": "grapple-exit.released",
+      "symbol": "GrappleBeamFunction_ReleasedFromSwing",
+      "expectedCode": "LDA.W #$0007",
+      "paragraphs": [
+        "Angular-velocity sign selects released pose 51/52 and command seven while the movement handler keeps",
+        "the momentum calculated by PropelSamusFromGrappleSwing. Grapple, flare, palette and drawing state are",
+        "then retired without clearing the new Samus X/Y speed."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "grapple-control.Handler.lines",
+      "symbol": "GrappleBeamHandler",
+      "lines": [
+        {
+          "expectedCode": "PHP"
+        },
+        {
+          "expectedCode": "PHB"
+        },
+        {
+          "expectedCode": "PHK"
+        },
+        {
+          "expectedCode": "PLB",
+          "comment": "Use bank $9B for the grapple state machine."
+        },
+        {
+          "expectedCode": "REP #$30"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_PoseChangeAutoFireTimer",
+          "comment": "Tick retained auto-fire after a grapple pose change."
+        },
+        {
+          "expectedCode": "BEQ +"
+        },
+        {
+          "expectedCode": "DEC"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_PoseChangeAutoFireTimer"
+        },
+        {
+          "expectedCode": "+ LDA.W GrappleConnectedFlags"
+        },
+        {
+          "expectedCode": "AND.W #$FFFE"
+        },
+        {
+          "expectedCode": "STA.W GrappleConnectedFlags",
+          "comment": "Clear the per-update connected flag before this state runs."
+        },
+        {
+          "expectedCode": "JSR.W CancelGrappleBeamIfInIncompatiblePose",
+          "comment": "Force cancellation when Samus's current pose cannot own grapple."
+        },
+        {
+          "expectedCode": "PEA.W .manualReturn-1",
+          "comment": "Build the synthetic near return consumed by the selected state RTS."
+        },
+        {
+          "expectedCode": "JMP.W (GrappleBeam_Function)",
+          "comment": "Dispatch the current grapple function within bank $9B."
+        },
+        {
+          "expectedCode": ".manualReturn:"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_Function",
+          "comment": "Classify the post-state lifecycle for liquid physics."
+        },
+        {
+          "expectedCode": "CMP.W #GrappleBeamFunction_Inactive"
+        },
+        {
+          "expectedCode": "BEQ .clearLiquidPhysics"
+        },
+        {
+          "expectedCode": "CMP.W #GrappleBeamFunction_HitNothing_Cancel"
+        },
+        {
+          "expectedCode": "BPL .clearLiquidPhysics",
+          "comment": "Cancel/drop/exit states do not use grapple liquid physics."
+        },
+        {
+          "expectedCode": "LDA.W SuitPaletteIndex"
+        },
+        {
+          "expectedCode": "BIT.W #$0004"
+        },
+        {
+          "expectedCode": "BNE .clearLiquidPhysics",
+          "comment": "Gravity Suit bypasses the liquid flag."
+        },
+        {
+          "expectedCode": "LDA.W FX_Type"
+        },
+        {
+          "expectedCode": "BEQ .clearLiquidPhysics",
+          "comment": "No room FX means no liquid interaction."
+        },
+        {
+          "expectedCode": "JSL.L Get_Samus_BottomTop_Boundary",
+          "comment": "Publish Samus's bottom boundary in scratch $12."
+        },
+        {
+          "expectedCode": "LDA.W FX_YPosition"
+        },
+        {
+          "expectedCode": "BMI .clearLiquidPhysics"
+        },
+        {
+          "expectedCode": "CMP.B DP_Temp12"
+        },
+        {
+          "expectedCode": "BPL .clearLiquidPhysics",
+          "comment": "The liquid surface must be above Samus's bottom boundary."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_Flags"
+        },
+        {
+          "expectedCode": "ORA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Flags",
+          "comment": "Enable grapple liquid physics for this update."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        },
+        {
+          "expectedCode": ".clearLiquidPhysics:"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_Flags"
+        },
+        {
+          "expectedCode": "AND.W #$FFFE"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Flags",
+          "comment": "Clear grapple liquid physics on every ineligible path."
+        },
+        {
+          "expectedCode": "PLB"
+        },
+        {
+          "expectedCode": "PLP"
+        },
+        {
+          "expectedCode": "RTL"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.Inactive.lines",
+      "symbol": "GrappleBeamFunction_Inactive",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Controller1New",
+          "comment": "Check the live new-input Shot edge."
+        },
+        {
+          "expectedCode": "BIT.W ShotBinding"
+        },
+        {
+          "expectedCode": "BNE GrappleBeamFunction_Fire_GotoCancel",
+          "comment": "Tail-enter firing when Shot was newly pressed."
+        },
+        {
+          "expectedCode": "LDA.W PreviousController1NewDrawing",
+          "comment": "Also honor the retained drawing-time input edge."
+        },
+        {
+          "expectedCode": "BIT.W ShotBinding"
+        },
+        {
+          "expectedCode": "BNE GrappleBeamFunction_Fire_GotoCancel"
+        },
+        {
+          "expectedCode": "LDA.W SamusProjectile_FlareCounter",
+          "comment": "Inactive grapple owns cleanup of stale charge presentation."
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareCounter"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationFrame"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CD8"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CDA"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationTimer"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CDE"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CE0",
+          "comment": "Clear all central/slow/fast flare components."
+        },
+        {
+          "expectedCode": "JSL.L LoadSamusSuitPalette",
+          "comment": "Restore the ordinary suit palette after flare cleanup."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.Firing.lines",
+      "symbol": "GrappleBeamFunction_Firing",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W ShotBinding",
+          "comment": "Extension continues only while Shot remains held."
+        },
+        {
+          "expectedCode": "BNE .firing"
+        },
+        {
+          "expectedCode": ".cancel:"
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_HitNothing_Cancel"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Defer common grapple teardown to the cancel state."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".firing:"
+        },
+        {
+          "expectedCode": "JSR.W RTS_9BB8D4",
+          "comment": "Retain the source's no-op extension hook."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_Length"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeam_LengthDelta",
+          "comment": "Advance current beam length by its signed delta."
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Length"
+        },
+        {
+          "expectedCode": "CMP.W #$0080"
+        },
+        {
+          "expectedCode": "BMI .enemyCollisionCheck"
+        },
+        {
+          "expectedCode": ".gotoCancel:"
+        },
+        {
+          "expectedCode": "BRA .cancel",
+          "comment": "Length $80 or an invalid collision ends the shot."
+        },
+        {
+          "expectedCode": ".enemyCollisionCheck:"
+        },
+        {
+          "expectedCode": "JSL.L Enemy_vs_GrappleBeam_CollisionDetection",
+          "comment": "Give enemy grapple reactions priority over blocks."
+        },
+        {
+          "expectedCode": "JSR.W ProcessEnemyGrappleBeamCollisionResult",
+          "comment": "Translate the enemy reaction into carry/A connection status."
+        },
+        {
+          "expectedCode": "BCC .blockCollisionCheck"
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "BNE .gotoCancel",
+          "comment": "A nonzero carried result rejects this connection."
+        },
+        {
+          "expectedCode": "BRA .connected"
+        },
+        {
+          "expectedCode": ".blockCollisionCheck:"
+        },
+        {
+          "expectedCode": "JSL.L GrappleBeamBlockCollisionDetection",
+          "comment": "Probe the current endpoint against room blocks."
+        },
+        {
+          "expectedCode": "BCC .return",
+          "comment": "No block hit leaves the beam extending."
+        },
+        {
+          "expectedCode": "BVC .gotoCancel",
+          "comment": "Carry without overflow is a non-grapple collision."
+        },
+        {
+          "expectedCode": ".connected:"
+        },
+        {
+          "expectedCode": "LDA.W #$0006"
+        },
+        {
+          "expectedCode": "JSL.L QueueSound_Lib1_Max6",
+          "comment": "Queue grapple-connection sound six."
+        },
+        {
+          "expectedCode": "JSR.W HandleConnectingGrapple",
+          "comment": "Select locked, swinging or wall-grab connection behavior."
+        },
+        {
+          "expectedCode": "LDA.W #$0008"
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_LengthDelta",
+          "comment": "Reverse length delta to signed -8 after connection."
+        },
+        {
+          "expectedCode": "LDA.W GrappleConnectedFlags"
+        },
+        {
+          "expectedCode": "ORA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W GrappleConnectedFlags",
+          "comment": "Publish a connection for this update."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.Locked.lines",
+      "symbol": "GrappleBeamFunction_Connected_LockedInPlace",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W ShotBinding",
+          "comment": "A locked connection requires held Shot."
+        },
+        {
+          "expectedCode": "BNE .firing"
+        },
+        {
+          "expectedCode": ".cancel:"
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_HitNothing_Cancel"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Release or lost attachment enters common cancellation."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".firing:"
+        },
+        {
+          "expectedCode": "JSL.L Enemy_vs_GrappleBeam_CollisionDetection",
+          "comment": "Revalidate an enemy-owned connection first."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "BNE .returnCarryClear",
+          "comment": "Any nonzero enemy result keeps this locked state."
+        },
+        {
+          "expectedCode": "JSR.W CheckIfGrappleIsConnectedToBlock",
+          "comment": "Otherwise require the endpoint's grapple block to remain."
+        },
+        {
+          "expectedCode": "BCC .cancel"
+        },
+        {
+          "expectedCode": ".returnCarryClear:"
+        },
+        {
+          "expectedCode": "JSL.L CLCRTL_94AF0B",
+          "comment": "Report the retained connection through carry clear."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.Swinging.lines",
+      "symbol": "GrappleBeamFunction_Connected_Swinging",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W ShotBinding",
+          "comment": "Held Shot continues the swing simulation."
+        },
+        {
+          "expectedCode": "BNE .firing"
+        },
+        {
+          "expectedCode": ".cancel:"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_SwingAngularVelocity",
+          "comment": "Determine whether release has momentum to preserve."
+        },
+        {
+          "expectedCode": "BNE .propelSamus"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_EndAngle"
+        },
+        {
+          "expectedCode": "CMP.W #$8000"
+        },
+        {
+          "expectedCode": "BNE .propelSamus"
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Dropped"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Zero velocity at angle $8000 drops without propulsion."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".propelSamus:"
+        },
+        {
+          "expectedCode": "JSR.W PropelSamusFromGrappleSwing",
+          "comment": "Convert angular state into Samus X/Y velocity."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_ReleasedFromSwing"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function"
+        },
+        {
+          "expectedCode": "LDA.W #SamusMovementHandler_ReleasedFromGrappleSwing"
+        },
+        {
+          "expectedCode": "STA.W MovementHandler",
+          "comment": "Give movement ownership to post-swing flight."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".firing:"
+        },
+        {
+          "expectedCode": "JSR.W HandleGrappleDpadInput",
+          "comment": "Apply player length/angle input."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_LengthDelta"
+        },
+        {
+          "expectedCode": "BEQ .handleSwinging"
+        },
+        {
+          "expectedCode": "JSL.L HandleGrappleBeamLengthChange",
+          "comment": "Resolve active contraction/extension before angular motion."
+        },
+        {
+          "expectedCode": ".handleSwinging:"
+        },
+        {
+          "expectedCode": "JSR.W DetermineGrappleSwingAngularAccelerationDueToAngleOfSwing",
+          "comment": "Calculate gravity-like angular acceleration."
+        },
+        {
+          "expectedCode": "JSR.W UpdateGrappleSwingAngularVelocity",
+          "comment": "Integrate angular acceleration into velocity."
+        },
+        {
+          "expectedCode": "JSR.W HandleGrappleKick",
+          "comment": "Apply the player's timed swing kick."
+        },
+        {
+          "expectedCode": "JSL.L HandleGrappleBeamSwingingMovement",
+          "comment": "Move Samus and endpoint through grapple collision logic."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_SpecialAngleHandlingFlag"
+        },
+        {
+          "expectedCode": "BPL .enemyCollision"
+        },
+        {
+          "expectedCode": "JSR.W HandleSpecialGrappleBeamAngles",
+          "comment": "Resolve special vertical/edge angles when flagged."
+        },
+        {
+          "expectedCode": "BCC .enemyCollision"
+        },
+        {
+          "expectedCode": "JSL.L CLCRTL_94AF0B",
+          "comment": "A handled special angle completes with carry clear."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".enemyCollision:"
+        },
+        {
+          "expectedCode": "JSL.L Enemy_vs_GrappleBeam_CollisionDetection",
+          "comment": "Revalidate enemy attachment after movement."
+        },
+        {
+          "expectedCode": "TAY"
+        },
+        {
+          "expectedCode": "BEQ .blockCollision"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_Flags"
+        },
+        {
+          "expectedCode": "ORA.W #$8000"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Flags",
+          "comment": "Mark an enemy-owned swinging endpoint."
+        },
+        {
+          "expectedCode": "BRA +"
+        },
+        {
+          "expectedCode": ".blockCollision:"
+        },
+        {
+          "expectedCode": "JSR.W CheckIfGrappleIsConnectedToBlock",
+          "comment": "A non-enemy endpoint must still touch its grapple block."
+        },
+        {
+          "expectedCode": "BCC .cancel"
+        },
+        {
+          "expectedCode": "+ JSL.L UpdateGrappleBeamStartPositionDuringGrappleSwinging",
+          "comment": "Re-anchor the beam start to moved Samus."
+        },
+        {
+          "expectedCode": "JSL.L CLCRTL_94AF0B",
+          "comment": "Publish carry clear for a retained swing."
+        },
+        {
+          "expectedCode": "JSL.L SetSamusAnimationFrameAndPositionDuringGrappleSwinging",
+          "comment": "Synchronize Samus pose/frame and final position."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.WallGrab.lines",
+      "symbol": "GrappleBeamFunction_WallGrab",
+      "lines": [
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W ShotBinding",
+          "comment": "Keep the wall grab only while Shot is held."
+        },
+        {
+          "expectedCode": "BNE .firing"
+        },
+        {
+          "expectedCode": ".cancel:"
+        },
+        {
+          "expectedCode": "LDA.W #$001E"
+        },
+        {
+          "expectedCode": "STA.W GrappleWalljumpTimer",
+          "comment": "Open a thirty-update grapple wall-jump window."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_WallGrabRelease"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Enter wall-release handling."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".firing:"
+        },
+        {
+          "expectedCode": "JSR.W CheckIfGrappleIsConnectedToBlock",
+          "comment": "Revalidate the wall's grapple block."
+        },
+        {
+          "expectedCode": "BCC .cancel"
+        },
+        {
+          "expectedCode": "JSL.L CLCRTL_94AF0B",
+          "comment": "A retained wall grab reports carry clear."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.WallRelease.lines",
+      "symbol": "GrappleBeamFunction_WallGrabRelease",
+      "lines": [
+        {
+          "expectedCode": "LDA.W GrappleWalljumpTimer",
+          "comment": "Read the remaining wall-jump opportunity."
+        },
+        {
+          "expectedCode": "DEC"
+        },
+        {
+          "expectedCode": "STA.W GrappleWalljumpTimer"
+        },
+        {
+          "expectedCode": "BPL .timerNotExpired",
+          "comment": "Keep testing while the pre-decremented timer is nonnegative."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Dropped"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "An expired opportunity falls into dropped cleanup."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".timerNotExpired:"
+        },
+        {
+          "expectedCode": "LDA.W #$0010"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Use a sixteen-pixel wall-jump probe distance."
+        },
+        {
+          "expectedCode": "STZ.B DP_Temp14"
+        },
+        {
+          "expectedCode": "JSL.L Grapple_WallJump_Check",
+          "comment": "Ask the shared collision helper whether jump input/wall geometry match."
+        },
+        {
+          "expectedCode": "BCC .return"
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_WallJumping"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Commit the grapple wall-jump state on carry set."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-control.Cancel.lines",
+      "symbol": "GrappleBeamFunction_HitNothing_Cancel",
+      "lines": [
+        {
+          "expectedCode": "LDA.W #$0007"
+        },
+        {
+          "expectedCode": "JSL.L QueueSound",
+          "comment": "Queue the grapple-end sound."
+        },
+        {
+          "expectedCode": "LDA.W MovementType"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0016",
+          "comment": "Check whether Samus is still in grapple movement type $16."
+        },
+        {
+          "expectedCode": "BNE .notGrappling"
+        },
+        {
+          "expectedCode": "JSL.L HandleTransitionTableLookupFailure",
+          "comment": "Resolve a missing transition from the active grapple pose."
+        },
+        {
+          "expectedCode": "BRA +"
+        },
+        {
+          "expectedCode": ".notGrappling:"
+        },
+        {
+          "expectedCode": "LDA.W #$001C"
+        },
+        {
+          "expectedCode": "JSL.L Run_Samus_Command",
+          "comment": "Otherwise run command $1C to normalize spin-jump sound state."
+        },
+        {
+          "expectedCode": "+ STZ.W GrappleBeam_neverRead0D1E"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D20"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_DirectionFired"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SpecialAngleHandlingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleWalljumpTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SlowScrollingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_PoseChangeAutoFireTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_Flags",
+          "comment": "Clear grapple direction, angle, timer and connection state."
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareCounter"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationFrame"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CD8"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CDA"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationTimer"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CDE"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CE0",
+          "comment": "Clear all flare/charge presentation."
+        },
+        {
+          "expectedCode": "LDA.W EquippedBeams"
+        },
+        {
+          "expectedCode": "JSL.L Load_Beam_Palette_External",
+          "comment": "Restore the equipped beam/suit palette."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Inactive"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Return the state machine to inactive."
+        },
+        {
+          "expectedCode": "LDA.W #SamusDrawingHandler_Default"
+        },
+        {
+          "expectedCode": "STA.W DrawingHandler",
+          "comment": "Restore ordinary Samus drawing."
+        },
+        {
+          "expectedCode": "JSL.L PostGrappleCollisionDetection",
+          "comment": "Correct position/collision after releasing grapple ownership."
+        },
+        {
+          "expectedCode": "LDA.W AutoCancelHUDItemIndex"
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "STZ.W SelectedHUDItem"
+        },
+        {
+          "expectedCode": "STZ.W AutoCancelHUDItemIndex",
+          "comment": "Consume grapple's auto-cancel HUD ownership."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-launch.Fire.lines",
+      "symbol": "GrappleBeamFunction_Fire_GotoCancel",
+      "lines": [
+        {
+          "expectedCode": "LDA.W Pose",
+          "comment": "Read the current pose for direction and origin metadata."
+        },
+        {
+          "expectedCode": "CMP.W #$00F0"
+        },
+        {
+          "expectedCode": "BEQ .draygon",
+          "comment": "Pose $F0 uses held-by-Draygon aiming."
+        },
+        {
+          "expectedCode": "CMP.W #$00BE"
+        },
+        {
+          "expectedCode": "BEQ .draygon",
+          "comment": "Pose $BE is the opposite held-by-Draygon facing."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Convert pose ID to its eight-byte definition offset."
+        },
+        {
+          "expectedCode": "LDA.L PoseDefinitions_YOffset,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp16",
+          "comment": "Preserve the pose's unsigned Y offset."
+        },
+        {
+          "expectedCode": "LDA.L PoseDefinitions_directionShotsFired,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF",
+          "comment": "Read the pose-defined projectile direction byte."
+        },
+        {
+          "expectedCode": "BIT.W #$00F0"
+        },
+        {
+          "expectedCode": "BEQ .fire",
+          "comment": "Only ordinary low-nibble directions can launch grapple."
+        },
+        {
+          "expectedCode": ".cancel:"
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_HitNothing_Cancel"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Route unsupported/no-fire poses through common teardown."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".draygon:"
+        },
+        {
+          "expectedCode": "JSR.W GetDirectionGrappleIsFiredWhenHeldByDraygon",
+          "comment": "Derive direction directly from facing and held D-pad."
+        },
+        {
+          "expectedCode": "BCC .cancel"
+        },
+        {
+          "expectedCode": ".fire:"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_DirectionFired",
+          "comment": "Publish the accepted direction index."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Convert direction to word-table offset."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireVelocityTable_X,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_ExtensionXSubVelocity",
+          "comment": "Seed horizontal endpoint subvelocity."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireVelocityTable_Y,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_ExtensionYSubVelocity",
+          "comment": "Seed vertical endpoint subvelocity."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireAngles,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_EndAngle"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_EndAngleMirror",
+          "comment": "Initialize live and mirror angles together."
+        },
+        {
+          "expectedCode": "LDA.W #$000A"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_PoseChangeAutoFireTimer",
+          "comment": "Retain grapple fire across ten pose-change updates."
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "CMP.W #$0049"
+        },
+        {
+          "expectedCode": "BEQ .moonwalkingNotRunning"
+        },
+        {
+          "expectedCode": "CMP.W #$004A"
+        },
+        {
+          "expectedCode": "BEQ .moonwalkingNotRunning",
+          "comment": "Moonwalk poses deliberately use non-running offsets."
+        },
+        {
+          "expectedCode": "LDA.W MovementType"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0001"
+        },
+        {
+          "expectedCode": "BEQ .running",
+          "comment": "Only movement type one selects running offsets."
+        },
+        {
+          "expectedCode": ".moonwalkingNotRunning:"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireOffsets_NotRunning_OriginX,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_OriginXOffset",
+          "comment": "Save the non-running beam-origin X offset."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireOffsets_NotRunning_OriginY,X"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp16"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_OriginYOffset",
+          "comment": "Remove the pose Y offset from beam-origin Y."
+        },
+        {
+          "expectedCode": "LDA.W SamusXPosition"
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_NotRunning_OriginX,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_EndXPosition"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_StartXPosition",
+          "comment": "Begin endpoint and beam start at the same world X."
+        },
+        {
+          "expectedCode": "PLA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_NotRunning_FlareX,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_FlareXPosition",
+          "comment": "Place the flare with its independent X offset."
+        },
+        {
+          "expectedCode": "LDA.W SamusYPosition"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp16",
+          "comment": "Convert Samus Y to the pose-adjusted origin baseline."
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_NotRunning_OriginY,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_EndYPosition"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_StartYPosition",
+          "comment": "Begin endpoint and beam start at the same world Y."
+        },
+        {
+          "expectedCode": "PLA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_NotRunning_FlareY,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_FlareYPosition",
+          "comment": "Place the flare with its independent Y offset."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".running:"
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireOffsets_Running_OriginX,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_OriginXOffset",
+          "comment": "Save the running beam-origin X offset."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamFireOffsets_Running_OriginY,X"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp16"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_OriginYOffset",
+          "comment": "Remove pose Y from the running origin offset."
+        },
+        {
+          "expectedCode": "LDA.W SamusXPosition"
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_Running_OriginX,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_EndXPosition"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_StartXPosition",
+          "comment": "Seed running endpoint/start X together."
+        },
+        {
+          "expectedCode": "PLA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_Running_FlareX,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_FlareXPosition",
+          "comment": "Seed running flare X."
+        },
+        {
+          "expectedCode": "LDA.W SamusYPosition"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp16"
+        },
+        {
+          "expectedCode": "PHA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_Running_OriginY,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_EndYPosition"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_StartYPosition",
+          "comment": "Seed running endpoint/start Y together."
+        },
+        {
+          "expectedCode": "PLA"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.W GrappleBeamFireOffsets_Running_FlareY,X"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_FlareYPosition",
+          "comment": "Seed running flare Y."
+        },
+        {
+          "expectedCode": ".merge:"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_EndXSubPosition"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_EndYSubPosition"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_EndXSubOffset"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_EndXOffset"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_EndYSubOffset"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_EndYOffset"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_Flags",
+          "comment": "Clear endpoint fraction/offset and lifecycle flags."
+        },
+        {
+          "expectedCode": "LDA.W #$000C"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_LengthDelta",
+          "comment": "Start extending by twelve units per update."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_Length",
+          "comment": "Begin with zero visible length."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SwingAngularVelocity"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SwingAngularAccelerationDueToAngleOfSwing"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SwingAngularAccelerationDueToButtonInput"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SwingAngularDeceleration"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_ExtraSwingAngularVelocity"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_KickCooldownTimer",
+          "comment": "Reset the complete swing integrator and kick cooldown."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D1E"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D20"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_neverRead0D3A"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D3C"
+        },
+        {
+          "expectedCode": "LDA.W #$0005*!FPS"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_StartAnimationTimer",
+          "comment": "Seed the region-adjusted start-animation timer."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeamStartTilesBeginEndPointers_0"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_StartAnimationTilePointer",
+          "comment": "Begin at grapple start-animation entry zero."
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_XQuarterSubVelocity"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_XQuarterVelocity"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_YQuarterSubVelocity"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_YQuarterVelocity"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_LoopCounter"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_TargetLength"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_SamusFrontBoundaryOffset"
+        },
+        {
+          "expectedCode": "STZ.W GrappleCollision_XPosition",
+          "comment": "Clear the collision solver's quarter-speed and target state."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_FailedSwingMovementCounter"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SpecialAngleHandlingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SlowScrollingFlag",
+          "comment": "Clear failure, special-angle and slow-scroll state."
+        },
+        {
+          "expectedCode": "JSL.L InitializeGrappleSegmentAnimations",
+          "comment": "Initialize every beam-segment animation slot."
+        },
+        {
+          "expectedCode": "LDA.W #SamusDrawingHandler_FiringGrappleBeam"
+        },
+        {
+          "expectedCode": "STA.W DrawingHandler",
+          "comment": "Give Samus drawing ownership to grapple rendering."
+        },
+        {
+          "expectedCode": "STZ.W GrappleWalljumpTimer"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "JSL.L Load_Beam_Palette_External",
+          "comment": "Load grapple beam palette two."
+        },
+        {
+          "expectedCode": "LDA.W #$7F91"
+        },
+        {
+          "expectedCode": "STA.L Palettes_SpriteP5+$1E",
+          "comment": "Install the grapple flare's final sprite-palette color."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Firing"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Enter endpoint extension state."
+        },
+        {
+          "expectedCode": "LDA.W #$0005"
+        },
+        {
+          "expectedCode": "JSL.L QueueSound_Lib1_Max1",
+          "comment": "Queue grapple firing sound five."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusProjectile_FlareCounter",
+          "comment": "Enable grapple flare presentation."
+        },
+        {
+          "expectedCode": "STZ.W ResumeChargingBeamSFXFlag"
+        },
+        {
+          "expectedCode": "LDA.W MovementHandler"
+        },
+        {
+          "expectedCode": "CMP.W #SamusMovementHandler_ReleasedFromGrappleSwing"
+        },
+        {
+          "expectedCode": "BNE .return"
+        },
+        {
+          "expectedCode": "LDA.W #SamusMovementHandler_Normal"
+        },
+        {
+          "expectedCode": "STA.W MovementHandler",
+          "comment": "Cancel stale post-swing movement before a new shot."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-launch.Draygon.lines",
+      "symbol": "GetDirectionGrappleIsFiredWhenHeldByDraygon",
+      "lines": [
+        {
+          "expectedCode": "CMP.W #$00BE",
+          "comment": "Pose $BE selects the left-facing held state."
+        },
+        {
+          "expectedCode": "BEQ .facingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$0006"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp16",
+          "comment": "Use a six-pixel projectile-origin Y offset."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W #$0100",
+          "comment": "Right must be held before checking right diagonals."
+        },
+        {
+          "expectedCode": "BEQ .right"
+        },
+        {
+          "expectedCode": "BIT.W #$0400"
+        },
+        {
+          "expectedCode": "BNE .downRight"
+        },
+        {
+          "expectedCode": "BIT.W #$0800"
+        },
+        {
+          "expectedCode": "BNE .upRight"
+        },
+        {
+          "expectedCode": ".right:"
+        },
+        {
+          "expectedCode": "LDA.W #$0002",
+          "comment": "Direction 2: right."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".upRight:"
+        },
+        {
+          "expectedCode": "LDA.W #$0001",
+          "comment": "Direction 1: up-right."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".downRight:"
+        },
+        {
+          "expectedCode": "LDA.W #$0003",
+          "comment": "Direction 3: down-right."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".facingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0006"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp16",
+          "comment": "Use the same six-pixel Y offset when facing left."
+        },
+        {
+          "expectedCode": "LDA.B DP_Controller1Input"
+        },
+        {
+          "expectedCode": "BIT.W #$0200",
+          "comment": "Left must be held before checking left diagonals."
+        },
+        {
+          "expectedCode": "BEQ .left"
+        },
+        {
+          "expectedCode": "BIT.W #$0400"
+        },
+        {
+          "expectedCode": "BNE .downLeft"
+        },
+        {
+          "expectedCode": "BIT.W #$0800"
+        },
+        {
+          "expectedCode": "BNE .upLeft"
+        },
+        {
+          "expectedCode": ".left:"
+        },
+        {
+          "expectedCode": "LDA.W #$0007",
+          "comment": "Direction 7: left."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".upLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0008",
+          "comment": "Direction 8: up-left."
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".downLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0006",
+          "comment": "Direction 6: down-left."
+        },
+        {
+          "expectedCode": "SEC",
+          "comment": "Every valid held direction reports success."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": "if !FEATURE_KEEP_UNREFERENCED"
+        }
+      ]
+    },
+    {
+      "id": "grapple-exit.Dropped.lines",
+      "symbol": "GrappleBeamFunction_Dropped",
+      "lines": [
+        {
+          "expectedCode": "LDA.W #$0007"
+        },
+        {
+          "expectedCode": "JSL.L QueueSound",
+          "comment": "Queue grapple-end sound seven."
+        },
+        {
+          "expectedCode": "LDA.W Pose",
+          "comment": "Preserve swing orientation when dropping directly from a swing pose."
+        },
+        {
+          "expectedCode": "CMP.W #$00B2"
+        },
+        {
+          "expectedCode": "BEQ .clockwise"
+        },
+        {
+          "expectedCode": "CMP.W #$00B3"
+        },
+        {
+          "expectedCode": "BEQ .antiClockwise"
+        },
+        {
+          "expectedCode": "BRA .notSwinging"
+        },
+        {
+          "expectedCode": ".cancel:"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .antiClockwise",
+          "comment": "Fallback pose follows current facing."
+        },
+        {
+          "expectedCode": ".clockwise:"
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Request normal standing pose one."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".antiClockwise:"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Request normal standing pose two."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".notSwinging:"
+        },
+        {
+          "expectedCode": "LDA.W SamusYRadius"
+        },
+        {
+          "expectedCode": "CMP.W #$0011"
+        },
+        {
+          "expectedCode": "BMI .crouching",
+          "comment": "A radius below seventeen selects crouching recovery."
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.L PoseDefinitions_directionShotsFired,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use the pose projectile direction as standing-table index."
+        },
+        {
+          "expectedCode": "BIT.W #$00F0"
+        },
+        {
+          "expectedCode": "BNE .cancel",
+          "comment": "Special direction markers fall back to facing."
+        },
+        {
+          "expectedCode": "LDA.W .standingPoses,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Select a standing recovery pose by direction."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".crouching:"
+        },
+        {
+          "expectedCode": "LDA.W Pose"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.L PoseDefinitions_directionShotsFired,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use the same direction index for crouching recovery."
+        },
+        {
+          "expectedCode": "BIT.W #$00F0"
+        },
+        {
+          "expectedCode": "BNE .checkDirection"
+        },
+        {
+          "expectedCode": "LDA.W .crouchingPoses,X"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Select a crouching recovery pose by direction."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".checkDirection:"
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0004"
+        },
+        {
+          "expectedCode": "BEQ .facingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$0027"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Fallback to crouching right pose $27."
+        },
+        {
+          "expectedCode": "BRA .merge"
+        },
+        {
+          "expectedCode": ".facingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0028"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Fallback to crouching left pose $28."
+        },
+        {
+          "expectedCode": ".merge:"
+        },
+        {
+          "expectedCode": "STZ.W SuperSpecialProspectivePoseChangeCommand",
+          "comment": "Request recovery with pose command zero."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusSolidVerticalCollisionResult",
+          "comment": "Publish solid vertical contact for the dropped recovery."
+        },
+        {
+          "expectedCode": "STZ.W SamusXBaseSpeed"
+        },
+        {
+          "expectedCode": "STZ.W SamusXBaseSubSpeed"
+        },
+        {
+          "expectedCode": "STZ.W SamusYSubSpeed"
+        },
+        {
+          "expectedCode": "STZ.W SamusYSpeed",
+          "comment": "A zero-momentum drop clears both axes completely."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D1E"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D20"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_DirectionFired"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SpecialAngleHandlingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleWalljumpTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SlowScrollingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_PoseChangeAutoFireTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_Flags",
+          "comment": "Clear all remaining grapple lifecycle state."
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareCounter"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationFrame"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CD8"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CDA"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationTimer"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CDE"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CE0",
+          "comment": "Clear all grapple flare presentation."
+        },
+        {
+          "expectedCode": "LDA.W EquippedBeams"
+        },
+        {
+          "expectedCode": "JSL.L Load_Beam_Palette_External",
+          "comment": "Restore the equipped beam palette."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Inactive"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function",
+          "comment": "Return grapple state to inactive."
+        },
+        {
+          "expectedCode": "LDA.W #SamusDrawingHandler_Default"
+        },
+        {
+          "expectedCode": "STA.W DrawingHandler",
+          "comment": "Restore normal Samus drawing."
+        },
+        {
+          "expectedCode": "JSL.L PostGrappleCollisionDetection",
+          "comment": "Resolve post-grapple overlap at the recovery pose."
+        },
+        {
+          "expectedCode": "LDA.W AutoCancelHUDItemIndex"
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "STZ.W SelectedHUDItem"
+        },
+        {
+          "expectedCode": "STZ.W AutoCancelHUDItemIndex",
+          "comment": "Release grapple's auto-cancel HUD item."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".standingPoses:"
+        },
+        {
+          "expectedCode": "db $03,$05,$01,$07,$01,$02,$08,$02,$06,$04",
+          "comment": "Standing recovery poses indexed by ten shot directions."
+        },
+        {
+          "expectedCode": ".crouchingPoses:"
+        },
+        {
+          "expectedCode": "db $85,$71,$27,$73,$27,$28,$74,$28,$72,$86",
+          "comment": "Crouching recovery poses indexed by the same directions."
+        }
+      ]
+    },
+    {
+      "id": "grapple-exit.WallJump.lines",
+      "symbol": "GrappleBeamFunction_WallJumping",
+      "lines": [
+        {
+          "expectedCode": "LDA.W #$0007"
+        },
+        {
+          "expectedCode": "JSL.L QueueSound",
+          "comment": "Queue grapple-end sound seven."
+        },
+        {
+          "expectedCode": "LDA.W PoseXDirection"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "CMP.W #$0008"
+        },
+        {
+          "expectedCode": "BEQ .right"
+        },
+        {
+          "expectedCode": "LDA.W #$0083"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Request grapple wall-jump pose $83 for one facing."
+        },
+        {
+          "expectedCode": "BRA +"
+        },
+        {
+          "expectedCode": ".right:"
+        },
+        {
+          "expectedCode": "LDA.W #$0084"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Request grapple wall-jump pose $84 for the other facing."
+        },
+        {
+          "expectedCode": "+ LDA.W #$0006"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePoseChangeCommand",
+          "comment": "Use pose command six to start wall-jump motion."
+        },
+        {
+          "expectedCode": "STZ.W SamusXAccelerationMode"
+        },
+        {
+          "expectedCode": "STZ.W SamusXSpeedKilledDueToCollisionFlag"
+        },
+        {
+          "expectedCode": "STZ.W SamusIsFallingFlag"
+        },
+        {
+          "expectedCode": "STZ.W neverRead0B1A"
+        },
+        {
+          "expectedCode": "STZ.W neverRead0B2A"
+        },
+        {
+          "expectedCode": "STZ.W SamusYSubSpeed"
+        },
+        {
+          "expectedCode": "STZ.W SamusYSpeed"
+        },
+        {
+          "expectedCode": "STZ.W SamusYDirection"
+        },
+        {
+          "expectedCode": "STZ.W neverRead0B38"
+        },
+        {
+          "expectedCode": "STZ.W SamusXBaseSpeed"
+        },
+        {
+          "expectedCode": "STZ.W SamusXBaseSubSpeed",
+          "comment": "Clear previous X/Y movement before the pose command supplies the jump."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D1E"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D20"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_DirectionFired"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SpecialAngleHandlingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleWalljumpTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SlowScrollingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_PoseChangeAutoFireTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_Flags",
+          "comment": "Clear grapple connection/timer state."
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareCounter"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationFrame"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CD8"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CDA"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationTimer"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CDE"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CE0",
+          "comment": "Clear grapple flare presentation."
+        },
+        {
+          "expectedCode": "LDA.W EquippedBeams"
+        },
+        {
+          "expectedCode": "JSL.L Load_Beam_Palette_External",
+          "comment": "Restore equipped beam palette."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Inactive"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function"
+        },
+        {
+          "expectedCode": "LDA.W #SamusDrawingHandler_Default"
+        },
+        {
+          "expectedCode": "STA.W DrawingHandler",
+          "comment": "Return state and drawing ownership to normal gameplay."
+        },
+        {
+          "expectedCode": "JSL.L PostGrappleCollisionDetection",
+          "comment": "Resolve collision at the new wall-jump pose."
+        },
+        {
+          "expectedCode": "LDA.W AutoCancelHUDItemIndex"
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "STZ.W SelectedHUDItem"
+        },
+        {
+          "expectedCode": "STZ.W AutoCancelHUDItemIndex",
+          "comment": "Consume auto-cancel grapple selection."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-exit.Propel.lines",
+      "symbol": "PropelSamusFromGrappleSwing",
+      "lines": [
+        {
+          "expectedCode": "LDA.W GrappleBeam_SwingAngularVelocity",
+          "comment": "Read signed angular velocity; kick-only extra velocity is not included."
+        },
+        {
+          "expectedCode": "BMI .negativeVelocity"
+        },
+        {
+          "expectedCode": "JMP.W .positive"
+        },
+        {
+          "expectedCode": ".negativeVelocity:"
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Y holds twice the absolute angular velocity for multiplication."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_EndAngle"
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Use the endpoint angle high byte as sine-table word index."
+        },
+        {
+          "expectedCode": "LDA.L SineCosineTables_8bitSine_SignExtended,X"
+        },
+        {
+          "expectedCode": "BMI .negativeAngle"
+        },
+        {
+          "expectedCode": "PHY"
+        },
+        {
+          "expectedCode": "JSL.L A_Y_16bit_UnsignedMultiplication",
+          "comment": "Multiply positive sine magnitude by angular magnitude."
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult"
+        },
+        {
+          "expectedCode": "STA.W SamusYSubSpeed"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult+2"
+        },
+        {
+          "expectedCode": "STA.W SamusYSpeed",
+          "comment": "Store the 32-bit vertical speed magnitude."
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusYDirection",
+          "comment": "Positive sine on this angular branch moves down."
+        },
+        {
+          "expectedCode": "BRA .decelerating"
+        },
+        {
+          "expectedCode": ".negativeAngle:"
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC",
+          "comment": "Convert negative sine to unsigned magnitude."
+        },
+        {
+          "expectedCode": "PHY"
+        },
+        {
+          "expectedCode": "JSL.L A_Y_16bit_UnsignedMultiplication"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult"
+        },
+        {
+          "expectedCode": "STA.W SamusYSubSpeed"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult+2"
+        },
+        {
+          "expectedCode": "STA.W SamusYSpeed"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W SamusYDirection",
+          "comment": "Negative sine on this angular branch moves up."
+        },
+        {
+          "expectedCode": ".decelerating:"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W SamusXAccelerationMode",
+          "comment": "Use horizontal deceleration mode two after release."
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "LSR"
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Extract the angular-velocity high byte after undoing the earlier doubling."
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp12"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Scale that byte by three."
+        },
+        {
+          "expectedCode": "LDA.W #$0040"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp12"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Create the velocity-dependent angular correction $40 - 3v."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_EndAngle"
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp12"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX",
+          "comment": "Index sine with the corrected endpoint angle."
+        },
+        {
+          "expectedCode": "LDA.L SineCosineTables_8bitSine_SignExtended,X"
+        },
+        {
+          "expectedCode": "BPL +"
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC",
+          "comment": "Horizontal speed uses absolute sine magnitude."
+        },
+        {
+          "expectedCode": "+ JSL.L A_Y_16bit_UnsignedMultiplication"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult"
+        },
+        {
+          "expectedCode": "STA.W SamusXBaseSubSpeed"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult+2"
+        },
+        {
+          "expectedCode": "STA.W SamusXBaseSpeed",
+          "comment": "Store the 32-bit horizontal base-speed magnitude."
+        },
+        {
+          "expectedCode": "RTS"
+        },
+        {
+          "expectedCode": ".positive:"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAY",
+          "comment": "Positive angular velocity also uses twice its magnitude."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_EndAngle"
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.L SineCosineTables_8bitSine_SignExtended,X"
+        },
+        {
+          "expectedCode": "BPL +"
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC",
+          "comment": "Use absolute negative-sine magnitude on this branch."
+        },
+        {
+          "expectedCode": "PHY"
+        },
+        {
+          "expectedCode": "JSL.L A_Y_16bit_UnsignedMultiplication"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult"
+        },
+        {
+          "expectedCode": "STA.W SamusYSubSpeed"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult+2"
+        },
+        {
+          "expectedCode": "STA.W SamusYSpeed"
+        },
+        {
+          "expectedCode": "LDA.W #$0001"
+        },
+        {
+          "expectedCode": "STA.W SamusYDirection",
+          "comment": "Negative sine with positive angular velocity moves down."
+        },
+        {
+          "expectedCode": "BRA ..decelerating"
+        },
+        {
+          "expectedCode": "+ PHY"
+        },
+        {
+          "expectedCode": "JSL.L A_Y_16bit_UnsignedMultiplication"
+        },
+        {
+          "expectedCode": "PLY"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult"
+        },
+        {
+          "expectedCode": "STA.W SamusYSubSpeed"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult+2"
+        },
+        {
+          "expectedCode": "STA.W SamusYSpeed"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W SamusYDirection",
+          "comment": "Positive sine with positive angular velocity moves up."
+        },
+        {
+          "expectedCode": "..decelerating:"
+        },
+        {
+          "expectedCode": "LDA.W #$0002"
+        },
+        {
+          "expectedCode": "STA.W SamusXAccelerationMode",
+          "comment": "Use the same horizontal deceleration mode."
+        },
+        {
+          "expectedCode": "TYA"
+        },
+        {
+          "expectedCode": "LSR"
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "CLC"
+        },
+        {
+          "expectedCode": "ADC.B DP_Temp12"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12"
+        },
+        {
+          "expectedCode": "LDA.W #$0040"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp12"
+        },
+        {
+          "expectedCode": "STA.B DP_Temp12",
+          "comment": "Repeat the velocity-dependent correction for the mirrored branch."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_EndAngle"
+        },
+        {
+          "expectedCode": "XBA"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "SEC"
+        },
+        {
+          "expectedCode": "SBC.B DP_Temp12"
+        },
+        {
+          "expectedCode": "AND.W #$00FF"
+        },
+        {
+          "expectedCode": "ASL"
+        },
+        {
+          "expectedCode": "TAX"
+        },
+        {
+          "expectedCode": "LDA.L SineCosineTables_8bitSine_SignExtended,X"
+        },
+        {
+          "expectedCode": "BPL +"
+        },
+        {
+          "expectedCode": "EOR.W #$FFFF"
+        },
+        {
+          "expectedCode": "INC"
+        },
+        {
+          "expectedCode": "+ JSL.L A_Y_16bit_UnsignedMultiplication"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult"
+        },
+        {
+          "expectedCode": "STA.W SamusXBaseSubSpeed"
+        },
+        {
+          "expectedCode": "LDA.W MultiplicationResult+2"
+        },
+        {
+          "expectedCode": "STA.W SamusXBaseSpeed",
+          "comment": "Store the mirrored branch's horizontal magnitude."
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    },
+    {
+      "id": "grapple-exit.Released.lines",
+      "symbol": "GrappleBeamFunction_ReleasedFromSwing",
+      "lines": [
+        {
+          "expectedCode": "LDA.W #$0007"
+        },
+        {
+          "expectedCode": "JSL.L QueueSound",
+          "comment": "Queue grapple-end sound seven."
+        },
+        {
+          "expectedCode": "LDA.W GrappleBeam_SwingAngularVelocity",
+          "comment": "Use release angular sign to choose facing pose."
+        },
+        {
+          "expectedCode": "BPL .facingLeft"
+        },
+        {
+          "expectedCode": "LDA.W #$0051"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Negative angular velocity requests pose $51."
+        },
+        {
+          "expectedCode": "BRA +"
+        },
+        {
+          "expectedCode": ".facingLeft:"
+        },
+        {
+          "expectedCode": "LDA.W #$0052"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePose",
+          "comment": "Nonnegative angular velocity requests pose $52."
+        },
+        {
+          "expectedCode": "+ LDA.W #$0007"
+        },
+        {
+          "expectedCode": "STA.W SuperSpecialProspectivePoseChangeCommand",
+          "comment": "Use command seven for released-from-swing motion."
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D1E"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_neverRead0D20"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_DirectionFired"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SpecialAngleHandlingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleWalljumpTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_SlowScrollingFlag"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_PoseChangeAutoFireTimer"
+        },
+        {
+          "expectedCode": "STZ.W GrappleBeam_Flags",
+          "comment": "Clear grapple state without touching newly calculated Samus speed."
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareCounter"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationFrame"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CD8"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CDA"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareAnimationTimer"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareSlowSparksAnimationFrame0CDE"
+        },
+        {
+          "expectedCode": "STZ.W SamusProjectile_FlareFastSparksAnimationFrame0CE0",
+          "comment": "Clear grapple flare presentation."
+        },
+        {
+          "expectedCode": "LDA.W EquippedBeams"
+        },
+        {
+          "expectedCode": "JSL.L Load_Beam_Palette_External",
+          "comment": "Restore equipped beam palette."
+        },
+        {
+          "expectedCode": "LDA.W #GrappleBeamFunction_Inactive"
+        },
+        {
+          "expectedCode": "STA.W GrappleBeam_Function"
+        },
+        {
+          "expectedCode": "LDA.W #SamusDrawingHandler_Default"
+        },
+        {
+          "expectedCode": "STA.W DrawingHandler",
+          "comment": "Return grapple state/drawing ownership to normal."
+        },
+        {
+          "expectedCode": "JSL.L PostGrappleCollisionDetection",
+          "comment": "Correct any overlap at the release position."
+        },
+        {
+          "expectedCode": "LDA.W AutoCancelHUDItemIndex"
+        },
+        {
+          "expectedCode": "BEQ .return"
+        },
+        {
+          "expectedCode": "STZ.W SelectedHUDItem"
+        },
+        {
+          "expectedCode": "STZ.W AutoCancelHUDItemIndex",
+          "comment": "Release grapple's auto-cancel selection."
+        },
+        {
+          "expectedCode": ".return:"
+        },
+        {
+          "expectedCode": "RTS"
+        }
+      ]
+    }
+  ]
+}
