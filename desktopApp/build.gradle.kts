@@ -147,8 +147,9 @@ tasks.register<org.gradle.api.tasks.testing.Test>("asmSymbolCoverageTest") {
     dependsOn(tasks.named("jvmTestClasses"), rootProject.tasks.named("parityBuildReference"))
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath
-    // Compare original and augmented source indexes alongside real Asar symbol/ROM output.
-    maxHeapSize = "1g"
+    // Compare original/augmented indexes and every frozen baseline migration in
+    // one worker. The documented source graph no longer fits reliably in 1 GiB.
+    maxHeapSize = "2g"
     useJUnitPlatform { includeTags("asm-symbol-coverage") }
     systemProperty("smedit.requireParityFixtures", "true")
     systemProperty("smedit.asmEnrichmentReviewDirectory", layout.buildDirectory.dir("reports/asm-enrichment").get().asFile.absolutePath)

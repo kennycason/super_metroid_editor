@@ -22,7 +22,8 @@ class AsmSourceAugmentationIntegrationTest {
         val fixture = verify(AsmSourceAugmentation.bundled())
         // A disposable, generated review artifact, never a change to a user's pinned baseline.
         System.getProperty("smedit.asmEnrichmentReviewDirectory")?.let { directory ->
-            for (fileId in listOf("bank_80.asm", "bank_82.asm", "bank_84.asm", "bank_8F.asm", "bank_90.asm", "bank_A0.asm", "bank_A3.asm")) {
+            for (fileId in listOf("bank_80.asm", "bank_81.asm", "bank_82.asm", "bank_84.asm", "bank_8F.asm",
+                "bank_90.asm", "bank_91.asm", "bank_93.asm", "bank_A0.asm", "bank_A3.asm")) {
                 val output = File(directory, "src/$fileId")
                 output.parentFile.mkdirs()
                 File(fixture.workspace.originalDirectory, "src/$fileId").copyTo(output, overwrite = true)
@@ -106,6 +107,72 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previous)
     }
 
+    @Test fun `explicit v10 to current update adds VRAM consumer notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-10.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v11 to current update adds audio runtime notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-11.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v12 to current update adds audio queue notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-12.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v13 to current update adds NMI presentation notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-13.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v14 to current update adds controller binding notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-14.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v15 to current update adds save-file notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-15.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v16 to current update adds health notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-16.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v17 to current update adds projectile notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-17.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v18 to current update adds ammunition notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-18.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v19 to current update adds firing-gate notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-19.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v20 to current update adds projectile-runtime notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-20.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -162,6 +229,40 @@ class AsmSourceAugmentationIntegrationTest {
             ";8485F7; Create a synthetic near return to fetch another list word.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_84.asm").readText(),
             ";84862C; Bit 15 set selects a vertical run.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";808CC3; Advance by the exact seven-byte software-record stride.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";808E82; Set the processor zero flag explicitly.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";808EEA; Advance by the exact nine-byte VRAMRead record stride.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_82.asm").readText(),
+            ";828A8D; Try to send another queued sound in the same handler call.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";808FD4; Wrap that offset across eight entries.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";809190; Publish the successor as library 3's producer.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";8091DE; Skip the eight descriptor bytes after the JSL.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";809372; Run the OAM and CGRAM transfers together during v-blank.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";809450; Consume the pending source while leaving the object ID alive.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";80946C; Keep only changed buttons that are now pressed.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_82.asm").readText(),
+            ";82F707; Give that button to the previous owner, preserving a permutation.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_81.asm").readText(),
+            ";8180D5; Compare with the secondary complement copy.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90EA27; Subtract whole damage plus any fractional borrow.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_93.asm").readText(),
+            ";938021; Resolve the uncharged beam data record.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_91.asm").readText(),
+            ";91DF87; Add the requested amount to live missiles.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90AC32; Select a 32-tick firing lockout.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_93.asm").readText(),
+            ";938226; Advance past the complete timed-frame record.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)

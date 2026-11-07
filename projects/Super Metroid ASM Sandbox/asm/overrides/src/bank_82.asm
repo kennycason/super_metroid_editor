@@ -1256,154 +1256,182 @@ GameState_5_FileSelectMap:
 
 
 ;;; $89EF: Handle sounds ;;;
+; Service the three independent sound-library handshakes after game-state logic.
+; Each library owns one SPC port ($2141..$2143), a 16-byte ring and a state byte.
+; When music has imposed downtime, decrement that counter and keep all three
+; request ports and current-sound mirrors clear instead of advancing states.
 HandleSounds:
-    PHP                                                                  ;8289EF;
-    SEP #$30                                                             ;8289F0;
-    LDA.W APU_SoundHandlerDowntime                                       ;8289F2;
-    DEC                                                                  ;8289F5;
-    BPL .downtime                                                        ;8289F6;
-    LDY.B #$00                                                           ;8289F8;
+    PHP                                                                  ;8289EF; Preserve the caller's register widths and flags.
+    SEP #$30                                                             ;8289F0; Sound states, indices, requests and SPC ports are byte-sized.
+    LDA.W APU_SoundHandlerDowntime                                       ;8289F2; Read the low-byte music-imposed suppression counter.
+    DEC                                                                  ;8289F5; Advance the suppression counter before testing it.
+    BPL .downtime                                                        ;8289F6; Values that remain nonnegative keep sound requests suppressed.
+    LDY.B #$00                                                           ;8289F8; Begin with sound library 1 at adjacent-field index zero.
 
   .loop:
-    PHY                                                                  ;8289FA;
-    LDA.W APU_SoundStateLib1,Y                                           ;8289FB;
-    ASL                                                                  ;8289FE;
+    PHY                                                                  ;8289FA; Preserve the library index across its state handler.
+    LDA.W APU_SoundStateLib1,Y                                           ;8289FB; Read this library's handshake state.
+    ASL                                                                  ;8289FE; Convert the state number to a word-pointer offset.
     TAX                                                                  ;8289FF;
-    JSR.W (.pointers,X)                                                  ;828A00;
+    JSR.W (.pointers,X)                                                  ;828A00; Run the selected bank-$82 state handler.
     PLY                                                                  ;828A03;
-    INY                                                                  ;828A04;
-    CPY.B #$03                                                           ;828A05;
-    BCC .loop                                                            ;828A07;
+    INY                                                                  ;828A04; Advance across the adjacent library metadata bytes.
+    CPY.B #$03                                                           ;828A05; There are three independent sound libraries.
+    BCC .loop                                                            ;828A07; Service every library in this call.
     PLP                                                                  ;828A09;
     RTL                                                                  ;828A0A;
 
   .downtime:
-    STA.W APU_SoundHandlerDowntime                                       ;828A0B;
-    STZ.W $2141                                                          ;828A0E;
-    STZ.W APU_CurrentSoundLib1                                           ;828A11;
-    STZ.W $2142                                                          ;828A14;
+    STA.W APU_SoundHandlerDowntime                                       ;828A0B; Store the decremented suppression count.
+    STZ.W $2141                                                          ;828A0E; Keep library 1's SPC request port clear.
+    STZ.W APU_CurrentSoundLib1                                           ;828A11; Clear its mirrored outstanding request.
+    STZ.W $2142                                                          ;828A14; Keep library 2's request port clear.
     STZ.W APU_CurrentSoundLib2                                           ;828A17;
-    STZ.W $2143                                                          ;828A1A;
+    STZ.W $2143                                                          ;828A1A; Keep library 3's request port clear.
     STZ.W APU_CurrentSoundLib3                                           ;828A1D;
     PLP                                                                  ;828A20;
     RTL                                                                  ;828A21;
 
+  ; The per-library state byte indexes this word-pointer table. States send a
+  ; queued request, wait for the SPC to echo it, delay before clearing the port,
+  ; wait for the echoed clear, or perform the separate delayed reset path. The
+  ; selected bank-$82 handler returns with RTS to the three-library dispatch loop.
   .pointers:
-    dw SoundState_0_SendAPUSoundRequestFromQueue                         ;828A22;
-    dw SoundState_1_WaitForAPUSoundRequestAcknowledgement                ;828A24;
-    dw SoundState_2_ClearSoundRequest                                    ;828A26;
-    dw SoudnState_3_WaitForAPUClearRequestAcknowledgement                ;828A28;
-    dw SoundState_4_ResetSoundState                                      ;828A2A;
+    dw SoundState_0_SendAPUSoundRequestFromQueue                         ;828A22; State 0 sends the next queued request.
+    dw SoundState_1_WaitForAPUSoundRequestAcknowledgement                ;828A24; State 1 waits for the SPC to echo the sound ID.
+    dw SoundState_2_ClearSoundRequest                                    ;828A26; State 2 delays, then clears the request port.
+    dw SoudnState_3_WaitForAPUClearRequestAcknowledgement                ;828A28; State 3 waits for the SPC to echo zero.
+    dw SoundState_4_ResetSoundState                                      ;828A2A; State 4 performs a delayed state reset.
 
 
 ;;; $8A2C: Sound state 0 - send APU sound request from queue ;;;
+; For library index 0, 1 or 2, compare its ring start and next indices. The
+; $00/$10/$20 table selects that library's 16-byte queue while X selects its
+; adjacent metadata and SPC port. Send one sound, advance the start modulo $10
+; and enter acknowledgement state 1; an empty queue remains in state 0.
 SoundState_0_SendAPUSoundRequestFromQueue:
 ;; Parameter:
 ;;     Y: Sound library index to process queue of
-    TYX                                                                  ;828A2C;
-    LDA.W APU_SoundQueueStartIndexLib1,X                                 ;828A2D;
-    CMP.W APU_SoundQueueNextIndexLib1,X                                  ;828A30;
-    BEQ .return                                                          ;828A33;
-    LDA.L .data,X                                                        ;828A35;
+    TYX                                                                  ;828A2C; Use the library index for its adjacent metadata and SPC port.
+    LDA.W APU_SoundQueueStartIndexLib1,X                                 ;828A2D; Read this library's ring-consumer index.
+    CMP.W APU_SoundQueueNextIndexLib1,X                                  ;828A30; Compare it with the ring-producer index.
+    BEQ .return                                                          ;828A33; Equal indices leave an empty library in state 0.
+    LDA.L .data,X                                                        ;828A35; Select queue base offset $00, $10 or $20 for this library.
     CLC                                                                  ;828A39;
-    ADC.W APU_SoundQueueStartIndexLib1,X                                 ;828A3A;
-    TAY                                                                  ;828A3D;
-    LDA.W APU_SoundQueueLib1,Y                                           ;828A3E;
-    STA.W $2141,X                                                        ;828A41;
-    STA.W APU_CurrentSoundLib1,X                                         ;828A44;
+    ADC.W APU_SoundQueueStartIndexLib1,X                                 ;828A3A; Add its current 0..15 ring index.
+    TAY                                                                  ;828A3D; Address the selected byte in the three contiguous queues.
+    LDA.W APU_SoundQueueLib1,Y                                           ;828A3E; Read the queued sound ID.
+    STA.W $2141,X                                                        ;828A41; Send it through this library's SPC request port.
+    STA.W APU_CurrentSoundLib1,X                                         ;828A44; Mirror the request while waiting for acknowledgement.
     INY                                                                  ;828A47;
     TYA                                                                  ;828A48;
-    AND.B #$0F                                                           ;828A49;
-    STA.W APU_SoundQueueStartIndexLib1,X                                 ;828A4B;
-    INC.W APU_SoundStateLib1,X                                           ;828A4E;
+    AND.B #$0F                                                           ;828A49; Discard the queue-base offset and wrap the index modulo 16.
+    STA.W APU_SoundQueueStartIndexLib1,X                                 ;828A4B; Consume the queued byte.
+    INC.W APU_SoundStateLib1,X                                           ;828A4E; Enter request-acknowledgement state 1.
 
   .return:
     RTS                                                                  ;828A51;
 
   .data:
-    db $00,$10,$20                                                       ;828A52;
+    db $00,$10,$20                                                       ;828A52; Map library indices to their contiguous 16-byte queue regions.
 
 
 ;;; $8A55: Sound state 1 - wait for APU sound request acknowledgement ;;;
+; Wait until the selected SPC port echoes the current sound ID. Reassert the
+; request while it differs. On acknowledgement, enter state 2 and install a
+; two-call clear delay; the queue entry was already consumed when it was sent.
 SoundState_1_WaitForAPUSoundRequestAcknowledgement:
 ;; Parameter:
 ;;     Y: Sound library index to process queue of
-    TYX                                                                  ;828A55;
-    LDA.W APU_CurrentSoundLib1,X                                         ;828A56;
-    CMP.W $2141,X                                                        ;828A59;
-    BEQ .incState                                                        ;828A5C;
-    STA.W $2141,X                                                        ;828A5E;
+    TYX                                                                  ;828A55; Select this library's adjacent request fields and port.
+    LDA.W APU_CurrentSoundLib1,X                                         ;828A56; Read the mirrored outstanding sound ID.
+    CMP.W $2141,X                                                        ;828A59; Test whether the SPC port has echoed it.
+    BEQ .incState                                                        ;828A5C; A matching echo acknowledges the request.
+    STA.W $2141,X                                                        ;828A5E; Reassert the request while the port differs.
     BRA .return                                                          ;828A61;
 
   .incState:
-    INC.W APU_SoundStateLib1,X                                           ;828A63;
-    LDA.B #$02                                                           ;828A66;
-    STA.W APU_ClearSoundDelayLib1,X                                      ;828A68;
+    INC.W APU_SoundStateLib1,X                                           ;828A63; Enter the delayed-clear state.
+    LDA.B #$02                                                           ;828A66; Hold the acknowledged request for two handler calls.
+    STA.W APU_ClearSoundDelayLib1,X                                      ;828A68; Store this library's clear countdown.
 
   .return:
     RTS                                                                  ;828A6B;
 
 
 ;;; $8A6C: Sound state 2 - clear sound request ;;;
+; Count down the selected library's two-call hold after request acknowledgement.
+; When it expires, clear both the SPC request port and its current-sound mirror,
+; then enter state 3 to wait for the SPC to echo that clear.
 SoundState_2_ClearSoundRequest:
 ;; Parameter:
 ;;     Y: Sound library index to process queue of
 
 ; This delay is needed, but I have no idea why, screws up door transition though otherwise
-    TYX                                                                  ;828A6C;
-    DEC.W APU_ClearSoundDelayLib1,X                                      ;828A6D;
-    BNE .return                                                          ;828A70;
-    STZ.W $2141,X                                                        ;828A72;
-    STZ.W APU_CurrentSoundLib1,X                                         ;828A75;
-    INC.W APU_SoundStateLib1,X                                           ;828A78;
+    TYX                                                                  ;828A6C; Select this library's clear delay, request mirror and port.
+    DEC.W APU_ClearSoundDelayLib1,X                                      ;828A6D; Advance the post-acknowledgement hold.
+    BNE .return                                                          ;828A70; Keep the request asserted until the delay expires.
+    STZ.W $2141,X                                                        ;828A72; Clear this library's SPC request port.
+    STZ.W APU_CurrentSoundLib1,X                                         ;828A75; Make zero the value expected back from the SPC.
+    INC.W APU_SoundStateLib1,X                                           ;828A78; Enter clear-acknowledgement state 3.
 
   .return:
     RTS                                                                  ;828A7B;
 
 
 ;;; $8A7C: Sound state 3 - wait for APU clear request acknowledgement ;;;
+; Wait until the selected SPC port matches the now-zero current-sound mirror,
+; rewriting zero while it does not. Once acknowledged, reset to state 0 and
+; tail-branch into the sender so another queued sound can begin in this call.
 SoudnState_3_WaitForAPUClearRequestAcknowledgement:
 ;; Parameter:
 ;;     Y: Sound library index to process queue of
-    TYX                                                                  ;828A7C;
-    LDA.W APU_CurrentSoundLib1,X                                         ;828A7D;
-    CMP.W $2141,X                                                        ;828A80;
-    BEQ .state0                                                          ;828A83;
-    STA.W $2141,X                                                        ;828A85;
+    TYX                                                                  ;828A7C; Select this library's cleared request mirror and SPC port.
+    LDA.W APU_CurrentSoundLib1,X                                         ;828A7D; Read the expected zero acknowledgement.
+    CMP.W $2141,X                                                        ;828A80; Test whether the SPC port has also cleared.
+    BEQ .state0                                                          ;828A83; A matching zero completes the handshake.
+    STA.W $2141,X                                                        ;828A85; Reassert zero while the port differs.
     BRA .return                                                          ;828A88;
 
   .state0:
-    STZ.W APU_SoundStateLib1,X                                           ;828A8A;
-    BRA SoundState_0_SendAPUSoundRequestFromQueue                        ;828A8D;
+    STZ.W APU_SoundStateLib1,X                                           ;828A8A; Return this library to sender state 0.
+    BRA SoundState_0_SendAPUSoundRequestFromQueue                        ;828A8D; Try to send another queued sound in the same handler call.
 
   .return:
     RTS                                                                  ;828A8F;
 
 
 ;;; $8A90: Sound state 4 - reset sound state ;;;
+; If state 4 is selected, it uses the same per-library clear counter as state 2.
+; It returns to state 0 only when that counter reaches zero; unlike the normal
+; state-2 path, it does not write the SPC port or current-sound mirror here.
 SoundState_4_ResetSoundState:
 ;; Parameter:
 ;;     Y: Sound library index to process queue of
-    TYX                                                                  ;828A90;
-    DEC.W APU_ClearSoundDelayLib1,X                                      ;828A91;
-    BNE .return                                                          ;828A94;
-    STZ.W APU_SoundStateLib1,X                                           ;828A96;
+    TYX                                                                  ;828A90; Select this library's reset countdown and state byte.
+    DEC.W APU_ClearSoundDelayLib1,X                                      ;828A91; Advance the state-4 delay.
+    BNE .return                                                          ;828A94; Remain in state 4 until the counter expires.
+    STZ.W APU_SoundStateLib1,X                                           ;828A96; Return to sender state 0 without touching the SPC port.
 
   .return:
     RTS                                                                  ;828A99;
 
 
 ;;; $8A9A: Reset sound queues ;;;
+; Clear the three adjacent start bytes, next bytes and state bytes with four
+; overlapping word stores plus the final state-3 byte store. Queue payloads and
+; SPC ports are not erased here; equal zero indices make every ring logically
+; empty, and state 0 leaves each library idle until a new request is queued.
 ResetSoundQueues:
 ; Clear sound queue start/next indices and sound states
-    PHP                                                                  ;828A9A;
-    REP #$20                                                             ;828A9B;
-    STZ.W APU_SoundQueueStartIndexLib1                                   ;828A9D;
-    STZ.W APU_SoundQueueStartIndexLib3                                   ;828AA0;
-    STZ.W APU_SoundQueueNextIndexLib2                                    ;828AA3;
-    STZ.W APU_SoundStateLib1                                             ;828AA6;
-    SEP #$20                                                             ;828AA9;
-    STZ.W APU_SoundStateLib3                                             ;828AAB;
+    PHP                                                                  ;828A9A; Preserve the caller's register widths and flags.
+    REP #$20                                                             ;828A9B; Use overlapping word clears across adjacent byte fields.
+    STZ.W APU_SoundQueueStartIndexLib1                                   ;828A9D; Clear library 1 and 2 start indices together.
+    STZ.W APU_SoundQueueStartIndexLib3                                   ;828AA0; Clear library 3's start and library 1's next index.
+    STZ.W APU_SoundQueueNextIndexLib2                                    ;828AA3; Clear library 2 and 3 next indices together.
+    STZ.W APU_SoundStateLib1                                             ;828AA6; Clear library 1 and 2 state bytes together.
+    SEP #$20                                                             ;828AA9; The final adjacent state is one byte.
+    STZ.W APU_SoundStateLib3                                             ;828AAB; Return library 3 to sender state 0.
     PLP                                                                  ;828AAE;
     RTL                                                                  ;828AAF;
 

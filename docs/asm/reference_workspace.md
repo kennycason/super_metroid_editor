@@ -63,7 +63,7 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-10`. It retains the
+The current enrichment revision is `super-metroid-ntsc-21`. It retains the
 Zoomer/crawler, Waver, core-loop, pause/door, room-loading, enemy-runtime and
 PLM-runtime/item documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
@@ -77,7 +77,32 @@ scheduling, AI dispatch, drawing and instruction-script scopes. Revision 9 adds
 10 block explanations and 103 line comments across nine guarded PLM runtime,
 interpreter and item-lifecycle scopes. Revision 10 adds 10 block explanations
 and 61 line comments across three complete guarded PLM drawing and VRAM-upload
-scopes. Existing names, instructions and upstream comments remain intact.
+scopes. Revision 11 adds 8 block explanations and 95 line comments across the
+three complete bank-$80 scopes that consume ordinary VRAM writes and scrolling
+column/row DMA buffers. Revision 12 adds 14 block explanations and 157 line
+comments across 10 complete bank-$80/$82 scopes for VRAM reads, music consumption
+and the three-library SPC sound handshake. Revision 13 adds 15 block explanations
+and 125 line comments across five complete bank-$80 scopes for music and sound
+queue producers. Revision 14 adds 9 block explanations and 275 line comments
+across five complete bank-$80 scopes for inline DMA setup and the NMI-side PPU,
+OAM, CGRAM, Samus-tile and animated-tile presentation pipeline. Existing names,
+instructions and upstream comments remain intact. Revision 15 adds 9 block
+explanations and 191 line comments across seven complete bank-$80/$82 scopes for
+joypad sampling, repeat input and controller-binding load/reset/save/swap behavior.
+Revision 16 adds 7 block explanations and 107 line comments across three complete
+bank-$81 scopes for SRAM mirror refresh, slot placement, checksum validation and
+corrupt-slot clearing. Revision 17 adds 9 block explanations and 157 line comments
+across seven complete bank-$82/$90/$91 scopes for energy restoration, raw and
+periodic damage, low-energy state, reserve refill, death selection and in-game time.
+Revision 18 adds 9 block explanations and 175 line comments across seven complete
+bank-$90/$93 scopes for projectile reset, clear, dispatch, data-record selection
+and beam/missile explosion conversion.
+Revision 19 adds 4 block explanations and 36 line comments across three complete
+bank-$91 scopes for missile reserve overflow and super-missile/power-bomb capping.
+Revision 20 adds 4 block explanations and 33 line comments across three complete
+bank-$90 scopes for cooldown ticking and beam/missile slot reservations. Revision
+21 adds 7 block explanations and 94 line comments across five complete bank-$93
+scopes for projectile instruction execution, command returns and drawing passes.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -332,6 +357,300 @@ offset encodings, metatile masks and flip XORs, eight-byte cursor advance and
 `$0200` cap. Source contracts separately pin horizontal/vertical clipping and the
 two-record destination setup. Updating a frozen v9 baseline preserves authored
 enemy tuning and modules with byte-identical complete ROM output.
+
+### NMI presentation and DMA-setup reading route
+
+In bank `$80`, begin at the serviced-request branch of `NMI`. After the queued
+VRAM write/read consumers, it calls `UpdateOAM_CGRAM`,
+`TransferSamusTilesToVRAM`, `ProcessAnimatedTilesObjectVRAMTransfers` and
+`Update_IO_Registers` in that order. These routines present the software state
+prepared by the main thread; the no-request NMI path skips all of them.
+
+`UpdateOAM_CGRAM` configures channel 0 for the complete `$220`-byte OAM image and
+channel 1 for the `$200`-byte CGRAM image, resets both hardware destinations, and
+starts the two channels together. `TransferSamusTilesToVRAM` consumes independent
+top/bottom requests. Each definition has a 24-bit source followed by two sizes;
+the second size may be zero, otherwise its source immediately follows part 1.
+The top destinations are `$6000/$6100` and the bottom destinations are
+`$6080/$6180` in VRAM word addressing.
+
+`ProcessAnimatedTilesObjectVRAMTransfers` visits six word-indexed slots from
+`$0A` down to zero. A nonzero object ID keeps the object alive; a nonzero source
+offset is the one-frame upload request. Successful DMA clears only that source,
+so the same prepared graphics are not uploaded twice.
+
+`Update_IO_Registers` finally copies the CPU/PPU shadows to hardware. Scroll and
+Mode 7 values use the PPU's two-write latches. The Mode 7 matrix/origins are sent
+only if the real or Ceres fake BG-mode value selects mode 7. Gameplay copies of
+the main-screen and colour-math values record what this NMI actually presented.
+
+Also read `SetupHDMATransfer`, a utility used by loading and cutscene paths. Its
+call sites place an eight-byte descriptor directly after `JSL`: channel, DMA
+mode, B-bus target, 24-bit source and 16-bit size. The helper writes the selected
+`$43x0` block, advances the stacked return address over those bytes, and returns
+without starting DMA. The caller subsequently writes `$420B` or `$420C`.
+
+Complete-scope guards pin all 296 executable/label lines. Focused contracts cover
+the inline descriptor length and channel offsets, complete OAM/CGRAM sizes,
+Samus VRAM destinations and the six animated-tile slots. A current-source parity
+case verifies the additions remain byte-identical after assembly.
+
+### Controller input and binding ownership reading route
+
+Continue in bank `$80` at `ReadControllerInput`, called near the end of the
+serviced NMI path. It waits for automatic joypad polling to finish, publishes the
+16-bit held mask, and calculates real new presses as
+`current AND (current XOR previous)`. `DP_Controller1New` remains edge-only.
+`DP_FakeController1New` initially receives those same edges, then receives the
+entire unchanged chord when the initial/subsequent repeat timer expires. Releasing
+or changing any button reloads the longer initial delay.
+
+The conditional debug tail repeats that bookkeeping for controller 2. It also
+guards the Start+Select+L+R soft reset while an SPC upload is active and retains
+the original controller-1 debug chords. These paths are documented as preserved
+runtime behavior, not recommended editor-facing controls.
+
+For editable bindings, move to bank `$82`. `GameOptionsMenu_ControllerBindings`
+converts the seven live action masks into compact indices: X=0, A=1, B=2,
+Select=3, Y=4, L=5 and R=6. The parallel action-address table orders them as
+shot, jump, dash, item select, item cancel, aim up and aim down.
+`Save_GameOptionsMenu_ControllerBindings` performs the reverse conversion and
+writes the live RAM words. The reset routine restores X/A/B/Y/Select/R/L.
+
+`GameOptions_ControllerSettings_SetBinding` deliberately maintains a permutation
+of those seven buttons. It finds the other action that owns the newly selected
+button and exchanges the two compact indices. Thus assigning Select to Item
+Cancel moves Item Cancel from Y to Select and moves Item Select from Select to Y;
+the `$4000/$2000` project diff is the intended swap, not an ASM-version overwrite.
+
+Complete-scope guards pin 302 executable/directive/label/data lines, including
+the input-edge formula, default masks, action order, hardware-bit table, circular
+six-owner search and final exchange. Focused permutation tests and the current
+full-source parity case verify that the documentation changes no ROM bytes.
+
+### Save/SRAM mirror and checksum reading route
+
+In bank `$81`, begin at `SaveToSRAM`. The routine first refreshes the WRAM save
+mirror: the `$60`-byte equipment/options region, the current area's `$100`-byte
+explored-map slice, save station and area. It then selects one of the three SRAM
+slot offsets from `SaveSlotOffsets`, copies the complete mirror, and accumulates a
+16-bit wrapping checksum. Two checksum copies and two bitwise complements protect
+each slot; this is duplication for validation, not four independent checksums.
+
+Follow `LoadFromSRAM` for the reverse path. It stages SRAM in the WRAM mirror and
+validates the first checksum/complement pair before trying the second. Only a
+successful pair commits equipment, map and location to live state. If both pairs
+fail, the routine clears that slot in SRAM and returns carry set; untrusted staged
+bytes never become live game state. The slot table values `$0010`, `$066C` and
+`$0CC8` are separated by `$65C` bytes.
+
+Complete-scope guards pin all 154 executable/data/label lines. Focused tests cover
+slot spacing, complement arithmetic and preservation of existing comments. An
+explicit revision-15 upgrade case verifies the added prose does not alter the ROM.
+
+### Samus health, damage and reserve reading route
+
+Start in bank `$91` with `Restore_A_Energy_ToSamus`: main-tank overflow moves into
+reserve, reserve clamps at capacity, and the first nonzero reserve fill enables
+automatic mode when it was off. `Deal_A_Damage_to_Samus` is the raw-damage path;
+it deliberately performs no suit reduction, ignores the retained 300-damage
+sentinel, respects frozen time, and clamps lethal subtraction to zero.
+
+In bank `$90`, `HandlePeriodicDamageToSamus` is the separate signed 16.16 path.
+Varia halves and Gravity quarters the complete pending value before fractional
+energy is subtracted; its borrow flows into whole energy. Every return consumes
+the pending words, including frozen time. `LowEnergyCheck` owns the warning-sound
+state around the 31-energy threshold, while
+`HandleSamus_AutoJumpTimer_HurtFlashCounter_PrevInputEnergy` compares current and
+previous energy to start hurt flashing without mistaking restoration for damage.
+
+Finish in bank `$82`. `HandleSamusRunningOutOfEnergy_and_IncrementGameTime` chooses
+automatic reserve refill when enabled and nonempty, otherwise begins the normal
+death transition only from gameplay state 8. Its shared tail also advances the
+regional frame count and cascades seconds/minutes/hours, clamping at 99:59:59:59.
+`Reserve_Tank_Auto_Refill` transfers one unit per call and queues its sound every
+eight serviced NMI frames. Guards pin 285 source lines; focused arithmetic and an
+explicit revision-16 upgrade case protect these contracts.
+
+### Projectile lifecycle and data-record reading route
+
+In bank `$90`, read `Reset_Projectile_Data`, then `Clear_Projectile`. Ten slots use
+word offsets `$00..$12`; the first five are ordinary projectiles and the last five
+are bombs. A zero instruction pointer marks a slot inactive. `Handle_Projectiles`
+walks those offsets backward, calling the bank-$90 pre-instruction before the
+bank-$93 instruction handler and reloading the shared index afterward.
+
+`Kill_Projectile` moves a beam to its leading collision edge before converting it
+to an explosion. Missiles convert in place; other categories are cleared. Move to
+bank `$93` for `InitializeProjectile`: direction selects a record pointer, beam
+type selects charged/uncharged tables, and non-beam type selects its own table.
+The record supplies damage, instruction list and first-frame collision radii.
+`InitializeBomb` uses the same non-beam table but has one instruction-list pointer.
+
+Finally, `Initialize_Beam_Missile_Explosion` changes beams to category `$07` and
+missiles/supers to `$08`. It selects distinct instruction lists and impact sounds;
+cinematics suppress the missile sound. Super missiles additionally start quake
+type `$14` for 30 ticks. Cooldowns of 21 or more become 20, shorter values remain
+unchanged, and every resulting explosion receives damage 8. Guards pin 287 lines;
+focused boundary tests and an explicit revision-17 upgrade case accompany the
+current full-source/ROM parity check.
+
+### Ammunition restoration reading route
+
+In bank `$91`, follow `Restore_A_Missiles_ToSamus`. A pickup first updates the live
+count. Overflow beyond normal capacity moves into the otherwise rarely used
+`ReserveMissiles` word; live missiles then clamp to maximum. Reserve missiles cap
+at the lesser of 99 and normal missile capacity. A pickup that remains below
+normal capacity does not change the reserve word.
+
+`Restore_A_SuperMissiles_ToSamus` and `Restore_A_PowerBombs_ToSamus` are simpler:
+they add directly to the live count and clamp only values strictly above maximum.
+Equality returns without a redundant clamp store. The three guarded scopes cover
+75 source lines, with arithmetic tests for under-capacity, overflow, 99-cap and
+exact-maximum behavior. Updating revision 18 adds only these comments.
+
+### Projectile cooldown and slot-reservation reading route
+
+In bank `$90`, start at `Handle_Samus_Cooldown`. Positive cooldowns tick toward
+zero, negative values canonicalize to zero, and zero returns unchanged. Frozen
+time instead refreshes the cooldown to 32 every call.
+
+Then compare `Check_if_Samus_Can_Fire_Beam` and
+`Check_if_Samus_Can_Fire_Missile`. Both inspect only the cooldown's low byte and
+reserve ownership before construction by setting cooldown to one, incrementing
+the ordinary projectile counter and returning carry set. Beams and normal
+missiles allow counts below five. Super missiles require a count below four so a
+second slot remains for their linked projectile. Carry clear means no reservation
+occurred. Guards pin 58 source lines; revision-19 migration checks keep output
+byte-identical.
+
+### Projectile instruction and drawing reading route
+
+Continue in bank `$93` at `ProjectileInstructionHandler`. It decrements the active
+slot's timer; expiry loads the instruction cursor. Negative words are bank-$93
+commands. The handler advances Y past the opcode and pushes a synthetic near
+return to its loop, so an `RTS` command may consume arguments or replace Y.
+`Instruction_SamusProjectile_Delete` deliberately discards that return and exits
+the long handler after clearing the slot. `Instruction_SamusProjectile_GotoY`
+replaces Y with its word argument and returns to interpretation.
+
+Nonnegative words are eight-byte timed frames: duration, spritemap pointer,
+byte-sized X radius, byte-sized Y radius and the next cursor. `DrawProjectiles`
+visits the five ordinary slots. Uncharged ordinary beams alternate visibility by
+slot group and frame parity; spazer/plasma use frame-counter bit 1. Categories
+`$03+` are left for `DrawBombsAndProjectileExplosions`, which visits all ten slots,
+hides power bombs with zero timers, and culls ordinary coordinates from -48 through
+303 pixels horizontally. Both paths account for the Ceres rotating room and reload
+the shared slot after drawing code repurposes X. Guards pin 178 source lines;
+focused record, slot, category and culling tests accompany the revision-20 update.
+
+### NMI VRAM-write and scrolling-DMA reading route
+
+Continue in bank `$80` at `HandleVRAMWriteTable_ScrollingDMAs`, called from the
+serviced-request path in `NMI`. Main-thread systems append seven-byte records to
+`VRAMWrite`: a word byte count, 24-bit source and word VRAM destination.
+`VRAMWriteStack` is the byte offset immediately after the last record. The
+consumer writes a zero-size terminator there and walks from offset zero in exact
+seven-byte strides; it clears the stack only after the queue has been consumed.
+
+Each ordinary record runs DMA channel 1 in mode 1, alternating writes to `$2118`
+and `$2119`. Destination bit 15 also chooses VMAIN `$81` instead of `$80`:
+ordinary rows advance one VRAM word after each high-byte write, while columns
+advance 32 words. This is how revision 10's vertical PLM records reuse the same
+queue format as ordinary row writes. After that queue—even when it was empty—the
+routine always checks the independent scrolling-column and scrolling-row flags.
+
+Follow `ExecuteHorizontalScrollingDMAs` for BG1 and BG2 columns. VMAIN `$81`
+turns the staged left/right tile halves into adjacent columns, advancing down the
+tilemap between words. Each background first uploads its unwrapped segment, then
+an optional wrapped segment with adjusted WRAM sources and VRAM destination.
+The update flag is cleared before DMA so the prepared column is consumed once.
+
+`ExecuteVerticalScrollingDMAs` uses VMAIN `$80` for BG1/BG2 rows. The prepared
+destination receives the top tile row; OR `$20` selects the tilemap row 32 words
+below it for the bottom half. The same top/bottom pair is repeated for an optional
+wrapped segment. All staging buffers live in bank `$7E`, and every transfer uses
+DMA channel 1. In the BG2 wrapped path, `SEP #$02` explicitly sets the processor
+zero flag, so the following `BEQ` always skips the retained self-loop on a
+conforming 65816; it is not a data-dependent runtime failure check.
+
+Complete-scope guards pin all 219 executable/label lines, including the record
+stride, source-bank overlap, VMAIN modes, paired destinations, wrap sizes and the
+forced-status branch. Arithmetic tests cover queue boundaries, destination-mode
+selection and row/column pairing. Updating a frozen v10 baseline is compiled
+before and after migration to retain authored enemy tuning and modules with
+byte-identical complete ROM output. These are source/compiler and arithmetic
+contracts, not cycle-level DMA emulation.
+
+### VRAM-read and audio-runtime reading route
+
+Continue at `HandleVRAMReadTable` in bank `$80`. The serviced NMI path consumes
+nine-byte `VRAMRead` records: a VRAM word address, DMA control byte, B-bus target,
+24-bit WRAM destination and 16-bit byte count. The routine configures channel 1 for
+VRAM-to-WRAM DMA, primes the VRAM read buffer through `$2139`, then advances by
+nine bytes. `VRAMReadStack` is the byte offset after the final record.
+
+The retained table terminator deserves care. The routine enters with an eight-bit
+accumulator and writes one zero byte at the queue end, but changes to a 16-bit
+accumulator before testing the source word. The upstream note observes that normal
+producers queue only one read in a frame; the following byte must already be zero.
+The enrichment documents and guards this historical mismatch rather than changing
+it or implying that arbitrary multiple-record queues are safe.
+
+For music, read `CheckIfMusicIsQueued` and `HandleMusicQueue`. The first scans all
+eight queued timer words and reports only whether one is nonzero; it does not test
+the active timer or SPC playback. The consumer decrements a signed active timer:
+a positive value waits, zero dispatches the active entry and a negative value
+loads the next ring slot. Ring offsets are even values `$00..$0E`. A nonnegative
+entry sends its low seven-bit track number through `$2140`; a negative entry uses
+its low byte to select a 24-bit `Music_Pointers` source for `UploadToAPU_long`.
+Both paths suppress sound-effect handshakes for eight calls, but the upload path
+loads a following ring entry on the next call rather than falling through directly.
+
+The request side begins at `QueueMusicDataOrTrack_8FrameDelay`. It rejects demo
+states, assigns eight calls of delay and checks the prospective producer against
+the consumer before writing, retaining one empty slot in the eight-entry word
+ring. `QueueMusicDataOrTrack_YFrameDelay` instead stores max(Y, 8) and advances
+without a capacity comparison. That variant can overwrite an unread slot; callers
+choose it specifically when replacing older music requests is acceptable. Both
+use bit 15 of the request to distinguish music data from a track when consumed.
+
+Sound-effect callers first select a library and a maximum outstanding count of
+1, 3, 6, 9 or 15. The small wrappers preserve X/Y/status, use `XBA` to retain the
+sound ID in A high and put the threshold in A low, then branch to
+`QueueSound_Lib1`, `QueueSound_Lib2` or `QueueSound_Lib3`. Each common body rejects
+requests at its threshold, when sounds are disabled, during demo states or during
+an active power-bomb explosion. A successful insert advances the library's
+producer modulo 16 and clears the new producer slot as a zero sentinel.
+
+The retained `.queueFull` path calls `NOPRTS_8091A7`, compares the new ID with the
+current producer byte and replaces it only for a numerically lower ID without
+advancing. With consistent indices, the official thresholds reject a full ring
+before this path, so it is documented as retained collision behavior rather than
+the ordinary insertion policy.
+
+Then follow `HandleSounds` in bank `$82`, called after each game-state handler.
+Libraries 1, 2 and 3 independently use ports `$2141`, `$2142` and `$2143`, adjacent
+state bytes and separate 16-byte rings. State 0 sends and consumes a queued sound;
+state 1 waits for the SPC to echo its ID; state 2 holds the acknowledged request
+for two calls before clearing it; state 3 waits for the echoed zero and can send
+the next request immediately. If selected, state 4 is a separate delayed state
+reset. During
+music-imposed downtime, the dispatcher decrements the counter and keeps all three
+ports and current-request mirrors clear without advancing these states.
+
+`ResetSoundQueues` demonstrates the packed metadata layout: four word stores clear
+the adjacent start, next and first two state-byte pairs, followed by one byte store
+for the third state. Queue payload bytes and ports remain untouched; equal zero
+indices make the three rings logically empty. Revision 12 guards all 230 runtime
+executable/label lines, including the nine-byte VRAM stride, eight-slot music wrap,
+state dispatch table, acknowledgement branches and overlapping reset stores.
+Revision 13 adds 173 guarded producer lines for capacity, minimum-delay, wrap,
+global-gate, insertion and numeric replacement paths. Focused tests cover the
+record/ring boundaries and two-call/underflow behavior. Frozen v11/v12 migrations
+are included in the periodic full historical gate; they need not run during each
+authoring iteration. The comments themselves remain source-preserving and are
+checked against the current disassembly independently.
 
 ### Applying an update
 

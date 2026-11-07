@@ -40,11 +40,16 @@ DrawPLM:
     @Test fun `v10 adds PLM drawing and VRAM notes without changing the exact frozen v9 recipe`() {
         val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-9.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
-        assertEquals("super-metroid-ntsc-10", current.revision)
-        assertEquals(previous, current.copy(revision = previous.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith("plm-draw.") },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith("plm-draw.") }))
-        assertEquals(10, current.documentation.count { it.id.startsWith("plm-draw.") })
+        val v10 = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-10.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        assertEquals("super-metroid-ntsc-10", v10.revision)
+        assertEquals(previous, v10.copy(revision = previous.revision,
+            documentation = v10.documentation.filterNot { it.id.startsWith("plm-draw.") },
+            lineDocumentation = v10.lineDocumentation.filterNot { it.id.startsWith("plm-draw.") }))
+        assertEquals(v10.documentation.filter { it.id.startsWith("plm-draw.") },
+            current.documentation.filter { it.id.startsWith("plm-draw.") })
+        assertEquals(v10.lineDocumentation.filter { it.id.startsWith("plm-draw.") }, groups)
+        assertEquals(10, v10.documentation.count { it.id.startsWith("plm-draw.") })
         assertEquals(3, groups.size)
         assertEquals(61, groups.flatMap { it.lines }.count { it.comment != null })
         assertEquals(146, groups.sumOf { it.lines.size })

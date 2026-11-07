@@ -159,22 +159,46 @@ shared script interpreter, with line comments for six common commands in both
 [enemy-runtime/script route](reference_workspace.md#enemy-scheduling-and-instruction-script-reading-route).
 Those A3-local command copies explain the actual Sleep/loop commands reached by
 the crawler and Waver scripts, including their synthetic return frames.
+Revision 9 adds bank-$84 PLM runtime/item coverage; revision 10 follows PLM draw
+records through metatile expansion and queue creation. Revision 11 closes that
+path in bank `$80`, documenting the NMI consumer for ordinary VRAM records and
+the separate scrolling column/row DMA buffers. Revision 12 continues through the
+VRAM-read consumer and bank-$80/$82 music and SPC sound runtime. Revision 13 adds
+the fixed/variable music producers and all three sound-library queue producers.
+Revision 14 follows the serviced NMI presentation path through inline DMA setup,
+PPU shadow registers, OAM/CGRAM, Samus tiles and animated-tile uploads. Revision
+15 continues from NMI joypad sampling into the controller-options binding tables,
+defaults, persistence and one-owner swap behavior.
+Revision 16 documents bank-$81 save-mirror refresh, SRAM slot offsets and both
+checksum/complement validation pairs. Revision 17 follows Samus energy restoration,
+raw/periodic damage, low-health state, reserve refill, death selection and in-game
+time across banks `$82`, `$90` and `$91`. Revision 18 covers projectile slot reset,
+clear/kill/dispatch and bank-$93 projectile, bomb and explosion initialization.
+Revision 19 documents missile reserve overflow plus super-missile and power-bomb
+pickup caps. Revision 20 covers cooldown ticking and beam/missile slot reservation.
+Revision 21 follows bank-$93 projectile command execution and both drawing passes.
+See the
+[PLM/VRAM reading routes](reference_workspace.md#plm-runtime-and-item-lifecycle-reading-route)
+the [audio-runtime route](reference_workspace.md#vram-read-and-audio-runtime-reading-route),
+and the [NMI presentation route](reference_workspace.md#nmi-presentation-and-dma-setup-reading-route).
+The [controller binding route](reference_workspace.md#controller-input-and-binding-ownership-reading-route)
+explains the project-visible Y/Select swap.
 These are generated review files, not project overrides or a new source of truth.
 The gate also reads the compiled orientation/script tables and checks the
 dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1, 2, 3, 4, 5, 6 and 7 are compiled before and after migration,
+Updates from revisions 1 through 20 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2 through version-7 recipes are
+with byte-identical complete ROM output. Version-2 through version-20 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 
 Existing projects retain their frozen baseline. Opening or repairing one does
 not add these comments or rewrite its modules. To adopt the new comments in an
-existing project, expand **Project ASM enabled**, choose **Save edits & preview
-baseline update…**, review any conflicts, then **Validate & apply**. Alternatively,
+existing project, expand **Project ASM enabled**, choose **Update ASM Version…**,
+review any conflicts, then **Validate & apply**. Alternatively,
 inspect a fresh Project ASM workspace. **Original (read-only)** remains upstream.
 `asset-manifest.tsv` is unchanged: this pass neither changes assets nor their
 ROM extraction ranges.
