@@ -63,7 +63,7 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-40`. It retains the
+The current enrichment revision is `super-metroid-ntsc-57`. It retains the
 Zoomer/crawler, Waver, core-loop, pause/door, room-loading, enemy-runtime and
 PLM-runtime/item documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
@@ -131,6 +131,36 @@ Revision 38 adds 4 block explanations and 33 line comments across the 53-line
 charge/input controller. Revision 39 adds 11 block explanations and 104 line
 comments across 229 lines of SBA dispatch and all four constructors. Revision 40
 adds 6 block explanations and 44 line comments across 97 lines of ice-SBA runtime.
+Revision 41 adds 5 block explanations and 44 line comments across the complete
+112-line wave-SBA runtime. Revision 42 adds 5 block explanations and 42 line
+comments across 81 lines of plasma-SBA orbit and all three phases. Revision 43
+adds 8 block explanations and 99 line comments across 193 lines of spazer-SBA
+pair cleanup, circling, inward/outward flight, conversion and ending behavior.
+Revision 44 adds 10 block explanations and 91 line comments across 144 lines of
+movement-specific HUD/projectile dispatch. Revision 45 adds 10 block explanations
+and 66 line comments across 138 lines of item switching and availability handling.
+Revision 46 adds 4 block explanations and 40 line comments across 81 lines of
+arm-cannon open/close state. Revision 47 adds 6 block explanations and 75 line
+comments across the complete 186-line arm-cannon OAM/VRAM renderer.
+Revision 48 adds 9 block explanations and 78 line comments across 118 lines of
+initial beam collision and reflected beam/missile behavior. Revision 49 adds 6
+block explanations and 66 line comments across 123 lines of shinespark trigger,
+windup and directional control. Revision 50 adds 9 block explanations and 86
+line comments across 228 lines of complete horizontal/vertical shinespark
+movement and termination. Revision 51 adds 9 block explanations and 96 line
+comments across 204 lines of crash-circle, finish and speed-echo behavior.
+Revision 52 adds 10 block explanations and 91 line comments across 207 lines of
+Crystal Flash activation, ammo consumption, healing and recovery. Revision 53
+adds 7 block explanations and 76 line comments across 185 lines of bomb-spread
+construction, tables, movement and collision response.
+Revision 54 adds 9 block explanations and 102 line comments across 402 lines of
+X-ray activation, environment ownership, aiming poses, animation and restoration.
+Revision 55 adds 10 block explanations and 82 line comments across 239 lines of
+grapple dispatch, extension, connection, swinging, wall grab and cancellation.
+Revision 56 adds 5 block explanations and 58 line comments across 209 lines of
+grapple direction/origin selection and complete launch initialization. Revision
+57 adds 6 block explanations and 69 line comments across 334 lines of grapple
+drop, wall-jump, swing-propulsion and released-flight cleanup.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -614,6 +644,23 @@ direction and running offsets, temporarily transforms coordinates in rotating
 Ceres, and submits only byte-page-zero screen Y coordinates. These three revisions
 guard 369 lines and explain both shot construction and its complete presentation.
 
+### Beam spawn collision and reflection reading route
+
+Continue at `InitialBeamBlockCollision_NoWaveBeam`. The low direction nibble
+selects ten vertical, diagonal and horizontal entries while X temporarily holds
+the table offset, so each helper reloads the firing slot from `ProjectileIndex`.
+Diagonal shots probe horizontally first and skip the vertical probe on collision.
+Left-facing helpers seed signed X velocity -1 because firing otherwise reaches
+this check with zero velocity. `InitialWaveBeamBlockCollision` has the same
+direction grouping and axis priority, but calls the wave-aware movement helpers.
+
+At `ProjectileReflection`, scratch `$14` identifies the reflected slot and category
+bits distinguish beams, missiles and supers. A beam rebuilds velocity/data and
+selects charged behavior from its low beam nibble. A missile reinstalls its data,
+pre-instruction and `$00F0` launch accumulator. A super first clears the linked
+slot named by its variable low byte, then returns through the same launch path so
+a fresh link can be constructed. Revision 48 guards all 118 lines in this route.
+
 ### Missile and linked-super firing reading route
 
 Continue at `HUDSelectionHandler_Missiles_SuperMissiles`. A current or retained
@@ -718,6 +765,165 @@ outside X `[-32, 288)` or Y `[16, 256)`. Both phases refresh cooldown two and cl
 ordinary charge, preventing overlap. Revisions 38–40 guard 379 lines across input,
 construction and the complete ice runtime.
 
+For wave, follow `ProjectilePreInstruction_WaveSBA`. Its regional countdown and
+direction flags own lifetime. Packed 8.8 X velocity and the variable-field Y
+velocity steer toward Samus by `$40`, under retained limits `$F801/$0800`, before
+being split into 16.16 position additions. Only slot offset six queues sound `$28`
+when horizontal velocity crosses zero; every slot still trails and homes alike.
+
+Plasma's `ProjectilePreInstruction_PlasmaSBA` calculates a Samus-centered orbit,
+advances its byte angle by the facing-derived shared delta and dispatches through
+the phase number stored in Y velocity. `PlasmaSBA_Phase0_Expanding` grows radius
+to `$C0`; phase 1 contracts below `$2D`; phase 2 grows outward until X leaves
+`[-32, 288)` or Y leaves `[16, 256)`. The projectile slot is preserved in Y while
+X becomes the phase-table offset.
+
+Spazer's main pre-instruction dispatches phase offsets 0/2/4 and treats slots 0/4
+and 2/6 as cleanup pairs. Phase 0 circles Samus until angle `$80`, then starts at
+radius `$A0` around a point 114 pixels above Samus. Phase 2 contracts by five to
+the center, reverses angular direction and rotates angle by `$80`; phase 4 expands
+until its radius crosses `$60` or it leaves the top. `FireEndOfSpazerSBA` separates
+the pairs horizontally, converts the two main slots to special trail type `$8024`,
+and installs a falling ending behavior that clears at screen Y `$F8`. Revisions
+41–43 guard all 386 lines in the wave, plasma and spazer runtime paths.
+
+### HUD selection and arm-cannon reading route
+
+Continue at `HandleHUDSpecificBehaviorAndProjectiles`. Facing-forward poses 0 and
+`$9B` run projectile handling directly. Other poses tick cooldown, process item
+switching and dispatch one of 28 movement-specific handlers. Frozen time still
+allows that HUD behavior to run but then suppresses `Handle_Projectiles`.
+
+`HUDSelectionHandler_Standard` gives an active grapple priority over the selected
+item and gives frozen X-ray state priority when grapple is inactive. Otherwise the
+selection 0..5 dispatches beam/charge, missile/super, power-bomb, grapple or X-ray
+behavior. Turning and transition poses may suppress ordinary handling, cancel an
+active grapple or use the transition-supplied shot direction. Draygon pose `$DF`
+uses morph-ball weapons; its other grabbed poses use the standard path.
+
+`HandleSwitchingHUDSelection` gives a new cancel press priority, while a new select
+press cycles through six candidates. Candidate handlers return carry set to skip
+unavailable ammo/equipment and carry clear to accept; the always-available nothing
+entry guarantees termination. Held cancel can assign the accepted item as the
+auto-cancel owner. A changed selection resets arm-cannon settling state to one;
+an unchanged selection advances it and clamps at two.
+
+At `UpdateArmCannonIsOpenState`, selections map to closed/open bytes as
+`0,1,1,0,1,0`. A state change writes desired open state and transition byte one
+together through adjacent RAM fields. Opening advances frames 0 to 3; closing
+advances 4 to 0. Reaching either endpoint clears the transition byte.
+
+`DrawArmCannon` skips closed frame zero and odd invincibility-flicker frames. Its
+pose record chooses orientation and signed per-animation X/Y offsets. A visible
+coordinate in `[0, 256)` appends one low-OAM entry; tile orientation and transition
+frame choose a bank-`$9A` source, then a seven-byte VRAM-write record transfers
+`$20` bytes to `$61F0`. Revisions 44–47 guard all 549 lines of this HUD-selection,
+state and renderer route.
+
+### X-ray activation and pose-lifecycle reading route
+
+Follow `HUDSelectionHandler_Xray` into bank `$91`'s `XrayHandler`. It does nothing
+when time is already frozen or Dash is not held. `XraySetup` must return carry set
+before the window HDMA object is spawned. Setup rejects the special five-bomb/
+cooldown-seven liquid case, landing poses `$A4..A7` and `$E0..E7`, non-gameplay
+states, an active power-bomb effect, any vertical speed, and unsupported previous
+or current movement types. Its table accepts standing/running/ran-into-wall as
+standing class one and crouching as class two.
+
+Success requests facing-specific pose `$D5/$D6/$D9/$DA`, freezes time, initializes
+all 256 window entries, pauses enemy projectiles, PLMs, animated tiles and palette
+FX, constructs the indirect HDMA regions and seeds beam angle `$40` right or `$C0`
+left. The spawned object's existing setup-stage list then performs the BG tilemap
+backup/build/transfer sequence. These paused systems are explicit owners, not a
+generic side effect of merely selecting X-ray in the HUD.
+
+`XraySamusPoseInputHandler` mirrors the angle around `$100` when opposite-direction
+input begins a standing/crouching turn. It completes that turn only at animation
+frame two, timer one, and commits pose history on both boundaries. In bank `$90`,
+`SamusMovementHandler_Xray` maps facing-aware angle bands to five fixed Samus
+frames while holding their timer at fifteen. `Set_NonXray_SamusPose` restores the
+normal pose/movement/input handlers, compensates Y for a smaller restored radius
+and resumes all four paused subsystems. Treating turning as standing preserves the
+original X-ray stand-up glitch. Revision 54 guards all 402 lines in this lifecycle.
+
+### Grapple launch, connection and release reading route
+
+`HUDSelectionHandler_Grappling` reaches bank `$9B`'s `GrappleBeamHandler`. The
+handler ticks pose-change auto-fire, clears the per-update connected bit, rejects
+incompatible poses and jumps through `GrappleBeam_Function` using a synthetic near
+return. After the selected state returns, it enables grapple liquid physics only
+for active pre-cancel states below a valid room liquid surface and without Gravity
+Suit.
+
+Inactive grapple fires from either live or retained new-shot input. At
+`GrappleBeamFunction_Fire_GotoCancel`, ordinary pose records supply direction and
+Y offset; Draygon-held poses derive three directions per facing from the D-pad.
+Direction selects extension velocity and angle. Running and non-running tables
+independently place origin/start/endpoint and flare. The shared tail clears swing
+and collision state, starts length zero with delta twelve, initializes segments,
+takes drawing/palette ownership and enters `GrappleBeamFunction_Firing`.
+
+Extension stops at length `$80`, checks enemies before blocks, and accepts only a
+valid grapple reaction. Connection reverses length delta to -8 and selects locked,
+swinging or wall-grab behavior. Locked and wall-grab states continuously revalidate
+their endpoint. Swinging processes D-pad length, angular acceleration, velocity,
+kick, movement and special angles before rechecking enemy/block attachment and
+synchronizing Samus. Releasing wall grab opens a thirty-update, sixteen-pixel
+wall-jump probe window.
+
+Common cancellation clears grapple/flare state, restores palette/drawing and runs
+post-grapple collision correction. A zero-velocity release at angle `$8000` uses
+`GrappleBeamFunction_Dropped`, which selects standing/crouching recovery and clears
+motion. A successful wall jump requests pose `$83/$84` with command six. Other
+swing releases call `PropelSamusFromGrappleSwing`: angular magnitude and endpoint
+sine produce 16.16 Y speed plus decelerating X base speed, intentionally excluding
+extra kick velocity. `GrappleBeamFunction_ReleasedFromSwing` keeps that new motion
+while retiring grapple ownership. Revisions 55–57 guard all 782 lines in this route.
+
+### Shinespark trigger, flight and crash reading route
+
+Start at `TriggerShinesparkWindup`. It clears ordinary motion, seeds boost/extra-run
+state, installs a thirty-tick windup and consumes any beam charge. At windup expiry,
+`SamusMovementHandler_ShinesparkWindup` chooses pose `$CB/$CC`, installs vertical
+flight and clears horizontal speed echoes. The vertical, diagonal and horizontal
+handlers refresh contact damage/hurt flash, sample echoes, run their required axes,
+then call `EndShinesparkIfCollisionDetectedOrLowEnergy`. Energy drains by one only
+when the pre-drain value is at least thirty; energy below thirty or a published
+solid-enemy collision begins the crash and returns carry set.
+
+`Shinespark_Horizontal_Movement` accumulates and caps extra-run speed at fifteen,
+tests solid enemies before block movement and clamps previous X to fifteen pixels
+from current X. `Shinespark_Vertical_Movement` caps integer speed at fourteen,
+negates it for upward travel and clamps previous Y only after movement more than
+fourteen pixels upward. The shared ending path clears flight state, seeds the two
+crash echoes and installs the circle controller and drawing handler.
+
+Follow `SamusMovementHandler_ShinesparkCrash_EchoesCircleSamus` through phases
+0/1/2: radius grows to sixteen, angles rotate until the retained counter reaches
+`$80`, then radius shrinks to zero. A thirty-tick hold leads to
+`ShinesparkCrash_Finish`, which fills available ordinary projectile slots toward
+five with outward type-`$8029` echoes and requests the normal facing pose.
+`ProjectilePreInstruction_SpeedEcho` grows distance by eight and clears offscreen
+echoes; its retained low-byte wrap at distances `$F8..$FF` is documented as an
+original bug. Revisions 49–51 guard all 555 lines of this lifecycle.
+
+### Crystal Flash reading route
+
+Begin at `CrystalFlash`. Before game state `$28`, held input must exactly equal
+`$0430 | ShotBinding`; later states skip only that input test. Activation also
+requires zero vertical speed, energy below 51, no reserve energy, and at least ten
+missiles, supers and power bombs. Pose `$D3/$D4` must resolve to movement type
+`$1B` before the routine installs special input, palette and movement state.
+
+`SamusMovementHandler_CrystalFlash_RaiseSamus_GenerateBubble` raises Samus two
+pixels for ten updates (twenty total), then centers/spawns the HDMA bubble and
+switches to ammo consumption. The dispatcher consumes ten missiles, ten supers
+and ten power bombs, one unit every eight serviced NMI frames, restoring fifty
+energy each time for a nominal 1500 total. The final power-bomb tick installs
+`SamusMovementHandler_CrystalFlash_Finish`; it descends to the saved Y coordinate,
+waits for movement type zero, clears the effect/palette and restores normal input.
+Revision 52 guards all 207 lines in this route.
+
 ### Morph-ball bombs and power-bomb runtime reading route
 
 In bank `$90`, begin at `HUDSelectionHandler_MorphBall`. Held shot with HUD item 3
@@ -752,6 +958,24 @@ HDMA objects and spawns the global effect. Its slot timer becomes `$FFFF`. A lat
 zero-timer call waits for the global flag to clear before releasing the slot.
 Together these five scopes guard 241 source lines; focused tests cover charge,
 reservation, slot/category, fuse and effect-cleanup boundaries.
+
+### Bomb-spread construction and movement reading route
+
+Continue at `BombSpread`. It rejects duplicate construction when bomb slot zero
+already uses spread behavior, then fills fixed offsets `$0A..$12` with five type-
+`$8500` bombs centered on Samus. `BombSpreadData` supplies staggered fuse timers
+120/110/100/110/120, symmetric packed horizontal velocities, base upward speeds
+0/1/2/1/0 and the center bomb's fractional `$8000` Y speed. Timeout bits 6..7 add
+0..3 to each base Y speed before negation, so longer charge strengthens the spread
+without changing its shape.
+
+At `ProjectilePreInstruction_BombSpread`, a direction high-nibble deletion marker
+clears the slot; otherwise ordinary fuse/explosion handling runs before motion.
+Gravity updates 16.16 Y velocity. Vertical collision restores the prior position,
+then falling bombs reload their stored upward bounce while rising bombs stop.
+Horizontal velocity packs direction in bit 15 and an unsigned 8.8 magnitude in the
+remaining bytes. A wall collision undoes that update and flips bit 15, sending the
+bomb away on the next frame. Revision 53 guards all 185 lines in this route.
 
 ### NMI VRAM-write and scrolling-DMA reading route
 

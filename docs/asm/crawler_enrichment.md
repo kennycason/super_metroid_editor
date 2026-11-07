@@ -192,7 +192,19 @@ and beam-speed initialization paths. Revision 37 closes the visible projectile
 trail allocator, paired interpreter, OAM renderer and frozen-time path.
 Revision 38 documents shot-button charge/release control, revision 39 the SBA
 dispatcher and all wave/ice/spazer/plasma constructors, and revision 40 the full
-two-phase ice-SBA orbit/expansion runtime.
+two-phase ice-SBA orbit/expansion runtime. Revision 41 follows the complete wave
+homing/lifetime path, revision 42 the complete three-phase plasma orbit, and
+revision 43 the spazer pair cleanup, three movement phases and falling ending.
+Revision 44 documents movement-specific HUD/projectile dispatch, revision 45 item
+cycling and availability, revision 46 arm-cannon open/close state, and revision 47
+the complete arm-cannon OAM and VRAM renderer. Revision 48 covers initial ordinary/
+wave beam collision and reflected projectiles. Revisions 49–51 follow the complete
+shinespark path from trigger and windup through flight, collision, crash-circle and
+outward speed echoes. Revision 52 documents Crystal Flash activation, consumption,
+healing and recovery, and revision 53 completes bomb-spread construction and motion.
+Revision 54 closes X-ray activation, aiming and restoration. Revisions 55–57 follow
+grapple from HUD dispatch through launch, extension, attachment, swinging, wall grab,
+cancel/drop/wall-jump exits and momentum-preserving release.
 See the
 [PLM/VRAM reading routes](reference_workspace.md#plm-runtime-and-item-lifecycle-reading-route)
 the [audio-runtime route](reference_workspace.md#vram-read-and-audio-runtime-reading-route),
@@ -205,9 +217,9 @@ dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1 through 39 are compiled before and after migration,
+Updates from revisions 1 through 56 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2 through version-39 recipes are
+with byte-identical complete ROM output. Version-2 through version-56 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 
