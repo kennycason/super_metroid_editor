@@ -190,6 +190,9 @@ movement-word behavior. Revision 34 follows ordinary beam/missile motion, revisi
 35 super-missile/link runtime, and revision 36 bomb, wave/Hyper, viewport-culling
 and beam-speed initialization paths. Revision 37 closes the visible projectile
 trail allocator, paired interpreter, OAM renderer and frozen-time path.
+Revision 38 documents shot-button charge/release control, revision 39 the SBA
+dispatcher and all wave/ice/spazer/plasma constructors, and revision 40 the full
+two-phase ice-SBA orbit/expansion runtime.
 See the
 [PLM/VRAM reading routes](reference_workspace.md#plm-runtime-and-item-lifecycle-reading-route)
 the [audio-runtime route](reference_workspace.md#vram-read-and-audio-runtime-reading-route),
@@ -202,9 +205,9 @@ dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1 through 36 are compiled before and after migration,
+Updates from revisions 1 through 39 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2 through version-36 recipes are
+with byte-identical complete ROM output. Version-2 through version-39 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 

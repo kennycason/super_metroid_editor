@@ -63,7 +63,7 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-37`. It retains the
+The current enrichment revision is `super-metroid-ntsc-40`. It retains the
 Zoomer/crawler, Waver, core-loop, pause/door, room-loading, enemy-runtime and
 PLM-runtime/item documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
@@ -127,6 +127,10 @@ missile movement. Revision 35 adds 4 block explanations and 51 line comments acr
 line comments across 152 lines of bomb, wave/Hyper, culling and beam-speed runtime.
 Revision 37 adds 7 block explanations and 80 line comments across 220 lines of
 projectile-trail allocation, paired script interpretation, OAM drawing and freeze behavior.
+Revision 38 adds 4 block explanations and 33 line comments across the 53-line
+charge/input controller. Revision 39 adds 11 block explanations and 104 line
+comments across 229 lines of SBA dispatch and all four constructors. Revision 40
+adds 6 block explanations and 44 line comments across 97 lines of ice-SBA runtime.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -684,6 +688,35 @@ and when both screen coordinates fit byte page zero. Frozen time redraws active
 halves without changing timers, cursors, tiles or scripted positions. The three
 position commands move one half vertically by one pixel. Revision 37 guards all
 220 executable/label lines in this allocation/interpreter/drawing route.
+
+### Beam charge and special-beam-attack reading route
+
+Return to `HUDSelectionHandler_Nothing_PowerBombs`. It snapshots charge before
+each update. Hyper Beam or a loadout without Charge Beam fires while shot is held.
+With Charge equipped, the first held tick fires an uncharged shot and begins charge;
+release below 60 fires uncharged, while 60 or more fires charged. At 120 ticks,
+held input attempts an SBA every update. A pending pose-transition direction forces
+the same release decision immediately. SBA carry clear preserves charge for retry;
+success clears flare state and restores the suit palette.
+
+At `FireSBA`, power bombs must be selected. The low equipped-beam nibble indexes
+cost and dispatch tables; only pure wave, ice, spazer and plasma have constructors,
+each costing one power bomb. Cost is committed before dispatch and underflow clamps
+to zero. Empty inventory clears HUD selection, while constructor carry flows back
+to charge control.
+
+Each constructor owns four ordinary slots and reuses the normal beam cooldown.
+Wave starts at four signed square corners. Ice/plasma use cardinal angle bytes and
+choose angular step +4/-4 from facing, rejecting a duplicate active attack. Spazer
+creates two main charged projectiles plus two type-`$8024` trail projectiles through
+the echo initializer. Their sounds are `$28/$23/$25/$27` respectively.
+
+Follow ice into `ProjectilePreInstruction_IceSBA_Main`: four slots orbit Samus at
+radius 32 while their regional timer counts down, then switch to ending behavior at
+radius 40. The ending phase expands radius by eight per update and clears each slot
+outside X `[-32, 288)` or Y `[16, 256)`. Both phases refresh cooldown two and clear
+ordinary charge, preventing overlap. Revisions 38–40 guard 379 lines across input,
+construction and the complete ice runtime.
 
 ### Morph-ball bombs and power-bomb runtime reading route
 

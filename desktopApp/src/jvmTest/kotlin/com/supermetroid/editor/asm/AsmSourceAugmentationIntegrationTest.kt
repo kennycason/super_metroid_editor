@@ -269,6 +269,24 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previous)
     }
 
+    @Test fun `explicit v37 to current update adds charge-control notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-37.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v38 to current update adds SBA-construction notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-38.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v39 to current update adds ice-SBA-runtime notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-39.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -393,6 +411,12 @@ class AsmSourceAugmentationIntegrationTest {
             ";90B66F; Map categories 1/2 to trail types ${'$'}20/${'$'}21.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
             ";90B6D0; Create a synthetic RTS return to the left fetch loop.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B846; At 120 ticks, attempt a special beam attack.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90CCD6; Subtract this combination's SBA cost.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90CFE2; Expand radius by eight pixels.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
