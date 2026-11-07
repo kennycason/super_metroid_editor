@@ -63,7 +63,7 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-27`. It retains the
+The current enrichment revision is `super-metroid-ntsc-37`. It retains the
 Zoomer/crawler, Waver, core-loop, pause/door, room-loading, enemy-runtime and
 PLM-runtime/item documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
@@ -112,7 +112,21 @@ Revision 25 adds 6 block explanations and 63 line comments across the complete
 125-line morph-ball weapon constructor. Revision 26 adds 4 block explanations and
 35 line comments across two bomb reservation/spread-gate scopes. Revision 27 adds
 4 block explanations and 32 line comments across the normal/power-bomb fuse and
-explosion handlers.
+explosion handlers. Revision 28 adds 3 block explanations and 38 line comments
+across the 80-line projectile-origin/direction scope. Revision 29 adds 3 block
+explanations and 29 line comments across the 62-line Hyper Beam firing scope.
+Revision 30 adds 7 block explanations and 83 line comments across 227 lines of
+charge/flare animation and drawing. Revision 31 adds 4 block explanations and
+51 line comments across 85 lines of missile launch and acceleration. Revision 32
+adds 4 block explanations and 49 line comments across all eight directional
+velocity helpers (110 guarded lines). Revision 33 adds 4 block explanations and
+62 line comments across 153 lines of linked-super collision handling. Revision 34
+adds 5 block explanations and 66 line comments across 108 lines of ordinary beam/
+missile movement. Revision 35 adds 4 block explanations and 51 line comments across
+84 lines of super-missile runtime. Revision 36 adds 6 block explanations and 92
+line comments across 152 lines of bomb, wave/Hyper, culling and beam-speed runtime.
+Revision 37 adds 7 block explanations and 80 line comments across 220 lines of
+projectile-trail allocation, paired script interpretation, OAM drawing and freeze behavior.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -577,6 +591,25 @@ combinations use the shared wide-wave handler, non-wave combinations use the
 straight handler, and completed construction starts a four-tick glow. Together the
 two guarded scopes pin 211 source lines; revision-21/22 upgrades add comments only.
 
+Continue at `InitializeProjectilePositionDirection` for the shared pose-to-shot
+bridge. A one-shot transition direction is consumed before the current pose record;
+normal direction bytes have a zero high nibble. Marker `$10` retries with the last
+different pose, while any unresolved special marker rolls back the projectile-count
+reservation and returns carry set. Direction selects signed origin offsets, with
+running and poses `$75/$76` using the alternate tables; the pose Y offset is then
+subtracted from the projectile's world Y.
+
+`FireHyperBeam` still uses the ordinary beam reservation and five-slot scan, but
+constructs fixed type `$9018`, forces damage 1000 and installs Hyper Beam behavior.
+It seeds cooldown, charged glow and all three flare components. Follow that state
+through `HandleChargingBeamGraphicsAudio`: ordinary charging begins drawing at 15
+ticks, queues its sound at 16 and adds both spark components at 30. Delay-script
+bytes `$FF` and `$FE` mean restart and step backward. Hyper Beam counts its three
+components down instead. `DrawFlareAnimationComponent` resolves facing, pose,
+direction and running offsets, temporarily transforms coordinates in rotating
+Ceres, and submits only byte-page-zero screen Y coordinates. These three revisions
+guard 369 lines and explain both shot construction and its complete presentation.
+
 ### Missile and linked-super firing reading route
 
 Continue at `HUDSelectionHandler_Missiles_SuperMissiles`. A current or retained
@@ -594,6 +627,63 @@ position/direction, and installs link data/behavior. Its word offset is packed i
 the primary variable's low byte, preserving the high byte, and the projectile count
 increments for that second owned slot. Guards cover 148 lines; focused tests protect
 ammo rollback, type encoding, selection clearing and the link back-reference.
+
+For missile motion, start at `InitializeMissileVelocities`: it deliberately passes
+base speed zero through `InitializeProjectileVelocities`, which clears subpositions
+and dispatches the low direction nibble through ten pointers. `AccelerateMissile`
+uses the projectile variable high byte as its initialization marker. Before it is
+set, each update adds `MissileInitializedBitset`; the crossing update installs
+directional velocity and creates a super-missile link. Later updates select signed
+X/Y pairs from `MissileAccelerations` or `SuperMissileAccelerations`.
+
+The eight directional helpers preserve a notable original quirk. Reads such as
+`ProjSpeed_SubDistanceSamusMovedRight+1` and `CameraYSubSpeed+1` are unaligned:
+their low and high bytes come from adjacent RAM fields. The comments describe the
+actual shifts/additions, including the contaminated low byte, rather than treating
+them as clean recent-movement words.
+
+Finish at `SuperMissileLink_VerticalBlockCollisionDetection` and its horizontal
+counterpart. Only initialized categories `$0200/$0800` participate; the primary
+variable low byte identifies the link. A speed magnitude of at least `$0B00`
+positions the link behind the primary and performs an extra missile collision
+probe. Slower live supers synchronize the matching coordinate directly. Explosion
+category `$0800` clears the link on both paths. Revisions 31–33 guard 348 lines;
+focused tests pin initialization, direction dispatch, unaligned-byte behavior,
+the 11-pixel threshold and explosion cleanup.
+
+Continue backward to the projectile pre-instructions for the per-frame motion loop.
+Non-wave beams and ordinary missiles honor the direction high nibble as a deletion
+flag, emit trails every four updates, add direction-indexed acceleration, move
+horizontal before vertical for diagonals, and cull against the expanded viewport.
+Missiles additionally run `AccelerateMissile`. Super missiles emit trails every two
+updates and maintain the link after each moved axis; deletion or offscreen culling
+scans all five ordinary slots and clears every category `$0200` entry. A link-side
+deletion performs the same sweep.
+
+Wave beam variants join `WaveBeamSharedPreInstruction`, using wave-specific block
+movement. Charged/spazer/plasma paths emit trails every four updates; uncharged
+ice-wave uses three and falls through to the shared mover. Hyper Beam jumps there
+without either trail-entry path. `DeleteProjectileIfTooFarOffScreen` retains only
+screen-relative X/Y in `[-64, 320)` and reports deletion through carry. Finally,
+`InitializeBeamVelocities` selects cardinal/diagonal base speed by beam combination
+before joining the shared directional helpers. Bomb and power-bomb pre-instructions
+run fuse/effect handling and block collision in the same update. Revisions 34–36
+guard 344 lines and close the main ordinary projectile motion path.
+
+The visible tail continues at `Spawn_ProjectileTrail`. Beam type indices use their
+low six bits; missile/super categories map to `$20/$21`. Eighteen paired slots are
+scanned from `$22` down, with the left timer owning pair liveness. Allocation sets
+both timers to one, installs independent left/right scripts and seeds position from
+the source projectile.
+
+`HandleProjectileTrails` interprets both halves separately. Timers pre-decrement;
+negative words dispatch bank-$90 commands through a synthetic return, while a
+nonnegative duration is followed by tile/attribute data and zero ends that half.
+Visible halves append four-byte low-OAM entries only below the `$200` cursor cap
+and when both screen coordinates fit byte page zero. Frozen time redraws active
+halves without changing timers, cursors, tiles or scripted positions. The three
+position commands move one half vertically by one pixel. Revision 37 guards all
+220 executable/label lines in this allocation/interpreter/drawing route.
 
 ### Morph-ball bombs and power-bomb runtime reading route
 

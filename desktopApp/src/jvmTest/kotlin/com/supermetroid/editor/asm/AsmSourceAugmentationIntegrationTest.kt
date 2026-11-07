@@ -209,6 +209,66 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previous)
     }
 
+    @Test fun `explicit v27 to current update adds projectile-origin notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-27.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v28 to current update adds Hyper Beam notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-28.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v29 to current update adds charge-presentation notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-29.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v30 to current update adds missile-velocity notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-30.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v31 to current update adds directional-velocity notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-31.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v32 to current update adds super-link notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-32.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v33 to current update adds ordinary projectile-motion notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-33.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v34 to current update adds super-runtime notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-34.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v35 to current update adds wave-motion notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-35.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v36 to current update adds projectile-trail notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-36.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -311,6 +371,28 @@ class AsmSourceAugmentationIntegrationTest {
             ";90C0F1; The first active bomb bypasses later-bomb limit/cooldown checks.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
             ";90C18D; Create the global power-bomb explosion object.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90BA67; Consume the override exactly once.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90BD22; Read fixed Hyper Beam damage 1000.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90BB6D; ${'$'}FF restarts at frame zero.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B307; Advance the launch-delay/base-speed accumulator.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B21A; Read the retained unaligned word spanning movement fields.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B393; Fast-link probing begins at 11 pixels per frame.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90AF1E; Add signed X acceleration for this direction.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B018; An offscreen deletion must also clear linked category entries.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B179; Accept X only while below 320.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B66F; Map categories 1/2 to trail types ${'$'}20/${'$'}21.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90B6D0; Create a synthetic RTS return to the left fetch loop.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)

@@ -182,6 +182,14 @@ spawn collision and motion. Revision 23 covers the charged-beam counterpart.
 Revision 24 follows missile/super-missile construction and the linked super slot.
 Revision 25 documents morph-ball normal/power-bomb construction. Revision 26 adds
 bomb/spread reservation gates, and revision 27 follows both fuse/explosion handlers.
+Revision 28 documents pose/transition projectile origins; revision 29 follows Hyper
+Beam construction; revision 30 covers charge and flare presentation. Revision 31
+adds missile launch/acceleration, revision 32 all eight directional velocity helpers,
+and revision 33 both linked-super collision paths, including the retained unaligned
+movement-word behavior. Revision 34 follows ordinary beam/missile motion, revision
+35 super-missile/link runtime, and revision 36 bomb, wave/Hyper, viewport-culling
+and beam-speed initialization paths. Revision 37 closes the visible projectile
+trail allocator, paired interpreter, OAM renderer and frozen-time path.
 See the
 [PLM/VRAM reading routes](reference_workspace.md#plm-runtime-and-item-lifecycle-reading-route)
 the [audio-runtime route](reference_workspace.md#vram-read-and-audio-runtime-reading-route),
@@ -194,9 +202,9 @@ dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1 through 26 are compiled before and after migration,
+Updates from revisions 1 through 36 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2 through version-26 recipes are
+with byte-identical complete ROM output. Version-2 through version-36 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 
