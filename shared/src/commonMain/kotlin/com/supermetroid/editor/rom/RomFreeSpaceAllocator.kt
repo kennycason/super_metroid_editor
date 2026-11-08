@@ -126,17 +126,56 @@ class RomFreeSpaceAllocator(
         }
     }
 
+    /** A read-only view of the exact shared allocator session. Inspecting space
+     * never initializes a bank cursor or reserves bytes. */
+    fun snapshot(banks: Iterable<Int>): RomFreeSpaceSnapshot {
+        val requested = banks.distinct()
+        val bankSet = requested.toSet()
+        return RomFreeSpaceSnapshot(
+            banks = requested.mapNotNull(::inspectBank),
+            allocations = sessionState.reservations.filter { it.bank in bankSet }.toList(),
+        )
+    }
+
+    private fun inspectBank(bank: Int): RomFreeSpaceBank? {
+        val (bankStart, bankEndExclusive) = bankBounds(bank) ?: return null
+        val freeFillByte = freeFillByteForBank(bank).also {
+            require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
+        }
+        val rawCursor = sessionState.nextFreeByBank[bank]
+            ?: scanTrailingFreeStart(bankStart, bankEndExclusive, freeFillByte)
+        val protectedEnd = (excludedRanges + sessionState.protectedRanges)
+            .filter { !it.isEmpty() && it.first < bankEndExclusive && it.last >= bankStart }
+            .maxOfOrNull { minOf(it.last + 1, bankEndExclusive) }
+        val cursor = maxOf(
+            rawCursor,
+            protectedEnd?.let { (it + guardBytes).coerceAtMost(bankEndExclusive) } ?: bankStart,
+        )
+        var availableEnd = cursor
+        while (
+            availableEnd < bankEndExclusive &&
+            (romData[availableEnd].toInt() and 0xFF) == freeFillByte &&
+            !isProtected(availableEnd)
+        ) {
+            availableEnd++
+        }
+        return RomFreeSpaceBank(
+            bank = bank,
+            pcStart = bankStart,
+            pcEndExclusive = bankEndExclusive,
+            nextFreePcOffset = cursor,
+            availableBytes = availableEnd - cursor,
+            fillByte = freeFillByte,
+        )
+    }
+
     private fun reserveInBank(
         bank: Int,
         size: Int,
         label: String,
         alignment: Int,
     ): RomAllocation? {
-        val bankStart = snesToPc((bank shl 16) or 0x8000)
-        val bankEndExclusive = snesToPc((bank shl 16) or 0xFFFF) + 1
-        if (bankStart !in romData.indices || bankEndExclusive > romData.size || bankStart >= bankEndExclusive) {
-            return null
-        }
+        val (bankStart, bankEndExclusive) = bankBounds(bank) ?: return null
 
         val freeFillByte = freeFillByteForBank(bank).also {
             require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
@@ -180,6 +219,14 @@ class RomFreeSpaceAllocator(
 
     private fun isProtected(pc: Int) = excludedRanges.any { pc in it } || sessionState.protectedRanges.any { pc in it }
 
+    private fun bankBounds(bank: Int): Pair<Int, Int>? {
+        val bankStart = snesToPc((bank shl 16) or 0x8000)
+        val bankEndExclusive = snesToPc((bank shl 16) or 0xFFFF) + 1
+        return if (
+            bankStart in romData.indices && bankEndExclusive <= romData.size && bankStart < bankEndExclusive
+        ) bankStart to bankEndExclusive else null
+    }
+
     private fun alignUp(value: Int, alignment: Int): Int {
         val remainder = value % alignment
         return if (remainder == 0) value else value + (alignment - remainder)
@@ -192,4 +239,22 @@ data class RomAllocation(
     val snesAddress: Int,
     val size: Int,
     val label: String,
+)
+
+data class RomFreeSpaceBank(
+    val bank: Int,
+    /** File offset, including a copier header when the allocator's ROM has one. */
+    val pcStart: Int,
+    val pcEndExclusive: Int,
+    val nextFreePcOffset: Int,
+    /** Contiguous bytes the next reservation can consume from [nextFreePcOffset]. */
+    val availableBytes: Int,
+    val fillByte: Int,
+) {
+    val capacityBytes: Int get() = pcEndExclusive - pcStart
+}
+
+data class RomFreeSpaceSnapshot(
+    val banks: List<RomFreeSpaceBank>,
+    val allocations: List<RomAllocation>,
 )

@@ -12,9 +12,17 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.Instant
 
 internal enum class AsmBrowserMode { SOURCE, GENERATED_ROOMS, PLM_PLACEMENT, ASSETS, LIBRARY, ROM }
+
+internal data class AsmSourceBankBudget(
+    val bank: Int,
+    val capacityBytes: Int = 0x8000,
+    val allocatableContiguousBytes: Int? = null,
+    val spaceIsCurrent: Boolean = false,
+)
 
 internal data class AsmRoomSourceInspection(val roomId: Int, val title: String, val text: String, val stateId: String? = null,
                                           val fileId: String = PLM_SOURCE_FILE,
@@ -124,6 +132,27 @@ internal data class AsmSourceTextChange(
         }
     }
 }
+
+/** Immutable review snapshot of the three source layers visible to a project.
+ * Reading it must not populate editor buffers or change source ownership. */
+internal data class AsmProjectSourceChange(
+    val fileId: String,
+    val baselineText: String,
+    val savedText: String,
+    val workingText: String,
+    val projectModule: Boolean,
+    val enabled: Boolean,
+) {
+    val savedBankOverride: Boolean get() = !projectModule && baselineText != savedText
+    val unsavedBuffer: Boolean get() = savedText != workingText
+}
+
+internal data class AsmProjectAssetChange(
+    val assetPath: String,
+    val size: Int,
+    val changedBytes: Int,
+    val firstChangedOffsets: List<Int>,
+)
 
 internal class AsmWorkspaceState(
     private val repository: AsmReferenceRepository = AsmReferenceRepository(),
@@ -241,6 +270,10 @@ internal class AsmWorkspaceState(
         private set
     var romPreview by mutableStateOf<AsmRomPreview?>(null)
         private set
+    var romSpacePlan by mutableStateOf<AsmRomSpacePlan?>(null)
+        private set
+    var requestedRomSpaceBank by mutableStateOf<Int?>(null)
+        private set
     var romPreviewView by mutableStateOf(AsmRomPreviewView.DIFF)
         private set
     var selectedRomDiffIndex by mutableStateOf(0)
@@ -347,8 +380,13 @@ internal class AsmWorkspaceState(
         get() = dirtySourceFileIds.keys.filterNotTo(linkedSetOf()) {
             it in disabledProjectModuleFileIds
         }
+    val projectModifiedAssetPaths: Set<String>
+        get() = if (boundProjectEnabled && boundProjectFilePath.isNotBlank()) {
+            projectRepository.assetOverridePaths(boundProjectFilePath)
+        } else emptySet()
     val hasProjectSourceChanges: Boolean
-        get() = projectModifiedFileIds.isNotEmpty() || activeUnsavedSourceFileIds.isNotEmpty()
+        get() = projectModifiedFileIds.isNotEmpty() || activeUnsavedSourceFileIds.isNotEmpty() ||
+            projectModifiedAssetPaths.isNotEmpty()
     val isProjectSourceEditable: Boolean
         get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
             (roomSourceInspection == null || roomSourceInspection?.automaticEdit != null) &&
@@ -405,6 +443,31 @@ internal class AsmWorkspaceState(
                 }
             }.filter(String::isNotBlank).joinToString(" · ")
         }
+
+    /** Resolves the bank containing the source caret. A successful current
+     * project build wins because edits can move code; otherwise the immutable
+     * reference atlas supplies safe source context. Space is deliberately the
+     * allocator's one contiguous trailing range, never a sum of apparent holes. */
+    fun sourceBankBudget(fileId: String, lineIndex: Int): AsmSourceBankBudget? {
+        val index = workspace?.index ?: return null
+        if (index.file(fileId) == null) return null
+        val compiledIsCurrent = workspaceKind == AsmWorkspaceKind.PROJECT &&
+            !sourceBuildRequired && buildReport?.succeeded == true
+        val compiledAddress = if (compiledIsCurrent) {
+            buildReport?.symbols?.addressAtOrBefore(fileId, lineIndex)
+        } else null
+        val referenceAddress = index.addressAtlas.exactAt(fileId, lineIndex).firstOrNull()?.snesAddress
+            ?: index.addressAtlas.contextAt(fileId, lineIndex)?.snesAddress
+        val address = compiledAddress ?: referenceAddress ?: return null
+        val bank = address ushr 16 and 0xFF
+        val plannedBank = romSpacePlan?.banks?.firstOrNull { it.bank == bank }
+        return AsmSourceBankBudget(
+            bank = bank,
+            capacityBytes = plannedBank?.capacityBytes ?: LOROM_BANK_CAPACITY_BYTES,
+            allocatableContiguousBytes = plannedBank?.remainingAfter,
+            spaceIsCurrent = plannedBank != null && !sourceBuildRequired,
+        )
+    }
 
     val hasSourceSplit: Boolean get() = sourcePanes.size > 1
 
@@ -791,6 +854,8 @@ internal class AsmWorkspaceState(
 
     private fun clearRomPreview() {
         romPreview = null
+        romSpacePlan = null
+        requestedRomSpaceBank = null
         selectedRomDiffIndex = 0
         romPreviewView = AsmRomPreviewView.DIFF
     }
@@ -859,8 +924,14 @@ internal class AsmWorkspaceState(
         roomSourceInspection = null
         browserMode = AsmBrowserMode.ROM
         romPreviewView = view
+        requestedRomSpaceBank = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
+    }
+
+    fun openRomSpaceBank(bank: Int, addToHistory: Boolean = true) {
+        selectRomPreviewView(AsmRomPreviewView.SPACE, addToHistory)
+        requestedRomSpaceBank = bank and 0xFF
     }
 
     fun selectRomDiff(index: Int) {
@@ -871,23 +942,33 @@ internal class AsmWorkspaceState(
         navigationSerial++
     }
 
-    suspend fun buildRomPreview(builder: () -> AsmRomPreview?) {
+    suspend fun buildRomPreview(builder: () -> AsmRomPreviewBuild) {
         if (previewBusy) return
+        val requestedView = romPreviewView
         previewBusy = true
         error = null
         try {
-            val preview = withContext(Dispatchers.Default) { builder() }
+            val attempt = withContext(Dispatchers.Default) { builder() }
             refreshBuildReport()
-            if (preview == null) {
-                error = "SMEDIT Result could not be built. No ROM was written; check the export status or log for the blocker."
+            romSpacePlan = attempt.spacePlan
+            if (attempt.preview == null) {
+                romPreview = null
+                error = attempt.error ?: "SMEDIT Result could not be built. No ROM was written."
+                if (requestedView == AsmRomPreviewView.SPACE) {
+                    browserMode = AsmBrowserMode.ROM
+                    romPreviewView = requestedView
+                    navigationSerial++
+                }
             } else {
-                romPreview = preview
+                romPreview = attempt.preview
                 selectedRomDiffIndex = 0
-                romPreviewView = AsmRomPreviewView.DIFF
+                romPreviewView = if (requestedView == AsmRomPreviewView.SPACE) requestedView else AsmRomPreviewView.DIFF
                 browserMode = AsmBrowserMode.ROM
                 navigationSerial++
             }
         } catch (problem: Exception) {
+            romPreview = null
+            romSpacePlan = null
             error = problem.message ?: "SMEDIT Result could not be built"
         } finally {
             previewBusy = false
@@ -896,15 +977,16 @@ internal class AsmWorkspaceState(
 
     /** Runs the same non-writing validated build as ROM comparison while
      * keeping the user in Source. */
-    suspend fun validateProjectBuild(builder: () -> AsmRomPreview?): Boolean {
+    suspend fun validateProjectBuild(builder: () -> AsmRomPreviewBuild): Boolean {
         if (previewBusy) return false
         previewBusy = true
         error = null
         return try {
             val result = withContext(Dispatchers.Default) { builder() }
             refreshBuildReport()
-            if (result == null) {
-                retainOrCreateBuildFailure("ROM build did not complete. No ROM was written.")
+            romSpacePlan = result.spacePlan
+            if (result.preview == null) {
+                retainOrCreateBuildFailure(result.error ?: "ROM build did not complete. No ROM was written.")
                 false
             } else {
                 true
@@ -1018,6 +1100,60 @@ internal class AsmWorkspaceState(
 
     fun sourceEditText(fileId: String): String = sourceBuffers[fileId]
         ?: workspace?.index?.file(fileId)?.file?.readText().orEmpty()
+
+    /** Captures Project ASM changes without adopting files into the live editor.
+     * Project modules have no immutable-bank counterpart and therefore compare
+     * against an empty baseline as whole-file additions. */
+    fun projectSourceChangesSnapshot(): List<AsmProjectSourceChange> {
+        val project = projectWorkspace ?: return emptyList()
+        val moduleIds = project.projectModuleFileIds.toSet()
+        val fileIds = linkedSetOf<String>().apply {
+            addAll(project.modifiedFileIds)
+            addAll(project.projectModuleFileIds)
+            addAll(unsavedSourceFileIds)
+        }
+        return fileIds.map { fileId ->
+            val projectModule = fileId in moduleIds
+            val savedFile = File(project.workingDirectory, "src/$fileId")
+            require(savedFile.isFile) { "Project ASM source is unavailable: $fileId" }
+            val savedText = savedFile.readText()
+            val baselineText = if (projectModule) {
+                ""
+            } else {
+                val baselineFile = File(project.originalDirectory, "src/$fileId")
+                require(baselineFile.isFile) { "Project ASM baseline source is unavailable: $fileId" }
+                baselineFile.readText()
+            }
+            AsmProjectSourceChange(
+                fileId = fileId,
+                baselineText = baselineText,
+                savedText = savedText,
+                workingText = sourceBuffers[fileId] ?: savedText,
+                projectModule = projectModule,
+                enabled = !projectModule || fileId !in project.disabledProjectModuleFileIds,
+            )
+        }.sortedWith(compareBy<AsmProjectSourceChange> { it.projectModule }.thenBy { it.fileId })
+    }
+
+    fun projectAssetChangesSnapshot(): List<AsmProjectAssetChange> {
+        val project = projectWorkspace ?: return emptyList()
+        return projectModifiedAssetPaths.map { assetPath ->
+            val baseline = File(project.originalDirectory, "data/$assetPath")
+            val current = File(project.workingDirectory, "data/$assetPath")
+            require(baseline.isFile && current.isFile && baseline.length() == current.length()) {
+                "Project ASM data asset is unavailable: $assetPath"
+            }
+            val before = baseline.readBytes()
+            val after = current.readBytes()
+            val changed = before.indices.filter { before[it] != after[it] }
+            AsmProjectAssetChange(
+                assetPath = assetPath,
+                size = after.size,
+                changedBytes = changed.size,
+                firstChangedOffsets = changed.take(32),
+            )
+        }.sortedBy(AsmProjectAssetChange::assetPath)
+    }
 
     /** Semantic editors share the very same document/undo stack, independent of which browser tab is visible. */
     fun projectSourceText(fileId: String): String {
@@ -2128,5 +2264,6 @@ internal class AsmWorkspaceState(
         private const val MAX_SOURCE_PANES = 2
         private const val MAX_SOURCE_UNDO_STEPS = 250
         private const val PRIMARY_SOURCE_PANE_ID = 0L
+        private const val LOROM_BANK_CAPACITY_BYTES = 0x8000
     }
 }

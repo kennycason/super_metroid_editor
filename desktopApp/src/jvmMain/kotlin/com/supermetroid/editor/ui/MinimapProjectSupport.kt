@@ -21,6 +21,14 @@ internal fun effectiveMinimapData(
     return result
 }
 
+internal fun applyMinimapEdits(data: MinimapData, project: SmEditProject): MinimapData {
+    var result = data
+    for (edit in project.minimapEdits[data.area.toString()].orEmpty()) {
+        result = result.withTile(edit.x, edit.y, edit.tileWord)
+    }
+    return result
+}
+
 internal fun persistMinimapData(
     parser: RomParser,
     project: SmEditProject,
@@ -47,6 +55,14 @@ internal fun effectiveMapStationData(
 ): MapStationData {
     var result = parser.readMapStationData(area)
     for (edit in project.mapStationEdits[area.toString()].orEmpty()) {
+        result = result.withValue(edit.x, edit.y, edit.revealed)
+    }
+    return result
+}
+
+internal fun applyMapStationEdits(data: MapStationData, project: SmEditProject): MapStationData {
+    var result = data
+    for (edit in project.mapStationEdits[data.area.toString()].orEmpty()) {
         result = result.withValue(edit.x, edit.y, edit.revealed)
     }
     return result

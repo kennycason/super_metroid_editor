@@ -18,6 +18,7 @@ import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomAllocation
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
+import com.supermetroid.editor.rom.RomFreeSpaceSnapshot
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomOverlapPolicy
 import com.supermetroid.editor.rom.RomWriteKind
@@ -200,6 +201,9 @@ internal data class RomBuildResult(
     val sourceAssetPatched: Int = 0,
     val sourceRoomPatched: Int = 0,
     val sourcePatchPatched: Int = 0,
+    /** Exact shared-allocator state before and after this successful transaction. */
+    val romSpaceBefore: RomFreeSpaceSnapshot = RomFreeSpaceSnapshot(emptyList(), emptyList()),
+    val romSpaceAfter: RomFreeSpaceSnapshot = RomFreeSpaceSnapshot(emptyList(), emptyList()),
     /** Actual build placements keyed by durable project room ID. Disposable, never written into project data. */
     val newRoomIds: Map<String, Int> = emptyMap(),
 ) {
@@ -209,6 +213,14 @@ internal data class RomBuildResult(
             textPatched > 0 || asmPatched > 0 || sourcePatched > 0 || sourceAssetPatched > 0 ||
             sourceRoomPatched > 0 || sourcePatchPatched > 0
 }
+
+internal data class RomSpaceBuildSnapshot(
+    val headerSize: Int,
+    val romBodySize: Int,
+    val before: RomFreeSpaceSnapshot,
+    val current: RomFreeSpaceSnapshot,
+    val writeReport: RomWritePlanReport,
+)
 
 /**
  * Handles all ROM patching and export logic for a given [project] snapshot.
@@ -233,6 +245,7 @@ internal class RomExporter(
     private val sourceSelectors: Map<Int, com.supermetroid.editor.rom.SourceRoomSelectors> = emptyMap(),
     private val sourceDoors: Map<Int, com.supermetroid.editor.rom.SourceRoomDoors> = emptyMap(),
     private val projectFilePath: String = "",
+    private val onRomSpaceSnapshot: (RomSpaceBuildSnapshot) -> Unit = {},
 ) {
 
     fun build(): RomBuildResult? {
@@ -412,6 +425,9 @@ internal class RomExporter(
                 (headerSize + it.pcOffset) until (headerSize + it.pcOffset + it.length)
             },
         )
+        val allocatorBanks = List((exportBase.size - headerSize) / 0x8000) { 0x80 + it }
+        val romSpaceBefore = freeSpaceAllocator.snapshot(allocatorBanks)
+        try {
         val roomsPatched = mutableSetOf<String>()
         var newRoomIds = compiledAsmBase?.generatedNewRoomIds.orEmpty()
 
@@ -599,6 +615,7 @@ internal class RomExporter(
             )
         }
         val finalRom = writePlan.finalRom()
+        val romSpaceAfter = freeSpaceAllocator.snapshot(allocatorBanks)
         compiledAsmBase?.expectedFinalParitySha256?.let { expected ->
             val actual = asmGeneratedParitySha256(finalRom)
             if (actual != expected) {
@@ -656,6 +673,8 @@ internal class RomExporter(
                 sourceAssetPatched = compiledAsmBase?.generatedAssetClaims?.sumOf { it.length } ?: 0,
                 sourceRoomPatched = compiledAsmBase?.generatedRoomClaims?.sumOf { it.length } ?: 0,
                 sourcePatchPatched = compiledAsmBase?.generatedPatchClaims?.sumOf { it.length } ?: 0,
+                romSpaceBefore = romSpaceBefore,
+                romSpaceAfter = romSpaceAfter,
                 newRoomIds = newRoomIds,
             )
         }
@@ -710,8 +729,21 @@ internal class RomExporter(
             sourceAssetPatched = compiledAsmBase?.generatedAssetClaims?.sumOf { it.length } ?: 0,
             sourceRoomPatched = compiledAsmBase?.generatedRoomClaims?.sumOf { it.length } ?: 0,
             sourcePatchPatched = compiledAsmBase?.generatedPatchClaims?.sumOf { it.length } ?: 0,
+            romSpaceBefore = romSpaceBefore,
+            romSpaceAfter = romSpaceAfter,
             newRoomIds = newRoomIds,
         )
+        } finally {
+            onRomSpaceSnapshot(
+                RomSpaceBuildSnapshot(
+                    headerSize = headerSize,
+                    romBodySize = exportBase.size - headerSize,
+                    before = romSpaceBefore,
+                    current = freeSpaceAllocator.snapshot(allocatorBanks),
+                    writeReport = writePlan.report(),
+                ),
+            )
+        }
     }
 
     fun export(preparedBuild: RomBuildResult? = build()): String? {

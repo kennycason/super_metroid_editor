@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpritePalettes
+import com.supermetroid.editor.rom.TileGraphics
 
 /**
  * Sprite palette editor for Samus suits and beams.
@@ -65,7 +66,6 @@ fun SpritePaletteEditor(
     var selectedRegionId by remember { mutableStateOf<String?>(null) }
     var selectedColorIdx by remember { mutableStateOf(-1) }
     var showHsvPicker by remember { mutableStateOf(false) }
-
     // Load or get cached colors for a region
     fun getColors(regionId: String): IntArray? {
         return editorState.readSpritePalette(regionId, romParser)
@@ -386,6 +386,10 @@ fun AreaPaletteEditor(
     var selectedTileset by remember { mutableStateOf(-1) }
     var selectedColorIdx by remember { mutableStateOf(-1) }
     var showHsvPicker by remember { mutableStateOf(false) }
+    val paletteStatuses = (0 until TileGraphics.NUM_TILESETS).associateWith {
+        editorState.tilesetPaletteEditingStatus(it)
+    }
+    val hasAsmPaletteAuthority = paletteStatuses.values.any(TilesetPaletteEditingStatus::sourceManaged)
 
     fun getColors(tilesetId: Int): IntArray? {
         return editorState.readTilesetPalette(tilesetId, romParser)
@@ -407,7 +411,7 @@ fun AreaPaletteEditor(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val hasAnyOverride = (0 until 29).any { editorState.hasCustomPalette(it) }
-            if (hasAnyOverride) {
+            if (hasAnyOverride && !hasAsmPaletteAuthority) {
                 OutlinedButton(onClick = {
                     var changed = false
                     for (i in 0 until 29) {
@@ -430,6 +434,22 @@ fun AreaPaletteEditor(
         fun targetTilesets(): List<Int> =
             if (selectedTileset >= 0) listOf(selectedTileset) else (0 until 29).toList()
 
+        fun editableRepresentatives(targets: List<Int>): List<Int> {
+            val remaining = targets.toMutableSet()
+            val representatives = mutableListOf<Int>()
+            while (remaining.isNotEmpty()) {
+                val id = remaining.min()
+                representatives += id
+                val affected = paletteStatuses.getValue(id).affectedTilesetIds.ifEmpty { listOf(id) }
+                remaining.removeAll(affected.toSet())
+            }
+            return representatives
+        }
+
+        fun canEditAll(targets: List<Int>): Boolean =
+            targets.all { paletteStatuses.getValue(it).editable } &&
+                (targets.size == 1 || targets.none { paletteStatuses.getValue(it).sourceManaged })
+
         fun notifyCurrentTilesetIfAffected(targets: List<Int>, reloadCurrentTileset: Boolean) {
             if (editorState.editorTilesetId in targets || editorState.currentTilesetId in targets) {
                 onCurrentTilesetPaletteChanged(reloadCurrentTileset)
@@ -439,11 +459,18 @@ fun AreaPaletteEditor(
         fun applyAreaEffect(effectId: String) {
             val effect = PaletteEffects.findEffect(effectId) ?: return
             val targets = targetTilesets()
-            for (tsId in targets) {
+            if (!canEditAll(targets)) {
+                editorState.postStatus("Palette edit blocked: One or more selected palettes are ASM-only.")
+                return
+            }
+            for (tsId in editableRepresentatives(targets)) {
                 val colors = getColors(tsId) ?: continue
                 effect.apply(colors)
-                editorState.saveTilesetPaletteFromColors(tsId, colors)
-                editorState.setPaletteEffect("tileset:$tsId", effect.id)
+                if (editorState.saveTilesetPaletteFromColors(tsId, colors)) {
+                    paletteStatuses.getValue(tsId).affectedTilesetIds.ifEmpty { listOf(tsId) }
+                        .filter(targets::contains)
+                        .forEach { affected -> editorState.setPaletteEffect("tileset:$affected", effect.id) }
+                }
             }
             notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
             editVersion++
@@ -455,37 +482,51 @@ fun AreaPaletteEditor(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            OutlinedButton(onClick = {
+            OutlinedButton(enabled = canEditAll(targetTilesets()), onClick = {
                 val targets = targetTilesets()
-                for (tsId in targets) {
+                for (tsId in editableRepresentatives(targets)) {
                     val colors = getColors(tsId) ?: continue
                     PaletteEffects.randomEffect(colors)
-                    editorState.saveTilesetPaletteFromColors(tsId, colors)
-                    editorState.setPaletteEffect("tileset:$tsId", "random_palette")
+                    if (editorState.saveTilesetPaletteFromColors(tsId, colors)) {
+                        paletteStatuses.getValue(tsId).affectedTilesetIds.ifEmpty { listOf(tsId) }
+                            .filter(targets::contains)
+                            .forEach { affected -> editorState.setPaletteEffect("tileset:$affected", "random_palette") }
+                    }
                 }
                 notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                 editVersion++
             }) { Text("Random Palette", fontSize = fs.detail) }
-            OutlinedButton(onClick = {
+            OutlinedButton(enabled = canEditAll(targetTilesets()), onClick = {
                 val targets = targetTilesets()
-                for (tsId in targets) {
+                for (tsId in editableRepresentatives(targets)) {
                     val colors = getColors(tsId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     PaletteEffects.mutate(colors)
-                    editorState.saveTilesetPaletteFromColors(tsId, colors)
-                    editorState.setPaletteEffect("tileset:$tsId", "full_random")
+                    if (editorState.saveTilesetPaletteFromColors(tsId, colors)) {
+                        paletteStatuses.getValue(tsId).affectedTilesetIds.ifEmpty { listOf(tsId) }
+                            .filter(targets::contains)
+                            .forEach { affected -> editorState.setPaletteEffect("tileset:$affected", "full_random") }
+                    }
                 }
                 notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                 editVersion++
             }) { Text("Full Random", fontSize = fs.detail) }
-            OutlinedButton(onClick = { applyAreaEffect("psychedelic-randomize") }) {
+            OutlinedButton(enabled = canEditAll(targetTilesets()), onClick = { applyAreaEffect("psychedelic-randomize") }) {
                 Text("Psychedelic", fontSize = fs.detail)
             }
-            OutlinedButton(onClick = { applyAreaEffect("mathematical-randomize") }) {
+            OutlinedButton(enabled = canEditAll(targetTilesets()), onClick = { applyAreaEffect("mathematical-randomize") }) {
                 Text("Mathematical", fontSize = fs.detail)
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
+        if (hasAsmPaletteAuthority && selectedTileset < 0) {
+            Text(
+                "Select one tileset to edit its ASM palette data.",
+                fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+        }
 
         // Effects bar
         val areaScopeLabel = if (selectedTileset >= 0) SpritePalettes.tilesetName(selectedTileset) else "All Tilesets"
@@ -515,13 +556,16 @@ fun AreaPaletteEditor(
                     shape = RoundedCornerShape(4.dp),
                     color = if (isActive) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.clickable {
+                    modifier = Modifier.clickable(enabled = canEditAll(targetTilesets())) {
                         val targets = if (selectedTileset >= 0) listOf(selectedTileset) else (0 until 29).toList()
-                        for (tsId in targets) {
+                        for (tsId in editableRepresentatives(targets)) {
                             val colors = getColors(tsId) ?: continue
                             effect.apply(colors)
-                            editorState.saveTilesetPaletteFromColors(tsId, colors)
-                            editorState.setPaletteEffect("tileset:$tsId", effect.id)
+                            if (editorState.saveTilesetPaletteFromColors(tsId, colors)) {
+                                paletteStatuses.getValue(tsId).affectedTilesetIds.ifEmpty { listOf(tsId) }
+                                    .filter(targets::contains)
+                                    .forEach { affected -> editorState.setPaletteEffect("tileset:$affected", effect.id) }
+                            }
                         }
                         notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                         editVersion++
@@ -548,6 +592,7 @@ fun AreaPaletteEditor(
             val colors = getColors(tsId)
             val isSelected = selectedTileset == tsId
             val hasOverride = editorState.hasCustomPalette(tsId)
+            val paletteStatus = paletteStatuses.getValue(tsId)
             val borderColor = if (isSelected) Color(0xFF4FC3F7) else Color.Transparent
             Surface(
                 shape = RoundedCornerShape(6.dp),
@@ -574,12 +619,23 @@ fun AreaPaletteEditor(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("(modified)", fontSize = fs.detail, color = Color(0xFFFFD54F))
                             }
+                            if (paletteStatus.sourceManaged) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    if (paletteStatus.editable) "ASM data" else "ASM only",
+                                    fontSize = fs.detail,
+                                    color = if (paletteStatus.editable) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFFC857),
+                                )
+                            }
                         }
                         if (hasOverride) {
                             TextButton(
                                 onClick = {
                                     if (editorState.resetPaletteOverride(tsId)) {
-                                        notifyCurrentTilesetIfAffected(listOf(tsId), reloadCurrentTileset = true)
+                                        notifyCurrentTilesetIfAffected(
+                                            paletteStatus.affectedTilesetIds.ifEmpty { listOf(tsId) },
+                                            reloadCurrentTileset = true,
+                                        )
                                         editVersion++
                                     }
                                 },
@@ -612,7 +668,7 @@ fun AreaPaletteEditor(
                                                     if (isSel) Modifier.border(2.dp, Color.White, RoundedCornerShape(1.dp))
                                                     else Modifier
                                                 )
-                                                .clickable {
+                                                .clickable(enabled = paletteStatus.editable) {
                                                     selectedTileset = tsId
                                                     selectedColorIdx = idx
                                                     showHsvPicker = true
@@ -629,7 +685,9 @@ fun AreaPaletteEditor(
         }
 
         // HSV picker for selected color
-        if (showHsvPicker && selectedTileset >= 0 && selectedColorIdx >= 0) {
+        if (showHsvPicker && selectedTileset >= 0 && selectedColorIdx >= 0 &&
+            paletteStatuses.getValue(selectedTileset).editable
+        ) {
             val colors = getColors(selectedTileset)
             if (colors != null && selectedColorIdx < colors.size) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -643,10 +701,13 @@ fun AreaPaletteEditor(
                     onColorChanged = { newBgr ->
                         val updated = getColors(selectedTileset) ?: return@HsvColorPicker
                         updated[selectedColorIdx] = newBgr
-                        editorState.saveTilesetPaletteFromColors(selectedTileset, updated)
-                        editorState.clearPaletteEffect("tileset:$selectedTileset")
-                        notifyCurrentTilesetIfAffected(listOf(selectedTileset), reloadCurrentTileset = false)
-                        editVersion++
+                        if (editorState.saveTilesetPaletteFromColors(selectedTileset, updated)) {
+                            val affected = paletteStatuses.getValue(selectedTileset).affectedTilesetIds
+                                .ifEmpty { listOf(selectedTileset) }
+                            affected.forEach { editorState.clearPaletteEffect("tileset:$it") }
+                            notifyCurrentTilesetIfAffected(affected, reloadCurrentTileset = false)
+                            editVersion++
+                        }
                     }
                 )
             }

@@ -170,17 +170,20 @@ import com.supermetroid.editor.asm.AsmMacro
 import com.supermetroid.editor.asm.AsmMacroCallAnalyzer
 import com.supermetroid.editor.asm.AsmMacroCallHint
 import com.supermetroid.editor.asm.AsmMacroUsage
+import com.supermetroid.editor.asm.AsmProjectSourceChange
 import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceExpansionTarget
 import com.supermetroid.editor.asm.AsmReferenceIndex
 import com.supermetroid.editor.asm.AsmRomDiffRange
 import com.supermetroid.editor.asm.AsmRomPreview
+import com.supermetroid.editor.asm.AsmRomPreviewBuild
 import com.supermetroid.editor.asm.AsmRomPreviewView
 import com.supermetroid.editor.asm.AsmSemanticBridge
 import com.supermetroid.editor.asm.AsmSemanticIndex
 import com.supermetroid.editor.asm.AsmRoomSourceLink
 import com.supermetroid.editor.asm.asmRoomSourceLinksAt
 import com.supermetroid.editor.asm.AsmSourceFile
+import com.supermetroid.editor.asm.AsmSourceBankBudget
 import com.supermetroid.editor.asm.AsmSourcePaneState
 import com.supermetroid.editor.asm.AsmSourceReplacementPreview
 import com.supermetroid.editor.asm.AsmSourceText
@@ -358,7 +361,7 @@ internal fun AsmWorkspaceSidebar(
     projectRomExpanded: Boolean = false,
     projectRomExpansionForced: Boolean = false,
     onProjectRomExpandedChanged: (Boolean) -> Unit = {},
-    buildRomPreview: (() -> AsmRomPreview?)? = null,
+    buildRomPreview: (() -> AsmRomPreviewBuild)? = null,
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -368,6 +371,8 @@ internal fun AsmWorkspaceSidebar(
     val hasProjectSourceChanges = state.hasProjectSourceChanges
     var showReplaceDialog by remember { mutableStateOf(false) }
     var showCreateModuleDialog by remember { mutableStateOf(false) }
+    var projectSourceChanges by remember { mutableStateOf<List<AsmProjectSourceChange>?>(null) }
+    var projectAssetChanges by remember { mutableStateOf<List<com.supermetroid.editor.asm.AsmProjectAssetChange>>(emptyList()) }
 
     state.baselineUpdatePlan?.let { plan ->
         AsmBaselineUpdateDialog(plan, state.busy, state.progress, state.error,
@@ -422,6 +427,22 @@ internal fun AsmWorkspaceSidebar(
             },
         )
     }
+    projectSourceChanges?.let { changes ->
+        AsmProjectChangesDialog(
+            changes = changes,
+            assetChanges = projectAssetChanges,
+            onDismiss = {
+                projectSourceChanges = null
+                projectAssetChanges = emptyList()
+            },
+            onOpenSource = { fileId ->
+                projectSourceChanges = null
+                projectAssetChanges = emptyList()
+                state.showProjectWorkspace()
+                state.openSource(fileId)
+            },
+        )
+    }
 
     LaunchedEffect(projectAsmEnabled, hasProjectSourceChanges, projectBuildMode) {
         // A source edit must never be silently ignored by a Loaded ROM build.
@@ -455,6 +476,11 @@ internal fun AsmWorkspaceSidebar(
     fun previewRom() {
         val build = buildRomPreview ?: return
         scope.launch { state.buildRomPreview(build) }
+    }
+
+    fun openSpacePlanner() {
+        state.selectRomPreviewView(AsmRomPreviewView.SPACE)
+        previewRom()
     }
 
     fun enableProjectAsm() {
@@ -584,6 +610,15 @@ internal fun AsmWorkspaceSidebar(
             onDownload = ::download,
             onSyncAssets = ::syncAssets,
             onEnableProjectAsm = ::enableProjectAsm,
+            onReviewSourceChanges = {
+                runCatching { state.projectSourceChangesSnapshot() to state.projectAssetChangesSnapshot() }
+                    .onSuccess { (source, assets) ->
+                        projectAssetChanges = assets
+                        projectSourceChanges = source
+                    }
+                    .onFailure { state.reportSourceEditError(it.message ?: "Could not read Project ASM source") }
+            },
+            onOpenSpacePlanner = ::openSpacePlanner,
             onUpdateBaseline = { scope.launch { if (state.saveAllSources()) state.previewBaselineUpdate() } },
             onShowBaselineBackups = { scope.launch { state.showBaselineBackups() } },
             onProjectBuildModeChanged = onProjectBuildModeChanged,
@@ -809,6 +844,8 @@ private fun AsmWorkspaceControls(
     onDownload: () -> Unit,
     onSyncAssets: () -> Unit,
     onEnableProjectAsm: () -> Unit,
+    onReviewSourceChanges: () -> Unit,
+    onOpenSpacePlanner: () -> Unit,
     onUpdateBaseline: () -> Unit,
     onShowBaselineBackups: () -> Unit,
     onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit,
@@ -958,12 +995,24 @@ private fun AsmWorkspaceControls(
                     Text("Project ASM enabled", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
                     val modified = state.projectModifiedFileIds.size
                     val unsaved = state.unsavedSourceFileIds.size
+                    val modifiedAssets = state.projectModifiedAssetPaths.size
                     Text(
                         "$modified modified source file${if (modified == 1) "" else "s"} · " +
+                            "$modifiedAssets modified data asset${if (modifiedAssets == 1) "" else "s"} · " +
                             if (unsaved == 0) "all saved" else "$unsaved unsaved buffer${if (unsaved == 1) "" else "s"}",
                         fontSize = fs.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (modified > 0 || modifiedAssets > 0 || unsaved > 0 || state.projectModuleFileIds.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = onReviewSourceChanges,
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth().testTag("asm-project-changes-open"),
+                            shape = ASM_CONTROL_SHAPE,
+                        ) {
+                            Text("Review project changes…", fontSize = fs.detail)
+                        }
+                    }
                     val revision = state.projectWorkspace?.baselineRevision.orEmpty()
                     val documentationBaseline = revision.removePrefix("super-metroid-ntsc-").ifBlank { "Unknown" }
                     val upstreamCommit = state.projectWorkspace?.referenceWorkspace?.metadata?.commit
@@ -1028,7 +1077,7 @@ private fun AsmWorkspaceControls(
                     }
                     Text(
                         if (state.hasProjectSourceChanges) {
-                            "ASM source is required while saved or unsaved source edits exist. Restore every edited file to its original snapshot before returning to Loaded ROM."
+                            "ASM source is required while saved source, data, or unsaved buffer changes exist. Restore those overrides before returning to Loaded ROM."
                         } else if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) {
                             "Compiles project source first, then applies normal SMEDIT edits and patches with conflict checks."
                         } else {
@@ -1066,6 +1115,14 @@ private fun AsmWorkspaceControls(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 5.dp),
                     )
+                    OutlinedButton(
+                        onClick = onOpenSpacePlanner,
+                        enabled = romAvailable && !state.previewBusy,
+                        modifier = Modifier.fillMaxWidth().padding(top = 5.dp).testTag("asm-rom-space-planner-open"),
+                        shape = ASM_CONTROL_SHAPE,
+                    ) {
+                        Text("Open ROM Space Planner…", fontSize = fs.detail)
+                    }
                 } else if (referenceReady) {
                     Spacer(Modifier.height(7.dp))
                     Text(
@@ -1224,6 +1281,7 @@ private fun AsmRomPreviewTree(
         AsmRomViewRow(state, AsmRomPreviewView.LOADED_ROM, preview != null)
         AsmRomViewRow(state, AsmRomPreviewView.SMEDIT_RESULT, preview != null)
         AsmRomViewRow(state, AsmRomPreviewView.DIFF, preview != null)
+        AsmRomViewRow(state, AsmRomPreviewView.SPACE, preview != null || state.romSpacePlan != null)
 
         if (preview == null) {
             Spacer(Modifier.weight(1f))
@@ -1298,6 +1356,7 @@ private fun AsmRomViewRow(state: AsmWorkspaceState, view: AsmRomPreviewView, ena
                     AsmRomPreviewView.LOADED_ROM -> "Bytes from the ROM you opened"
                     AsmRomPreviewView.SMEDIT_RESULT -> "Validated in-memory export result"
                     AsmRomPreviewView.DIFF -> "Only bytes that would change"
+                    AsmRomPreviewView.SPACE -> "Allocator capacity and exact planned placements"
                 },
                 fontSize = fs.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1924,6 +1983,7 @@ internal fun AsmWorkspaceCanvas(
     onSaveProject: suspend () -> Boolean = { true },
     onBuildProject: (() -> Unit)? = null,
     onRunInEmulator: (() -> Unit)? = null,
+    onOpenRomSpaceBank: (Int) -> Unit = { bank -> state.openRomSpaceBank(bank) },
     problemsPaneHeightDp: Float = DEFAULT_ASM_PROBLEMS_HEIGHT_DP,
     onProblemsPaneHeightChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -1931,7 +1991,7 @@ internal fun AsmWorkspaceCanvas(
     Box(modifier.asmHistoryShortcuts(state)) {
         AsmWorkspaceCanvasContent(
             state, romParser, onOpenInEditor, onOpenRoomSource, onSaveProject, onBuildProject, onRunInEmulator,
-            problemsPaneHeightDp, onProblemsPaneHeightChange, Modifier.fillMaxSize(),
+            onOpenRomSpaceBank, problemsPaneHeightDp, onProblemsPaneHeightChange, Modifier.fillMaxSize(),
         )
     }
 }
@@ -1945,6 +2005,7 @@ private fun AsmWorkspaceCanvasContent(
     onSaveProject: suspend () -> Boolean,
     onBuildProject: (() -> Unit)?,
     onRunInEmulator: (() -> Unit)?,
+    onOpenRomSpaceBank: (Int) -> Unit,
     problemsPaneHeightDp: Float,
     onProblemsPaneHeightChange: (Float) -> Unit,
     modifier: Modifier,
@@ -2046,6 +2107,7 @@ private fun AsmWorkspaceCanvasContent(
                                     onSaveProject = onSaveProject,
                                     onBuildProject = onBuildProject,
                                     onRunInEmulator = onRunInEmulator,
+                                    onOpenRomSpaceBank = onOpenRomSpaceBank,
                                     modifier = Modifier.weight(paneWeight).fillMaxHeight(),
                                 )
                             }
@@ -2073,6 +2135,10 @@ private fun AsmWorkspaceCanvasContent(
 private fun AsmRomPreviewCanvas(state: AsmWorkspaceState, modifier: Modifier) {
     val fs = LocalEditorTheme.current.fontSize.value
     val preview = state.romPreview
+    if (preview == null && state.romPreviewView == AsmRomPreviewView.SPACE && state.romSpacePlan != null) {
+        AsmRomSpacePlannerCanvas(state, state.romSpacePlan, planFits = false, modifier = modifier)
+        return
+    }
     if (preview == null) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Surface(
@@ -2081,10 +2147,18 @@ private fun AsmRomPreviewCanvas(state: AsmWorkspaceState, modifier: Modifier) {
                 modifier = Modifier.fillMaxWidth(0.68f),
             ) {
                 Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("ROM Comparison", fontSize = fs.display, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (state.romPreviewView == AsmRomPreviewView.SPACE) "ROM Space Planner" else "ROM Comparison",
+                        fontSize = fs.display,
+                        fontWeight = FontWeight.Bold,
+                    )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Build SMEDIT Result to compare the ROM you opened with the fully validated bytes SMEDIT would export. The preview never writes a ROM.",
+                        if (state.romPreviewView == AsmRomPreviewView.SPACE) {
+                            "Build SMEDIT Result to validate allocations and inspect remaining contiguous ROM space. The planner never writes a ROM."
+                        } else {
+                            "Build SMEDIT Result to compare the ROM you opened with the fully validated bytes SMEDIT would export. The preview never writes a ROM."
+                        },
                         fontSize = fs.body,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2098,6 +2172,12 @@ private fun AsmRomPreviewCanvas(state: AsmWorkspaceState, modifier: Modifier) {
         AsmRomPreviewView.LOADED_ROM -> AsmWholeRomCanvas(state, preview, AsmRomPreviewView.LOADED_ROM, modifier)
         AsmRomPreviewView.SMEDIT_RESULT -> AsmWholeRomCanvas(state, preview, AsmRomPreviewView.SMEDIT_RESULT, modifier)
         AsmRomPreviewView.DIFF -> AsmRomDiffCanvas(state, preview, modifier)
+        AsmRomPreviewView.SPACE -> AsmRomSpacePlannerCanvas(
+            state,
+            state.romSpacePlan ?: preview.spacePlan,
+            planFits = true,
+            modifier = modifier,
+        )
     }
 }
 
@@ -2122,6 +2202,7 @@ private fun AsmWholeRomCanvas(
         AsmRomPreviewView.LOADED_ROM -> "The file opened in SMEDIT; no assumption that it is vanilla"
         AsmRomPreviewView.SMEDIT_RESULT -> "Exact validated output of the current transactional export plan"
         AsmRomPreviewView.DIFF -> ""
+        AsmRomPreviewView.SPACE -> ""
     }
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(
@@ -2831,6 +2912,7 @@ private fun AsmSourceCanvas(
     onSaveProject: suspend () -> Boolean,
     onBuildProject: (() -> Unit)?,
     onRunInEmulator: (() -> Unit)?,
+    onOpenRomSpaceBank: (Int) -> Unit,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -2882,6 +2964,7 @@ private fun AsmSourceCanvas(
     var visualEditorLine by remember(pane.id, source.id, pane.navigationSerial, state.editSessionSerial, state.workspaceKind) {
         mutableStateOf(pane.lineIndex)
     }
+    val bankBudget = state.sourceBankBudget(source.id, visualEditorLine)
     // Links can depend on other banks, including ones absent from the startup index.
     val visualEditors = remember(source, editorLines, semanticIndex, visualEditorAddresses,
         state.workspaceKind, state.sourceEditorLinks, state.sourceBufferRevision) {
@@ -3047,6 +3130,9 @@ private fun AsmSourceCanvas(
             trailing = "",
             active = isActivePane,
             actions = {
+                bankBudget?.let { budget ->
+                    AsmSourceBankChip(budget) { onOpenRomSpaceBank(budget.bank) }
+                }
                 AsmDocumentFindButton(find::show)
                 if (state.workspaceKind == AsmWorkspaceKind.PROJECT) {
                     AsmSourceToolbarActions(
@@ -3376,6 +3462,48 @@ private fun AsmReadOnlySourceNotice(onOpenProjectSource: () -> Unit) {
                 Text("Open editable project source", fontSize = fs.detail)
             }
         }
+    }
+}
+
+internal fun asmSourceBankChipLabel(budget: AsmSourceBankBudget): String = buildString {
+    append("Bank \$")
+    append(budget.bank.toString(16).uppercase().padStart(2, '0'))
+    append(" · ")
+    append(compactAsmBankBytes(budget.capacityBytes))
+    append(" · ")
+    if (budget.spaceIsCurrent && budget.allocatableContiguousBytes != null) {
+        append(compactAsmBankBytes(budget.allocatableContiguousBytes))
+        append(" alloc.")
+    } else {
+        append("build for space")
+    }
+}
+
+private fun compactAsmBankBytes(bytes: Int): String =
+    if (bytes >= 1024 && bytes % 1024 == 0) "${bytes / 1024} KiB"
+    else formatAsmBackupSize(bytes.toLong())
+
+@Composable
+private fun AsmSourceBankChip(budget: AsmSourceBankBudget, onClick: () -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val low = budget.spaceIsCurrent &&
+        budget.allocatableContiguousBytes?.let { it in 0 until ASM_LOW_BANK_SPACE_BYTES } == true
+    Surface(
+        color = if (low) MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.65f) else Color.Transparent,
+        contentColor = if (low) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        border = BorderStroke(1.dp, if (low) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outlineVariant),
+        shape = ASM_CONTROL_SHAPE,
+        modifier = Modifier.padding(end = 4.dp).clickable(onClick = onClick)
+            .testTag("asm-source-bank-${budget.bank.toString(16).uppercase().padStart(2, '0')}"),
+    ) {
+        Text(
+            asmSourceBankChipLabel(budget),
+            fontSize = fs.detail,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+        )
     }
 }
 
@@ -5014,7 +5142,7 @@ private fun AsmScrollableTextPane(
 }
 
 @Composable
-private fun AsmNavigationHeader(
+internal fun AsmNavigationHeader(
     state: AsmWorkspaceState,
     title: String,
     detail: String,
@@ -5633,6 +5761,7 @@ private const val ASM_OPCODE_INDENT = 4
 private const val ASM_MOUSE_WHEEL_SCALE = 38f
 private const val ASM_LIVE_DIAGNOSTIC_DELAY_MS = 350L
 private const val ASM_MODULE_DESCRIPTION_MAX_LENGTH = 240
+private const val ASM_LOW_BANK_SPACE_BYTES = 4096
 private val ASM_IS_MAC = System.getProperty("os.name", "").lowercase().contains("mac")
 private val ASM_MODIFIER_LABEL = if (ASM_IS_MAC) "Cmd" else "Ctrl"
 private val ASM_LINK_CURSOR = PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))

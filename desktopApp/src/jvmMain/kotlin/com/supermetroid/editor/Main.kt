@@ -827,6 +827,18 @@ fun main() = application {
                 }
             }
 
+            fun openAsmRomSpaceBank(bank: Int) {
+                asmWorkspaceState.openRomSpaceBank(bank)
+                val parser = romParser ?: return
+                scope.launch {
+                    if (saveAsmForExecution()) {
+                        asmWorkspaceState.buildRomPreview {
+                            editorState.buildRomPreview(parser)
+                        }
+                    }
+                }
+            }
+
             fun runProjectInEmulator() {
                 scope.launch {
                     if (!saveAsmForExecution()) return@launch
@@ -1634,6 +1646,7 @@ fun main() = application {
                                         },
                                         onBuildProject = ::buildAsmProject,
                                         onRunInEmulator = ::runProjectInEmulator,
+                                        onOpenRomSpaceBank = ::openAsmRomSpaceBank,
                                         problemsPaneHeightDp = asmProblemsPaneHeightDp,
                                         onProblemsPaneHeightChange = { asmProblemsPaneHeightDp = it },
                                         modifier = Modifier.fillMaxSize(),

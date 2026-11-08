@@ -503,9 +503,12 @@ private fun NewRoomDialog(
         val areaRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
             romParser.readRoomHeader(info.getRoomIdAsInt())?.let(editorState::applyHeaderChanges)
         }.filter { it.area == initialArea }
+        val mapData = runCatching { editorState.effectiveProjectMinimapData(romParser, initialArea) }
+            .getOrElse { effectiveMinimapData(romParser, editorState.project, initialArea) to
+                effectiveMapStationData(romParser, editorState.project, initialArea) }
         findAvailableRoomMapPosition(
-            effectiveMinimapData(romParser, editorState.project, initialArea),
-            effectiveMapStationData(romParser, editorState.project, initialArea),
+            mapData.first,
+            mapData.second,
             areaRooms,
             initialWidth,
             initialHeight,

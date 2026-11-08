@@ -242,6 +242,14 @@ fun TilesetCanvas(
     val zoomLevel = zoomState.value
     AttachMacPinchZoom(LocalSwingWindow.current, zoomState, minZoom = 0.5f, maxZoom = 8f)
     val tilesetId = editorState.editorTilesetId
+    val areaTilesStatus = editorState.tilesetGraphicsEditingStatus(
+        com.supermetroid.editor.asm.AsmTilesetGraphicsKind.AREA_TILES,
+        tilesetId,
+    )
+    val commonTilesStatus = editorState.tilesetGraphicsEditingStatus(
+        com.supermetroid.editor.asm.AsmTilesetGraphicsKind.COMMON_TILES,
+        tilesetId,
+    )
     val selectedMeta = editorState.editorSelectedMetatile
     val gridData = tilesetEditorState.gridData
     val coroutineScope = rememberCoroutineScope()
@@ -516,6 +524,7 @@ fun TilesetCanvas(
                                         }
                                     }
                                 },
+                                enabled = areaTilesStatus.editable,
                                 modifier = Modifier.height(28.dp)
                             )
                             DropdownMenuItem(
@@ -543,6 +552,7 @@ fun TilesetCanvas(
                                         }
                                     }
                                 },
+                                enabled = commonTilesStatus.editable,
                                 modifier = Modifier.height(28.dp)
                             )
                         }
@@ -831,6 +841,12 @@ private fun MetatileComposer(
         }
     }
     val tableScope = tileGraphics.metatileTableSourceLabel(metatileIndex)
+    val tableKind = if (tileGraphics.isCreMetatileIndex(metatileIndex)) {
+        com.supermetroid.editor.asm.AsmTilesetGraphicsKind.COMMON_METATILES
+    } else {
+        com.supermetroid.editor.asm.AsmTilesetGraphicsKind.AREA_METATILES
+    }
+    val tableStatus = editorState.tilesetGraphicsEditingStatus(tableKind)
     val selectedTileSource = tileGraphics.tileSourceLabel(selectedSubtile.tileNum)
     val creReferencesAreaTile = tileGraphics.isCreMetatileIndex(metatileIndex) &&
             tileGraphics.tileSource(selectedSubtile.tileNum) == TileGraphics.TileSource.AREA
@@ -862,6 +878,13 @@ private fun MetatileComposer(
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (tableStatus.sourceManaged) {
+                    Text(
+                        if (tableStatus.editable) "ASM data" else "ASM only",
+                        fontSize = 9.sp,
+                        color = if (tableStatus.editable) Color(0xFF66BB6A) else Color(0xFFFFC857),
+                    )
+                }
                 if (!tileGraphics.isCreMetatileIndex(metatileIndex)) {
                     Text(
                         "tileset ${editorState.editorTilesetId}",
@@ -877,15 +900,15 @@ private fun MetatileComposer(
                     Text("staged", fontSize = 9.sp, color = Color(0xFFFFCA28))
                 }
                 Surface(
-                    modifier = Modifier.height(28.dp).clickable(enabled = hasStagedChanges) { applyStagedWords() },
+                    modifier = Modifier.height(28.dp).clickable(enabled = hasStagedChanges && tableStatus.editable) { applyStagedWords() },
                     shape = MaterialTheme.shapes.small,
-                    color = if (hasStagedChanges) MaterialTheme.colorScheme.primary
+                    color = if (hasStagedChanges && tableStatus.editable) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                 ) {
                     Text(
                         "Apply",
                         fontSize = 9.sp,
-                        color = if (hasStagedChanges) MaterialTheme.colorScheme.onPrimary
+                        color = if (hasStagedChanges && tableStatus.editable) MaterialTheme.colorScheme.onPrimary
                             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 0.dp)
                     )

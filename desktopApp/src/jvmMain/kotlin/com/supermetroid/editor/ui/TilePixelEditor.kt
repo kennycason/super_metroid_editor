@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.asm.AsmTilesetGraphicsKind
 import com.supermetroid.editor.rom.TileGraphics
 import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
@@ -108,6 +109,16 @@ fun TilePixelEditor(
     @Suppress("UNUSED_VARIABLE")
     val palVer = editorState.paletteVersion  // observe palette changes from left-column editor
     val palettes = tileGraphics.getPalettes()
+    val paletteStatus = editorState.tilesetPaletteEditingStatus(editorState.editorTilesetId)
+    val editedKinds = metaWords?.map { word ->
+        if (tileGraphics.tileSource(word and 0x3FF) == TileGraphics.TileSource.CRE) {
+            AsmTilesetGraphicsKind.COMMON_TILES
+        } else {
+            AsmTilesetGraphicsKind.AREA_TILES
+        }
+    }?.toSet().orEmpty()
+    val graphicsStatuses = editedKinds.associateWith { editorState.tilesetGraphicsEditingStatus(it) }
+    val graphicsEditable = graphicsStatuses.values.all(TilesetGraphicsEditingStatus::editable)
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
 
@@ -161,6 +172,7 @@ fun TilePixelEditor(
     }
 
     fun drawPixel(px: Int, py: Int) {
+        if (!graphicsEditable) return
         if (px !in 0..15 || py !in 0..15 || metatileIdx < 0) return
         val colorIdx = if (activeTool == PixelTool.ERASER) 0 else selectedColorIdx
         val old = tileGraphics.readMetatilePixel(metatileIdx, px, py)
@@ -172,6 +184,7 @@ fun TilePixelEditor(
     }
 
     fun floodFill(startX: Int, startY: Int) {
+        if (!graphicsEditable) return
         if (startX !in 0..15 || startY !in 0..15 || metatileIdx < 0) return
         val targetIdx = tileGraphics.readMetatilePixel(metatileIdx, startX, startY)
         val fillIdx = if (activeTool == PixelTool.ERASER) 0 else selectedColorIdx
@@ -214,16 +227,14 @@ fun TilePixelEditor(
     // Persist edits when user navigates away or closes (metatile can touch both var and CRE)
     fun persistEdits() {
         commitPending()
+        val touchedTiles = (undoStack.flatten() + redoStack.flatten()).map(PixelEdit::tileNum).toSet()
         val varRaw = tileGraphics.getRawVarGfx()
         val creRaw = tileGraphics.getRawCreGfx()
-        if (varRaw != null) {
-            editorState.project.customGfx.varGfx[editorState.editorTilesetId.toString()] =
-                java.util.Base64.getEncoder().encodeToString(varRaw)
-            editorState.markDirty()
+        if (varRaw != null && touchedTiles.any { tileGraphics.tileSource(it) == TileGraphics.TileSource.AREA }) {
+            editorState.saveTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_TILES, varRaw)
         }
-        if (creRaw != null) {
-            editorState.project.customGfx.creGfx = java.util.Base64.getEncoder().encodeToString(creRaw)
-            editorState.markDirty()
+        if (creRaw != null && touchedTiles.any { tileGraphics.tileSource(it) == TileGraphics.TileSource.CRE }) {
+            editorState.saveTilesetGraphicsOverride(AsmTilesetGraphicsKind.COMMON_TILES, creRaw)
         }
     }
 
@@ -263,18 +274,21 @@ fun TilePixelEditor(
                 FilterChip(
                     selected = activeTool == PixelTool.PENCIL,
                     onClick = { activeTool = PixelTool.PENCIL },
+                    enabled = graphicsEditable,
                     label = { Icon(Icons.Default.Brush, null, Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
                     selected = activeTool == PixelTool.ERASER,
                     onClick = { activeTool = PixelTool.ERASER },
+                    enabled = graphicsEditable,
                     label = { Icon(Icons.Default.Clear, null, Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
                     selected = activeTool == PixelTool.FILL,
                     onClick = { activeTool = PixelTool.FILL },
+                    enabled = graphicsEditable,
                     label = { Icon(Icons.Default.FormatColorFill, null, Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp)
                 )
@@ -321,14 +335,21 @@ fun TilePixelEditor(
 
                 // Apply & Close (Surface like Tileset Export/Import) — 9.sp to match Grid, avoid cut-off
                 Surface(
-                    modifier = Modifier.height(28.dp).clickable {
+                    modifier = Modifier.height(28.dp).clickable(enabled = graphicsEditable) {
                         persistEdits()
                         coroutineScope.launch { tilesetEditorState.gridData = tileGraphics.renderTilesetGrid() }
                     },
                     shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (graphicsEditable) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
                 ) {
-                    Text("Apply", fontSize = 9.sp, color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(horizontal = 8.dp, vertical = 0.dp))
+                    Text(
+                        "Apply",
+                        fontSize = 9.sp,
+                        color = if (graphicsEditable) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 0.dp),
+                    )
                 }
                 Surface(
                     modifier = Modifier.height(28.dp).clickable { onClose() },
@@ -360,6 +381,20 @@ fun TilePixelEditor(
                     Text(
                         "Palette $selectedPalRow",
                         fontSize = 10.sp, color = Color(0xFFB0B8D1)
+                    )
+                    if (graphicsStatuses.isNotEmpty() && graphicsStatuses.values.all { it.sourceManaged }) {
+                        Text(
+                            if (graphicsEditable) "ASM data" else "ASM only",
+                            fontSize = 9.sp,
+                            color = if (graphicsEditable) Color(0xFF66BB6A) else Color(0xFFFFC857),
+                        )
+                    }
+                }
+                if (!graphicsEditable) {
+                    Text(
+                        "Tiles are ASM-only; edit their source directly.",
+                        fontSize = 9.sp,
+                        color = Color(0xFFFFC857),
                     )
                 }
                 Spacer(Modifier.height(8.dp))
@@ -609,7 +644,7 @@ fun TilePixelEditor(
                 ) {
                     Text("SNES Colour Editor", fontSize = 10.sp, color = Color(0xFFB0B8D1),
                         fontWeight = FontWeight.SemiBold)
-                    if (selectedColorIdx != 0) {
+                    if (selectedColorIdx != 0 && paletteStatus.editable) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("HSV", fontSize = 9.sp,
                                 fontWeight = if (showHsvPicker) FontWeight.Bold else FontWeight.Normal,
@@ -623,7 +658,13 @@ fun TilePixelEditor(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                if (selectedColorIdx == 0) {
+                if (!paletteStatus.editable) {
+                    Text(
+                        "Palette is ASM-only; edit its source directly.",
+                        fontSize = 9.sp,
+                        color = Color(0xFFFFC857),
+                    )
+                } else if (selectedColorIdx == 0) {
                     Text("Index 0 is transparent (cannot edit)", fontSize = 9.sp, color = Color(0xFF6A6F88))
                 } else if (palettes != null) {
                     val bgr555 = tileGraphics.getSnesBgr555(selectedPalRow, selectedColorIdx)

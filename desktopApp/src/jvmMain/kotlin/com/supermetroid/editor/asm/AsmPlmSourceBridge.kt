@@ -44,6 +44,7 @@ internal class AsmPlmSourceBridge(
     val properties = AsmRoomPropertiesBridge(catalog, workspace, project) { onMetadataChanged() }
     val doors = AsmDoorSourceBridge(catalog, workspace, project, context) { onMetadataChanged() }
     val doorStructure = AsmDoorStructure(catalog, workspace, project, doors, layouts, context) { onMetadataChanged() }
+    val minimaps = AsmMinimapSourceBridge(workspace)
     val areaMoves = AsmRoomAreaMove(catalog, workspace, project, properties, doors, ::requireObjectAdoptionAvailable, context) { onMetadataChanged() }
     val doorIndependence = AsmDoorIndependence(catalog, workspace, project, doors, areaMoves, context)
     var describePlm: (RomParser.PlmEntry) -> String = { AsmRoomObjectSource.defaultDescription(it) }
@@ -771,8 +772,11 @@ internal class AsmPlmSourceBridge(
             beforeTransition()
         }
         fun apply(undo: Boolean) {
-            plan.owner.rooms[plan.owner.roomKey(plan.room.roomId)] = if (undo) plan.room else plan.afterModel
+            // Sidecars may perform guarded durable writes. Publish them before
+            // the in-memory room model so a rejected sidecar leaves no partial
+            // model transition; the following assignment cannot fail.
             applySidecar(undo)
+            plan.owner.rooms[plan.owner.roomKey(plan.room.roomId)] = if (undo) plan.room else plan.afterModel
         }
         fun notify(undo: Boolean) { onMetadataChanged(); afterTransition(undo) }
         validate(false)

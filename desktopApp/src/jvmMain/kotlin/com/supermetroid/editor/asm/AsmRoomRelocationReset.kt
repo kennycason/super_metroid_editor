@@ -14,6 +14,8 @@ internal class AsmRoomRelocationReset(
     private val moves: AsmRoomAreaMove,
     private val context: AsmRoomSourceContext? = null,
 ) {
+    private val minimaps = AsmMinimapSourceBridge(workspace)
+
     fun plan(owner: SmEditProject, room: RoomEdits, describe: (RomParser.PlmEntry) -> String): AsmRoomReturnPlan? {
         val parser = context?.parser ?: catalog.parser
         val text = workspace.projectSourceText(PLM_SOURCE_FILE)
@@ -85,7 +87,16 @@ internal class AsmRoomRelocationReset(
             }
             val nativeMask = roomMapOwnershipMask(native, nativeRooms.filter { it.area == native.area })
             val sourceMask = roomMapOwnershipMask(moving, effectiveRooms.filter { it.area == moving.area })
-            var sourceMap = clearRoomTiles(effectiveMinimapData(parser, owner, moving.area), moving.mapX, moving.mapY,
+            fun effectiveMap(area: Int): Pair<MinimapData, MapStationData> {
+                if (minimaps.isAvailable()) {
+                    val view = minimaps.effectiveView(area, owner)
+                    require(view.editable) { view.problem ?: "The area map source is ASM-only." }
+                    return requireNotNull(view.map) to requireNotNull(view.stations)
+                }
+                return effectiveMinimapData(parser, owner, area) to effectiveMapStationData(parser, owner, area)
+            }
+            val movingData = effectiveMap(moving.area)
+            var sourceMap = clearRoomTiles(movingData.first, moving.mapX, moving.mapY,
                 moving.width, moving.height, sourceMask)
             val sourceBaseline = parser.readMinimapTiles(moving.area)
             for (y in 0 until moving.height) for (x in 0 until moving.width) {
@@ -93,12 +104,18 @@ internal class AsmRoomRelocationReset(
                 if (sourceMask[y][x] && isEmptyMinimapTile(word))
                     sourceMap = sourceMap.withTile(moving.mapX + x, moving.mapY + y, word)
             }
-            val sourceReveal = clearMapStationRect(effectiveMapStationData(parser, owner, moving.area), moving.mapX, moving.mapY,
+            val sourceReveal = clearMapStationRect(movingData.second, moving.mapX, moving.mapY,
                 moving.width, moving.height, sourceMask)
             persistMinimapData(parser, maps, sourceMap)
             persistMapStationData(parser, maps, sourceReveal)
-            var targetMap = effectiveMinimapData(parser, maps, native.area)
-            var targetReveal = effectiveMapStationData(parser, maps, native.area)
+            val targetData = if (native.area == moving.area) {
+                // The first persist is a full parser-relative projection; rebuild it from that
+                // projection so a cell intentionally restored to a ROM value is not re-overlaid
+                // by the old authored source value.
+                effectiveMinimapData(parser, maps, native.area) to effectiveMapStationData(parser, maps, native.area)
+            } else effectiveMap(native.area)
+            var targetMap = targetData.first
+            var targetReveal = targetData.second
             val baselineMap = parser.readMinimapTiles(native.area)
             val baselineReveal = parser.readMapStationData(native.area)
             fun covers(candidate: Room, x: Int, y: Int) = candidate.area == native.area &&
@@ -130,7 +147,7 @@ internal class AsmRoomRelocationReset(
         }
         return AsmRoomReturnPlan(moves.plan(room.roomId,
             RoomHeaderChange(area = native.area, mapX = native.mapX, mapY = native.mapY), incoming, AreaSaveMigrationPlan(),
-            maps.minimapEdits, maps.mapStationEdits, { RomParser.isItemPlm(it) }, describe), outgoing)
+            maps.minimapEdits, maps.mapStationEdits, setOf(moving.area, native.area), { RomParser.isItemPlm(it) }, describe), outgoing)
     }
 
     private fun requireSaveConsumers(owner: SmEditProject, room: RoomEdits, effectiveRooms: List<Room>, text: String) {

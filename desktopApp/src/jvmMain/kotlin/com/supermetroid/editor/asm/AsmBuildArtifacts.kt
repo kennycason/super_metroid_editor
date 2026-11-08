@@ -38,6 +38,25 @@ internal data class AsmCompiledSymbols(
         return null
     }
 
+    /** Returns the closest emitted address at or before the caret's source
+     * context. Comments, labels and blank lines usually have no direct WLA
+     * mapping, so bank-level UI must inherit the preceding emitted line. */
+    fun addressAtOrBefore(fileId: String, lineIndex: Int): Int? {
+        val entries = lineAddressesByFile[fileId] ?: return null
+        var closestLine = -1
+        var closestAddress: Int? = null
+        var index = 0
+        while (index < entries.size) {
+            val mappedLine = entries[index + 1]
+            if (mappedLine <= lineIndex && mappedLine >= closestLine) {
+                closestLine = mappedLine
+                closestAddress = entries[index]
+            }
+            index += 2
+        }
+        return closestAddress
+    }
+
     fun addressesFor(fileId: String): Map<Int, Int> {
         val entries = lineAddressesByFile[fileId] ?: return emptyMap()
         return buildMap(entries.size / 2) {

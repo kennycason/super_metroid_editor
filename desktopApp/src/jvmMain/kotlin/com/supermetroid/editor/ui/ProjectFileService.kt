@@ -124,6 +124,7 @@ internal object ProjectFileService {
         onLog: (String) -> Unit,
         onStatus: (String) -> Unit,
         projectFilePath: String = "",
+        onRomSpaceSnapshot: (RomSpaceBuildSnapshot) -> Unit = {},
     ): RomBuildResult? = withBuildFailureReport(project, projectFilePath, onLog, onStatus, "Export preview failed safely") { status ->
         val compiledAsmBase = prepareBuildBase(project, projectFilePath, romParser, onLog, status)
         RomExporter(
@@ -133,6 +134,7 @@ internal object ProjectFileService {
             onStatus = status,
             logWritePlanDetails = false,
             compiledAsmBase = compiledAsmBase,
+            onRomSpaceSnapshot = onRomSpaceSnapshot,
         ).build()?.also { publishRoomData(project, projectFilePath, romParser, it, onLog) }
     }
 
@@ -225,14 +227,20 @@ internal object ProjectFileService {
             require(project.asmWorkspace.disabledPatchValues.isEmpty()) { "Saved disabled ASM customizations require ASM source mode." }
             require(project.rooms.values.none { it.asmDoorSourceVersion != 0 || it.asmStateSelectorsSourceVersion != 0 || it.asmRoomPropertiesSourceVersion != 0 || it.asmLayoutSourceVersion != 0 || it.asmPlmSourceVersion != 0 || it.asmInitialScrollSourceVersion != 0 || it.asmFxSourceVersion != 0 || it.asmEnemySourceVersion != 0 }) { "Authored room data requires ASM source mode." }
             require(project.asmWorkspace.plmSourceBindings.isEmpty()) { "Linked room objects require ASM source mode." }
+            val repository = AsmProjectWorkspaceRepository()
             val sourceEdits = if (project.asmWorkspace.enabled && projectFilePath.isNotBlank()) {
-                AsmProjectWorkspaceRepository().sourceOverrideFileIds(projectFilePath)
-            } else {
-                emptySet()
-            }
+                repository.sourceOverrideFileIds(projectFilePath)
+            } else emptySet()
+            val assetEdits = if (project.asmWorkspace.enabled && projectFilePath.isNotBlank()) {
+                repository.assetOverridePaths(projectFilePath)
+            } else emptySet()
             require(sourceEdits.isEmpty()) {
                 "Loaded ROM mode cannot ignore saved ASM source edits (${sourceEdits.sorted().joinToString()}). " +
                     "Restore those files to their original source or select ASM source mode."
+            }
+            require(assetEdits.isEmpty()) {
+                "Loaded ROM mode cannot ignore saved ASM data edits (${assetEdits.sorted().joinToString()}). " +
+                    "Restore those assets to their original data or select ASM source mode."
             }
             return null
         }

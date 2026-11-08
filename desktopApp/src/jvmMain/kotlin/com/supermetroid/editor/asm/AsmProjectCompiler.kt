@@ -75,6 +75,8 @@ internal data class AsmCompiledBuildBase(
     val curatedPatchIds: Set<String> = emptySet(),
     /** Same authored build with the curated module gated off; proves hooks/free space were not occupied by other ASM. */
     val curatedBaselineRomBody: ByteArray? = null,
+    /** Same authored build with the checked tutorial hook gated off. */
+    val checkedHookDemoBaselineRomBody: ByteArray? = null,
 )
 
 internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
@@ -94,6 +96,7 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     nativePatchWrites = nativePatchWrites.mapValues { it.value.toList() },
     curatedPatchIds = curatedPatchIds.toSet(),
     curatedBaselineRomBody = curatedBaselineRomBody?.copyOf(),
+    checkedHookDemoBaselineRomBody = checkedHookDemoBaselineRomBody?.copyOf(),
     expectedFinalRomBytes = expectedFinalRomBytes?.copyOf(),
     roomValidationRomBytes = roomValidationRomBytes?.copyOf(),
 )
@@ -290,6 +293,7 @@ internal class AsmProjectCompiler(
         var predicateStart: Int? = null
         var predicateClaims: List<AsmSourceOwnedRange> = emptyList()
         var curatedBaseline: ByteArray? = null
+        var checkedHookDemoBaseline: ByteArray? = null
         try {
             reference = if (referenceRomBody == null) {
                 onProgress("Compiling immutable ASM snapshot…")
@@ -335,6 +339,20 @@ internal class AsmProjectCompiler(
                     generatedPatchSource = patchMaterialization.source,
                     generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
                     muteFastDoors = true, romSize = outputRomSize, fillByte = expandedFillByte).rom
+            }
+            if (AsmCheckedHookDemo.active(workspace)) {
+                onProgress("Checking the hook demo against native code and other authored modules…")
+                checkedHookDemoBaseline = compileTree(
+                    sourceTree = workspace.workingDirectory,
+                    asar = asar,
+                    assetOverrides = materialization.assetOverrides,
+                    generatedRoomSource = roomMaterialization.source,
+                    generatedPatchSource = patchMaterialization.source,
+                    generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    muteCheckedHookDemo = true,
+                    romSize = outputRomSize,
+                    fillByte = expandedFillByte,
+                ).rom
             }
             if (predicateStart != null) {
                 predicateClaims = AsmManagedBank8FCode.claims(predicates, predicateStart, reference.rom, project.rom, project.symbols)
@@ -382,7 +400,7 @@ internal class AsmProjectCompiler(
         } else {
             loadedRom.copyOfRange(0, headerSize) + project.rom
         }
-        return AsmCompiledBuildBase(
+        val compiled = AsmCompiledBuildBase(
             romBytes = output,
             referenceRomBody = reference.rom,
             // Expansion changes Asar's derived internal checksum inside the
@@ -416,18 +434,24 @@ internal class AsmProjectCompiler(
             compilerSymbols = project.symbols,
             managedBank8FStart = predicateStart,
             curatedBaselineRomBody = curatedBaseline,
-        ).also { compiled ->
-            runCatching {
-                buildArtifacts.publishSuccess(
-                    projectFilePath = projectFilePath,
-                    symbols = compiled.compilerSymbols,
-                    output = compiled.compilerOutput,
-                    assemblerVersion = version,
-                    generatedRoomSource = roomMaterialization.source,
-                )
-            }
-            AsmCompiledBuildCache.put(cacheKey, compiled)
+            checkedHookDemoBaselineRomBody = checkedHookDemoBaseline,
+        )
+        val protected = if (checkedHookDemoBaseline != null) {
+            AsmCheckedHookDemo.protect(workspace, compiled)
+        } else {
+            compiled
         }
+        runCatching {
+            buildArtifacts.publishSuccess(
+                projectFilePath = projectFilePath,
+                symbols = protected.compilerSymbols,
+                output = protected.compilerOutput,
+                assemblerVersion = version,
+                generatedRoomSource = roomMaterialization.source,
+            )
+        }
+        AsmCompiledBuildCache.put(cacheKey, protected)
+        return protected
     }
 
     /** Exact fingerprint used by the higher-level prepared-base cache. */
@@ -540,6 +564,7 @@ internal class AsmProjectCompiler(
         generatedPatchSource: String = "",
         generatedBank8FSource: String = "",
         muteFastDoors: Boolean = false,
+        muteCheckedHookDemo: Boolean = false,
         romSize: Int = ASM_ROM_SIZE,
         fillByte: Int = 0xFF,
     ): CompiledTree {
@@ -552,6 +577,10 @@ internal class AsmProjectCompiler(
             if (muteFastDoors) {
                 val module = File(staging, "src/${AsmFastDoorsModule.FILE}")
                 module.writeText(AsmFastDoorsModule.withEnabled(module.readText(), false))
+            }
+            if (muteCheckedHookDemo) {
+                val module = File(staging, "src/${AsmCheckedHookDemo.FILE}")
+                module.writeText(AsmCheckedHookDemo.withEnabled(module.readText(), false))
             }
             applyAssetOverrides(File(staging, "data"), assetOverrides)
             AsmProjectModuleGateway.apply(File(staging, "src"))
@@ -707,7 +736,7 @@ internal class AsmProjectCompiler(
         private const val GENERATED_ROOM_FILE = "__smedit_generated_rooms.asm"
         private const val GENERATED_PATCH_FILE = "__smedit_generated_patches.asm"
         private const val GENERATED_BANK8F_FILE = "__smedit_managed_bank8f.asm"
-        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v8-curated-patches"
+        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v9-checked-hook-demo"
 
         internal fun clearBuildCacheForTests() = AsmCompiledBuildCache.clear()
 

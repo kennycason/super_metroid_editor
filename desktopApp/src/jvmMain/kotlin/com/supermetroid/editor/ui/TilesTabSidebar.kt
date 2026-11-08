@@ -127,12 +127,16 @@ private fun PaletteSubTab(
         when (paletteCategory) {
             0 -> {
                 val currentTilesetId = editorState.editorTilesetId.takeIf { it >= 0 }
+                val paletteStatus = currentTilesetId?.let(editorState::tilesetPaletteEditingStatus)
                 PaletteEditor(
                     tileGraphics = editorState.editorTileGraphics,
                     tilesetId = currentTilesetId?.toString(),
                     hasCustomPalette = currentTilesetId != null && editorState.hasCustomPalette(currentTilesetId),
                     sampledPaletteRow = editorState.sampledPaletteRow,
                     sampledPaletteCol = editorState.sampledPaletteCol,
+                    editingEnabled = paletteStatus?.editable != false,
+                    sourceManaged = paletteStatus?.sourceManaged == true,
+                    ownershipMessage = paletteStatus?.message,
                     onPaletteSaved = { currentTilesetId?.let { editorState.savePaletteOverride(it) } },
                     onPaletteReset = {
                         if (currentTilesetId != null && editorState.resetPaletteOverride(currentTilesetId)) {

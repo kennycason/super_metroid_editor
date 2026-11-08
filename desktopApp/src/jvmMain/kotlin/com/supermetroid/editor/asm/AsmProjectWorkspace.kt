@@ -36,6 +36,10 @@ internal val DEFAULT_ASM_STARTER_MODULES = listOf(
         fileName = "objectives_pause_screen.asm",
         resourcePath = "/asm-templates/objectives_pause_screen.asm",
     ),
+    AsmStarterModule(
+        fileName = "checked_hook_demo.asm",
+        resourcePath = "/asm-templates/checked_hook_demo.asm",
+    ),
 )
 
 internal data class AsmProjectWorkspace(
@@ -63,6 +67,7 @@ internal data class AsmProjectBuildWorkspace(
 )
 
 internal data class AsmSavedSource(val modified: Boolean)
+internal data class AsmSavedAsset(val modified: Boolean)
 
 /**
  * Owns authored asm/ plus the generated smedit/asm/ cache. Initial creation is transactional and
@@ -111,6 +116,8 @@ internal class AsmProjectWorkspaceRepository(
 
     fun loadForBuild(projectFilePath: String): AsmProjectBuildWorkspace? = withSourceLock(projectFilePath) {
         AsmBaselineUpdateTransaction.recover(projectFilePath)
+        synchronizeAssetMirrorsAfterRecovery(projectFilePath)
+        synchronizeBundledStarterModules(projectFilePath)
         loadForBuildAfterRecovery(projectFilePath)
     }
 
@@ -128,7 +135,11 @@ internal class AsmProjectWorkspaceRepository(
         val working = File(cache, WORKING_DIRECTORY)
         if (!File(original, "src/main.asm").isFile || !File(working, "src/main.asm").isFile) return null
         if (!baseline.matches(File(original, "src"))) return null
-        if (!baseline.assets.all { File(working, "data/${it.path}").isFile }) return null
+        if (!baseline.assets.all { asset ->
+                File(original, "data/${asset.path}").let { it.isFile && it.length() == asset.length.toLong() } &&
+                    File(working, "data/${asset.path}").let { it.isFile && it.length() == asset.length.toLong() }
+            }
+        ) return null
         val modulesDirectory = File(root, MODULES_DIRECTORY)
         val workingModules = File(working, "src/$ASM_PROJECT_MODULE_DIRECTORY")
         val moduleOrder = runCatching { readModuleOrder(modulesDirectory) }.getOrNull() ?: return null
@@ -211,6 +222,7 @@ internal class AsmProjectWorkspaceRepository(
             val existingOverrides = File(target, OVERRIDES_DIRECTORY)
             if (existingOverrides.isDirectory) {
                 applySourceOverrides(existingOverrides, File(working, "src"))
+                applyAssetOverrides(existingOverrides, File(working, "data"), baseline.assets)
             }
             val existingModules = File(target, MODULES_DIRECTORY)
             if (existingModules.isDirectory) {
@@ -319,6 +331,81 @@ internal class AsmProjectWorkspaceRepository(
         return checkNotNull(load(projectFilePath)) { "Project ASM workspace did not validate after restoring $fileId" }
     }
 
+    /**
+     * Saves a complete extracted `incbin` asset as portable project authority.
+     * Assets keep their frozen manifest path and byte length; codecs must prove
+     * that constraint before publishing a visual edit here.
+     */
+    fun saveAsset(
+        projectFilePath: String,
+        assetPath: String,
+        bytes: ByteArray,
+        expectedBytes: ByteArray? = null,
+    ): AsmSavedAsset = withSourceLock(projectFilePath) {
+        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
+        val asset = requireAsset(current.assets, assetPath)
+        require(bytes.size == asset.length) {
+            "Source asset $assetPath must remain exactly ${asset.length} bytes; received ${bytes.size}"
+        }
+        val original = resolveManagedAsset(File(current.originalDirectory, "data"), assetPath, current.assets)
+        val target = resolveManagedAsset(File(current.workingDirectory, "data"), assetPath, current.assets)
+        val override = resolveManagedAsset(File(current.root, "$OVERRIDES_DIRECTORY/data"), assetPath, current.assets)
+        require(original.isFile && original.length() == asset.length.toLong() &&
+            target.isFile && target.length() == asset.length.toLong()) {
+            "Source asset $assetPath is missing or does not match its frozen manifest"
+        }
+        val authoritative = if (override.isFile) override else original
+        require(expectedBytes == null || target.readBytes().contentEquals(expectedBytes)) {
+            "$assetPath changed in the generated ASM workspace. No asset was overwritten."
+        }
+        require(expectedBytes == null || authoritative.readBytes().contentEquals(expectedBytes)) {
+            "$assetPath's authored data override changed outside SMEDIT. No asset was overwritten."
+        }
+        writeBytesAtomically(target, bytes)
+        val modified = !original.readBytes().contentEquals(bytes)
+        if (!modified) {
+            Files.deleteIfExists(override.toPath())
+            deleteEmptyOverrideParents(override.parentFile, File(current.root, OVERRIDES_DIRECTORY))
+        } else {
+            writeBytesAtomically(override, bytes)
+        }
+        AsmSavedAsset(modified)
+    }
+
+    fun restoreAsset(
+        projectFilePath: String,
+        assetPath: String,
+        expectedBytes: ByteArray? = null,
+    ): AsmSavedAsset = withSourceLock(projectFilePath) {
+        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
+        val asset = requireAsset(current.assets, assetPath)
+        val original = resolveManagedAsset(File(current.originalDirectory, "data"), assetPath, current.assets)
+        val target = resolveManagedAsset(File(current.workingDirectory, "data"), assetPath, current.assets)
+        val override = resolveManagedAsset(File(current.root, "$OVERRIDES_DIRECTORY/data"), assetPath, current.assets)
+        require(original.isFile && original.length() == asset.length.toLong() &&
+            target.isFile && target.length() == asset.length.toLong()) {
+            "Source asset $assetPath is missing or does not match its frozen manifest"
+        }
+        val authoritative = if (override.isFile) override else original
+        require(expectedBytes == null || target.readBytes().contentEquals(expectedBytes)) {
+            "$assetPath changed in the generated ASM workspace. No asset was overwritten."
+        }
+        require(expectedBytes == null || authoritative.readBytes().contentEquals(expectedBytes)) {
+            "$assetPath's authored data override changed outside SMEDIT. No asset was overwritten."
+        }
+        writeBytesAtomically(target, original.readBytes())
+        val modified = Files.deleteIfExists(override.toPath())
+        deleteEmptyOverrideParents(override.parentFile, File(current.root, OVERRIDES_DIRECTORY))
+        AsmSavedAsset(modified)
+    }
+
+    fun readAsset(projectFilePath: String, assetPath: String): ByteArray = withSourceLock(projectFilePath) {
+        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
+        val target = resolveManagedAsset(File(current.workingDirectory, "data"), assetPath, current.assets)
+        require(target.isFile) { "Source asset does not exist: $assetPath" }
+        target.readBytes()
+    }
+
     fun rootFor(projectFilePath: String): File? = projectRoot(projectFilePath)
 
     fun cacheFor(projectFilePath: String): File? = projectRoot(projectFilePath)?.let(::cacheRoot)
@@ -354,6 +441,17 @@ internal class AsmProjectWorkspaceRepository(
             enabledNames.asSequence().map { ASM_PROJECT_MODULE_PREFIX + it }
         }
         return (overrides + modules).toCollection(linkedSetOf())
+    }
+
+    /** Portable binary inputs which Loaded ROM mode must never silently ignore. */
+    fun assetOverridePaths(projectFilePath: String): Set<String> {
+        val root = projectRoot(projectFilePath) ?: return emptySet()
+        val dataRoot = File(root, "$OVERRIDES_DIRECTORY/data")
+        if (!dataRoot.isDirectory) return emptySet()
+        return dataRoot.walkTopDown()
+            .filter(File::isFile)
+            .map { it.relativeTo(dataRoot).invariantSeparatorsPath }
+            .toCollection(linkedSetOf())
     }
 
     fun createModule(
@@ -533,6 +631,41 @@ internal class AsmProjectWorkspaceRepository(
         }
     }
 
+    private fun synchronizeAssetMirrorsAfterRecovery(projectFilePath: String) {
+        val root = projectRoot(projectFilePath) ?: return
+        val baseline = AsmSourceBaseline.load(root) ?: return
+        val cache = cacheRoot(root)
+        val originalRoot = File(cache, "$ORIGINAL_DIRECTORY/data")
+        val workingRoot = File(cache, "$WORKING_DIRECTORY/data")
+        if (!originalRoot.isDirectory || !workingRoot.isDirectory) return
+        val overrideRoot = File(root, "$OVERRIDES_DIRECTORY/data")
+        validateAssetOverrideInventory(overrideRoot, baseline.assets)
+        baseline.assets.forEach { asset ->
+            val original = resolveManagedAsset(originalRoot, asset.path, baseline.assets)
+            if (!original.isFile || original.length() != asset.length.toLong()) return@forEach
+            val target = resolveManagedAsset(workingRoot, asset.path, baseline.assets)
+            val override = resolveManagedAsset(overrideRoot, asset.path, baseline.assets)
+            val authoritative = if (override.isFile) override else original
+            if (override.isFile) {
+                require(!Files.isSymbolicLink(override.toPath()) && override.length() == asset.length.toLong()) {
+                    "Project ASM data override ${asset.path} does not match its frozen ${asset.length}-byte asset"
+                }
+            }
+            val expected = authoritative.readBytes()
+            val previous = target.takeIf(File::isFile)?.readBytes()
+            if (previous != null && previous.contentEquals(expected)) return@forEach
+            if (previous != null) {
+                val recoveryRoot = File(cache, "recovery/data")
+                val recovery = resolveManagedRecoveryAsset(
+                    recoveryRoot,
+                    "${asset.path}.${AsmVerifiedCache.hash(previous)}.bin",
+                )
+                if (!recovery.exists()) writeBytesAtomically(recovery, previous)
+            }
+            writeBytesAtomically(target, expected)
+        }
+    }
+
     private fun ensureProjectModuleDirectory(modulesDirectory: File) {
         modulesDirectory.mkdirs()
         val order = File(modulesDirectory, ASM_PROJECT_MODULE_ORDER_FILE)
@@ -566,7 +699,63 @@ internal class AsmProjectWorkspaceRepository(
         // Starter modules are readable references, but a new workspace remains
         // byte-identical until the user explicitly enables one.
         writeDisabledModules(modulesDirectory, order)
+        writeTextAtomically(
+            File(modulesDirectory, BUNDLED_STARTERS_FILE),
+            order.joinToString("\n", postfix = if (order.isEmpty()) "" else "\n"),
+        )
         syncProjectModules(modulesDirectory, workingSourceRoot)
+    }
+
+    /**
+     * Appends newly shipped examples once, disabled, without replacing authored
+     * modules. The inventory also remembers deletion: a starter the project has
+     * already seen is never silently recreated.
+     */
+    private fun synchronizeBundledStarterModules(projectFilePath: String) {
+        if (starterModules.isEmpty()) return
+        val root = projectRoot(projectFilePath) ?: return
+        val cache = cacheRoot(root)
+        val workingSourceRoot = File(cache, "$WORKING_DIRECTORY/src")
+        if (!File(workingSourceRoot, "main.asm").isFile) return
+        val baseline = AsmSourceBaseline.load(root) ?: return
+        val modulesDirectory = File(root, MODULES_DIRECTORY)
+        ensureProjectModuleDirectory(modulesDirectory)
+        val order = readModuleOrder(modulesDirectory).toMutableList()
+        val marker = File(modulesDirectory, BUNDLED_STARTERS_FILE)
+        val seen = if (marker.isFile) {
+            marker.readLines().map(String::trim).filter(String::isNotEmpty).toMutableSet()
+        } else {
+            // Objectives was the sole starter before this inventory existed.
+            mutableSetOf("objectives_pause_screen.asm")
+        }
+        require(seen.all { normalizeProjectModuleName(it) == it }) {
+            "Bundled ASM starter inventory contains an unsafe module name"
+        }
+        val disabled = readDisabledModules(modulesDirectory, order).toMutableSet()
+        var changed = false
+        starterModules.forEach { starter ->
+            require(normalizeProjectModuleName(starter.fileName) == starter.fileName) {
+                "Unsafe bundled ASM starter module name: ${starter.fileName}"
+            }
+            val target = File(modulesDirectory, starter.fileName)
+            if (starter.fileName !in seen && !target.exists()) {
+                val text = checkNotNull(javaClass.getResourceAsStream(starter.resourcePath)) {
+                    "Missing bundled ASM starter module ${starter.resourcePath}"
+                }.bufferedReader().use { it.readText() }
+                writeTextAtomically(target, baseline.bindings.template(text))
+                order += starter.fileName
+                disabled += starter.fileName
+                changed = true
+            }
+            seen += starter.fileName
+        }
+        if (changed) {
+            writeModuleOrder(modulesDirectory, order)
+            writeDisabledModules(modulesDirectory, order.filter(disabled::contains))
+            syncProjectModules(modulesDirectory, workingSourceRoot)
+        }
+        val markerText = seen.sorted().joinToString("\n", postfix = if (seen.isEmpty()) "" else "\n")
+        if (!marker.isFile || marker.readText() != markerText) writeTextAtomically(marker, markerText)
     }
 
     private fun syncProjectModules(modulesDirectory: File, workingSourceRoot: File) {
@@ -757,6 +946,28 @@ internal class AsmProjectWorkspaceRepository(
         return resolved
     }
 
+    private fun requireAsset(assets: List<AsmAssetRange>, assetPath: String): AsmAssetRange =
+        requireNotNull(assets.singleOrNull { it.path == assetPath }) {
+            "Unknown project ASM source asset: $assetPath"
+        }
+
+    private fun resolveManagedAsset(root: File, assetPath: String, assets: List<AsmAssetRange>): File {
+        requireAsset(assets, assetPath)
+        return resolveManagedRecoveryAsset(root, assetPath)
+    }
+
+    private fun resolveManagedRecoveryAsset(root: File, relativePath: String): File {
+        require(relativePath.isNotBlank() && !relativePath.contains('\\')) {
+            "Invalid ASM data path: $relativePath"
+        }
+        val normalizedRoot = root.canonicalFile.toPath()
+        val resolved = File(root, relativePath).canonicalFile
+        require(resolved.toPath().startsWith(normalizedRoot) && resolved.toPath() != normalizedRoot) {
+            "Unsafe ASM data path: $relativePath"
+        }
+        return resolved
+    }
+
     private fun copyTree(source: File, destination: File) {
         require(source.isDirectory) { "ASM reference directory is missing: $source" }
         val sourcePath = source.canonicalFile.toPath()
@@ -782,6 +993,45 @@ internal class AsmProjectWorkspaceRepository(
             val target = resolveManagedSource(workingSourceRoot, fileId)
             require(target.isFile) { "Project ASM override has no pinned source file: $fileId" }
             writeBytesAtomically(target, override.readBytes())
+        }
+    }
+
+    private fun applyAssetOverrides(
+        overridesRoot: File,
+        workingDataRoot: File,
+        assets: List<AsmAssetRange>,
+    ) {
+        val overrideDataRoot = File(overridesRoot, "data")
+        validateAssetOverrideInventory(overrideDataRoot, assets)
+        if (!overrideDataRoot.isDirectory) return
+        overrideDataRoot.walkTopDown().filter(File::isFile).forEach { override ->
+            val assetPath = override.relativeTo(overrideDataRoot).invariantSeparatorsPath
+            val asset = requireAsset(assets, assetPath)
+            require(!Files.isSymbolicLink(override.toPath()) && override.length() == asset.length.toLong()) {
+                "Project ASM data override $assetPath does not match its frozen ${asset.length}-byte asset"
+            }
+            val target = resolveManagedAsset(workingDataRoot, assetPath, assets)
+            require(target.isFile && target.length() == asset.length.toLong()) {
+                "Project ASM data override has no pinned source asset: $assetPath"
+            }
+            writeBytesAtomically(target, override.readBytes())
+        }
+    }
+
+    private fun validateAssetOverrideInventory(overrideDataRoot: File, assets: List<AsmAssetRange>) {
+        if (!overrideDataRoot.exists()) return
+        require(overrideDataRoot.isDirectory && !Files.isSymbolicLink(overrideDataRoot.toPath())) {
+            "Project ASM data overrides must be a real directory"
+        }
+        val known = assets.mapTo(hashSetOf(), AsmAssetRange::path)
+        overrideDataRoot.walkTopDown().forEach { entry ->
+            require(!Files.isSymbolicLink(entry.toPath()) && (entry.isDirectory || entry.isFile)) {
+                "Project ASM data overrides cannot contain links or special files: $entry"
+            }
+            if (entry.isFile) {
+                val path = entry.relativeTo(overrideDataRoot).invariantSeparatorsPath
+                require(path in known) { "Project ASM data override has no frozen source asset: $path" }
+            }
         }
     }
 
@@ -917,5 +1167,6 @@ internal class AsmProjectWorkspaceRepository(
         const val OVERRIDES_DIRECTORY = "overrides"
         const val MODULES_DIRECTORY = "modules"
         const val ASM_PROJECT_MODULE_DIRECTORY = "project"
+        const val BUNDLED_STARTERS_FILE = ".bundled-starters"
     }
 }

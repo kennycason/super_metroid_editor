@@ -21,7 +21,7 @@ class AsmLibraryTest {
 
     @Test
     fun `guide and instruction page ids round trip`() {
-        assertEquals(10, AsmLibrary.guides.size)
+        assertEquals(12, AsmLibrary.guides.size)
         assertEquals(AsmLibrary.guides.size, AsmLibrary.guides.map { it.id }.toSet().size)
         AsmLibrary.guides.forEach { guide ->
             assertNotNull(AsmLibrary.guide(guide.id))
@@ -43,6 +43,20 @@ class AsmLibraryTest {
         assertTrue("\$90:9EB9" in jumpText)
         assertTrue("\$90:9EBF" in jumpText)
         assertTrue("cannot silently omit" in jumpText)
+        val hooksGuide = AsmLibrary.guide("hooks-and-overrides")!!
+        val hooksText = hooksGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("displaced work" in hooksText)
+        assertTrue("Objectives_MainPauseRoutine" in hooksText)
+        assertTrue("warnpc \$918000" in hooksText)
+        val demoGuide = AsmLibrary.guide("checked-hook-demo")!!
+        val demoText = demoGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("LowEnergyCheck+\$0008" in demoText)
+        assertTrue("SMEDIT_CheckedHookDemo_Threshold_End" in demoText)
+        assertTrue("last enabled Project Module" in demoText)
         val quickReference = AsmLibrary.guide("quick-reference-tables")!!
         val tables = quickReference.sections.mapNotNull { it.table }
         assertEquals(5, tables.size)

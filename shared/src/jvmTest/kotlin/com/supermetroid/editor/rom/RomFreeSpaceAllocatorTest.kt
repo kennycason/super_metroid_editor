@@ -159,6 +159,29 @@ class RomFreeSpaceAllocatorTest {
         )
     }
 
+    @Test
+    fun `space snapshots are read only and follow reservations protection and actual blockers`() {
+        val rom = ByteArray(0x10000) { -1 }
+        rom.fill(0, 0, 0x100)
+        val allocator = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes, guardBytes = 2)
+        val before = allocator.snapshot(listOf(0x80, 0x81))
+        assertEquals(0x102, before.banks.single { it.bank == 0x80 }.nextFreePcOffset)
+        assertEquals(0x8000 - 0x102, before.banks.single { it.bank == 0x80 }.availableBytes)
+        assertEquals(2, before.banks.single { it.bank == 0x81 }.nextFreePcOffset - 0x8000)
+        assertTrue(before.allocations.isEmpty())
+
+        val first = allocator.reserve(16, listOf(0x80), "room layout")!!
+        val reserved = allocator.snapshot(listOf(0x80))
+        assertEquals(listOf(first), reserved.allocations)
+        assertEquals(first.pcOffset + first.size, reserved.banks.single().nextFreePcOffset)
+        assertEquals(0x8000 - first.pcOffset - first.size, reserved.banks.single().availableBytes)
+        assertTrue(rom.sliceArray(first.pcOffset until first.pcOffset + first.size).all { it == (-1).toByte() })
+
+        rom[first.pcOffset + first.size + 4] = 0
+        val blocked = allocator.snapshot(listOf(0x80)).banks.single()
+        assertEquals(4, blocked.availableBytes, "Snapshot reports what the next contiguous reservation can really use")
+    }
+
     private fun snesToPc(snesAddress: Int): Int {
         val bank = (snesAddress shr 16) and 0xFF
         val address = snesAddress and 0xFFFF

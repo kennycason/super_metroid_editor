@@ -78,8 +78,14 @@ class MinimapEditorState {
     internal val isPointerDraggingRoom: Boolean get() = pointerMoveMode != null
 
     private var loadedParser: RomParser? = null
+    private var loadedSourceMap: MinimapData? = null
+    private var loadedSourceStations: MapStationData? = null
     private var observedEditorEditVersion: Int = -1
     var areaReassignmentError by mutableStateOf<String?>(null)
+        private set
+    var sourceOwnershipProblem by mutableStateOf<String?>(null)
+        private set
+    var sourceBacked by mutableStateOf(false)
         private set
 
     fun dismissAreaReassignmentError() {
@@ -100,8 +106,9 @@ class MinimapEditorState {
             tileGraphics = parser.readMinimapTileGraphics()
         }
         selectedArea = area
-        mapData = effectiveMinimapData(parser, editorState.project, area)
-        stationData = effectiveMapStationData(parser, editorState.project, area)
+        val effective = effectiveData(parser, editorState, area)
+        mapData = effective.first
+        stationData = effective.second
         if (resetHistory) {
             undoStack.clear()
             redoStack.clear()
@@ -162,6 +169,37 @@ class MinimapEditorState {
 
     private fun roomHexKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 
+    /** Source mode reads the live inline arrays first; old JSON edits remain an overlay only until the next save migrates them. */
+    private fun effectiveData(parser: RomParser, editorState: EditorState, area: Int): Pair<MinimapData, MapStationData> {
+        val bridge = editorState.asmPlmSourceBridge?.minimaps
+        if (editorState.project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && bridge?.isAvailable() == true) {
+            sourceBacked = true
+            val view = bridge.view(area)
+            sourceOwnershipProblem = view.problem
+            if (view.editable) {
+                val sourceMap = requireNotNull(view.map)
+                val sourceStations = requireNotNull(view.stations)
+                loadedSourceMap = sourceMap
+                loadedSourceStations = sourceStations
+                return applyMinimapEdits(sourceMap, editorState.project) to
+                    applyMapStationEdits(sourceStations, editorState.project)
+            }
+        } else {
+            sourceBacked = false
+            sourceOwnershipProblem = null
+        }
+        loadedSourceMap = null
+        loadedSourceStations = null
+        return effectiveMinimapData(parser, editorState.project, area) to
+            effectiveMapStationData(parser, editorState.project, area)
+    }
+
+    private fun requireEditableSource(editorState: EditorState): Boolean {
+        val problem = sourceOwnershipProblem ?: return true
+        editorState.postStatus("Minimap is ASM-only: $problem")
+        return false
+    }
+
     private fun clearPointerMoveMode() {
         pointerMoveMode = null
         pointerGrabOffsetX = 0
@@ -182,8 +220,9 @@ class MinimapEditorState {
         val parser = requireNotNull(loadedParser)
         editorState.refreshRoomMapHeaders(parser)
         initIfNeeded(parser, editorState)
-        mapData = effectiveMinimapData(parser, editorState.project, selectedArea)
-        stationData = effectiveMapStationData(parser, editorState.project, selectedArea)
+        effectiveData(parser, editorState, selectedArea).let { (map, stations) ->
+            mapData = map; stationData = stations
+        }
     }.onFailure { editorState.postStatus(it.message ?: "Room map data is unavailable.") }.isSuccess
 
     private fun liftRoom(room: Room, editorState: EditorState, targetX: Int = room.mapX, targetY: Int = room.mapY) {
@@ -292,8 +331,8 @@ class MinimapEditorState {
             }
             editorState.refreshRoomMapHeaders(parser)
             refreshAreaRooms(parser, selectedArea, editorState)
-            require(roomFootprints() == baseline.rooms && effectiveMinimapData(parser, editorState.project, selectedArea) == baseline.map &&
-                effectiveMapStationData(parser, editorState.project, selectedArea) == baseline.stations) {
+            val effective = effectiveData(parser, editorState, selectedArea)
+            require(roomFootprints() == baseline.rooms && effective.first == baseline.map && effective.second == baseline.stations) {
                 "Room positions or map data changed during this preview; cancel and start this move again."
             }
         }.onFailure { editorState.postStatus(it.message ?: "Room map data changed; restart this move.") }.isSuccess) {
@@ -351,8 +390,9 @@ class MinimapEditorState {
         val buf = moveBuffer ?: return
         val parser = loadedParser ?: return
 
-        mapData = effectiveMinimapData(parser, editorState.project, selectedArea)
-        stationData = effectiveMapStationData(parser, editorState.project, selectedArea)
+        effectiveData(parser, editorState, selectedArea).let { (map, stations) ->
+            mapData = map; stationData = stations
+        }
 
         refreshAreaRooms(parser, selectedArea, editorState)
         selectedRoomIndex = areaRooms.indexOfFirst { it.roomId == buf.roomId }
@@ -474,8 +514,9 @@ class MinimapEditorState {
             moveBaseline = null
             clearPointerMoveMode()
             loadedParser?.let { parser ->
-                mapData = effectiveMinimapData(parser, editorState.project, selectedArea)
-                stationData = effectiveMapStationData(parser, editorState.project, selectedArea)
+                effectiveData(parser, editorState, selectedArea).let { (map, stations) ->
+                    mapData = map; stationData = stations
+                }
             }
         }
         observedEditorEditVersion = editorState.editVersion
@@ -501,6 +542,7 @@ class MinimapEditorState {
             pendingStroke = null
             return
         }
+        if (!requireEditableSource(editorState)) { pendingStroke = null; return }
         pushUndo(editorState)
         mapData = pending
         pendingStroke = null
@@ -536,6 +578,7 @@ class MinimapEditorState {
 
     fun paintTile(x: Int, y: Int, editorState: EditorState) {
         if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) return
+        if (!requireEditableSource(editorState)) return
         val word = selectedTileWord
         if (mapData.getTile(x, y) == word) return
         pushUndo(editorState)
@@ -545,6 +588,7 @@ class MinimapEditorState {
 
     fun eraseTile(x: Int, y: Int, editorState: EditorState) {
         if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) return
+        if (!requireEditableSource(editorState)) return
         if (isEmptyMinimapTile(mapData.getTile(x, y))) return
         pushUndo(editorState)
         mapData = mapData.withTile(x, y, MinimapTiles.EMPTY)
@@ -562,6 +606,7 @@ class MinimapEditorState {
 
     fun fillTile(x: Int, y: Int, editorState: EditorState) {
         if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) return
+        if (!requireEditableSource(editorState)) return
         val word = selectedTileWord
         val target = mapData.getTile(x, y)
         if (target != word) {
@@ -573,6 +618,7 @@ class MinimapEditorState {
 
     fun toggleReveal(x: Int, y: Int, editorState: EditorState) {
         if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) return
+        if (!requireEditableSource(editorState)) return
         pushUndo(editorState)
         stationData = stationData.withToggle(x, y)
         saveEditsToProject(editorState)
@@ -611,6 +657,7 @@ class MinimapEditorState {
         selectedRoom?.roomId?.let { roomId -> clearRoomMap(roomId, editorState) } ?: false
 
     fun clearRoomMap(roomId: Int, editorState: EditorState): Boolean {
+        if (!requireEditableSource(editorState)) return false
         val room = areaRooms.firstOrNull { it.roomId == roomId } ?: return false
         val parser = loadedParser ?: return false
         val ownershipMask = roomMapOwnershipMask(room, areaRooms)
@@ -635,7 +682,7 @@ class MinimapEditorState {
             room.height,
             ownershipMask,
         )
-        saveEditsToProject(editorState)
+        if (!saveEditsToProject(editorState)) return false
         refreshAreaRooms(parser, selectedArea, editorState)
         selectedRoomIndex = areaRooms.indexOfFirst { it.roomId == room.roomId }
         editorState.postStatus("Cleared ${room.name}'s map tiles and station-reveal cells; the room remains assigned to ${MinimapData.AREA_NAMES[selectedArea]}.")
@@ -686,6 +733,12 @@ class MinimapEditorState {
         redoStack.clear()
         observedEditorEditVersion = editorState.editVersion
         if (history == null) return
+        wireSourceHistory(before, marker, history, parser, editorState)
+    }
+
+    private fun wireSourceHistory(before: MinimapProjectSnapshot, marker: MinimapProjectSnapshot,
+                                  history: com.supermetroid.editor.asm.AsmRoomAreaMoveHistory,
+                                  parser: RomParser, editorState: EditorState) {
         val owner = editorState.project
         val after = captureSnapshot(editorState)
         history.beforeTransition = {
@@ -709,11 +762,38 @@ class MinimapEditorState {
 
     // ─── Project persistence ───
 
-    private fun saveEditsToProject(editorState: EditorState) {
-        val parser = loadedParser ?: return
+    private fun saveEditsToProject(editorState: EditorState): Boolean {
+        val parser = loadedParser ?: return false
+        val bridge = editorState.asmPlmSourceBridge?.minimaps
+        if (editorState.project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && bridge?.isAvailable() == true) {
+            val before = undoStack.lastOrNull() ?: return false
+            val history = runCatching {
+                val current = bridge.view(selectedArea)
+                require(current.editable && current.map == loadedSourceMap && current.stations == loadedSourceStations) {
+                    "The minimap ASM changed after this visual view loaded. Reload the area before editing it."
+                }
+                val plan = bridge.plan(mapOf(selectedArea to (mapData to stationData)))
+                bridge.apply(plan, editorState.project) { editorState.notifyProjectMutation(parser) }
+            }.getOrElse { problem ->
+                undoStack.removeLastOrNull()
+                effectiveData(parser, editorState, selectedArea).let { (map, stations) ->
+                    mapData = map; stationData = stations
+                }
+                editorState.postStatus(problem.message ?: "This minimap source cannot be edited visually.")
+                return false
+            }
+            val marker = before.copy(sourceHistory = history)
+            undoStack[undoStack.lastIndex] = marker
+            wireSourceHistory(before, marker, history, parser, editorState)
+            loadedSourceMap = mapData.copy(tiles = mapData.tiles.copyOf())
+            loadedSourceStations = stationData.copy(revealed = stationData.revealed.copyOf())
+            observedEditorEditVersion = editorState.editVersion
+            return true
+        }
         persistMinimapData(parser, editorState.project, mapData)
         persistMapStationData(parser, editorState.project, stationData)
         editorState.markDirty()
+        return true
     }
 
     private fun pushUndo(editorState: EditorState) {

@@ -65,6 +65,48 @@ class AsmBaselineUpdateTest {
         assertEquals(setOf("bank_80.asm", "project/custom.asm"), result.workspace.modifiedFileIds)
     }
 
+    @Test fun `baseline update carries portable data overrides into the validated candidate`() {
+        val asset = AsmAssetRange("Palette_Test.bin", 0x100, 4)
+        val assetRom = rom.copyOf().also { byteArrayOf(0, 1, 2, 3).copyInto(it, asset.pcOffset) }
+        val directory = File(temporary, "asset-reference")
+        val src = File(directory, "src").apply { mkdirs() }
+        val data = File(directory, "data").apply { mkdirs() }
+        File(src, "main.asm").writeText("incsrc bank_80.asm\n")
+        File(src, "bank_80.asm").writeText(source)
+        File(data, asset.path).writeBytes(assetRom.copyOfRange(asset.pcOffset, asset.endExclusive))
+        val reference = AsmReferenceWorkspace(
+            directory,
+            AsmReferenceMetadata(
+                AsmReferenceContract.REPOSITORY_URL,
+                AsmReferenceContract.COMMIT,
+                "fixture",
+                "fixture.sfc",
+                AsmVerifiedCache.hash(assetRom),
+                assetRom.size,
+                1,
+            ),
+            AsmSourceParser().parse(src, data, listOf(asset)),
+        )
+        val repository = AsmProjectWorkspaceRepository(listOf(asset), emptyList(), oldRecipe)
+        val updater = AsmBaselineUpdateRepository(
+            repository,
+            nextRecipe,
+            listOf(asset),
+            emptyList(),
+        ) { _, _ -> }
+        val file = File(temporary, "asset-project/Test.smedit").apply { parentFile.mkdirs(); writeText("{}") }
+        val initial = repository.initialize(file.path, reference)
+        val edited = byteArrayOf(9, 8, 7, 6)
+        repository.saveAsset(file.path, asset.path, edited, byteArrayOf(0, 1, 2, 3))
+
+        val result = updater.apply(updater.prepare(file.path, reference), emptyMap(), assetRom)
+
+        assertContentEquals(edited, File(result.workspace.root, "overrides/data/${asset.path}").readBytes())
+        assertContentEquals(edited, File(result.workspace.workingDirectory, "data/${asset.path}").readBytes())
+        assertContentEquals(edited, File(result.backupDirectory, "asm/overrides/data/${asset.path}").readBytes())
+        assertEquals("two", AsmSourceBaseline.load(initial.root)?.augmentationRevision)
+    }
+
     @Test fun `update summaries preserve string significance and distinguish executable compatibility lines and renames`() {
         assertTrue(asmBaselineDocumentationOnly("Root:\n LDA #1 ; old\n RTL\n", "; Heading\nRoot:\n  LDA  #1 ; new\n RTL ; end\n"))
         assertFalse(asmBaselineDocumentationOnly("Root:\n LDA #1\n", "Root:\n LDA #2\n"))

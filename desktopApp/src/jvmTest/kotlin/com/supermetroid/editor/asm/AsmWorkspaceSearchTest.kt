@@ -52,7 +52,7 @@ class AsmWorkspaceSearchTest {
             assertEquals("  new search  ", state.query)
             assertTrue(++backCount <= 10, "Back must not append new history entries")
         }
-        assertEquals(5, backCount)
+        assertEquals(6, backCount)
         var forwardCount = 0
         while (state.canGoForward) {
             state.goForward()

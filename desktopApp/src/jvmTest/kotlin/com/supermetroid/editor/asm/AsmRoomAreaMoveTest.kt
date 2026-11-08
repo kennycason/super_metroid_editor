@@ -34,14 +34,41 @@ class AsmRoomAreaMoveTest {
         }
     }
 
-    private suspend fun fixture(hasSave: Boolean = true, sharedDoor: Boolean = false, nestedRoom: Boolean = false): Fixture {
+    private suspend fun fixture(hasSave: Boolean = true, sharedDoor: Boolean = false, nestedRoom: Boolean = false,
+                                sourceMaps: Boolean = false): Fixture {
         val src = File(directory, "reference/src").apply { mkdirs() }
         val data = File(directory, "reference/data").apply { mkdirs() }
         val macros = "macro PLMPopEntry(ID,X,Y,Param)\n dw <ID>\n db <X>,<Y>\n dw <Param>\nendmacro\n"
-        File(src, "main.asm").writeText("incsrc macros.asm\nincsrc bank_8F.asm\nincsrc bank_83.asm\n")
+        File(src, "main.asm").writeText("incsrc macros.asm\nincsrc bank_8F.asm\nincsrc bank_83.asm\n" +
+            if (sourceMaps) "incsrc bank_B5.asm\nincsrc bank_82.asm\n" else "")
         File(src, "macros.asm").writeText(macros)
         File(src, PLM_SOURCE_FILE).writeText("; Native room and arrival code\nDoorASM_Custom: ;8F9000;\n lda.w ${'$'}1234\n rts\n")
         File(src, DOOR_SOURCE_FILE).writeText("; Native connections and FX\n")
+        if (sourceMaps) {
+            File(src, MINIMAP_TILE_SOURCE_FILE).writeText(buildString {
+                listOf("MapTilemaps_brinstar", "MapTilemaps_crateria", "MapTilemaps_norfair", "MapTilemaps_wreckedShip",
+                    "MapTilemaps_maridia", "MapTilemaps_tourian", "UNUSED_MapTilemaps_ceres_B5E000").forEach { label ->
+                    append(label).append(":\n")
+                    repeat(128) { append("    dw ").append(List(16) { "\$0000" }.joinToString(",")).append('\n') }
+                }
+                append("Freespace_BankB5_F000:\n")
+            })
+            File(src, MINIMAP_REVEAL_SOURCE_FILE).writeText(buildString {
+                append("AreaMapPointers:\n")
+                listOf("MapTilemaps_crateria", "MapTilemaps_brinstar", "MapTilemaps_norfair", "MapTilemaps_wreckedShip",
+                    "MapTilemaps_maridia", "MapTilemaps_tourian", "UNUSED_MapTilemaps_ceres_B5E000")
+                    .forEach { append("    dl ").append(it).append('\n') }
+                append("AreaLabelTilemaps:\nMapData:\n  .pointers:\n")
+                val labels = listOf("crateria", "brinstar", "norfair", "wreckedShip", "maridia", "tourianDebug", "ceres")
+                labels.forEach { append("    dw MapData_").append(it).append('\n') }
+                append("    dw MapData_tourianDebug\n")
+                labels.forEach { label ->
+                    append("  .").append(label).append(":\n")
+                    repeat(16) { append("    db ").append(List(16) { "\$00" }.joinToString(",")).append('\n') }
+                }
+                append("SetupMapScrollingForPauseMenu:\n    rts\n")
+            })
+        }
         val reference = AsmReferenceWorkspace(src.parentFile,
             AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT, "test", "base.sfc", "ab".repeat(32), 0x300000, 0),
             AsmSourceParser().parse(src, data, emptyList()))
@@ -188,6 +215,85 @@ class AsmRoomAreaMoveTest {
         assertEquals(model, f.model()); assertEquals(source, f.sources())
         f.map.redo(f.editor)
         assertEquals(moved, f.model()); assertEquals(movedSource, f.sources())
+    }
+
+    @Test fun `source backed room move updates both inline map banks and retires legacy overlays atomically`() = runBlocking {
+        val f = fixture(sourceMaps = true)
+        val beforeB5 = f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE)
+        val before82 = f.workspace.projectSourceText(MINIMAP_REVEAL_SOURCE_FILE)
+        val beforeMap = f.map.mapData
+        val beforeStations = f.map.stationData
+        assertTrue("0" in f.project.minimapEdits)
+        assertTrue("0" in f.project.mapStationEdits)
+
+        f.map.moveRoom(1, 0, f.editor)
+        assertTrue(f.map.applyMove(f.editor), f.editor.statusMessage)
+        assertFalse("0" in f.project.minimapEdits)
+        assertFalse("0" in f.project.mapStationEdits)
+        assertNotEquals(beforeB5, f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE))
+        assertNotEquals(before82, f.workspace.projectSourceText(MINIMAP_REVEAL_SOURCE_FILE))
+        assertNotNull(f.workspace.sourceUndoHead(MINIMAP_TILE_SOURCE_FILE))
+        assertNotNull(f.workspace.sourceUndoHead(MINIMAP_REVEAL_SOURCE_FILE))
+
+        f.map.undo(f.editor)
+        assertEquals(beforeB5, f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE))
+        assertEquals(before82, f.workspace.projectSourceText(MINIMAP_REVEAL_SOURCE_FILE))
+        assertEquals(beforeMap, f.map.mapData)
+        assertEquals(beforeStations, f.map.stationData)
+        assertTrue("0" in f.project.minimapEdits)
+        assertTrue("0" in f.project.mapStationEdits)
+        f.map.redo(f.editor)
+        assertFalse("0" in f.project.minimapEdits)
+        assertFalse("0" in f.project.mapStationEdits)
+    }
+
+    @Test fun `normal minimap paint migrates overlays to source and rejects stale authored values`() = runBlocking {
+        val f = fixture(sourceMaps = true)
+        val beforeB5 = f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE)
+        f.map.selectedTile = 0x2F
+        f.map.paintTile(50, 20, f.editor)
+        assertEquals(0x2F, f.bridge.minimaps.view(0).map!!.getTile(50, 20))
+        assertFalse("0" in f.project.minimapEdits)
+        assertFalse("0" in f.project.mapStationEdits)
+        f.map.undo(f.editor)
+        assertEquals(beforeB5, f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE))
+        assertTrue("0" in f.project.minimapEdits)
+        assertTrue("0" in f.project.mapStationEdits)
+
+        f.map.loadArea(f.parser, 0, f.editor)
+        val current = f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE)
+        val authored = f.bridge.minimaps.view(0).map!!.withTile(20, 20, 0x7777)
+        val stations = f.bridge.minimaps.view(0).stations!!
+        val external = f.bridge.minimaps.plan(mapOf(0 to (authored to stations))).replacements
+            .getValue(MINIMAP_TILE_SOURCE_FILE).second
+        f.workspace.replaceProjectSource(MINIMAP_TILE_SOURCE_FILE, current, external)
+        f.map.paintTile(21, 20, f.editor)
+        assertEquals(0x7777, f.map.mapData.getTile(20, 20))
+        assertEquals(0, f.map.mapData.getTile(21, 20))
+        assertTrue(f.editor.statusMessage.contains("changed", ignoreCase = true))
+        assertEquals(external, f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE))
+    }
+
+    @Test fun `cross area source move preserves unrelated authored cells while updating both areas`() = runBlocking {
+        val f = fixture(sourceMaps = true)
+        val sourceView = f.bridge.minimaps.view(1)
+        val authored = sourceView.map!!.withTile(40, 20, 0x4567)
+        val authoredPlan = f.bridge.minimaps.plan(mapOf(1 to (authored to sourceView.stations!!)))
+        f.workspace.replaceProjectSources(authoredPlan.replacements)
+        val beforeB5 = f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE)
+        val before82 = f.workspace.projectSourceText(MINIMAP_REVEAL_SOURCE_FILE)
+
+        val result = f.move(1)
+        assertTrue(result.success, result.message)
+        assertEquals(0x4567, f.bridge.minimaps.view(1).map!!.getTile(40, 20))
+        assertFalse("0" in f.project.minimapEdits)
+        assertFalse("1" in f.project.minimapEdits)
+        assertFalse("0" in f.project.mapStationEdits)
+        assertFalse("1" in f.project.mapStationEdits)
+        f.map.undo(f.editor)
+        assertEquals(beforeB5, f.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE))
+        assertEquals(before82, f.workspace.projectSourceText(MINIMAP_REVEAL_SOURCE_FILE))
+        assertEquals(0x4567, f.bridge.minimaps.view(1).map!!.getTile(40, 20))
     }
 
     @Test fun `same area middle drag preserves authored notes private state data saves doors and another canvas`() = runBlocking {

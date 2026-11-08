@@ -362,7 +362,7 @@ private fun AsmConflictReview(
 }
 
 @Composable
-private fun AsmDiffGutterHeader() {
+internal fun AsmDiffGutterHeader() {
     val fs = LocalEditorTheme.current.fontSize.value
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant)
@@ -382,7 +382,7 @@ private fun AsmDiffGutterHeader() {
 }
 
 @Composable
-private fun AsmDiffLineRow(line: AsmDiffLine) {
+internal fun AsmDiffLineRow(line: AsmDiffLine) {
     val fs = LocalEditorTheme.current.fontSize.value
     val background = when (line.kind) {
         AsmDiffLineKind.ADDED -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
@@ -447,7 +447,7 @@ private fun shortAsmRevision(revision: String): String = revision.removePrefix("
     if (it == revision) revision else "v$it"
 }
 
-private fun diffHunkRange(hunk: AsmDiffHunk?): String {
+internal fun diffHunkRange(hunk: AsmDiffHunk?): String {
     if (hunk == null) return ""
     fun range(start: Int?, end: Int?): String = when {
         start == null -> "—"

@@ -16,21 +16,39 @@ class AsmRoomThemeSourceTest {
     @TempDir lateinit var directory: File
     private val theme = BiomeTheme("test", "Frozen lava", "Fixture", 1, "icecold", BiomeTheme.FX_LAVA, 0.5)
     private data class Fixture(val workspace: AsmWorkspaceState, val bridge: AsmPlmSourceBridge,
-                               val project: SmEditProject, val editor: EditorState, val file: File)
+                               val paletteBridge: AsmTilesetPaletteBridge, val project: SmEditProject,
+                               val editor: EditorState, val file: File)
     private suspend fun fixture(adoptFx: Boolean = false): Fixture {
         val root = File(directory, "reference")
         val src = File(root, "src").apply { mkdirs() }
         val data = File(root, "data").apply { mkdirs() }
         val macros = "macro PLMPopEntry(ID, X, Y, Param)\n dw <ID>\n db <X>, <Y>\n dw <Param>\nendmacro\n"
-        File(src, "main.asm").writeText("incsrc macros.asm\nincsrc bank_8F.asm\nincsrc bank_83.asm\n")
-        File(src, PLM_SOURCE_FILE).writeText("; Original objects\r\n")
+        val palette = ByteArray(256).also { bytes -> for (i in 0 until 128) {
+            val color = (i * 97) and 0x7FFF; bytes[i * 2] = color.toByte(); bytes[i * 2 + 1] = (color ushr 8).toByte()
+        } }
+        val compressedPalette = LZ5Compressor.compress(palette)
+        val paletteAsset = AsmAssetRange("Palettes_Theme.bin", 0x208000, 0x200)
+        File(data, paletteAsset.path).writeBytes(ByteArray(paletteAsset.length) { 0xFF.toByte() }.also(compressedPalette::copyInto))
+        File(src, "main.asm").writeText("incsrc macros.asm\nincsrc bank_8F.asm\nincsrc bank_83.asm\nincsrc bank_B9..CE.asm\n")
+        File(src, PLM_SOURCE_FILE).writeText("""
+            ; Original objects
+            Tileset_Table_0_Test:
+                dl DummyTable
+                dl DummyTiles
+                dl Palettes_Theme
+            Tileset_Table_1_Test:
+                dl DummyTable
+                dl DummyTiles
+                dl Palettes_Theme
+        """.trimIndent() + "\r\n")
         File(src, FX_SOURCE_FILE).writeText("; Original effects\r\n")
+        File(src, "bank_B9..CE.asm").writeText("org ${'$'}C18000\nPalettes_Theme:\nincbin \"../data/${paletteAsset.path}\"\n")
         File(src, "macros.asm").writeText(macros)
         val reference = AsmReferenceWorkspace(root,
-            AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT, "test", "test.sfc", "ab".repeat(32), 0x300000, 0),
-            AsmSourceParser().parse(src, data, emptyList()))
+            AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT, "test", "test.sfc", "ab".repeat(32), 0x300000, 1),
+            AsmSourceParser().parse(src, data, listOf(paletteAsset)))
         val file = File(directory, "Theme.smedit").apply { writeText("{}") }
-        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
+        val repository = AsmProjectWorkspaceRepository(listOf(paletteAsset), emptyList())
         repository.initialize(file.path, reference)
         val workspace = AsmWorkspaceState(projectRepository = repository)
         workspace.bindProject(file.path, true)
@@ -44,10 +62,7 @@ class AsmRoomThemeSourceTest {
         word(0x19000, 0x91F8)
         SourceFxResource("native", listOf(emptyDefaultFxEntry().copy(doorSelect = 0x9000, fxType = 4), emptyDefaultFxEntry().copy(fxType = 6)))
             .bytes().copyInto(rom, 0x18800)
-        val palette = ByteArray(256).also { bytes -> for (i in 0 until 128) {
-            val color = (i * 97) and 0x7FFF; bytes[i * 2] = color.toByte(); bytes[i * 2 + 1] = (color ushr 8).toByte()
-        } }
-        LZ5Compressor.compress(palette).copyInto(rom, 0x208000)
+        compressedPalette.copyInto(rom, 0x208000)
         for (id in listOf(0, 1)) {
             val pc = 0x7E6A2 + id * 9 + 6
             rom[pc] = 0; rom[pc + 1] = 0x80.toByte(); rom[pc + 2] = 0xC1.toByte()
@@ -72,9 +87,10 @@ class AsmRoomThemeSourceTest {
             loadRoom(room.roomId, parser, parser.readRoomHeader(room.roomId)!!)
             setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
         }
-        return Fixture(workspace, bridge, project, editor, file)
+        return Fixture(workspace, bridge, AsmTilesetPaletteBridge(repository), project, editor, file)
     }
     private fun Fixture.sources() = listOf(PLM_SOURCE_FILE, FX_SOURCE_FILE).associateWith { workspace.projectSourceText(it) }
+    private fun Fixture.palette() = assertIs<AsmTilesetPaletteAccess.Editable>(paletteBridge.access(file.path, 1))
     private fun Fixture.generate(theme: BiomeTheme = this@AsmRoomThemeSourceTest.theme): Boolean {
         val width = editor.workingBlocksWide / 16
         val height = editor.workingBlocksTall / 16
@@ -92,6 +108,7 @@ class AsmRoomThemeSourceTest {
         val before = snapshotRoomForResize(room)
         val sources = f.sources()
         val palette = f.project.customGfx.palettes["1"]
+        val paletteSource = f.palette().sourceBytes
         val pixels = f.editor.workingLevelData!!.copyOf()
         assertTrue(f.generate(), f.editor.statusMessage)
         val themed = f.project.rooms.getValue("91F8")
@@ -101,7 +118,9 @@ class AsmRoomThemeSourceTest {
         assertNull(themed.fxChange)
         assertEquals(0x8123, f.editor.readBlockWord(8, 8)); assertEquals(3, f.editor.readBts(8, 8))
         assertEquals(1, f.editor.currentTilesetId); assertEquals("icecold", f.project.customGfx.paletteEffects["tileset:1"])
-        assertNotEquals(palette, f.project.customGfx.palettes["1"])
+        assertNull(f.project.customGfx.palettes["1"])
+        val themedPaletteSource = f.palette().sourceBytes
+        assertFalse(paletteSource.contentEquals(themedPaletteSource))
         assertTrue(f.editor.workingPlms.none { RomParser.isScrollPlm(it.id) })
         assertTrue(f.editor.workingPlms.any { it.id == 0xB76F })
         for (state in themed.states) {
@@ -114,12 +133,17 @@ class AsmRoomThemeSourceTest {
         assertSame(room, f.project.rooms["91F8"]); assertEquals(before, room)
         assertEquals(sources, f.sources()); assertContentEquals(pixels, f.editor.workingLevelData)
         assertEquals(palette, f.project.customGfx.palettes["1"])
+        assertContentEquals(paletteSource, f.palette().sourceBytes)
         assertEquals("previous", f.project.customGfx.paletteEffects["tileset:1"])
         assertTrue(f.editor.redo(), f.editor.statusMessage)
         assertSame(themed, f.project.rooms["91F8"])
+        assertNull(f.project.customGfx.palettes["1"])
+        assertContentEquals(themedPaletteSource, f.palette().sourceBytes)
         assertEquals(0x8123, f.editor.readBlockWord(8, 8))
         assertTrue(f.editor.undo(), f.editor.statusMessage)
         assertEquals(before, room)
+        assertEquals(palette, f.project.customGfx.palettes["1"])
+        assertContentEquals(paletteSource, f.palette().sourceBytes)
     }
 
     @Test fun `standalone theme detaches only selected FX and leaves a sibling and unrelated palettes untouched`() = runBlocking {
@@ -168,11 +192,16 @@ class AsmRoomThemeSourceTest {
         assertTrue(f.generate(), f.editor.statusMessage)
         val themed = f.project.rooms.getValue("91F8")
         val sources = f.sources()
-        val palette = f.project.customGfx.palettes.getValue("1")
+        val palette = f.palette()
+        val newerRaw = palette.rawPalette.copyOf().also { it[0] = (it[0].toInt() xor 0x1F).toByte() }
+        val newer = f.paletteBridge.save(f.file.path, 1, newerRaw, palette.sourceBytes)
+        assertFalse(f.workspace.undoSourceEdit(FX_SOURCE_FILE))
+        assertEquals(sources, f.sources()); assertSame(themed, f.project.rooms["91F8"])
+        f.paletteBridge.replaceSourceBytes(f.file.path, 1, palette.sourceBytes, newer.sourceBytes)
         f.project.customGfx.palettes["1"] = "newer"
         assertFalse(f.workspace.undoSourceEdit(FX_SOURCE_FILE))
         assertEquals(sources, f.sources()); assertSame(themed, f.project.rooms["91F8"])
-        f.project.customGfx.palettes["1"] = palette
+        f.project.customGfx.palettes.remove("1")
         themed.roomHeaderChange = RoomHeaderChange(mapX = 4)
         assertFalse(f.workspace.undoSourceEdit(PLM_SOURCE_FILE))
         assertEquals(sources, f.sources())
@@ -210,7 +239,11 @@ class AsmRoomThemeSourceTest {
         }
         assertEquals(1, editor.currentTilesetId)
         assertEquals(0x8123, editor.readBlockWord(8, 8))
+        assertNull(reopened.customGfx.palettes["1"])
         assertEquals("icecold", reopened.customGfx.paletteEffects["tileset:1"])
+        assertTrue(assertIs<AsmTilesetPaletteAccess.Editable>(
+            AsmTilesetPaletteBridge().access(f.file.path, 1),
+        ).modified)
         assertEquals(2, editor.effectiveFxEntries(0x91F8, f.bridge.catalog.parser).last().fxType)
         assertTrue(reopened.rooms.getValue("91F8").states.all { it.fxChange == null && it.doorFxChanges.isEmpty() })
     }

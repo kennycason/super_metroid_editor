@@ -3,10 +3,15 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanReport
+import com.supermetroid.editor.rom.RomAllocation
+import com.supermetroid.editor.rom.RomFreeSpaceBank
+import com.supermetroid.editor.rom.RomFreeSpaceSnapshot
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class AsmRomPreviewTest {
     @Test
@@ -91,5 +96,79 @@ class AsmRomPreviewTest {
         assertEquals(writeCount, preview.changedByteCount)
         assertEquals(writeCount, preview.diffRanges.size)
         assertEquals(listOf("graphics:community-samus"), preview.diffRanges.last().owners)
+    }
+
+    @Test
+    fun `space plan preserves exact before after placement and owner data`() {
+        val header = 512
+        val loaded = ByteArray(header + 0x8000) { -1 }
+        val plan = RomWritePlan(loaded, header)
+        plan.add("room-graph:project", "Room 91F8 level data", 0x7000, List(0x100) { 0x5A }, RomWriteKind.ALLOCATION)
+        val before = RomFreeSpaceSnapshot(
+            banks = listOf(RomFreeSpaceBank(0x80, header, header + 0x8000, header + 0x7000, 0x1000, 0xFF)),
+            allocations = emptyList(),
+        )
+        val allocation = RomAllocation(0x80, header + 0x7000, 0x80F000, 0x100, "Room 91F8 level data")
+        val after = RomFreeSpaceSnapshot(
+            banks = listOf(RomFreeSpaceBank(0x80, header, header + 0x8000, header + 0x7100, 0x0F00, 0xFF)),
+            allocations = listOf(allocation),
+        )
+
+        val preview = AsmRomPreview.create(
+            loadedRom = loaded,
+            resultRom = plan.finalRom(),
+            headerSize = header,
+            writeReport = plan.report(),
+            romSpaceBefore = before,
+            romSpaceAfter = after,
+        )
+
+        val space = requireNotNull(preview.spacePlan)
+        val bank = space.banks.single()
+        assertEquals(0, bank.pcStart)
+        assertEquals(0x1000, bank.availableBefore)
+        assertEquals(0x0F00, bank.remainingAfter)
+        assertEquals(0x100, bank.consumedBytes)
+        assertEquals(0x100, space.allocationBytes)
+        assertEquals("room-graph:project", bank.placements.single().owner)
+        assertEquals(0x7000, bank.placements.single().pcOffset)
+    }
+
+    @Test
+    fun `blocked build keeps partial space plan and exact error in planner view`() = runBlocking {
+        val plan = AsmRomSpacePlan(
+            romBodySize = 0x300000,
+            banks = listOf(
+                AsmRomSpaceBank(0xC2, 0x210000, 0x8000, 3742, 3742, 0xFF, emptyList(), emptyList()),
+            ),
+        )
+        val state = AsmWorkspaceState()
+        state.selectRomPreviewView(AsmRomPreviewView.SPACE)
+        state.buildRomPreview {
+            AsmRomPreviewBuild(
+                preview = null,
+                spacePlan = plan,
+                error = "Room 0x91F8 needs 3935 bytes; largest contiguous block is 3742 bytes.",
+            )
+        }
+
+        assertNull(state.romPreview)
+        assertSame(plan, state.romSpacePlan)
+        assertEquals(AsmRomPreviewView.SPACE, state.romPreviewView)
+        assertEquals("Room 0x91F8 needs 3935 bytes; largest contiguous block is 3742 bytes.", state.error)
+    }
+
+    @Test
+    fun `source bank navigation opens and focuses the space planner`() {
+        val state = AsmWorkspaceState()
+
+        state.openRomSpaceBank(0x18F)
+
+        assertEquals(AsmBrowserMode.ROM, state.browserMode)
+        assertEquals(AsmRomPreviewView.SPACE, state.romPreviewView)
+        assertEquals(0x8F, state.requestedRomSpaceBank)
+
+        state.selectRomPreviewView(AsmRomPreviewView.DIFF)
+        assertNull(state.requestedRomSpaceBank)
     }
 }

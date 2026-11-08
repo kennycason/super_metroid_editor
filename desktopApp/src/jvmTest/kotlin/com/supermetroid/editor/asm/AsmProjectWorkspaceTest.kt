@@ -563,6 +563,106 @@ class AsmProjectWorkspaceTest {
     }
 
     @Test
+    fun `data asset save is durable guarded restorable and repairs its generated mirror`() {
+        val range = AsmAssetRange("nested/Tiles_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val repository = AsmProjectWorkspaceRepository(listOf(range), starterModules = emptyList())
+        val file = File(tempDirectory, "Asset.smedit").apply { writeText("{}") }
+        val workspace = repository.initialize(file.path, reference)
+        val original = byteArrayOf(0, 1, 2, 3)
+        val edited = byteArrayOf(9, 8, 7, 6)
+
+        assertTrue(repository.saveAsset(file.path, range.path, edited, original).modified)
+        assertEquals(edited.toList(), File(workspace.root, "overrides/data/${range.path}").readBytes().toList())
+        assertEquals(edited.toList(), File(workspace.workingDirectory, "data/${range.path}").readBytes().toList())
+        assertEquals(original.toList(), File(workspace.originalDirectory, "data/${range.path}").readBytes().toList())
+        assertEquals(setOf(range.path), repository.assetOverridePaths(file.path))
+        assertEquals(edited.toList(), repository.readAsset(file.path, range.path).toList())
+
+        val mirror = File(workspace.workingDirectory, "data/${range.path}")
+        mirror.writeBytes(byteArrayOf(4, 4))
+        assertNotNull(repository.loadForBuild(file.path))
+        assertEquals(edited.toList(), mirror.readBytes().toList(), "The authored override repairs generated data")
+        assertTrue(File(workspace.workingDirectory.parentFile, "recovery/data").walkTopDown()
+            .any { it.isFile && it.readBytes().contentEquals(byteArrayOf(4, 4)) })
+
+        assertTrue(repository.restoreAsset(file.path, range.path, edited).modified)
+        assertEquals(original.toList(), mirror.readBytes().toList())
+        assertFalse(File(workspace.root, "overrides/data/${range.path}").exists())
+        assertEquals(emptySet<String>(), repository.assetOverridePaths(file.path))
+    }
+
+    @Test
+    fun `data asset writes reject stale external authority unknown paths and wrong sizes`() {
+        val range = AsmAssetRange("Palette_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val repository = AsmProjectWorkspaceRepository(listOf(range), starterModules = emptyList())
+        val file = File(tempDirectory, "Guarded Asset.smedit").apply { writeText("{}") }
+        val workspace = repository.initialize(file.path, reference)
+        val original = byteArrayOf(0, 1, 2, 3)
+        val first = byteArrayOf(1, 1, 1, 1)
+        val external = byteArrayOf(2, 2, 2, 2)
+        repository.saveAsset(file.path, range.path, first, original)
+        File(workspace.root, "overrides/data/${range.path}").writeBytes(external)
+
+        assertThrows<IllegalArgumentException> {
+            repository.saveAsset(file.path, range.path, byteArrayOf(3, 3, 3, 3), expectedBytes = first)
+        }
+        assertEquals(external.toList(), File(workspace.root, "overrides/data/${range.path}").readBytes().toList())
+        assertEquals(external.toList(), File(workspace.workingDirectory, "data/${range.path}").readBytes().toList())
+        assertThrows<IllegalArgumentException> { repository.saveAsset(file.path, range.path, byteArrayOf(1), external) }
+        assertThrows<IllegalArgumentException> { repository.saveAsset(file.path, "../escape.bin", external, external) }
+
+        File(workspace.root, "overrides/data/Unknown.bin").writeBytes(ByteArray(4))
+        assertThrows<IllegalArgumentException> { repository.loadForBuild(file.path) }
+    }
+
+    @Test
+    fun `recreating a local tree reapplies portable data overrides`() {
+        val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val repository = AsmProjectWorkspaceRepository(listOf(range), starterModules = emptyList())
+        val projectFile = File(tempDirectory, "Portable Asset.smedit").apply { writeText("{}") }
+        val first = repository.initialize(projectFile.path, reference)
+        val edited = byteArrayOf(8, 7, 6, 5)
+        repository.saveAsset(projectFile.path, range.path, edited, byteArrayOf(0, 1, 2, 3))
+        check(requireNotNull(repository.cacheFor(projectFile.path)).deleteRecursively())
+
+        val recreated = repository.initialize(projectFile.path, reference)
+
+        assertEquals(edited.toList(), File(recreated.workingDirectory, "data/${range.path}").readBytes().toList())
+        assertEquals(edited.toList(), File(first.root, "overrides/data/${range.path}").readBytes().toList())
+        assertEquals(setOf(range.path), repository.assetOverridePaths(projectFile.path))
+    }
+
+    @Test
+    fun `workspace project changes include portable data assets`() = runBlocking {
+        val range = AsmAssetRange("Palette_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val repository = AsmProjectWorkspaceRepository(listOf(range), starterModules = emptyList())
+        val projectFile = File(tempDirectory, "Asset Review.smedit").apply { writeText("{}") }
+        repository.initialize(projectFile.path, reference)
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(projectFile.path, enabled = true)
+        assertFalse(state.hasProjectSourceChanges)
+
+        repository.saveAsset(
+            projectFile.path,
+            range.path,
+            byteArrayOf(0, 9, 2, 8),
+            byteArrayOf(0, 1, 2, 3),
+        )
+
+        assertTrue(state.hasProjectSourceChanges)
+        assertEquals(setOf(range.path), state.projectModifiedAssetPaths)
+        val change = state.projectAssetChangesSnapshot().single()
+        assertEquals(range.path, change.assetPath)
+        assertEquals(4, change.size)
+        assertEquals(2, change.changedBytes)
+        assertEquals(listOf(1, 3), change.firstChangedOffsets)
+    }
+
+    @Test
     fun `source writes cannot escape the managed project tree`() {
         val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
         val reference = fakeReference(listOf(range))
@@ -591,19 +691,50 @@ class AsmProjectWorkspaceTest {
     }
 
     @Test
-    fun `new workspaces include the objectives reference module disabled`() {
+    fun `new workspaces include bundled reference modules disabled`() {
         val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
         val reference = fakeReference(listOf(range))
         val repository = AsmProjectWorkspaceRepository(listOf(range))
         val projectFile = File(tempDirectory, "Starter.smedit").apply { writeText("{}") }
 
         val workspace = repository.initialize(projectFile.absolutePath, reference)
-        val fileId = "project/objectives_pause_screen.asm"
+        val objectives = "project/objectives_pause_screen.asm"
+        val hookDemo = "project/checked_hook_demo.asm"
 
-        assertEquals(listOf(fileId), workspace.projectModuleFileIds)
-        assertEquals(setOf(fileId), workspace.disabledProjectModuleFileIds)
+        assertEquals(listOf(objectives, hookDemo), workspace.projectModuleFileIds)
+        assertEquals(setOf(objectives, hookDemo), workspace.disabledProjectModuleFileIds)
         assertTrue(File(workspace.root, "modules/objectives_pause_screen.asm").readText().contains("Objectives_MainPauseRoutine"))
+        val hookSource = File(workspace.root, "modules/checked_hook_demo.asm").readText()
+        assertTrue(hookSource.contains("SMEDIT_CheckedHookDemo_Hook"))
+        assertTrue(hookSource.contains("SMEDIT_CheckedHookDemo_Threshold_End"))
         assertEquals(emptySet<String>(), repository.sourceOverrideFileIds(projectFile.absolutePath))
+    }
+
+    @Test
+    fun `new bundled starters append once to existing projects and respect later deletion`() {
+        val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val oldRepository = AsmProjectWorkspaceRepository(
+            listOf(range),
+            starterModules = listOf(DEFAULT_ASM_STARTER_MODULES.first()),
+        )
+        val projectFile = File(tempDirectory, "Starter Migration.smedit").apply { writeText("{}") }
+        val old = oldRepository.initialize(projectFile.path, reference)
+        assertEquals(listOf("project/objectives_pause_screen.asm"), old.projectModuleFileIds)
+
+        val repository = AsmProjectWorkspaceRepository(listOf(range))
+        val migrated = requireNotNull(repository.load(projectFile.path))
+        val hookDemo = "project/checked_hook_demo.asm"
+        assertEquals(
+            listOf("project/objectives_pause_screen.asm", hookDemo),
+            migrated.projectModuleFileIds,
+        )
+        assertTrue(hookDemo in migrated.disabledProjectModuleFileIds)
+
+        repository.deleteModule(projectFile.path, hookDemo)
+        val reloaded = requireNotNull(repository.load(projectFile.path))
+        assertFalse(hookDemo in reloaded.projectModuleFileIds)
+        assertFalse(File(reloaded.root, "modules/checked_hook_demo.asm").exists())
     }
 
     @Test
@@ -926,6 +1057,50 @@ class AsmProjectWorkspaceTest {
         assertEquals(setOf("bank_80.asm"), state.unsavedSourceFileIds)
         assertTrue(state.sourceEditText("bank_80.asm").contains("NOP"))
         assertEquals(emptySet<String>(), state.projectModifiedFileIds)
+    }
+
+    @Test
+    fun `project source review snapshots baseline saved buffers and disabled modules without mutation`() = runBlocking {
+        val reference = fakeReference(emptyList())
+        val repository = AsmProjectWorkspaceRepository(emptyList(), starterModules = emptyList())
+        val projectFile = File(tempDirectory, "Review.smedit").apply { writeText("{}") }
+        repository.initialize(projectFile.path, reference)
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(projectFile.path, enabled = true)
+        assertTrue(state.projectSourceChangesSnapshot().isEmpty())
+
+        val baseline = state.sourceEditText("bank_80.asm")
+        val unsaved = "$baseline\n; unsaved visual/source result\n"
+        assertTrue(state.updateSourceEditText("bank_80.asm", unsaved))
+        val buffered = state.projectSourceChangesSnapshot().single()
+        assertEquals(baseline, buffered.baselineText)
+        assertEquals(baseline, buffered.savedText)
+        assertEquals(unsaved, buffered.workingText)
+        assertFalse(buffered.savedBankOverride)
+        assertTrue(buffered.unsavedBuffer)
+        assertEquals(setOf("bank_80.asm"), state.unsavedSourceFileIds)
+
+        assertTrue(state.saveSource("bank_80.asm"))
+        val revisionBeforeReview = state.sourceBufferRevision
+        val saved = state.projectSourceChangesSnapshot().single()
+        assertEquals(revisionBeforeReview, state.sourceBufferRevision, "Review must not adopt or edit source")
+        assertEquals(baseline, saved.baselineText)
+        assertEquals(unsaved, saved.savedText)
+        assertEquals(unsaved, saved.workingText)
+        assertTrue(saved.savedBankOverride)
+        assertFalse(saved.unsavedBuffer)
+
+        assertTrue(state.createProjectModule("review_fixture"))
+        val moduleId = "project/review_fixture.asm"
+        assertTrue(state.setProjectModuleEnabled(moduleId, enabled = false))
+        val changes = state.projectSourceChangesSnapshot()
+        val module = changes.single { it.fileId == moduleId }
+        assertEquals("", module.baselineText)
+        assertTrue(module.savedText.contains("Project module:"))
+        assertEquals(module.savedText, module.workingText)
+        assertTrue(module.projectModule)
+        assertFalse(module.enabled)
+        assertFalse(module.unsavedBuffer)
     }
 
     @Test

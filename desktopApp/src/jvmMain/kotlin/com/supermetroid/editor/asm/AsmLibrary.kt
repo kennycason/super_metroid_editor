@@ -990,6 +990,238 @@ internal object AsmLibrary {
             ),
         ),
         AsmLibraryGuide(
+            id = "hooks-and-overrides",
+            title = "Hooks, overrides, and free space",
+            summary = "How project modules safely replace native bytes, redirect execution, and place new code without accidental collisions.",
+            keywords = setOf(
+                "hook", "detour", "override", "org", "freespace", "module", "collision",
+                "jsr", "jsl", "jmp", "jml", "rts", "rtl", "warnpc", "displaced instruction",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Four different kinds of source change",
+                    listOf(
+                        "An org directive only moves Asar's output cursor; it does not reserve or allocate space. What follows determines the kind of edit. A direct data override replaces table bytes, an in-place code patch replaces instructions and continues nearby, a hook redirects control to another routine, and a pointer/table redirection changes which routine data-driven code selects.",
+                        "All four are binary overrides mechanically. A collision is different: two independent owners claim the same bytes without one explicit contract. An intentional hook is not a collision merely because it replaces native code.",
+                    ),
+                    table = AsmLibraryTable(
+                        headers = listOf("Pattern", "Typical source", "Meaning"),
+                        rows = listOf(
+                            listOf("Data override", "org … / dw …", "Replace fixed data; no control transfer"),
+                            listOf("In-place patch", "org … / LDA …", "Replace code inside the available envelope"),
+                            listOf("Hook / detour", "org … / JML Helper", "Leave native flow for custom code"),
+                            listOf("Pointer redirect", "org … / dw Handler", "Select a different routine through data"),
+                        ),
+                        monospaceColumns = setOf(1),
+                        columnWeights = listOf(0.8f, 1.0f, 1.8f),
+                    ),
+                ),
+                AsmLibrarySection(
+                    "The complete hook shape",
+                    listOf(
+                        "A hook has two pieces: a small control-transfer instruction at a verified native entry, and custom code in verified free space. The custom code must preserve the native contract—register widths, flags, registers, stack balance, data bank, displaced work, and the exact continuation or return path expected by callers.",
+                        "Code placed in free space without a call, jump, pointer, or dispatcher entry is unreachable. Conversely, a jump at a native address without a valid destination destroys the original path. Treat the two pieces as one reviewed change.",
+                    ),
+                    AsmCodeExample(
+                        "A same-bank detour",
+                        code(
+                            "org NativeEntry",
+                            "    JMP.W CustomHelper",
+                            "",
+                            "org VerifiedFreeSpace",
+                            "CustomHelper:",
+                            "    ; preserve the native contract",
+                            "    JMP.W NativeContinuation",
+                        ),
+                        "The first JMP makes the helper reachable; the second tail-jumps back into the native routine without adding a return address.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Overwrite complete instructions",
+                    listOf(
+                        "A hook envelope must cover whole native instructions and be at least as large as the chosen transfer. JSR.W and JMP.W use three bytes; JSL.L and JML.L use four. Never cut through an operand merely because the byte count is convenient.",
+                        "If the transfer is shorter than the complete envelope, explicitly fill or replace the remaining bytes. Any overwritten instruction that callers still require is displaced work: execute an equivalent instruction in the helper before continuing. The checked demo replaces one complete three-byte LDA and deliberately repeats that LDA in its helper.",
+                    ),
+                    AsmCodeExample(
+                        "Displace, then resume",
+                        code(
+                            "; Native entry originally contains: LDA.W Energy (3 bytes)",
+                            "org LowEnergyCheck",
+                            "    JMP.W CustomThreshold       ; also 3 bytes",
+                            "CustomThreshold:",
+                            "    LDA.W Energy                ; displaced instruction",
+                            "    JMP.W LowEnergyCheck+$0008 ; chosen continuation",
+                        ),
+                        "Equal instruction sizes make this envelope exact, but the continuation still must be derived from the native control flow rather than guessed.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Match transfer distance and return type",
+                    listOf(
+                        "JSR/JMP encode a 16-bit destination and stay in the current program bank. JSL/JML encode a 24-bit destination and can cross banks. Calls push a return address; jumps do not. The routine that eventually returns must match the call that created the active return address.",
+                        "A helper reached by JSR normally ends in RTS; a helper reached by JSL normally ends in RTL. A helper reached by JMP or JML often tail-jumps to native code, allowing the native RTS or RTL to return to the original caller. Do not add RTS merely because the helper looks like a subroutine.",
+                    ),
+                    table = AsmLibraryTable(
+                        headers = listOf("Transfer", "Reach", "Pushes return?", "Normal matching end"),
+                        rows = listOf(
+                            listOf("JSR.W", "Same bank", "Yes, 16-bit", "RTS"),
+                            listOf("JSL.L", "Any ROM bank", "Yes, 24-bit", "RTL"),
+                            listOf("JMP.W", "Same bank", "No", "Tail path owns return"),
+                            listOf("JML.L", "Any ROM bank", "No", "Tail path owns return"),
+                        ),
+                        monospaceColumns = setOf(0, 3),
+                        columnWeights = listOf(0.7f, 1.0f, 1.0f, 1.4f),
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Free space is a checked range, not a magic label",
+                    listOf(
+                        "A Freespace_* label documents where unused bytes began in the pinned vanilla source. It does not stop another module from choosing the same bytes, and it does not move automatically when custom code grows. Module order can make a later org silently overwrite an earlier allocation unless SMEDIT has an explicit checked contract.",
+                        "Keep same-bank helpers below the bank boundary and place warnpc immediately after the owned payload. warnpc makes Asar fail when growth reaches the limit. SMEDIT's checked modules additionally compare a build with the module disabled, proving the proposed helper bytes were still free after earlier modules assembled.",
+                    ),
+                    AsmCodeExample(
+                        "Bound one bank-local allocation",
+                        code(
+                            "org Freespace_Bank90_F63A",
+                            "CustomHelper:",
+                            "    ; code",
+                            "CustomHelper_End:",
+                            "warnpc $918000",
+                        ),
+                        "The labels expose the exact owned span; warnpc prevents the payload from crossing the end of bank $90.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Module order and collisions",
+                    listOf(
+                        "Enabled Project Modules assemble from top to bottom after the pinned source. That order is meaningful: a later org can replace bytes emitted earlier. Reordering is not allocation, dependency resolution, or automatic conflict merging.",
+                        "A checked hook should fail closed when its native instruction changed, another module occupied its helper range, generated editor data overlaps it, a required label moved, or it emits outside its declared spans. Arbitrary handwritten modules remain your responsibility; SMEDIT cannot infer whether two overlapping writes are intentional from Asar syntax alone.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "How the Objectives pause-screen module is hooked",
+                    listOf(
+                        "The bundled Objectives example uses intentional org-based detours, not accidental address collisions. At $82:90FF it replaces the native PHP / PHB / PHK / PLB prologue with JML Objectives_MainPauseRoutine; the relocated routine repeats that displaced setup before continuing and eventually returns with RTL.",
+                        "At $82:934B it replaces the native LDA.W PauseMenu_MenuMode with JMP.W Objectives_DrawPauseMenuDuringFadeOut. That replacement follows the surrounding routine's contract and returns with RTS. Its main payload currently lives at $82:F836 and is bounded by warnpc $838000.",
+                        "This module is bank-$82-dependent: it uses bank-local JSR/JMP calls and 16-bit handler pointers. Moving only its payload to an expanded bank would break those assumptions. A real relocation would require reviewing and converting every bank-relative edge, not concatenating the source elsewhere.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Review a hook at three layers",
+                    listOf(
+                        "First, inspect source structure: complete instruction envelope, displaced work, register/stack contract, explicit continuations, and bounded placement. Second, inspect the compiled ROM: exact transfer opcode/operand, exact helper span, no unexpected output, and owner-aware overlap checks. Third, test runtime behavior on every branch, including the unmodified path.",
+                        "Compilation proves that labels resolve and instructions encode. A checked contract proves the reviewed structural assumptions still hold. Emulator testing proves the behavior. None of those layers replaces the others.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "checked-hook-demo",
+            title = "Worked example: checked low-energy hook",
+            summary = "A line-by-line tour of the bundled disabled module that changes the warning threshold through a verified bank-$90 detour.",
+            keywords = setOf(
+                "checked hook demo", "low energy", "threshold", "bank 90", "project module",
+                "continuation", "freespace", "validation", "example",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "What the demo changes",
+                    listOf(
+                        "Vanilla LowEnergyCheck warns when Energy is below $001F (31). The demo changes only that decision to below $0033 (51). It leaves the native warning flag and sound-queue logic in place, so both outcomes rejoin the original routine.",
+                        "New projects receive checked_hook_demo.asm as a disabled Project Module. Disabled means it emits no bytes and changes no gameplay. Enable it explicitly in Project Modules when you want to study or test the hook.",
+                    ),
+                    AsmCodeExample(
+                        "The one intended tuning value",
+                        code(
+                            "!SMEDIT_CheckedHookDemoThreshold = $0033 ; 51 energy",
+                            "",
+                            "LDA.W Energy",
+                            "CMP.W #!SMEDIT_CheckedHookDemoThreshold",
+                        ),
+                        "Change the literal to experiment with another threshold; keep the checked gate and boundary labels intact.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "The native instruction envelope",
+                    listOf(
+                        "LowEnergyCheck starts at $90:EA7F with LDA.W Energy, a complete three-byte instruction. JMP.W is also three bytes, so the demo replaces exactly that instruction—no operand fragment, padding, or neighboring instruction is left behind.",
+                        "The module asserts the expected native entry and low-energy label at assembly time. SMEDIT then independently verifies the resolved symbols and compiled JMP bytes before accepting the build.",
+                    ),
+                    AsmCodeExample(
+                        "The checked entry detour",
+                        code(
+                            "org LowEnergyCheck",
+                            "SMEDIT_CheckedHookDemo_Hook:",
+                            "    JMP.W SMEDIT_CheckedHookDemo_Threshold",
+                        ),
+                        "Because the helper stays in bank $90, a three-byte bank-local jump is sufficient.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "The helper repeats displaced work",
+                    listOf(
+                        "The hook overwrote LDA.W Energy, so the helper performs that load first. CMP sets the flags and BMI selects the low-energy path. The helper does not call the native routine and does not push another return address.",
+                        "Both branches use JMP.W tail transfers. The original LowEnergyCheck was entered through JSR by its callers, so the original routine's final RTS still consumes that original return address exactly once.",
+                    ),
+                    AsmCodeExample(
+                        "Decision and tail paths",
+                        code(
+                            "SMEDIT_CheckedHookDemo_Threshold:",
+                            "    LDA.W Energy",
+                            "    CMP.W #!SMEDIT_CheckedHookDemoThreshold",
+                            "    BMI .lowEnergy",
+                            "    JMP.W LowEnergyCheck+$0008",
+                            ".lowEnergy:",
+                            "    JMP.W LowEnergyCheck_lowEnergy",
+                            "SMEDIT_CheckedHookDemo_Threshold_End:",
+                        ),
+                        "Healthy energy resumes at $90:EA87, after vanilla's old compare/branch. Low energy resumes at $90:EA98, the native low-energy handler.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Why the continuation is +$0008",
+                    listOf(
+                        "Vanilla's LDA.W Energy, CMP.W #$001F, and BMI .lowEnergy occupy eight bytes from $90:EA7F through $90:EA86. A healthy result must therefore resume at $90:EA87, where the native code reads CriticalEnergyWarning.",
+                        "The low branch uses the named LowEnergyCheck_lowEnergy symbol rather than repeating its numeric address in the jump. Both destinations remain checked because a label resolving successfully does not by itself prove it still describes the reviewed control-flow point.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Placement and boundaries",
+                    listOf(
+                        "The helper begins at Freespace_Bank90_F63A, the pinned disassembly's trailing free-space label. SMEDIT requires both helper boundary labels to resolve in bank $90, requires the end to remain below $91:8000, and proves the complete span was \$FF in both vanilla and the build with this demo disabled.",
+                        "warnpc $918000 is the assembler-side guard. The _End label is the ownership-side guard: it lets SMEDIT claim the full payload and reject output elsewhere. Keep both even when changing the helper body.",
+                    ),
+                    AsmCodeExample(
+                        "A visible allocation envelope",
+                        code(
+                            "org Freespace_Bank90_F63A",
+                            "SMEDIT_CheckedHookDemo_Threshold:",
+                            "    ; helper body",
+                            "SMEDIT_CheckedHookDemo_Threshold_End:",
+                            "warnpc $918000",
+                        ),
+                        "The span is readable in source, measurable in symbols, and bounded during assembly.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "What SMEDIT proves before export",
+                    listOf(
+                        "The checked build verifies the native LowEnergyCheck source is unchanged, the reviewed native labels still resolve at $90:EA7F and $90:EA98, the entry contains JMP.W to the helper, and the helper remains in verified bank-$90 free space.",
+                        "It compiles a second snapshot with only this demo gated off. That detects an earlier module changing the native LDA or occupying the helper range. The demo must be the last enabled Project Module, generated assets/rooms/patches may not overlap either span, and the module may emit no bytes outside its hook and helper boundaries.",
+                        "This tutorial contract permits changing the threshold word, but it deliberately rejects structural rewrites of the helper. Copy or rename it as an ordinary authored module before experimenting beyond that reviewed shape; then you own the CPU-width, flags, registers, stack balance, and runtime-branch analysis.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Enable and test it",
+                    listOf(
+                        "Open ASM → Source → Project Modules, select checked_hook_demo.asm, and enable it. Keep it last among enabled modules. Build the SMEDIT result; a contract violation stops safely with a specific hook, placement, ordering, or overlap error.",
+                        "In the emulator, lower energy to 50: the warning should now activate even though vanilla would wait until 30. Raise energy to 51 or more: the warning should clear through the original healthy path. Also verify ordinary pause/gameplay flow, then disable the module and confirm vanilla's below-31 behavior returns.",
+                        "Use the ROM-space and ownership views to inspect the three-byte native hook and the small bank-$90 helper allocation. A successful build should attribute both complete spans to Project module checked_hook_demo.asm.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
             id = "samus-jump-edit",
             title = "First project edit: Samus's jump",
             summary = "Trace a real Super Metroid behavior from caller to data, make a safe project override, and define a byte-exact test plan.",

@@ -15,6 +15,12 @@ import com.supermetroid.editor.asm.RoomAsmSourceRequest
 import com.supermetroid.editor.asm.RoomAsmSourceKind
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmWorkspaceState
+import com.supermetroid.editor.asm.AsmTilesetPaletteAccess
+import com.supermetroid.editor.asm.AsmTilesetPaletteBridge
+import com.supermetroid.editor.asm.AsmTilesetGraphicsAccess
+import com.supermetroid.editor.asm.AsmTilesetGraphicsBridge
+import com.supermetroid.editor.asm.AsmTilesetGraphicsKey
+import com.supermetroid.editor.asm.AsmTilesetGraphicsKind
 import com.supermetroid.editor.asm.publishSourceModelChanges
 import com.supermetroid.editor.rom.withFxChange
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
@@ -160,6 +166,20 @@ internal fun writePng(filePath: String, pixels: IntArray, w: Int, h: Int): Boole
 }
 
 data class FloatingMapSelection(val x: Int, val y: Int)
+
+internal data class TilesetPaletteEditingStatus(
+    val editable: Boolean,
+    val sourceManaged: Boolean,
+    val message: String? = null,
+    val affectedTilesetIds: List<Int> = emptyList(),
+)
+
+internal data class TilesetGraphicsEditingStatus(
+    val editable: Boolean,
+    val sourceManaged: Boolean,
+    val message: String? = null,
+    val affectedTilesetIds: List<Int> = emptyList(),
+)
 
 data class EffectiveSaveStationSpawn(
     val area: Int,
@@ -425,6 +445,10 @@ class EditorState(
     }
 
     private var asmModeRevision by mutableStateOf(0)
+    private val asmTilesetPaletteBridge = AsmTilesetPaletteBridge()
+    private var asmTilesetPaletteAccesses: Map<Int, AsmTilesetPaletteAccess> = emptyMap()
+    private val asmTilesetGraphicsBridge = AsmTilesetGraphicsBridge()
+    private var asmTilesetGraphicsAccesses: Map<AsmTilesetGraphicsKey, AsmTilesetGraphicsAccess> = emptyMap()
     internal val asmNavigationEnabled: Boolean get() {
         asmModeRevision // Nested project flags are not Compose state; mode changes must invalidate links.
         return projectAsmNavigationEnabled(project)
@@ -446,6 +470,8 @@ class EditorState(
         project.asmWorkspace.enabled = true
         project.asmWorkspace.sourceRevision = sourceRevision
         project.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
+        asmTilesetPaletteAccesses = emptyMap()
+        asmTilesetGraphicsAccesses = emptyMap()
         asmModeRevision++
         dirty = true
     }
@@ -458,6 +484,8 @@ class EditorState(
         }
         if (project.asmWorkspace.buildMode == mode) return
         project.asmWorkspace.buildMode = mode
+        asmTilesetPaletteAccesses = emptyMap()
+        asmTilesetGraphicsAccesses = emptyMap()
         asmModeRevision++
         dirty = true
     }
@@ -613,6 +641,7 @@ class EditorState(
         statusMessage.startsWith("Patch toggle blocked", ignoreCase = true) ||
         statusMessage.startsWith("Patch synchronization blocked", ignoreCase = true) ||
         statusMessage.startsWith("Source edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Palette edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Object edit blocked", ignoreCase = true)
 
     /** Long-running ROM build state stays visible instead of expiring like a transient status. */
@@ -1781,7 +1810,127 @@ class EditorState(
     var editorSelectedMetatile by mutableStateOf(-1)
         private set
 
+    internal fun refreshAsmTilesetPaletteAccesses() {
+        asmTilesetPaletteAccesses = if (
+            project.asmWorkspace.enabled &&
+            project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
+            projectFilePath.isNotBlank()
+        ) {
+            runCatching { asmTilesetPaletteBridge.accessAll(projectFilePath) }.getOrElse { problem ->
+                (0 until TileGraphics.NUM_TILESETS).associateWith { tilesetId ->
+                    AsmTilesetPaletteAccess.AsmOnly(
+                        tilesetId,
+                        "Palette source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+        } else emptyMap()
+    }
+
+    private fun asmTilesetPaletteAccess(tilesetId: Int): AsmTilesetPaletteAccess? {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return null
+        if (asmTilesetPaletteAccesses.isEmpty()) refreshAsmTilesetPaletteAccesses()
+        return asmTilesetPaletteAccesses[tilesetId]
+    }
+
+    internal fun refreshAsmTilesetGraphicsAccesses() {
+        asmTilesetGraphicsAccesses = if (
+            project.asmWorkspace.enabled &&
+            project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
+            projectFilePath.isNotBlank()
+        ) {
+            runCatching { asmTilesetGraphicsBridge.accessAll(projectFilePath) }.getOrElse { problem ->
+                buildMap {
+                    for (tilesetId in 0 until TileGraphics.NUM_TILESETS) {
+                        for (kind in listOf(AsmTilesetGraphicsKind.AREA_TILES, AsmTilesetGraphicsKind.AREA_METATILES)) {
+                            val key = AsmTilesetGraphicsKey(kind, tilesetId)
+                            put(key, AsmTilesetGraphicsAccess.AsmOnly(
+                                key,
+                                "Source asset could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                            ))
+                        }
+                    }
+                    for (kind in listOf(AsmTilesetGraphicsKind.COMMON_TILES, AsmTilesetGraphicsKind.COMMON_METATILES)) {
+                        val key = AsmTilesetGraphicsKey(kind)
+                        put(key, AsmTilesetGraphicsAccess.AsmOnly(
+                            key,
+                            "Source asset could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                        ))
+                    }
+                }
+            }
+        } else emptyMap()
+    }
+
+    private fun asmTilesetGraphicsAccess(
+        kind: AsmTilesetGraphicsKind,
+        tilesetId: Int = editorTilesetId,
+    ): AsmTilesetGraphicsAccess? {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return null
+        if (asmTilesetGraphicsAccesses.isEmpty()) refreshAsmTilesetGraphicsAccesses()
+        val key = AsmTilesetGraphicsKey(
+            kind,
+            tilesetId.takeIf { kind == AsmTilesetGraphicsKind.AREA_TILES || kind == AsmTilesetGraphicsKind.AREA_METATILES },
+        )
+        return asmTilesetGraphicsAccesses[key]
+    }
+
+    internal fun tilesetGraphicsEditingStatus(
+        kind: AsmTilesetGraphicsKind,
+        tilesetId: Int = editorTilesetId,
+    ): TilesetGraphicsEditingStatus = when (val access = asmTilesetGraphicsAccess(kind, tilesetId)) {
+        null -> TilesetGraphicsEditingStatus(editable = true, sourceManaged = false)
+        is AsmTilesetGraphicsAccess.AsmOnly -> TilesetGraphicsEditingStatus(
+            editable = false,
+            sourceManaged = true,
+            message = access.reason,
+        )
+        is AsmTilesetGraphicsAccess.Editable -> {
+            val aliases = access.affectedTilesetIds.filterNot { it == tilesetId }
+            TilesetGraphicsEditingStatus(
+                editable = true,
+                sourceManaged = true,
+                message = when {
+                    kind == AsmTilesetGraphicsKind.COMMON_TILES || kind == AsmTilesetGraphicsKind.COMMON_METATILES ->
+                        "ASM data · ${access.assetPath} · shared common resource"
+                    aliases.isEmpty() -> "ASM data · ${access.assetPath}"
+                    else -> "ASM data · ${access.assetPath} · shared with ${aliases.joinToString()}"
+                },
+                affectedTilesetIds = access.affectedTilesetIds,
+            )
+        }
+    }
+
+    internal fun tilesetPaletteEditingStatus(tilesetId: Int): TilesetPaletteEditingStatus =
+        when (val access = asmTilesetPaletteAccess(tilesetId)) {
+            null -> TilesetPaletteEditingStatus(editable = true, sourceManaged = false)
+            is AsmTilesetPaletteAccess.AsmOnly -> TilesetPaletteEditingStatus(
+                editable = false,
+                sourceManaged = true,
+                message = access.reason,
+            )
+            is AsmTilesetPaletteAccess.Editable -> {
+                val aliases = access.affectedTilesetIds.filterNot { it == tilesetId }
+                TilesetPaletteEditingStatus(
+                    editable = true,
+                    sourceManaged = true,
+                    message = if (aliases.isEmpty()) {
+                        "ASM data · ${access.assetPath}"
+                    } else {
+                        "ASM data · ${access.assetPath} · shared with ${aliases.joinToString() }"
+                    },
+                    affectedTilesetIds = access.affectedTilesetIds,
+                )
+            }
+        }
+
     fun loadEditorTileset(tilesetId: Int, romParser: RomParser): Boolean {
+        refreshAsmTilesetPaletteAccesses()
+        refreshAsmTilesetGraphicsAccesses()
         editorTilesetId = tilesetId
         editorSelectedMetatile = -1
         val tg = TileGraphics(romParser)
@@ -1794,26 +1943,19 @@ class EditorState(
     /** Apply any project-stored custom graphics, metatile tables, and palette to a TileGraphics instance. */
     internal fun applyCustomGfxToTileGraphics(tg: TileGraphics, tilesetId: Int) {
         val gfxData = project.customGfx
-        val varB64 = gfxData.varGfx[tilesetId.toString()]
-        if (varB64 != null) {
-            try { tg.applyCustomVarGfx(java.util.Base64.getDecoder().decode(varB64)) }
-            catch (_: Exception) {}
+        fun decoded(value: String?): ByteArray? = value?.let {
+            runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull()
         }
-        val creB64 = gfxData.creGfx
-        if (creB64 != null) {
-            try { tg.applyCustomCreGfx(java.util.Base64.getDecoder().decode(creB64)) }
-            catch (_: Exception) {}
-        }
-        val tableB64 = gfxData.tileTables[tilesetId.toString()]
-        if (tableB64 != null) {
-            try { tg.applyCustomVarTileTable(java.util.Base64.getDecoder().decode(tableB64)) }
-            catch (_: Exception) {}
-        }
-        val creTableB64 = gfxData.creTileTable
-        if (creTableB64 != null) {
-            try { tg.applyCustomCreTileTable(java.util.Base64.getDecoder().decode(creTableB64)) }
-            catch (_: Exception) {}
-        }
+        fun source(kind: AsmTilesetGraphicsKind): ByteArray? =
+            (asmTilesetGraphicsAccess(kind, tilesetId) as? AsmTilesetGraphicsAccess.Editable)?.rawData
+        (decoded(gfxData.varGfx[tilesetId.toString()]) ?: source(AsmTilesetGraphicsKind.AREA_TILES))
+            ?.let(tg::applyCustomVarGfx)
+        (decoded(gfxData.creGfx) ?: source(AsmTilesetGraphicsKind.COMMON_TILES))
+            ?.let(tg::applyCustomCreGfx)
+        (decoded(gfxData.tileTables[tilesetId.toString()]) ?: source(AsmTilesetGraphicsKind.AREA_METATILES))
+            ?.let(tg::applyCustomVarTileTable)
+        (decoded(gfxData.creTileTable) ?: source(AsmTilesetGraphicsKind.COMMON_METATILES))
+            ?.let(tg::applyCustomCreTileTable)
         applyCustomPaletteToTileGraphics(tg, tilesetId)
     }
 
@@ -1821,31 +1963,81 @@ class EditorState(
 
     /** Apply any project-stored custom palette to a TileGraphics instance. */
     internal fun applyCustomPaletteToTileGraphics(tg: TileGraphics, tilesetId: Int) {
-        val palB64 = project.customGfx.palettes[tilesetId.toString()] ?: return
+        val sourceRaw = (asmTilesetPaletteAccess(tilesetId) as? AsmTilesetPaletteAccess.Editable)?.rawPalette
+        val storedRaw = project.customGfx.palettes[tilesetId.toString()]?.let { encoded ->
+            runCatching { java.util.Base64.getDecoder().decode(encoded) }.getOrNull()
+        }
+        val rawBgr = storedRaw?.takeIf { it.size == 256 } ?: sourceRaw ?: return
         try {
-            val rawBgr = java.util.Base64.getDecoder().decode(palB64)
-            if (rawBgr.size != 256) return  // 8 rows × 16 colors × 2 bytes
             for (row in 0..7) for (col in 0..15) {
                 val offset = (row * 16 + col) * 2
                 val bgr555 = (rawBgr[offset].toInt() and 0xFF) or
                         ((rawBgr[offset + 1].toInt() and 0xFF) shl 8)
                 tg.setPaletteEntry(row, col, bgr555)
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) { }
     }
 
-    /** Save the current TileGraphics palette to the project as a base64 BGR555 override. */
-    fun savePaletteOverride(tilesetId: Int) {
-        val tg = editorTileGraphics ?: return
-        val rawBgr = tg.getRawPaletteData() ?: return
-        project.customGfx.palettes[tilesetId.toString()] = java.util.Base64.getEncoder().encodeToString(rawBgr)
+    /** Save the current palette to its ASM asset, or to project JSON outside ASM source mode. */
+    fun savePaletteOverride(tilesetId: Int): Boolean {
+        val tg = editorTileGraphics ?: return false
+        val rawBgr = tg.getRawPaletteData() ?: return false
+        if (!saveTilesetPaletteBytes(tilesetId, rawBgr)) return false
         dirty = true
         paletteVersion++
-        if (tilesetId == currentTilesetId) {
+        val affected = tilesetPaletteEditingStatus(tilesetId).affectedTilesetIds.ifEmpty { listOf(tilesetId) }
+        if (currentTilesetId in affected) {
             tileGraphics?.let {
-                applyCustomPaletteToTileGraphics(it, tilesetId)
+                applyCustomPaletteToTileGraphics(it, currentTilesetId)
                 _editVersionState.value++
             }
+        }
+        if (editorTilesetId in affected && editorTilesetId != tilesetId) {
+            editorTileGraphics?.let { applyCustomPaletteToTileGraphics(it, editorTilesetId) }
+        }
+        return true
+    }
+
+    private fun saveTilesetPaletteBytes(tilesetId: Int, rawBgr: ByteArray): Boolean {
+        val access = asmTilesetPaletteAccess(tilesetId)
+        if (access == null) {
+            project.customGfx.palettes[tilesetId.toString()] =
+                java.util.Base64.getEncoder().encodeToString(rawBgr)
+            return true
+        }
+        if (access is AsmTilesetPaletteAccess.AsmOnly) {
+            postStatus("Palette edit blocked: ${access.reason}")
+            return false
+        }
+        access as AsmTilesetPaletteAccess.Editable
+        val conflictingAliases = access.affectedTilesetIds.filter { alias ->
+            alias != tilesetId && project.customGfx.palettes.containsKey(alias.toString())
+        }
+        if (conflictingAliases.isNotEmpty()) {
+            postStatus(
+                "Palette edit blocked: ${access.assetPath} is shared with tileset(s) " +
+                    conflictingAliases.joinToString() + " that still have project palette overrides. Reset or migrate those first.",
+            )
+            return false
+        }
+        return try {
+            val saved = asmTilesetPaletteBridge.save(
+                projectFilePath,
+                tilesetId,
+                rawBgr,
+                access.sourceBytes,
+            )
+            project.customGfx.palettes.remove(tilesetId.toString())
+            refreshAsmTilesetPaletteAccesses()
+            val aliases = saved.affectedTilesetIds.filterNot { it == tilesetId }
+            postStatus(
+                if (aliases.isEmpty()) "Updated ASM palette asset ${saved.assetPath}"
+                else "Updated shared ASM palette asset ${saved.assetPath} (tilesets ${saved.affectedTilesetIds.joinToString()})",
+            )
+            true
+        } catch (problem: Exception) {
+            postStatus("Palette edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
         }
     }
 
@@ -1853,9 +2045,35 @@ class EditorState(
 
     /** Remove the custom palette override, restoring the ROM default. */
     fun resetPaletteOverride(tilesetId: Int): Boolean {
+        var restoredSource = false
+        var restoredSourceIds = listOf(tilesetId)
+        val access = asmTilesetPaletteAccess(tilesetId)
+        if (access is AsmTilesetPaletteAccess.Editable && access.modified) {
+            restoredSourceIds = access.affectedTilesetIds.ifEmpty { listOf(tilesetId) }
+            restoredSource = try {
+                val restored = asmTilesetPaletteBridge.restore(
+                    projectFilePath,
+                    tilesetId,
+                    access.sourceBytes,
+                )
+                refreshAsmTilesetPaletteAccesses()
+                val aliases = restored.affectedTilesetIds.filterNot { it == tilesetId }
+                postStatus(
+                    if (aliases.isEmpty()) "Restored ASM palette asset ${restored.assetPath}"
+                    else "Restored shared ASM palette asset ${restored.assetPath} (tilesets ${restored.affectedTilesetIds.joinToString()})",
+                )
+                true
+            } catch (problem: Exception) {
+                postStatus("Palette edit blocked: ${problem.message ?: problem::class.simpleName}")
+                return false
+            }
+        }
         val removedPalette = project.customGfx.palettes.remove(tilesetId.toString()) != null
-        val removedEffect = project.customGfx.paletteEffects.remove(tilesetPaletteEffectKey(tilesetId)) != null
-        if (removedPalette || removedEffect) {
+        var removedEffect = false
+        restoredSourceIds.forEach { affected ->
+            removedEffect = project.customGfx.paletteEffects.remove(tilesetPaletteEffectKey(affected)) != null || removedEffect
+        }
+        if (restoredSource || removedPalette || removedEffect) {
             dirty = true
             paletteVersion++
             return true
@@ -1866,7 +2084,8 @@ class EditorState(
     /** Check if the project has a custom palette for the given tileset. */
     fun hasCustomPalette(tilesetId: Int): Boolean =
         project.customGfx.palettes.containsKey(tilesetId.toString()) ||
-                project.customGfx.paletteEffects.containsKey(tilesetPaletteEffectKey(tilesetId))
+                project.customGfx.paletteEffects.containsKey(tilesetPaletteEffectKey(tilesetId)) ||
+                (asmTilesetPaletteAccess(tilesetId) as? AsmTilesetPaletteAccess.Editable)?.modified == true
 
     fun hasCurrentTilesetOverrides(): Boolean =
         hasCustomVarGfx() ||
@@ -1883,33 +2102,12 @@ class EditorState(
         commonMetatiles: Boolean = false,
     ): Boolean {
         var changed = false
-        val tilesetKey = editorTilesetId.toString()
-        if (areaTiles && project.customGfx.varGfx.remove(tilesetKey) != null) {
-            changed = true
-        }
-        if (commonTiles && project.customGfx.creGfx != null) {
-            project.customGfx.creGfx = null
-            changed = true
-        }
-        if (areaMetatiles && project.customGfx.tileTables.remove(tilesetKey) != null) {
-            changed = true
-        }
-        if (commonMetatiles && project.customGfx.creTileTable != null) {
-            project.customGfx.creTileTable = null
-            changed = true
-        }
+        if (areaTiles) changed = resetTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_TILES) || changed
+        if (commonTiles) changed = resetTilesetGraphicsOverride(AsmTilesetGraphicsKind.COMMON_TILES) || changed
+        if (areaMetatiles) changed = resetTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_METATILES) || changed
+        if (commonMetatiles) changed = resetTilesetGraphicsOverride(AsmTilesetGraphicsKind.COMMON_METATILES) || changed
         if (palette) {
-            var paletteChanged = false
-            if (project.customGfx.palettes.remove(tilesetKey) != null) {
-                paletteChanged = true
-            }
-            if (project.customGfx.paletteEffects.remove(tilesetPaletteEffectKey(editorTilesetId)) != null) {
-                paletteChanged = true
-            }
-            if (paletteChanged) {
-                paletteVersion++
-                changed = true
-            }
+            changed = resetPaletteOverride(editorTilesetId) || changed
         }
         if (changed) dirty = true
         return changed
@@ -1992,14 +2190,18 @@ class EditorState(
      */
     fun readTilesetPalette(tilesetId: Int, romParser: RomParser, includeOverride: Boolean = true): IntArray? {
         try {
-            val romData = romParser.getRomData()
-            val tablePC = romParser.snesToPc(0x8FE6A2)
-            val entryOffset = tablePC + tilesetId * 9
-            if (entryOffset + 9 > romData.size) return null
-            val palettePtr = (romData[entryOffset + 6].toInt() and 0xFF) or
-                    ((romData[entryOffset + 7].toInt() and 0xFF) shl 8) or
-                    ((romData[entryOffset + 8].toInt() and 0xFF) shl 16)
-            val raw = romParser.decompressLZ2(palettePtr)
+            val sourcePalette = asmTilesetPaletteAccess(tilesetId) as? AsmTilesetPaletteAccess.Editable
+            val raw = sourcePalette?.let { if (includeOverride) it.rawPalette else it.baselineRawPalette }
+                ?: run {
+                    val romData = romParser.getRomData()
+                    val tablePC = romParser.snesToPc(0x8FE6A2)
+                    val entryOffset = tablePC + tilesetId * 9
+                    if (entryOffset + 9 > romData.size) return null
+                    val palettePtr = (romData[entryOffset + 6].toInt() and 0xFF) or
+                        ((romData[entryOffset + 7].toInt() and 0xFF) shl 8) or
+                        ((romData[entryOffset + 8].toInt() and 0xFF) shl 16)
+                    romParser.decompressLZ2(palettePtr)
+                }
             if (raw.size < 256) return null
             val colors = IntArray(128)
             for (i in 0 until 128) {
@@ -2023,28 +2225,32 @@ class EditorState(
     }
 
     /** Save a tileset palette from BGR555 color array (128 colors). */
-    fun saveTilesetPaletteFromColors(tilesetId: Int, colors: IntArray) {
-        if (colors.size != 128) return
+    fun saveTilesetPaletteFromColors(tilesetId: Int, colors: IntArray): Boolean {
+        if (colors.size != 128) return false
         val raw = ByteArray(256)
         for (i in 0 until 128) {
             raw[i * 2] = (colors[i] and 0xFF).toByte()
             raw[i * 2 + 1] = ((colors[i] shr 8) and 0xFF).toByte()
         }
-        project.customGfx.palettes[tilesetId.toString()] = java.util.Base64.getEncoder().encodeToString(raw)
+        if (!saveTilesetPaletteBytes(tilesetId, raw)) return false
         dirty = true
         paletteVersion++
-        if (tilesetId == editorTilesetId) {
-            editorTileGraphics?.let { applyCustomPaletteToTileGraphics(it, tilesetId) }
+        val affected = tilesetPaletteEditingStatus(tilesetId).affectedTilesetIds.ifEmpty { listOf(tilesetId) }
+        if (editorTilesetId in affected) {
+            editorTileGraphics?.let { applyCustomPaletteToTileGraphics(it, editorTilesetId) }
         }
-        if (tilesetId == currentTilesetId) {
+        if (currentTilesetId in affected) {
             tileGraphics?.let {
-                applyCustomPaletteToTileGraphics(it, tilesetId)
+                applyCustomPaletteToTileGraphics(it, currentTilesetId)
                 _editVersionState.value++
             }
         }
+        return true
     }
 
     fun reloadCurrentRoomTileGraphics(romParser: RomParser): Boolean {
+        refreshAsmTilesetPaletteAccesses()
+        refreshAsmTilesetGraphicsAccesses()
         val tg = TileGraphics(romParser)
         tileGraphics = if (tg.loadTileset(currentTilesetId)) {
             applyCustomGfxToTileGraphics(tg, currentTilesetId)
@@ -2057,6 +2263,117 @@ class EditorState(
     }
 
     // ─── Tileset graphics export / import ────────────────────────────
+
+    /** Persist one visual tileset resource into ASM data, or project JSON outside ASM source mode. */
+    internal fun saveTilesetGraphicsOverride(
+        kind: AsmTilesetGraphicsKind,
+        rawData: ByteArray,
+        tilesetId: Int = editorTilesetId,
+    ): Boolean {
+        val targetId = tilesetId.takeIf {
+            kind == AsmTilesetGraphicsKind.AREA_TILES || kind == AsmTilesetGraphicsKind.AREA_METATILES
+        }
+        val access = asmTilesetGraphicsAccess(kind, tilesetId)
+        if (access == null) {
+            val encoded = java.util.Base64.getEncoder().encodeToString(rawData)
+            when (kind) {
+                AsmTilesetGraphicsKind.AREA_TILES -> project.customGfx.varGfx[tilesetId.toString()] = encoded
+                AsmTilesetGraphicsKind.AREA_METATILES -> project.customGfx.tileTables[tilesetId.toString()] = encoded
+                AsmTilesetGraphicsKind.COMMON_TILES -> project.customGfx.creGfx = encoded
+                AsmTilesetGraphicsKind.COMMON_METATILES -> project.customGfx.creTileTable = encoded
+            }
+            dirty = true
+            return true
+        }
+        if (access is AsmTilesetGraphicsAccess.AsmOnly) {
+            postStatus("Graphics edit blocked: ${access.reason}")
+            return false
+        }
+        access as AsmTilesetGraphicsAccess.Editable
+        val conflicts = targetId?.let { target ->
+            access.affectedTilesetIds.filter { alias ->
+                alias != target && when (kind) {
+                    AsmTilesetGraphicsKind.AREA_TILES -> project.customGfx.varGfx.containsKey(alias.toString())
+                    AsmTilesetGraphicsKind.AREA_METATILES -> project.customGfx.tileTables.containsKey(alias.toString())
+                    else -> false
+                }
+            }
+        }.orEmpty()
+        if (conflicts.isNotEmpty()) {
+            postStatus(
+                "Graphics edit blocked: ${access.assetPath} is shared with tileset(s) ${conflicts.joinToString()} " +
+                    "that still have project overrides. Reset or migrate those first.",
+            )
+            return false
+        }
+        return try {
+            val saved = asmTilesetGraphicsBridge.save(
+                projectFilePath,
+                kind,
+                targetId,
+                rawData,
+                access.sourceBytes,
+            )
+            when (kind) {
+                AsmTilesetGraphicsKind.AREA_TILES -> project.customGfx.varGfx.remove(tilesetId.toString())
+                AsmTilesetGraphicsKind.AREA_METATILES -> project.customGfx.tileTables.remove(tilesetId.toString())
+                AsmTilesetGraphicsKind.COMMON_TILES -> project.customGfx.creGfx = null
+                AsmTilesetGraphicsKind.COMMON_METATILES -> project.customGfx.creTileTable = null
+            }
+            refreshAsmTilesetGraphicsAccesses()
+            dirty = true
+            val aliases = saved.affectedTilesetIds.filterNot { it == tilesetId }
+            postStatus(
+                when {
+                    targetId == null -> "Updated shared ASM data asset ${saved.assetPath}"
+                    aliases.isEmpty() -> "Updated ASM data asset ${saved.assetPath}"
+                    else -> "Updated shared ASM data asset ${saved.assetPath} (tilesets ${saved.affectedTilesetIds.joinToString()})"
+                },
+            )
+            if (currentTilesetId in saved.affectedTilesetIds) {
+                currentRomParser?.let(::reloadCurrentRoomTileGraphics)
+            }
+            true
+        } catch (problem: Exception) {
+            postStatus("Graphics edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun resetTilesetGraphicsOverride(
+        kind: AsmTilesetGraphicsKind,
+        tilesetId: Int = editorTilesetId,
+    ): Boolean {
+        val access = asmTilesetGraphicsAccess(kind, tilesetId)
+        var restored = false
+        if (access is AsmTilesetGraphicsAccess.Editable && access.modified) {
+            restored = try {
+                val sourceId = tilesetId.takeIf {
+                    kind == AsmTilesetGraphicsKind.AREA_TILES || kind == AsmTilesetGraphicsKind.AREA_METATILES
+                }
+                val result = asmTilesetGraphicsBridge.restore(
+                    projectFilePath,
+                    kind,
+                    sourceId,
+                    access.sourceBytes,
+                )
+                refreshAsmTilesetGraphicsAccesses()
+                postStatus("Restored ASM data asset ${result.assetPath}")
+                true
+            } catch (problem: Exception) {
+                postStatus("Graphics edit blocked: ${problem.message ?: problem::class.simpleName}")
+                return false
+            }
+        }
+        val removed = when (kind) {
+            AsmTilesetGraphicsKind.AREA_TILES -> project.customGfx.varGfx.remove(tilesetId.toString()) != null
+            AsmTilesetGraphicsKind.AREA_METATILES -> project.customGfx.tileTables.remove(tilesetId.toString()) != null
+            AsmTilesetGraphicsKind.COMMON_TILES -> (project.customGfx.creGfx != null).also { project.customGfx.creGfx = null }
+            AsmTilesetGraphicsKind.COMMON_METATILES -> (project.customGfx.creTileTable != null).also { project.customGfx.creTileTable = null }
+        }
+        if (restored || removed) dirty = true
+        return restored || removed
+    }
 
     /**
      * Export an 8x8 tile sheet as a PNG file.
@@ -2094,23 +2411,21 @@ class EditorState(
         val numTiles = if (isCre) tg.getCreTileCount() else tg.getVarTileCount()
         val raw4bpp = tg.importTileSheet(pixels, w, startTile, numTiles)
 
-        val b64 = java.util.Base64.getEncoder().encodeToString(raw4bpp)
-        if (isCre) {
-            project.customGfx.creGfx = b64
-            tg.applyCustomCreGfx(raw4bpp)
-        } else {
-            project.customGfx.varGfx[editorTilesetId.toString()] = b64
-            tg.applyCustomVarGfx(raw4bpp)
-        }
-        dirty = true
+        val kind = if (isCre) AsmTilesetGraphicsKind.COMMON_TILES else AsmTilesetGraphicsKind.AREA_TILES
+        if (!saveTilesetGraphicsOverride(kind, raw4bpp)) return false
+        if (isCre) tg.applyCustomCreGfx(raw4bpp) else tg.applyCustomVarGfx(raw4bpp)
         return true
     }
 
     /** Check whether custom graphics exist for the current tileset. */
-    fun hasCustomVarGfx(): Boolean = project.customGfx.varGfx.containsKey(editorTilesetId.toString())
-    fun hasCustomCreGfx(): Boolean = project.customGfx.creGfx != null
-    fun hasCustomVarTileTable(): Boolean = project.customGfx.tileTables.containsKey(editorTilesetId.toString())
-    fun hasCustomCreTileTable(): Boolean = project.customGfx.creTileTable != null
+    fun hasCustomVarGfx(): Boolean = project.customGfx.varGfx.containsKey(editorTilesetId.toString()) ||
+        (asmTilesetGraphicsAccess(AsmTilesetGraphicsKind.AREA_TILES) as? AsmTilesetGraphicsAccess.Editable)?.modified == true
+    fun hasCustomCreGfx(): Boolean = project.customGfx.creGfx != null ||
+        (asmTilesetGraphicsAccess(AsmTilesetGraphicsKind.COMMON_TILES) as? AsmTilesetGraphicsAccess.Editable)?.modified == true
+    fun hasCustomVarTileTable(): Boolean = project.customGfx.tileTables.containsKey(editorTilesetId.toString()) ||
+        (asmTilesetGraphicsAccess(AsmTilesetGraphicsKind.AREA_METATILES) as? AsmTilesetGraphicsAccess.Editable)?.modified == true
+    fun hasCustomCreTileTable(): Boolean = project.customGfx.creTileTable != null ||
+        (asmTilesetGraphicsAccess(AsmTilesetGraphicsKind.COMMON_METATILES) as? AsmTilesetGraphicsAccess.Editable)?.modified == true
 
     fun saveCurrentMetatileTableOverride(): Boolean {
         val tg = editorTileGraphics ?: return false
@@ -2123,22 +2438,33 @@ class EditorState(
         } else {
             tg.getRawVarTileTable() ?: return false
         }
-        val b64 = java.util.Base64.getEncoder().encodeToString(raw)
-        if (tg.isCreMetatileIndex(selected)) {
-            project.customGfx.creTileTable = b64
+        val kind = if (tg.isCreMetatileIndex(selected)) {
+            AsmTilesetGraphicsKind.COMMON_METATILES
         } else {
-            project.customGfx.tileTables[editorTilesetId.toString()] = b64
+            AsmTilesetGraphicsKind.AREA_METATILES
         }
-        dirty = true
-        return true
+        return saveTilesetGraphicsOverride(kind, raw)
     }
 
     fun setCurrentMetatileWords(words: IntArray): Boolean {
         val tg = editorTileGraphics ?: return false
         val selected = editorSelectedMetatile
         if (!tg.isCreMetatileIndex(selected) && !tg.isVariableMetatileIndex(selected)) return false
+        val kind = if (tg.isCreMetatileIndex(selected)) {
+            AsmTilesetGraphicsKind.COMMON_METATILES
+        } else {
+            AsmTilesetGraphicsKind.AREA_METATILES
+        }
+        val status = tilesetGraphicsEditingStatus(kind)
+        if (!status.editable) {
+            postStatus("Metatile edit blocked: ${status.message ?: "Edit this resource in ASM."}")
+            return false
+        }
+        val before = tg.getMetatileWords(selected) ?: return false
         if (!tg.setMetatileWords(selected, words)) return false
-        return saveCurrentMetatileTableOverride()
+        if (saveCurrentMetatileTableOverride()) return true
+        tg.setMetatileWords(selected, before)
+        return false
     }
 
     // ── Enemy / Boss sprite graphics ──────────────────────────────────────────
@@ -4199,6 +4525,8 @@ class EditorState(
         projectRoomWorkspaceParser = null
         projectFilePath = file.absolutePath
         project = loaded
+        asmTilesetPaletteAccesses = emptyMap()
+        asmTilesetGraphicsAccesses = emptyMap()
         resetForLoadedProject(seedPatches = true)
         editorLog("Loaded project: ${file.absolutePath} (${project.rooms.size} rooms, ${project.patches.size} patches)")
     }
@@ -4219,6 +4547,8 @@ class EditorState(
         projectRoomWorkspaceParser = null
         projectFilePath = ""
         project = SmEditProject(romPath = romPath)
+        asmTilesetPaletteAccesses = emptyMap()
+        asmTilesetGraphicsAccesses = emptyMap()
         resetForLoadedProject(seedPatches = true)
     }
 
@@ -4323,6 +4653,17 @@ class EditorState(
         )
     }
 
+    /** Every visual map consumer sees authored ASM first, with legacy project overlays applied until migration. */
+    internal fun effectiveProjectMinimapData(parser: RomParser, area: Int): Pair<MinimapData, MapStationData> {
+        val minimaps = asmPlmSourceBridge?.minimaps
+        if (project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && minimaps?.isAvailable() == true) {
+            val view = minimaps.effectiveView(area, project)
+            require(view.editable) { view.problem ?: "The area map source is ASM-only." }
+            return requireNotNull(view.map) to requireNotNull(view.stations)
+        }
+        return effectiveMinimapData(parser, project, area) to effectiveMapStationData(parser, project, area)
+    }
+
     /** Create a complete project-owned room seed. Call [prepareWorkspaceParser] afterwards. */
     fun createNewRoom(request: NewRoomCreationRequest, romParser: RomParser): ProjectNewRoom {
         val name = request.name.trim()
@@ -4390,8 +4731,9 @@ class EditorState(
             val occupiedBy = overlappingProjectRoom?.name ?: overlappingRomRoom?.name ?: "another room"
             "Map Chunk Coords (${request.mapX}, ${request.mapY}) overlap $occupiedBy. Choose an empty footprint for this room."
         }
-        val destinationMap = effectiveMinimapData(romParser, project, request.area)
-        val destinationStation = effectiveMapStationData(romParser, project, request.area)
+        val destinationData = effectiveProjectMinimapData(romParser, request.area)
+        val destinationMap = destinationData.first
+        val destinationStation = destinationData.second
         val occupiedCell = (0 until height).firstNotNullOfOrNull { ry ->
             (0 until width).firstNotNullOfOrNull { rx ->
                 val x = request.mapX + rx
@@ -4410,7 +4752,7 @@ class EditorState(
                 romParser.readRoomHeader(info.getRoomIdAsInt())?.let(::applyHeaderChanges)
             }.filter { it.area == sourceRoom.area }
             val sourceTiles = extractRoomTiles(
-                effectiveMinimapData(romParser, project, sourceRoom.area),
+                effectiveProjectMinimapData(romParser, sourceRoom.area).first,
                 sourceRoom.mapX,
                 sourceRoom.mapY,
                 sourceRoom.width,
@@ -4698,11 +5040,12 @@ class EditorState(
                 romParser.readRoomHeader(info.getRoomIdAsInt())?.let(::applyHeaderChanges)
             }.filter { it.area == room.area }
             val ownership = roomMapOwnershipMask(room, areaRooms)
+            val effective = effectiveProjectMinimapData(romParser, room.area)
             persistMinimapData(
                 romParser,
                 project,
                 clearRoomTiles(
-                    effectiveMinimapData(romParser, project, room.area),
+                    effective.first,
                     room.mapX, room.mapY, room.width, room.height, ownership,
                 ),
             )
@@ -4710,7 +5053,7 @@ class EditorState(
                 romParser,
                 project,
                 clearMapStationRect(
-                    effectiveMapStationData(romParser, project, room.area),
+                    effective.second,
                     room.mapX, room.mapY, room.width, room.height, ownership,
                 ),
             )
@@ -8779,8 +9122,27 @@ class EditorState(
             movingRoom,
             effectiveRooms.filter { it.area == sourceArea },
         )
-        val sourceMap = effectiveMinimapData(romParser, project, sourceArea)
-        val destinationMap = effectiveMinimapData(romParser, project, targetArea)
+        fun sourceAwareMap(area: Int): Pair<MinimapData, MapStationData> {
+            val minimaps = asmPlmSourceBridge?.minimaps
+            if (sourceMove && minimaps?.isAvailable() == true) {
+                val view = minimaps.effectiveView(area, project)
+                require(view.editable) { view.problem ?: "The area map source is ASM-only." }
+                return requireNotNull(view.map) to requireNotNull(view.stations)
+            }
+            return effectiveMinimapData(romParser, project, area) to effectiveMapStationData(romParser, project, area)
+        }
+        val sourceData = runCatching { sourceAwareMap(sourceArea) }.getOrElse {
+            val message = "Cannot move ${baseRoom.name}: ${it.message}"
+            postStatus(message)
+            return RoomAreaReassignmentResult(false, message, sourceArea, targetArea)
+        }
+        val destinationData = runCatching { sourceAwareMap(targetArea) }.getOrElse {
+            val message = "Cannot move ${baseRoom.name}: ${it.message}"
+            postStatus(message)
+            return RoomAreaReassignmentResult(false, message, sourceArea, targetArea)
+        }
+        val sourceMap = sourceData.first
+        val destinationMap = destinationData.first
         val roomTiles = extractRoomTiles(
             sourceMap,
             movingRoom.mapX,
@@ -8789,8 +9151,8 @@ class EditorState(
             movingRoom.height,
             sourceOwnership,
         )
-        val sourceStation = effectiveMapStationData(romParser, project, sourceArea)
-        val destinationStation = effectiveMapStationData(romParser, project, targetArea)
+        val sourceStation = sourceData.second
+        val destinationStation = destinationData.second
         val destinationPosition = findAvailableRoomMapPosition(
             mapData = destinationMap,
             stationData = destinationStation,
@@ -8897,7 +9259,8 @@ class EditorState(
         val sourceHistory = if (sourceMove) runCatching {
             val bridge = requireNotNull(asmPlmSourceBridge)
             val plan = bridge.areaMoves.plan(roomId, updatedHeader.copy(area = targetArea, mapX = destinationX, mapY = destinationY),
-                doorUpdates, areaSavePlan, mapPlan.minimapEdits, mapPlan.mapStationEdits, ::isEditorItemPlm, bridge.describePlm)
+                doorUpdates, areaSavePlan, mapPlan.minimapEdits, mapPlan.mapStationEdits, setOf(sourceArea, targetArea),
+                ::isEditorItemPlm, bridge.describePlm)
             applySourceRoomMove(roomId, romParser, plan)
         }.getOrElse {
             val message = "Cannot move ${baseRoom.name}: ${it.message}"
@@ -8981,7 +9344,7 @@ class EditorState(
         persistMapStationData(parser, planned, stations)
         val plan = bridge.areaMoves.plan(buffer.roomId,
             RoomHeaderChange(area = room.area, mapX = buffer.currentX, mapY = buffer.currentY), emptyMap(), AreaSaveMigrationPlan(),
-            planned.minimapEdits, planned.mapStationEdits, ::isEditorItemPlm, bridge.describePlm)
+            planned.minimapEdits, planned.mapStationEdits, setOf(room.area), ::isEditorItemPlm, bridge.describePlm)
         return applySourceRoomMove(buffer.roomId, parser, plan, "Move room on map")
     }
 
@@ -10040,8 +10403,9 @@ class EditorState(
         val effect = PaletteEffects.findEffect(effectId) ?: return
         val colors = readTilesetPalette(targetTileset, romParser, includeOverride = false) ?: return
         effect.apply(colors)
-        saveTilesetPaletteFromColors(targetTileset, colors)
-        setPaletteEffect("tileset:$targetTileset", effect.id)
+        if (saveTilesetPaletteFromColors(targetTileset, colors)) {
+            setPaletteEffect("tileset:$targetTileset", effect.id)
+        }
     }
 
     private fun buildBiomeGenerationOptionsForRoom(
@@ -10571,8 +10935,9 @@ class EditorState(
             val colors = readTilesetPalette(targetTileset, romParser, includeOverride = false)
             if (effect != null && colors != null) {
                 effect.apply(colors)
-                saveTilesetPaletteFromColors(targetTileset, colors)
-                setPaletteEffect("tileset:$targetTileset", effect.id)
+                if (saveTilesetPaletteFromColors(targetTileset, colors)) {
+                    setPaletteEffect("tileset:$targetTileset", effect.id)
+                }
             }
         }
 
@@ -10644,14 +11009,31 @@ class EditorState(
         val effectBefore = project.customGfx.paletteEffects[effectKey]
         var paletteAfter = paletteBefore
         var effectAfter = effectBefore
+        var paletteSourceBefore: AsmTilesetPaletteAccess.Editable? = null
+        var paletteSourceAfter: ByteArray? = null
         val paletteEffectId = theme.paletteEffectId
         if (paletteEffectId != null) {
             val effect = requireNotNull(PaletteEffects.findEffect(paletteEffectId)) { "Unknown theme palette effect." }
+            val access = requireNotNull(asmTilesetPaletteAccess(targetTileset)) {
+                "The theme palette requires an initialized Project ASM data workspace."
+            }
+            require(access is AsmTilesetPaletteAccess.Editable) {
+                (access as AsmTilesetPaletteAccess.AsmOnly).reason
+            }
+            val conflictingAliases = access.affectedTilesetIds.filter { alias ->
+                alias != targetTileset && project.customGfx.palettes.containsKey(alias.toString())
+            }
+            require(conflictingAliases.isEmpty()) {
+                "${access.assetPath} is shared with tileset(s) ${conflictingAliases.joinToString()} that still " +
+                    "have project palette overrides. Reset or migrate those first."
+            }
             val colors = requireNotNull(readTilesetPalette(targetTileset, parser, includeOverride = false)) { "The theme's native palette is unavailable." }
             effect.apply(colors)
             val bytes = ByteArray(256)
             for (i in colors.indices) { bytes[i * 2] = colors[i].toByte(); bytes[i * 2 + 1] = (colors[i] ushr 8).toByte() }
-            paletteAfter = Base64.getEncoder().encodeToString(bytes)
+            paletteSourceBefore = access
+            paletteSourceAfter = asmTilesetPaletteBridge.encode(access, bytes)
+            paletteAfter = null
             effectAfter = paletteEffectId
         }
         val change = theme.fxType?.let { type ->
@@ -10665,7 +11047,8 @@ class EditorState(
         }
         val plan = bridge.planTheme(roomId, native.name, targets ?: setOf(selected.id), theme.tilesetId, change, generation)
         if (edits.isEmpty() && plan.beforeModel == plan.afterModel && plan.replacements.values.all { it.first == it.second } &&
-            paletteBefore == paletteAfter && effectBefore == effectAfter) {
+            paletteBefore == paletteAfter && effectBefore == effectAfter &&
+            (paletteSourceBefore == null || paletteSourceBefore.sourceBytes.contentEquals(paletteSourceAfter))) {
             postStatus("${theme.displayName} already matches the room.")
             return@runCatching false
         }
@@ -10681,11 +11064,30 @@ class EditorState(
         var applied = false
         bridge.applyTheme(plan, beforeTransition = {
             requireIdle()
+            paletteSourceBefore?.let { before ->
+                refreshAsmTilesetPaletteAccesses()
+                val expected = if (applied) requireNotNull(paletteSourceAfter) else before.sourceBytes
+                val current = asmTilesetPaletteAccess(targetTileset)
+                require(current is AsmTilesetPaletteAccess.Editable && current.assetPath == before.assetPath &&
+                    current.sourceBytes.contentEquals(expected)) {
+                    "The shared tileset palette source changed; restore the newer palette edit before undoing this theme."
+                }
+            }
             require(project.customGfx.palettes[paletteKey] == (if (applied) paletteAfter else paletteBefore) &&
                 project.customGfx.paletteEffects[effectKey] == (if (applied) effectAfter else effectBefore)) {
                 "The shared tileset palette changed; restore the newer palette edit before undoing this theme."
             }
         }, applySidecar = { undo ->
+            paletteSourceBefore?.let { before ->
+                val after = requireNotNull(paletteSourceAfter)
+                asmTilesetPaletteBridge.replaceSourceBytes(
+                    projectFilePath = projectFilePath,
+                    tilesetId = targetTileset,
+                    sourceBytes = if (undo) before.sourceBytes else after,
+                    expectedSourceBytes = if (undo) after else before.sourceBytes,
+                )
+                refreshAsmTilesetPaletteAccesses()
+            }
             val palette = if (undo) paletteBefore else paletteAfter
             val effect = if (undo) effectBefore else effectAfter
             if (palette == null) project.customGfx.palettes.remove(paletteKey) else project.customGfx.palettes[paletteKey] = palette
@@ -11131,23 +11533,46 @@ class EditorState(
         }
     }
 
-    internal fun buildRomPreview(romParser: RomParser): com.supermetroid.editor.asm.AsmRomPreview? {
+    internal fun buildRomPreview(romParser: RomParser): com.supermetroid.editor.asm.AsmRomPreviewBuild {
         seedDefaultPatches(forceRefreshBundled = true)
-        if (project.romPath.isEmpty()) return null
+        if (project.romPath.isEmpty()) return com.supermetroid.editor.asm.AsmRomPreviewBuild(
+            preview = null,
+            spacePlan = null,
+            error = "Open a ROM before building the space plan.",
+        )
         val projectSnapshot = ProjectFileService.snapshotProject(project)
         val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
+        var latestStatus = ""
+        var latestSpace: RomSpaceBuildSnapshot? = null
         val result = ProjectFileService.buildRom(
             projectSnapshot,
             sourceParser,
             ::editorLog,
-            ::postStatus,
+            { message -> latestStatus = message; postStatus(message) },
             projectFilePath,
-        ) ?: return null
-        return com.supermetroid.editor.asm.AsmRomPreview.create(
-            loadedRom = result.loadedRom,
-            resultRom = result.resultRom,
-            headerSize = result.headerSize,
-            writeReport = result.writeReport,
+            onRomSpaceSnapshot = { latestSpace = it },
+        )
+        val preview = result?.let { built -> com.supermetroid.editor.asm.AsmRomPreview.create(
+            loadedRom = built.loadedRom,
+            resultRom = built.resultRom,
+            headerSize = built.headerSize,
+            writeReport = built.writeReport,
+            romSpaceBefore = built.romSpaceBefore,
+            romSpaceAfter = built.romSpaceAfter,
+        ) }
+        val failedSpacePlan = if (preview != null) null else latestSpace?.let { snapshot ->
+            com.supermetroid.editor.asm.AsmRomSpacePlan.create(
+                bodySize = snapshot.romBodySize,
+                headerSize = snapshot.headerSize,
+                report = snapshot.writeReport,
+                before = snapshot.before,
+                after = snapshot.current,
+            )
+        }
+        return com.supermetroid.editor.asm.AsmRomPreviewBuild(
+            preview = preview,
+            spacePlan = preview?.spacePlan ?: failedSpacePlan,
+            error = if (preview == null) latestStatus.ifBlank { "SMEDIT Result could not be built. No ROM was written." } else null,
         )
     }
 

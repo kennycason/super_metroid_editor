@@ -11,19 +11,20 @@ internal class AsmRoomAreaMoveHistory(
     private val replacements: Map<String, Pair<String, String>>,
     private val head: AsmSourceTextChange,
     private val action: String = "room move",
+    private val anchorFile: String = PLM_SOURCE_FILE,
 ) {
     var beforeTransition: (() -> Unit)? = null
     var onTransition: ((Boolean) -> Unit)? = null
     fun undo(): Boolean = move(true)
     fun redo(): Boolean = move(false)
     private fun move(undo: Boolean): Boolean {
-        val currentHead = if (undo) workspace.sourceUndoHead(PLM_SOURCE_FILE) else workspace.sourceRedoHead(PLM_SOURCE_FILE)
+        val currentHead = if (undo) workspace.sourceUndoHead(anchorFile) else workspace.sourceRedoHead(anchorFile)
         check(currentHead === head) { "Undo newer ASM edits before restoring this $action." }
         check(replacements.all { (file, texts) -> workspace.projectSourceText(file) == if (undo) texts.second else texts.first }) {
             "The $action's source changed; undo newer source edits first."
         }
-        val moved = if (undo) workspace.undoSourceEdit(PLM_SOURCE_FILE, fromRoomEditor = true)
-        else workspace.redoSourceEdit(PLM_SOURCE_FILE, fromRoomEditor = true)
+        val moved = if (undo) workspace.undoSourceEdit(anchorFile, fromRoomEditor = true)
+        else workspace.redoSourceEdit(anchorFile, fromRoomEditor = true)
         check(moved) { workspace.error ?: "Undo newer source/model edits before restoring this $action." }
         return true
     }
@@ -54,6 +55,7 @@ internal class AsmRoomAreaMove(
     private val context: AsmRoomSourceContext = AsmRoomSourceContext(catalog, project),
     private val changed: () -> Unit,
 ) {
+    private val minimaps = AsmMinimapSourceBridge(workspace)
     private fun encode(room: RoomEdits) = Json.encodeToString(RoomEdits.serializer(), room)
 
     /** Geometry, connections and slot consumers matter; unrelated tile/actor/FX edits do not. */
@@ -73,6 +75,7 @@ internal class AsmRoomAreaMove(
 
     fun plan(roomId: Int, header: RoomHeaderChange, doors: Map<Int, List<DoorChange>>, saves: AreaSaveMigrationPlan,
              maps: Map<String, List<MinimapTileEdit>>, stations: Map<String, List<MapStationTileEdit>>,
+             affectedMapAreas: Set<Int>,
              isItem: (Int) -> Boolean, describe: (RomParser.PlmEntry) -> String): AsmRoomAreaMovePlan {
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
@@ -185,10 +188,20 @@ internal class AsmRoomAreaMove(
         val replacements = linkedMapOf(PLM_SOURCE_FILE to (before8F to text8F))
         // A same-area map move has no DoorDef dependency. Do not anchor an unrelated bank's history.
         if (before83 != null) replacements[DOOR_SOURCE_FILE] = before83 to text83
+        require(affectedMapAreas.all { it in 0 until MinimapData.NUM_AREAS }) { "A room move referenced an unsupported pause-map area." }
+        var storedMaps = maps
+        var storedStations = stations
+        if (affectedMapAreas.isNotEmpty() && minimaps.isAvailable()) {
+            val mapPlan = minimaps.planLegacyEdits(context.parser, maps, stations, affectedMapAreas)
+            replacements.putAll(mapPlan.replacements)
+            val retired = affectedMapAreas.map(Int::toString).toSet()
+            storedMaps = maps - retired
+            storedStations = stations - retired
+        }
         return AsmRoomAreaMovePlan(owner, changes,
             replacements,
-            owner.minimapEdits.mapValues { it.value.toList() }, maps.mapValues { it.value.toList() },
-            owner.mapStationEdits.mapValues { it.value.toList() }, stations.mapValues { it.value.toList() },
+            owner.minimapEdits.mapValues { it.value.toList() }, storedMaps.mapValues { it.value.toList() },
+            owner.mapStationEdits.mapValues { it.value.toList() }, storedStations.mapValues { it.value.toList() },
             dependencies(owner), dependencies(prospective), macros)
     }
 

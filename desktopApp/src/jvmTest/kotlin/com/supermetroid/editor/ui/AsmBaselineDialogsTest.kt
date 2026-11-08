@@ -3,14 +3,21 @@ package com.supermetroid.editor.ui
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.ComposeScene
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Constraints
 import com.supermetroid.editor.asm.*
+import com.supermetroid.editor.rom.RomAllocation
+import com.supermetroid.editor.rom.RomFreeSpaceBank
+import com.supermetroid.editor.rom.RomFreeSpaceSnapshot
+import com.supermetroid.editor.rom.RomWriteKind
+import com.supermetroid.editor.rom.RomWritePlan
 import java.io.File
 import kotlin.test.*
 import org.jetbrains.skia.Surface
@@ -187,6 +194,84 @@ class AsmBaselineDialogsTest {
             click(scene, "asm-baseline-keep-bank_84.asm-0"); render()
             click(scene, "asm-baseline-apply")
             assertEquals(conflict.project, applied?.get("bank_84.asm")?.get(0))
+        }
+    }
+
+    @Test fun `project changes distinguish saved unsaved and disabled module source`() {
+        val bank = AsmProjectSourceChange(
+            fileId = "bank_8F.asm",
+            baselineText = "org \$8F8000\nValue: dw \$0001\n",
+            savedText = "org \$8F8000\nValue: dw \$0002\n",
+            workingText = "org \$8F8000\nValue: dw \$0003\n",
+            projectModule = false,
+            enabled = true,
+        )
+        val module = AsmProjectSourceChange(
+            fileId = "project/custom.asm",
+            baselineText = "",
+            savedText = "; Project module: custom\nCustom: RTS\n",
+            workingText = "; Project module: custom\nCustom: RTS\n",
+            projectModule = true,
+            enabled = false,
+        )
+        val asset = AsmProjectAssetChange("Palettes_0.bin", 225, 17, listOf(1, 2, 9))
+        var opened: String? = null
+
+        withDialog({ AsmProjectChangesDialog(listOf(bank, module), {}, { opened = it }, listOf(asset)) }) { scene, render ->
+            assertContains(texts(scene), "reciprocal Visual Editor changes")
+            assertContains(texts(scene), "Saved bank override")
+            assertContains(texts(scene), "Unsaved buffer")
+            assertContains(texts(scene), "1 data asset")
+            assertContains(texts(scene), "\$0003")
+            click(scene, "asm-project-change-view-baseline_to_saved"); render()
+            assertContains(texts(scene), "\$0002")
+            click(scene, "asm-project-change-file-project/custom.asm"); render()
+            assertContains(texts(scene), "Disabled module")
+            assertContains(texts(scene), "whole-file addition")
+            assertTrue(tag(scene, "asm-project-change-view-saved_to_unsaved").config.contains(SemanticsProperties.Disabled))
+            click(scene, "asm-project-change-asset-Palettes_0.bin"); render()
+            assertContains(texts(scene), "17 changed")
+            assertContains(texts(scene), "+\$0001")
+            assertTrue(tag(scene, "asm-project-changes-open-source").config.contains(SemanticsProperties.Disabled))
+            click(scene, "asm-project-change-file-project/custom.asm"); render()
+            click(scene, "asm-project-changes-open-source")
+            assertEquals("project/custom.asm", opened)
+        }
+    }
+
+    @Test fun `ROM space planner renders exact bank pressure placements and ownership`() {
+        val loaded = ByteArray(0x8000) { -1 }
+        val writePlan = RomWritePlan(loaded)
+        writePlan.add(
+            owner = "room-graph:project",
+            label = "Room 91F8 level data",
+            offset = 0x7000,
+            bytes = List(0x100) { 0x5A },
+            kind = RomWriteKind.ALLOCATION,
+        )
+        val before = RomFreeSpaceSnapshot(
+            listOf(RomFreeSpaceBank(0x80, 0, 0x8000, 0x7000, 0x1000, 0xFF)),
+            emptyList(),
+        )
+        val after = RomFreeSpaceSnapshot(
+            listOf(RomFreeSpaceBank(0x80, 0, 0x8000, 0x7100, 0x0F00, 0xFF)),
+            listOf(RomAllocation(0x80, 0x7000, 0x80F000, 0x100, "Room 91F8 level data")),
+        )
+        val preview = AsmRomPreview.create(
+            loaded,
+            writePlan.finalRom(),
+            0,
+            writePlan.report(),
+            romSpaceBefore = before,
+            romSpaceAfter = after,
+        )
+
+        withDialog({ AsmRomSpacePlannerCanvas(AsmWorkspaceState(), preview.spacePlan, true, Modifier.fillMaxSize()) }) { scene, _ ->
+            assertContains(texts(scene), "Plan fits")
+            assertContains(texts(scene), "Room 91F8 level data")
+            assertContains(texts(scene), "room-graph:project")
+            assertContains(texts(scene), "4.0 KiB → 3.8 KiB")
+            assertNotNull(tag(scene, "asm-space-bank-80"))
         }
     }
 

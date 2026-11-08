@@ -3,12 +3,116 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.rom.RomWriteIntent
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlanReport
+import com.supermetroid.editor.rom.RomFreeSpaceSnapshot
 
 internal enum class AsmRomPreviewView(val title: String) {
     LOADED_ROM("Loaded ROM"),
     SMEDIT_RESULT("SMEDIT Result"),
     DIFF("Diff"),
+    SPACE("Space Planner"),
 }
+
+internal data class AsmRomSpacePlacement(
+    val bank: Int,
+    val pcOffset: Int,
+    val snesAddress: Int,
+    val size: Int,
+    val label: String,
+    val owner: String?,
+)
+
+internal data class AsmRomSpaceOwner(
+    val owner: String,
+    val writes: Int,
+    val kinds: Set<String>,
+)
+
+internal data class AsmRomSpaceBank(
+    val bank: Int,
+    val pcStart: Int,
+    val capacityBytes: Int,
+    val availableBefore: Int,
+    val remainingAfter: Int,
+    val fillByte: Int,
+    val placements: List<AsmRomSpacePlacement>,
+    val owners: List<AsmRomSpaceOwner>,
+) {
+    val consumedBytes: Int get() = (availableBefore - remainingAfter).coerceAtLeast(0)
+}
+
+internal data class AsmRomSpacePlan(
+    val romBodySize: Int,
+    val banks: List<AsmRomSpaceBank>,
+) {
+    val placements: List<AsmRomSpacePlacement> get() = banks.flatMap(AsmRomSpaceBank::placements)
+    val allocationBytes: Int get() = placements.sumOf(AsmRomSpacePlacement::size)
+    val availableBefore: Int get() = banks.sumOf(AsmRomSpaceBank::availableBefore)
+    val remainingAfter: Int get() = banks.sumOf(AsmRomSpaceBank::remainingAfter)
+    val consumedBytes: Int get() = banks.sumOf(AsmRomSpaceBank::consumedBytes)
+    val largestRemainingBank: AsmRomSpaceBank? get() = banks.maxByOrNull(AsmRomSpaceBank::remainingAfter)
+
+    companion object {
+        fun create(
+            bodySize: Int,
+            headerSize: Int,
+            report: RomWritePlanReport,
+            before: RomFreeSpaceSnapshot?,
+            after: RomFreeSpaceSnapshot?,
+        ): AsmRomSpacePlan? {
+            if (before == null || after == null || before.banks.isEmpty() || after.banks.isEmpty()) return null
+            val beforeByBank = before.banks.associateBy { it.bank }
+            val placementsByBank = after.allocations.map { allocation ->
+                val pcOffset = allocation.pcOffset - headerSize
+                val owner = report.writes.firstOrNull {
+                    it.offset == pcOffset && it.bytes.size == allocation.size && it.label == allocation.label
+                }?.owner ?: report.writes.firstOrNull {
+                    it.offset == pcOffset && it.bytes.size == allocation.size
+                }?.owner
+                AsmRomSpacePlacement(
+                    bank = allocation.bank,
+                    pcOffset = pcOffset,
+                    snesAddress = allocation.snesAddress,
+                    size = allocation.size,
+                    label = allocation.label,
+                    owner = owner,
+                )
+            }.groupBy(AsmRomSpacePlacement::bank)
+            val banks = after.banks.mapNotNull { finalBank ->
+                val initialBank = beforeByBank[finalBank.bank] ?: return@mapNotNull null
+                val pcStart = finalBank.pcStart - headerSize
+                val pcEnd = pcStart + finalBank.capacityBytes
+                val owners = report.writes
+                    .filter { it.offset < pcEnd && it.endInclusive >= pcStart }
+                    .groupBy(RomWriteIntent::owner)
+                    .map { (owner, writes) ->
+                        AsmRomSpaceOwner(
+                            owner = owner,
+                            writes = writes.size,
+                            kinds = writes.mapTo(linkedSetOf()) { it.kind.name.lowercase().replace('_', ' ') },
+                        )
+                    }
+                    .sortedBy(AsmRomSpaceOwner::owner)
+                AsmRomSpaceBank(
+                    bank = finalBank.bank,
+                    pcStart = pcStart,
+                    capacityBytes = finalBank.capacityBytes,
+                    availableBefore = initialBank.availableBytes,
+                    remainingAfter = finalBank.availableBytes,
+                    fillByte = finalBank.fillByte,
+                    placements = placementsByBank[finalBank.bank].orEmpty().sortedBy(AsmRomSpacePlacement::pcOffset),
+                    owners = owners,
+                )
+            }.sortedBy(AsmRomSpaceBank::bank)
+            return AsmRomSpacePlan(bodySize, banks)
+        }
+    }
+}
+
+internal data class AsmRomPreviewBuild(
+    val preview: AsmRomPreview?,
+    val spacePlan: AsmRomSpacePlan?,
+    val error: String?,
+)
 
 internal data class AsmRomDiffRange(
     val pcOffset: Int,
@@ -28,6 +132,7 @@ internal class AsmRomPreview private constructor(
     val writeReport: RomWritePlanReport,
     val diffRanges: List<AsmRomDiffRange>,
     val changedByteCount: Int,
+    val spacePlan: AsmRomSpacePlan?,
 ) {
     val loadedRom: ByteArray = loadedRom.copyOf()
     val resultRom: ByteArray = resultRom.copyOf()
@@ -38,6 +143,7 @@ internal class AsmRomPreview private constructor(
         AsmRomPreviewView.LOADED_ROM -> loadedRom
         AsmRomPreviewView.SMEDIT_RESULT -> resultRom
         AsmRomPreviewView.DIFF -> resultRom
+        AsmRomPreviewView.SPACE -> resultRom
     }
 
     fun loadedByte(pcOffset: Int): Int? = byteAt(loadedRom, pcOffset)
@@ -56,6 +162,8 @@ internal class AsmRomPreview private constructor(
             headerSize: Int,
             writeReport: RomWritePlanReport,
             maxRangeBytes: Int = Int.MAX_VALUE,
+            romSpaceBefore: RomFreeSpaceSnapshot? = null,
+            romSpaceAfter: RomFreeSpaceSnapshot? = null,
         ): AsmRomPreview {
             require(headerSize >= 0 && headerSize <= loadedRom.size && headerSize <= resultRom.size)
             require(maxRangeBytes > 0)
@@ -126,6 +234,13 @@ internal class AsmRomPreview private constructor(
                 writeReport = writeReport,
                 diffRanges = ranges,
                 changedByteCount = changedBytes,
+                spacePlan = AsmRomSpacePlan.create(
+                    bodySize = resultBodySize,
+                    headerSize = headerSize,
+                    report = writeReport,
+                    before = romSpaceBefore,
+                    after = romSpaceAfter,
+                ),
             )
         }
 

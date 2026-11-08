@@ -368,6 +368,25 @@ class AsmReferenceTest {
     }
 
     @Test
+    fun `source bank budget resolves reference context without claiming unmeasured space`() = runBlocking {
+        val repository = AsmReferenceRepository(
+            referenceRoot = File(tempDirectory, "asm-bank-budget"),
+            fetchBytes = { fakeSourceArchive() },
+            assetRanges = emptyList(),
+        )
+        repository.installOrRefresh(ByteArray(0x300000), "fixture.sfc")
+        val state = AsmWorkspaceState(repository)
+        state.loadInstalled()
+
+        val budget = assertNotNull(state.sourceBankBudget("bank_80.asm", 4))
+
+        assertEquals(0x80, budget.bank)
+        assertEquals(0x8000, budget.capacityBytes)
+        assertNull(budget.allocatableContiguousBytes)
+        assertFalse(budget.spaceIsCurrent)
+    }
+
+    @Test
     fun `workspace address navigation prefers a named exact source anchor`() = runBlocking {
         val repository = AsmReferenceRepository(
             referenceRoot = File(tempDirectory, "asm"),

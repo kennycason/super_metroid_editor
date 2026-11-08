@@ -53,6 +53,9 @@ fun PaletteEditor(
     hasCustomPalette: Boolean,
     sampledPaletteRow: Int = -1,
     sampledPaletteCol: Int = -1,
+    editingEnabled: Boolean = true,
+    sourceManaged: Boolean = false,
+    ownershipMessage: String? = null,
     onPaletteSaved: () -> Unit,
     onPaletteReset: () -> Unit,
     onRefreshNeeded: () -> Unit,
@@ -91,6 +94,7 @@ fun PaletteEditor(
     val redoStack = remember { mutableStateListOf<PaletteEdit>() }
 
     fun applyColorChange(row: Int, col: Int, newBgr: Int, recordUndo: Boolean = true) {
+        if (!editingEnabled) return
         if (recordUndo) {
             val oldBgr = tg.getSnesBgr555(row, col)
             if (oldBgr == newBgr) return
@@ -147,17 +151,25 @@ fun PaletteEditor(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(
                     onClick = { undoPalette() },
-                    enabled = undoStack.isNotEmpty()
+                    enabled = editingEnabled && undoStack.isNotEmpty()
                 ) {
                     Text("Undo", fontSize = fs.detail)
                 }
                 OutlinedButton(
                     onClick = { redoPalette() },
-                    enabled = redoStack.isNotEmpty()
+                    enabled = editingEnabled && redoStack.isNotEmpty()
                 ) {
                     Text("Redo", fontSize = fs.detail)
                 }
             }
+        }
+        ownershipMessage?.let { message ->
+            Text(
+                message,
+                fontSize = fs.detail,
+                color = if (editingEnabled) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFFC857),
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
         Spacer(Modifier.height(12.dp))
 
@@ -266,7 +278,13 @@ fun PaletteEditor(
                 }
                 Spacer(Modifier.height(8.dp))
 
-                if (selectedCol == 0) {
+                if (!editingEnabled) {
+                    Text(
+                        "This palette uses custom ASM source and is read-only here.",
+                        fontSize = fs.detail,
+                        color = Color(0xFFFFC857),
+                    )
+                } else if (selectedCol == 0) {
                     Text(
                         "Color index 0 is transparent and cannot be edited.",
                         fontSize = fs.detail,
@@ -300,8 +318,8 @@ fun PaletteEditor(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            OutlinedButton(onClick = { onPaletteSaved() }) {
-                Text("Save to Project", fontSize = fs.body)
+            OutlinedButton(onClick = { onPaletteSaved() }, enabled = editingEnabled) {
+                Text(if (sourceManaged) "Save to ASM Data" else "Save to Project", fontSize = fs.body)
             }
             if (hasCustomPalette) {
                 OutlinedButton(onClick = {
@@ -310,7 +328,7 @@ fun PaletteEditor(
                     redoStack.clear()
                     editVersion++
                 }) {
-                    Text("Reset to ROM", fontSize = fs.body)
+                    Text(if (sourceManaged) "Restore ASM Data" else "Reset to ROM", fontSize = fs.body)
                 }
             }
         }

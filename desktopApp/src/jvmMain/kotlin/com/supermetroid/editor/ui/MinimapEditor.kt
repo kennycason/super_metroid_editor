@@ -419,6 +419,14 @@ private fun MinimapToolbar(
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.primary,
             )
+            if (state.sourceBacked) {
+                Text(
+                    if (state.sourceOwnershipProblem == null) "ASM data" else "ASM only",
+                    fontSize = 10.sp,
+                    color = if (state.sourceOwnershipProblem == null) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.error,
+                )
+            }
             Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
             MinimapToolChip(Icons.Default.SelectAll, "Select (S)", state.tool == MinimapTool.SELECT) {
