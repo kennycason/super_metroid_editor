@@ -15662,6 +15662,11 @@ macro SmeditObjects_91F8_List_1()
     %PLMPopEntry($EF23, $52, $4A, $005C) ; PLM: Morph Ball (Visible)
     %PLMPopEntry($EEDB, $71, $10, $0051) ; PLM: Missile (Visible)
     %PLMPopEntry($EEF3, $47, $37, $0058) ; PLM: Hi-Jump Boots (Visible)
+    %PLMPopEntry($EEEF, $31, $4C, $0055) ; PLM: Ice Beam (Visible)
+    %PLMPopEntry($EEFB, $33, $4B, $0059) ; PLM: Wave Beam (Visible)
+    %PLMPopEntry($EF13, $2E, $4C, $005E) ; PLM: Plasma Beam (Visible)
+    %PLMPopEntry($EEFF, $35, $4A, $005B) ; PLM: Spazer (Visible)
+    %PLMPopEntry($EEEB, $2C, $4C, $0053) ; PLM: Charge Beam (Visible)
     dw $0000
 endmacro
 
@@ -15682,6 +15687,11 @@ macro SmeditObjects_91F8_List_2()
     %PLMPopEntry($EF23, $52, $4A, $005C) ; PLM: Morph Ball (Visible)
     %PLMPopEntry($EEDB, $71, $10, $0051) ; PLM: Missile (Visible)
     %PLMPopEntry($EEF3, $47, $37, $0058) ; PLM: Hi-Jump Boots (Visible)
+    %PLMPopEntry($EEEF, $31, $4C, $0055) ; PLM: Ice Beam (Visible)
+    %PLMPopEntry($EEFB, $33, $4B, $0059) ; PLM: Wave Beam (Visible)
+    %PLMPopEntry($EF13, $2E, $4C, $005E) ; PLM: Plasma Beam (Visible)
+    %PLMPopEntry($EEFF, $35, $4A, $005B) ; PLM: Spazer (Visible)
+    %PLMPopEntry($EEEB, $2C, $4C, $0053) ; PLM: Charge Beam (Visible)
     dw $0000
 endmacro
 
@@ -15701,6 +15711,11 @@ macro SmeditObjects_91F8_List_3()
     %PLMPopEntry($C8A2, $8E, $17, $0000) ; PLM: Door Cap: Blue Left
     %PLMPopEntry($EEDB, $71, $10, $0051) ; PLM: Missile (Visible)
     %PLMPopEntry($EEF3, $47, $37, $0058) ; PLM: Hi-Jump Boots (Visible)
+    %PLMPopEntry($EEEF, $31, $4C, $0055) ; PLM: Ice Beam (Visible)
+    %PLMPopEntry($EEFB, $33, $4B, $0059) ; PLM: Wave Beam (Visible)
+    %PLMPopEntry($EF13, $2E, $4C, $005E) ; PLM: Plasma Beam (Visible)
+    %PLMPopEntry($EEFF, $35, $4A, $005B) ; PLM: Spazer (Visible)
+    %PLMPopEntry($EEEB, $2C, $4C, $0053) ; PLM: Charge Beam (Visible)
     dw $0000
 endmacro
 
@@ -15722,8 +15737,8 @@ macro SmeditObjects_ACB3_List_1()
     %PLMPopEntry($EEDB, $14, $3C, $0040) ; PLM: Missile (Visible)
     %PLMPopEntry($EEE7, $1A, $0A, $005A) ; PLM: Bomb (Visible)
     %PLMPopEntry($EEE3, $06, $29, $005D) ; PLM: Power Bomb (Visible)
-    %PLMPopEntry($B6DF, $0D, $11, $0000) ; PLM: Energy Refill
     %PLMPopEntry($EF23, $1C, $09, $0052) ; PLM: Morph Ball (Visible)
+    %PLMPopEntry($B6DF, $0D, $10, $0000) ; PLM: Energy Refill
     dw $0000 ; End of PLM list
 endmacro
 

@@ -71,6 +71,91 @@
     ]
   },
   {
+    "file": "spazer_plasma.ips",
+    "name": "Spazer + Plasma Compatibility",
+    "description": "Allows Spazer and Plasma to remain equipped together without invalid beam-table lookups. Mixed combinations use matching Plasma damage, piercing, graphics, palette, sound, and movement behavior, drawn as two gently alternating Plasma lobes; Ice supplies the blue Ice/Plasma palette and Wave remains active. Mixed special beam attacks are disabled.",
+    "resources": [
+      {
+        "namespace": "rom_hook",
+        "start": 77928,
+        "endInclusive": 77928,
+        "label": "Pause equipment Spazer/Plasma exclusivity check"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 133321,
+        "endInclusive": 133323,
+        "label": "Spazer pickup Plasma-clear instruction"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 133331,
+        "endInclusive": 133333,
+        "label": "Plasma pickup Spazer-clear instruction"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 535702,
+        "endInclusive": 535704,
+        "label": "Beam tile combination index"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 535752,
+        "endInclusive": 535754,
+        "label": "Crystal-flash beam palette combination index"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 535804,
+        "endInclusive": 535806,
+        "label": "Beam palette combination index"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 538841,
+        "endInclusive": 538843,
+        "label": "Uncharged beam sound combination index"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 539091,
+        "endInclusive": 539093,
+        "label": "Charged beam sound combination index"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 543949,
+        "endInclusive": 543951,
+        "label": "Special beam attack combination index"
+      },
+      {
+        "namespace": "rom_region",
+        "start": 554554,
+        "endInclusive": 554609,
+        "label": "Spazer/Plasma normalization helpers"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 622607,
+        "endInclusive": 622612,
+        "label": "Projectile type initialization hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 623319,
+        "endInclusive": 623322,
+        "label": "Projectile spritemap dual-lobe drawing hook"
+      },
+      {
+        "namespace": "rom_region",
+        "start": 652829,
+        "endInclusive": 653056,
+        "label": "Spazer/Plasma dual-lobe drawing helper"
+      }
+    ]
+  },
+  {
     "file": "fast_doors.ips",
     "name": "Fast Doors",
     "description": "Door transitions run twice per frame, cutting transition time in half."

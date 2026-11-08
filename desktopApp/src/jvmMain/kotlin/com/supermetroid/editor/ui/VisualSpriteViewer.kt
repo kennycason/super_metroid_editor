@@ -45,13 +45,15 @@ internal fun visualSpriteTargets(parser: RomParser, workspace: VisualSpriteWorks
         val beam = weapon.beam
         return buildList {
             if (beam != null) {
-                val graphics = 0x9A0000 or parser.readUInt16At(parser.snesToPc(0x90C3B1 + beam * 2))
-                val palette = 0x900000 or parser.readUInt16At(parser.snesToPc(0x90C3C9 + beam * 2))
+                val nativeBeam = ProjectileSprites.nativeBeamMask(beam)
+                val graphics = 0x9A0000 or parser.readUInt16At(parser.snesToPc(0x90C3B1 + nativeBeam * 2))
+                val palette = 0x900000 or parser.readUInt16At(parser.snesToPc(0x90C3C9 + nativeBeam * 2))
                 add(NativeSpriteTarget(NativeSpriteAssets.key(graphics), palette, 1))
             }
             val row = ProjectileSprites(parser).paletteRow(weapon, direction)
             if (beam != null && row == 6) {
-                val palette = 0x900000 or parser.readUInt16At(parser.snesToPc(0x90C3C9 + beam * 2))
+                val nativeBeam = ProjectileSprites.nativeBeamMask(beam)
+                val palette = 0x900000 or parser.readUInt16At(parser.snesToPc(0x90C3C9 + nativeBeam * 2))
                 add(NativeSpriteTarget("9AD200", palette, 1))
             } else add(NativeSpriteTarget("9AD200", 0x9A8100, 8, row))
         }

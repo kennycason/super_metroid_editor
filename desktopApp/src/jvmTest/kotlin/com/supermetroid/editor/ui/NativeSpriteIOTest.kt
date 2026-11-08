@@ -71,6 +71,23 @@ class NativeSpriteIOTest {
     }
 
     @Test
+    fun `combined beam choices edit the matching shared Plasma graphics and palettes`() {
+        val parser = TestRomHelper.requireRomParser()
+        val workspace = VISUAL_SPRITE_WORKSPACES.single { it.index == -2 }
+        for (mask in 0xC..0xF) {
+            val combined = ProjectileSprites.WEAPONS.indexOfFirst { it.beam == mask && !it.charged }
+            val plasma = ProjectileSprites.WEAPONS.indexOfFirst {
+                it.beam == ProjectileSprites.nativeBeamMask(mask) && !it.charged
+            }
+            assertEquals(
+                visualSpriteTargets(parser, workspace, plasma),
+                visualSpriteTargets(parser, workspace, combined),
+                ProjectileSprites.BEAMS[mask],
+            )
+        }
+    }
+
+    @Test
     fun `new sprites export native frames timed GIFs and animation sheets`() {
         val parser = TestRomHelper.requireRomParser()
         val examples = listOf(

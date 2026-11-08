@@ -5,6 +5,21 @@ import kotlin.test.*
 
 class ProjectileSpritesTest {
     @Test
+    fun `combined beam masks share native Plasma resources and render two alternating lobes`() {
+        assertEquals(16, ProjectileSprites.BEAMS.size)
+        assertEquals(listOf(8, 9, 10, 11), (0xC..0xF).map(ProjectileSprites::nativeBeamMask))
+
+        val renderer = ProjectileSprites(TestRomHelper.requireRomParser())
+        val plasma = assertNotNull(renderer.render(ProjectileSprites.WEAPONS.single { it.name == "Plasma" }, 2))
+        val combined = assertNotNull(renderer.render(ProjectileSprites.WEAPONS.single { it.name == "Spazer + Plasma" }, 2))
+        assertEquals(plasma.totalTicks, combined.totalTicks)
+        assertTrue(combined.frames.size > plasma.frames.size)
+        assertEquals(plasma.frames.first().width, combined.frames.first().width)
+        assertEquals(plasma.frames.first().height + 12, combined.frames.first().height)
+        assertTrue(combined.frames.map { it.pixels.contentHashCode() }.distinct().size > 1)
+    }
+
+    @Test
     fun `all equipped beam combinations and weapon effects render in every direction`() {
         val renderer = ProjectileSprites(TestRomHelper.requireRomParser())
         for (weapon in ProjectileSprites.WEAPONS) for (direction in ProjectileSprites.DIRECTIONS.indices) {

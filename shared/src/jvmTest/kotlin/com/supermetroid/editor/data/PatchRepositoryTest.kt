@@ -149,6 +149,88 @@ class PatchRepositoryTest {
     }
 
     @Test
+    fun `spazer plasma compatibility preserves inventory and normalizes mixed runtime beams`() {
+        val patch = assertNotNull(
+            PatchRepository.loadBundledPatches().firstOrNull { it.id == "bundled_spazer_plasma" }
+        )
+
+        assertEquals("Spazer + Plasma Compatibility", patch.name)
+        assertEquals(
+            listOf(
+                loromPc(0x82, 0xB068),
+                loromPc(0x84, 0x88C9),
+                loromPc(0x84, 0x88D3),
+                loromPc(0x90, 0xAC96),
+                loromPc(0x90, 0xACC8),
+                loromPc(0x90, 0xACFC),
+                loromPc(0x90, 0xB8D9),
+                loromPc(0x90, 0xB9D3),
+                loromPc(0x90, 0xCCCD),
+                loromPc(0x90, 0xF63A),
+                loromPc(0x93, 0x800F),
+                loromPc(0x93, 0x82D7),
+                loromPc(0x93, 0xF61D),
+            ),
+            patch.writes.map { it.offset },
+        )
+        assertContentEquals(listOf(0x60), patch.writes[0].bytes)
+        assertContentEquals(listOf(0xEA, 0xEA, 0xEA), patch.writes[1].bytes)
+        assertContentEquals(listOf(0xEA, 0xEA, 0xEA), patch.writes[2].bytes)
+
+        val indexHelper = assertNotNull(
+            patch.writes.firstOrNull { it.offset == loromPc(0x90, 0xF63A) }
+        ).bytes
+        assertEquals(56, indexHelper.size)
+        assertContentEquals(
+            listOf(0x29, 0x0F, 0x00, 0xC9, 0x0C, 0x00, 0x90, 0x03, 0x29, 0x0B, 0x00, 0x60),
+            indexHelper.take(12),
+        )
+        assertContentEquals(
+            listOf(0x29, 0x0F, 0x00, 0xC9, 0x0C, 0x00, 0x90, 0x03, 0xA9, 0x00, 0x00, 0x60),
+            indexHelper.slice(12 until 24),
+        )
+        assertContentEquals(
+            listOf(
+                0xBD, 0x18, 0x0C, 0x89, 0x00, 0x0F, 0xD0, 0x17,
+                0x29, 0x0F, 0x00, 0xC9, 0x0C, 0x00, 0x90, 0x09,
+                0xBD, 0x18, 0x0C, 0x29, 0xFB, 0xFF, 0x9D, 0x18,
+                0x0C, 0xBD, 0x18, 0x0C, 0x89, 0x00, 0x0F, 0x6B,
+            ),
+            indexHelper.slice(24 until 56),
+        )
+        val drawHelper = assertNotNull(
+            patch.writes.firstOrNull { it.offset == loromPc(0x93, 0xF61D) }
+        ).bytes
+        assertEquals(228, drawHelper.size)
+        assertContentEquals(
+            listOf(
+                0xBD, 0x18, 0x0C, 0x29, 0x08, 0x0F, 0xC9, 0x08,
+                0x00, 0xD0, 0x10, 0xAD, 0x76, 0x0A, 0xD0, 0x0B,
+                0xAD, 0xA6, 0x09, 0x29, 0x0C, 0x00, 0xC9, 0x0C,
+                0x00, 0xF0, 0x05, 0x22, 0x4B, 0x8A, 0x81, 0x6B,
+            ),
+            drawHelper.take(32),
+        )
+        assertContentEquals(
+            listOf(0x22, 0x52, 0xF6, 0x90, 0xEA, 0xEA),
+            assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x93, 0x800F) }).bytes,
+        )
+        assertContentEquals(
+            listOf(0x22, 0x1D, 0xF6, 0x93),
+            assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x93, 0x82D7) }).bytes,
+        )
+        assertEquals(13, patch.resources.size)
+        assertTrue(patch.resources.any {
+            it.namespace == "rom_region" && it.start == loromPc(0x90, 0xF63A).toInt() &&
+                it.endInclusive == loromPc(0x90, 0xF671).toInt()
+        })
+        assertTrue(patch.resources.any {
+            it.namespace == "rom_region" && it.start == loromPc(0x93, 0xF61D).toInt() &&
+                it.endInclusive == loromPc(0x93, 0xF700).toInt()
+        })
+    }
+
+    @Test
     fun `spider ball label graphics do not overwrite Varia wireframe tiles`() {
         val patches = PatchRepository.loadBundledPatches().filter {
             it.id == "bundled_spider_ball" || it.id == "bundled_spider_ball_hold_aim_down"
