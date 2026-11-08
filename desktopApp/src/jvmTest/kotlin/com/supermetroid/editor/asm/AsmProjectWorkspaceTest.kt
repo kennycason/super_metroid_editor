@@ -56,6 +56,31 @@ class AsmProjectWorkspaceTest {
         assertEquals("bank_82.asm", state.selectedFileId)
     }
 
+    @Test fun `directive definition navigation opens focused ASM library documentation`() = runBlocking {
+        val reference = roomReference()
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
+        val file = File(tempDirectory, "DirectiveDocs.smedit").apply { writeText("{}") }
+        repository.initialize(file.path, reference)
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(file.path, true)
+        val page = "org ${'$'}81A0A8\nwarnpc ${'$'}81A0AE\n"
+
+        for (directive in listOf("org", "warnpc")) {
+            state.openSource("main.asm")
+            val offset = page.indexOf(directive) + 1
+            assertTrue(asmEditableReferenceIsNavigable(state.workspace?.index, "main.asm", page, offset, 0, state))
+            assertTrue(asmOpenEditableReference(state, state.workspace?.index, "main.asm", page, offset, 0))
+            assertEquals(AsmBrowserMode.LIBRARY, state.browserMode)
+            assertEquals("asar-directives", state.selectedLibraryPageId)
+            assertEquals(directive, state.selectedLibraryDirective)
+            state.goBack()
+            assertEquals(AsmBrowserMode.SOURCE, state.browserMode)
+            state.goForward()
+            assertEquals(AsmBrowserMode.LIBRARY, state.browserMode)
+            assertEquals(directive, state.selectedLibraryDirective)
+        }
+    }
+
     @Test fun `compound source undo is atomic from either bank and refuses newer edits`() = runBlocking {
         val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
         val file = File(tempDirectory, "Compound.smedit").apply { writeText("{}") }

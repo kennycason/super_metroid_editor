@@ -9,6 +9,7 @@ import com.supermetroid.editor.asm.AsmSourceParser
 import com.supermetroid.editor.asm.AsmTilesetGraphicsAccess
 import com.supermetroid.editor.asm.AsmTilesetGraphicsBridge
 import com.supermetroid.editor.asm.AsmTilesetGraphicsKind
+import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
@@ -19,6 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -100,6 +102,9 @@ class AsmTilesetGraphicsEditorStateTest {
             customGfx.varGfx["0"] = Base64.getEncoder().encodeToString(editedTiles)
         }
         val state = EditorState().apply { initForProject(projectFile, project) }
+        val workspaceState = AsmWorkspaceState(projectRepository = repository)
+        runBlocking { workspaceState.bindProject(projectFile.path, enabled = true, progressive = true) }
+        state.attachAsmWorkspaceState(workspaceState)
 
         val status = state.tilesetGraphicsEditingStatus(AsmTilesetGraphicsKind.AREA_TILES, 0)
         assertTrue(status.editable)
@@ -122,5 +127,20 @@ class AsmTilesetGraphicsEditorStateTest {
         assertContentEquals(originalTiles, assertIs<AsmTilesetGraphicsAccess.Editable>(
             AsmTilesetGraphicsBridge(repository).access(projectFile.path, AsmTilesetGraphicsKind.AREA_TILES, 0),
         ).rawData)
+
+        val before = workspaceState.projectSourceText("bank_8F.asm")
+        workspaceState.replaceProjectSource(
+            "bank_8F.asm",
+            before,
+            before.replace("dl Tiles_Shared", "dl ${'$'}C18000"),
+        )
+        assertTrue(
+            state.tilesetGraphicsEditingStatus(AsmTilesetGraphicsKind.AREA_TILES, 0).editable,
+            "Unsaved ASM drafts must not redirect durable visual asset writes",
+        )
+        runBlocking { assertTrue(workspaceState.saveSource("bank_8F.asm")) }
+        val savedStatus = state.tilesetGraphicsEditingStatus(AsmTilesetGraphicsKind.AREA_TILES, 0)
+        assertFalse(savedStatus.editable, "A saved source-pointer change must invalidate the visual cache")
+        assertTrue(savedStatus.message.orEmpty().contains("direct source asset"))
     }
 }

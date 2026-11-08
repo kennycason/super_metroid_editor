@@ -1,6 +1,7 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomVerifiedFreeRange
 import java.io.File
 import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -77,6 +78,8 @@ internal data class AsmCompiledBuildBase(
     val curatedBaselineRomBody: ByteArray? = null,
     /** Same authored build with the checked tutorial hook gated off. */
     val checkedHookDemoBaselineRomBody: ByteArray? = null,
+    /** Audited disassembly declarations plus managed expanded banks. */
+    val verifiedFreeRanges: List<RomVerifiedFreeRange> = emptyList(),
 )
 
 internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
@@ -97,6 +100,7 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     curatedPatchIds = curatedPatchIds.toSet(),
     curatedBaselineRomBody = curatedBaselineRomBody?.copyOf(),
     checkedHookDemoBaselineRomBody = checkedHookDemoBaselineRomBody?.copyOf(),
+    verifiedFreeRanges = verifiedFreeRanges.toList(),
     expectedFinalRomBytes = expectedFinalRomBytes?.copyOf(),
     roomValidationRomBytes = roomValidationRomBytes?.copyOf(),
 )
@@ -112,7 +116,7 @@ internal class AsmCompilationException(
 internal object AsmProjectModuleGateway {
     private const val GENERATED_FILE = "__smedit_project_modules.asm"
 
-    fun apply(sourceRoot: File): List<String> {
+    fun enabledModules(sourceRoot: File): List<String> {
         val projectDirectory = File(sourceRoot, "project")
         if (!projectDirectory.isDirectory) return emptyList()
         val orderFile = File(projectDirectory, ASM_PROJECT_MODULE_ORDER_FILE)
@@ -145,7 +149,18 @@ internal object AsmProjectModuleGateway {
         require(disabledNames.all(moduleNames::contains)) {
             "Disabled project ASM modules reference an unknown module"
         }
-        val enabledNames = moduleNames.filterNot(disabledNames.toSet()::contains)
+        return moduleNames.filterNot(disabledNames.toSet()::contains).map { ASM_PROJECT_MODULE_PREFIX + it }
+    }
+
+    fun apply(sourceRoot: File, onlyModules: Set<String>? = null): List<String> {
+        val projectDirectory = File(sourceRoot, "project")
+        if (!projectDirectory.isDirectory) return emptyList()
+        val moduleNames = enabledModules(sourceRoot).map { it.removePrefix(ASM_PROJECT_MODULE_PREFIX) }
+        val requestedNames = onlyModules?.mapTo(linkedSetOf()) { it.removePrefix(ASM_PROJECT_MODULE_PREFIX) }
+        require(requestedNames == null || requestedNames.all(moduleNames::contains)) {
+            "Project module audit requested an inactive or unknown module"
+        }
+        val enabledNames = if (requestedNames == null) moduleNames else moduleNames.filter(requestedNames::contains)
         if (enabledNames.isEmpty()) return emptyList()
         val gateway = File(sourceRoot, GENERATED_FILE)
         require(!gateway.exists()) { "Project source uses reserved SMEDIT file name $GENERATED_FILE" }
@@ -294,6 +309,8 @@ internal class AsmProjectCompiler(
         var predicateClaims: List<AsmSourceOwnedRange> = emptyList()
         var curatedBaseline: ByteArray? = null
         var checkedHookDemoBaseline: ByteArray? = null
+        var auditedModuleClaims: List<AsmSourceOwnedRange> = emptyList()
+        val verifiedFreeRanges: List<RomVerifiedFreeRange>
         try {
             reference = if (referenceRomBody == null) {
                 onProgress("Compiling immutable ASM snapshot…")
@@ -305,6 +322,12 @@ internal class AsmProjectCompiler(
                 onProgress("Reusing immutable ASM snapshot…")
                 CompiledTree(referenceRomBody.copyOf(), emptyList(), ByteArray(0))
             }
+            verifiedFreeRanges = AsmVerifiedFreeSpaceCatalog.load(
+                originalDirectory = workspace.originalDirectory,
+                immutableRomBody = reference.rom,
+                originalRomBodySize = loadedBodySize,
+                expandedFillByte = expandedFillByte,
+            )
             val sourceText = File(workspace.workingDirectory, "src/$PLM_SOURCE_FILE").takeIf(File::isFile)?.readText().orEmpty()
             val predicates = try { (AsmRoomSelectorsSource(sourceText).managedPredicates() + AsmDoorArrivalsSource(sourceText).routines()).sortedBy { it.label } }
             catch (error: Exception) {
@@ -330,6 +353,87 @@ internal class AsmProjectCompiler(
                 romSize = outputRomSize,
                 fillByte = expandedFillByte,
             )
+            if (predicateStart != null) {
+                predicateClaims = AsmManagedBank8FCode.claims(
+                    predicates, predicateStart, reference.rom, project.rom, project.symbols,
+                )
+                val generatedClaims = materialization.claims.map { it.pcOffset until it.endExclusive } +
+                    roomMaterialization.claims.map { it.pcOffset until it.endExclusive } +
+                    patchMaterialization.claims.map { it.pcOffset until it.endExclusive }
+                if (predicateClaims.any { claim -> generatedClaims.any { range ->
+                    claim.pcOffset <= range.last && range.first < claim.pcOffset + claim.length
+                } }) throw AsmCompilationException(
+                    "Generated room/assets/patches overlap managed bank-8F code; no ROM was produced.",
+                )
+            }
+            val enabledModules = AsmProjectModuleGateway.enabledModules(File(workspace.workingDirectory, "src"))
+            if (enabledModules.isNotEmpty()) {
+                onProgress("Auditing ${enabledModules.size} Project Module${if (enabledModules.size == 1) "" else "s"} for ROM collisions…")
+                val moduleFree = compileTree(
+                    sourceTree = workspace.workingDirectory,
+                    asar = asar,
+                    assetOverrides = materialization.assetOverrides,
+                    generatedRoomSource = roomMaterialization.source,
+                    generatedPatchSource = patchMaterialization.source,
+                    generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    onlyProjectModules = emptySet(),
+                    romSize = outputRomSize,
+                    fillByte = expandedFillByte,
+                )
+                val auditedModules = enabledModules.map { fileId ->
+                    val isolated = try {
+                        compileTree(
+                            sourceTree = workspace.workingDirectory,
+                            asar = asar,
+                            assetOverrides = materialization.assetOverrides,
+                            generatedRoomSource = roomMaterialization.source,
+                            generatedPatchSource = patchMaterialization.source,
+                            generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                            onlyProjectModules = setOf(fileId),
+                            romSize = outputRomSize,
+                            fillByte = expandedFillByte,
+                        )
+                    } catch (problem: AsmCompilationException) {
+                        throw AsmCompilationException(
+                            "$fileId cannot be audited independently. Keep shared code in an incsrc file or make dependencies explicit inside the module. ${problem.message}",
+                            problem.compilerOutput,
+                        )
+                    }
+                    val changedClaims = AsmProjectModuleAuditor.claims(fileId, moduleFree.rom, isolated.rom)
+                    val moduleSource = File(workspace.workingDirectory, "src/$fileId").readText()
+                    val contracts = try {
+                        AsmCheckedHookContract.parseAll(moduleSource)
+                    } catch (problem: Exception) {
+                        throw AsmCompilationException("$fileId: ${problem.message}")
+                    }
+                    val validatedClaims = try {
+                        AsmCheckedHookValidator.validate(
+                            fileId = fileId,
+                            contracts = contracts,
+                            immutable = reference.rom,
+                            moduleFree = moduleFree.rom,
+                            isolated = isolated.rom,
+                            symbolsBytes = isolated.symbols,
+                            verifiedFreeRanges = verifiedFreeRanges,
+                            changedClaims = changedClaims,
+                        )
+                    } catch (problem: Exception) {
+                        throw AsmCompilationException(problem.message ?: "$fileId failed checked-hook validation")
+                    }
+                    AsmProjectModuleAuditor.capture(fileId, validatedClaims, isolated.rom)
+                }
+                auditedModuleClaims = auditedModules.flatMap(AsmAuditedModuleOutput::claims)
+                AsmProjectModuleAuditor.requireNoCollisions(auditedModuleClaims)
+                val generated = materialization.claims.map { (it.pcOffset until it.endExclusive) to "asset ${it.label}" } +
+                    roomMaterialization.claims.map { (it.pcOffset until it.endExclusive) to "room data ${it.label}" } +
+                    patchMaterialization.claims.map { (it.pcOffset until it.endExclusive) to "patch ${it.label}" } +
+                    predicateClaims.map { (it.pcOffset until it.pcOffset + it.length) to "managed bank-8F code" }
+                AsmProjectModuleAuditor.requireNoGeneratedCollisions(auditedModuleClaims, generated)
+                AsmProjectModuleAuditor.requireNoProjectSourceCollisions(
+                    auditedModuleClaims, reference.rom, moduleFree.rom,
+                )
+                AsmProjectModuleAuditor.requireDeterministicComposition(moduleFree.rom, project.rom, auditedModules)
+            }
             val fastDoors = File(workspace.workingDirectory, "src/${AsmFastDoorsModule.FILE}")
             if (fastDoors.isFile && AsmFastDoorsModule.hasGate(fastDoors.readText()) && AsmFastDoorsModule.enabled(fastDoors.readText()) &&
                 AsmFastDoorsModule.FILE !in workspace.disabledProjectModuleFileIds) {
@@ -353,15 +457,6 @@ internal class AsmProjectCompiler(
                     romSize = outputRomSize,
                     fillByte = expandedFillByte,
                 ).rom
-            }
-            if (predicateStart != null) {
-                predicateClaims = AsmManagedBank8FCode.claims(predicates, predicateStart, reference.rom, project.rom, project.symbols)
-                val generatedClaims = materialization.claims.map { it.pcOffset until it.endExclusive } +
-                    roomMaterialization.claims.map { it.pcOffset until it.endExclusive } +
-                    patchMaterialization.claims.map { it.pcOffset until it.endExclusive }
-                if (predicateClaims.any { claim -> generatedClaims.any { range ->
-                    claim.pcOffset <= range.last && range.first < claim.pcOffset + claim.length
-                } }) throw AsmCompilationException("Generated room/assets/patches overlap managed bank-8F code; no ROM was produced.")
             }
         } catch (problem: AsmCompilationException) {
             runCatching {
@@ -411,7 +506,7 @@ internal class AsmProjectCompiler(
             // not authored source. Downstream SMEDIT writes may legitimately
             // replace them (community sprite IPS files commonly do), so keep
             // them out of source ownership.
-            sourceOwnedRanges = attributeSourceFiles(
+            sourceOwnedRanges = AsmProjectModuleAuditor.mergeOwnership(attributeSourceFiles(
                 ranges = changedRanges(
                     reference.rom,
                     project.rom,
@@ -422,7 +517,7 @@ internal class AsmProjectCompiler(
                         patchMaterialization.claims.map { it.pcOffset until it.endExclusive },
                 ),
                 symbols = project.symbols,
-            ) + predicateClaims,
+            ) + predicateClaims, auditedModuleClaims),
             generatedAssetClaims = materialization.claims,
             generatedRoomClaims = roomMaterialization.claims,
             generatedRoomIds = roomMaterialization.roomIds,
@@ -435,6 +530,7 @@ internal class AsmProjectCompiler(
             managedBank8FStart = predicateStart,
             curatedBaselineRomBody = curatedBaseline,
             checkedHookDemoBaselineRomBody = checkedHookDemoBaseline,
+            verifiedFreeRanges = verifiedFreeRanges,
         )
         val protected = if (checkedHookDemoBaseline != null) {
             AsmCheckedHookDemo.protect(workspace, compiled)
@@ -565,6 +661,7 @@ internal class AsmProjectCompiler(
         generatedBank8FSource: String = "",
         muteFastDoors: Boolean = false,
         muteCheckedHookDemo: Boolean = false,
+        onlyProjectModules: Set<String>? = null,
         romSize: Int = ASM_ROM_SIZE,
         fillByte: Int = 0xFF,
     ): CompiledTree {
@@ -583,7 +680,7 @@ internal class AsmProjectCompiler(
                 module.writeText(AsmCheckedHookDemo.withEnabled(module.readText(), false))
             }
             applyAssetOverrides(File(staging, "data"), assetOverrides)
-            AsmProjectModuleGateway.apply(File(staging, "src"))
+            AsmProjectModuleGateway.apply(File(staging, "src"), onlyProjectModules)
             applyGeneratedBank8FSource(File(staging, "src"), generatedBank8FSource)
             applyGeneratedRoomSource(File(staging, "src"), generatedRoomSource)
             applyGeneratedPatchSource(File(staging, "src"), generatedPatchSource)
@@ -736,7 +833,7 @@ internal class AsmProjectCompiler(
         private const val GENERATED_ROOM_FILE = "__smedit_generated_rooms.asm"
         private const val GENERATED_PATCH_FILE = "__smedit_generated_patches.asm"
         private const val GENERATED_BANK8F_FILE = "__smedit_managed_bank8f.asm"
-        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v9-checked-hook-demo"
+        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v11-checked-hooks-and-module-audit"
 
         internal fun clearBuildCacheForTests() = AsmCompiledBuildCache.clear()
 

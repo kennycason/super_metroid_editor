@@ -460,7 +460,12 @@ fun AreaPaletteEditor(
             val effect = PaletteEffects.findEffect(effectId) ?: return
             val targets = targetTilesets()
             if (!canEditAll(targets)) {
-                editorState.postStatus("Palette edit blocked: One or more selected palettes are ASM-only.")
+                val reasons = targets.mapNotNull { paletteStatuses.getValue(it).message }.distinct()
+                editorState.postStatus(
+                    "Palette edit blocked: " + reasons.joinToString(" ").ifBlank {
+                        "One or more selected palettes are ASM-only."
+                    }
+                )
                 return
             }
             for (tsId in editableRepresentatives(targets)) {
@@ -621,11 +626,19 @@ fun AreaPaletteEditor(
                             }
                             if (paletteStatus.sourceManaged) {
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    if (paletteStatus.editable) "ASM data" else "ASM only",
-                                    fontSize = fs.detail,
-                                    color = if (paletteStatus.editable) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFFC857),
-                                )
+                                if (paletteStatus.editable) {
+                                    Text(
+                                        "ASM data",
+                                        fontSize = fs.detail,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    AsmOnlyReasonBadge(
+                                        paletteStatus.message ?: "This palette uses a custom ASM source shape.",
+                                        "palette",
+                                        fontSize = fs.detail,
+                                    )
+                                }
                             }
                         }
                         if (hasOverride) {

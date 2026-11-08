@@ -6,6 +6,7 @@ import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceMetadata
 import com.supermetroid.editor.asm.AsmReferenceWorkspace
 import com.supermetroid.editor.asm.AsmSourceParser
+import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
@@ -16,6 +17,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -81,6 +83,9 @@ class AsmTilesetPaletteEditorStateTest {
             customGfx.palettes["0"] = Base64.getEncoder().encodeToString(editedRaw)
         }
         val state = EditorState().apply { initForProject(projectFile, project) }
+        val workspaceState = AsmWorkspaceState(projectRepository = repository)
+        runBlocking { workspaceState.bindProject(projectFile.path, enabled = true, progressive = true) }
+        state.attachAsmWorkspaceState(workspaceState)
         val parser = RomParser(ByteArray(0x300000))
 
         val status = state.tilesetPaletteEditingStatus(0)
@@ -98,6 +103,21 @@ class AsmTilesetPaletteEditorStateTest {
         assertTrue(state.resetPaletteOverride(1))
         assertTrue(repository.assetOverridePaths(projectFile.path).isEmpty())
         assertContentEquals(bytesToColors(originalRaw), state.readTilesetPalette(0, parser))
+
+        val before = workspaceState.projectSourceText("bank_8F.asm")
+        workspaceState.replaceProjectSource(
+            "bank_8F.asm",
+            before,
+            before.replace("dl Palettes_Shared", "dl ${'$'}C2AD7C"),
+        )
+        assertTrue(
+            state.tilesetPaletteEditingStatus(0).editable,
+            "Unsaved ASM drafts must not redirect durable visual asset writes",
+        )
+        runBlocking { assertTrue(workspaceState.saveSource("bank_8F.asm")) }
+        val savedStatus = state.tilesetPaletteEditingStatus(0)
+        assertFalse(savedStatus.editable, "A saved source-pointer change must invalidate the visual cache")
+        assertTrue(savedStatus.message.orEmpty().contains("direct source asset"))
     }
 
     private fun bytesToColors(raw: ByteArray): IntArray = IntArray(128) { index ->

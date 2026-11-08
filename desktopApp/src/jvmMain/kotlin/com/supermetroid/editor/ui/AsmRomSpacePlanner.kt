@@ -50,7 +50,7 @@ internal fun AsmRomSpacePlannerCanvas(
     }
     val focusBanks = remember(plan, planFits) {
         if (planFits) activityBanks
-        else plan.banks.filter { it.remainingAfter > 0 }.sortedByDescending(AsmRomSpaceBank::remainingAfter)
+        else plan.banks.filter { it.remainingAfter > 0 }.sortedByDescending(AsmRomSpaceBank::largestAfter)
     }
     val requestedBank = state.requestedRomSpaceBank
     var showAllBanks by remember(plan, planFits, requestedBank) {
@@ -70,7 +70,7 @@ internal fun AsmRomSpacePlannerCanvas(
         if (displayedBanks.none { it.bank == selectedBankId }) selectedBankId = displayedBanks.firstOrNull()?.bank
     }
     val selectedBank = plan.banks.firstOrNull { it.bank == selectedBankId }
-    val largest = plan.largestRemainingBank?.takeIf { it.remainingAfter > 0 }
+    val largest = plan.largestRemainingBank?.takeIf { it.largestAfter > 0 }
 
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(
@@ -95,12 +95,12 @@ internal fun AsmRomSpacePlannerCanvas(
                 SpaceFact("Total remaining", plannerBytes(plan.remainingAfter))
                 SpaceFact(
                     "Largest block",
-                    largest?.let { "\$${it.bank.hex2()} · ${plannerBytes(it.remainingAfter)}" } ?: "None",
+                    largest?.let { "\$${it.bank.hex2()} · ${plannerBytes(it.largestAfter)}" } ?: "None",
                 )
             }
         }
         Text(
-            "Each LoROM bank is 32 KiB. Space means one allocator-compatible contiguous range, not every erased-looking hole. “Before” starts beyond compiled ASM and protected data; “After” includes planned patches and generated placements.",
+            "Each LoROM bank is 32 KiB. Only source-declared free ranges and managed expanded banks are eligible. Total space may be fragmented; “largest block” is the biggest single allocation that currently fits.",
             fontSize = fs.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
@@ -173,7 +173,8 @@ private fun RomSpaceBankRow(bank: AsmRomSpaceBank, selected: Boolean, onClick: (
                 Text("\$${bank.bank.hex2()}", fontFamily = FontFamily.Monospace, fontSize = fs.body,
                     fontWeight = FontWeight.SemiBold, modifier = Modifier.width(42.dp))
                 Text(
-                    "${plannerBytes(bank.capacityBytes)} · ${plannerBytes(bank.remainingAfter)} allocatable",
+                    "${plannerBytes(bank.capacityBytes)} · ${plannerBytes(bank.remainingAfter)} total · " +
+                        "${plannerBytes(bank.largestAfter)} largest",
                     fontFamily = FontFamily.Monospace,
                     fontSize = fs.detail,
                     modifier = Modifier.weight(1f),
@@ -201,15 +202,15 @@ private fun RomSpaceBankDetails(bank: AsmRomSpaceBank, modifier: Modifier = Modi
             Column(Modifier.weight(1f)) {
                 Text("Bank \$${bank.bank.hex2()}", fontSize = fs.heading, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "${formatPcOffset(bank.pcStart)}–${formatPcOffset(bankEnd - 1)} · allocator boundary " +
-                        formatPcOffset(bankEnd - bank.availableBefore),
+                    "${formatPcOffset(bank.pcStart)}–${formatPcOffset(bankEnd - 1)} · " +
+                        "${bank.rangesAfter.size} usable block${if (bank.rangesAfter.size == 1) "" else "s"}",
                     fontFamily = FontFamily.Monospace,
                     fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Text(
-                "${plannerBytes(bank.remainingAfter)} allocatable contiguous",
+                "${plannerBytes(bank.remainingAfter)} total · ${plannerBytes(bank.largestAfter)} largest",
                 fontFamily = FontFamily.Monospace,
                 fontSize = fs.body,
                 fontWeight = FontWeight.SemiBold,
@@ -222,12 +223,37 @@ private fun RomSpaceBankDetails(bank: AsmRomSpaceBank, modifier: Modifier = Modi
             SpaceFact("Bank capacity", plannerBytes(bank.capacityBytes))
             SpaceFact("Fixed / protected", plannerBytes((bank.capacityBytes - bank.availableBefore).coerceAtLeast(0)))
             SpaceFact("Allocatable before", plannerBytes(bank.availableBefore))
+            SpaceFact("Largest before", plannerBytes(bank.largestBefore))
             SpaceFact("Planned consumption", plannerBytes(bank.consumedBytes))
             SpaceFact("Dynamic placements", plannerBytes(bank.placements.sumOf { it.size }))
             SpaceFact("Allocatable after", plannerBytes(bank.remainingAfter))
+            SpaceFact("Largest after", plannerBytes(bank.largestAfter))
         }
         Divider()
         LazyColumn(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            item("ranges-title") {
+                Text("Verified free-space blocks", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+            }
+            if (bank.rangesAfter.isEmpty()) {
+                item("ranges-empty") { Text("No allocator-compatible block remains", fontSize = fs.detail) }
+            } else {
+                items(bank.rangesAfter.size, key = { "range-${bank.rangesAfter[it].pcStart}" }) { index ->
+                    val range = bank.rangesAfter[index]
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "${formatPcOffset(range.pcStart)}–${formatPcOffset(range.endExclusive - 1)}",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = fs.detail,
+                            modifier = Modifier.width(170.dp),
+                        )
+                        Text(plannerBytes(range.length), fontFamily = FontFamily.Monospace, fontSize = fs.detail,
+                            modifier = Modifier.width(72.dp))
+                        Text(range.label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            item("ranges-divider") { Divider() }
             item("placements-title") {
                 Text("Allocator placements", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
             }

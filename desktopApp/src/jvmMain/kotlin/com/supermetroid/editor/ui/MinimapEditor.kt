@@ -48,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -404,6 +405,8 @@ fun MinimapSidebar(
 private fun MinimapToolbar(
     state: MinimapEditorState,
     editorState: EditorState,
+    onExplainSourceProblem: () -> Unit,
+    onRestoreBaseline: () -> Unit,
     requestFocus: () -> Unit,
 ) {
     Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
@@ -420,12 +423,22 @@ private fun MinimapToolbar(
                 color = MaterialTheme.colorScheme.primary,
             )
             if (state.sourceBacked) {
-                Text(
-                    if (state.sourceOwnershipProblem == null) "ASM data" else "ASM only",
-                    fontSize = 10.sp,
-                    color = if (state.sourceOwnershipProblem == null) MaterialTheme.colorScheme.tertiary
-                    else MaterialTheme.colorScheme.error,
-                )
+                if (state.sourceOwnershipProblem == null) {
+                    Text("ASM data", fontSize = 10.sp, color = MaterialTheme.colorScheme.tertiary)
+                } else {
+                    MinimapToolbarTextAction(
+                        "ASM only",
+                        MaterialTheme.colorScheme.error,
+                        onExplainSourceProblem,
+                    )
+                }
+                if (state.baselineRestoreAvailable) {
+                    MinimapToolbarTextAction(
+                        "Restore default",
+                        MaterialTheme.colorScheme.primary,
+                        onRestoreBaseline,
+                    )
+                }
             }
             Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -512,6 +525,22 @@ private fun MinimapToolbar(
     }
 }
 
+@Composable
+private fun MinimapToolbarTextAction(label: String, color: Color, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.height(24.dp).clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, fontSize = 10.sp, color = color, maxLines = 1)
+        }
+    }
+}
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun MinimapToolChip(icon: ImageVector, description: String, selected: Boolean, onClick: () -> Unit) {
@@ -528,6 +557,8 @@ private fun MinimapToolChip(icon: ImageVector, description: String, selected: Bo
 @Composable
 fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier: Modifier = Modifier) {
     val focusRequester = remember { FocusRequester() }
+    var showSourceProblem by remember(state.sourceOwnershipProblem) { mutableStateOf(false) }
+    var showRestoreConfirmation by remember(state.selectedArea) { mutableStateOf(false) }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     state.areaReassignmentError?.let { message ->
         AlertDialog(
@@ -539,8 +570,49 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
             },
         )
     }
+    if (showSourceProblem) {
+        state.sourceOwnershipProblem?.let { problem ->
+            AlertDialog(
+                onDismissRequest = { showSourceProblem = false },
+                title = { Text("Why this map is ASM-only") },
+                text = {
+                    Text("$problem\n\nThe visual editor is showing compiled ROM data and will not overwrite unsupported source.")
+                },
+                confirmButton = {
+                    TextButton(onClick = { showSourceProblem = false }) { Text("OK") }
+                },
+            )
+        }
+    }
+    if (showRestoreConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showRestoreConfirmation = false },
+            title = { Text("Restore ${MinimapData.AREA_NAMES[state.selectedArea]} map?") },
+            text = {
+                Text(
+                    "Replace this area's map tiles and station-reveal data with the immutable project ASM baseline. " +
+                        "Other areas remain unchanged, and this action can be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRestoreConfirmation = false
+                    state.restoreSelectedAreaBaseline(editorState)
+                    focusRequester.requestFocus()
+                }) { Text("Restore") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreConfirmation = false }) { Text("Cancel") }
+            },
+        )
+    }
     Column(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
-        MinimapToolbar(state, editorState) { focusRequester.requestFocus() }
+        MinimapToolbar(
+            state,
+            editorState,
+            onExplainSourceProblem = { showSourceProblem = true },
+            onRestoreBaseline = { showRestoreConfirmation = true },
+        ) { focusRequester.requestFocus() }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         val hScroll = rememberScrollState()
         val vScroll = rememberScrollState()

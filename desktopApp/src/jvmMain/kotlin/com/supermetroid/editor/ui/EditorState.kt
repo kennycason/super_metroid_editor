@@ -447,8 +447,32 @@ class EditorState(
     private var asmModeRevision by mutableStateOf(0)
     private val asmTilesetPaletteBridge = AsmTilesetPaletteBridge()
     private var asmTilesetPaletteAccesses: Map<Int, AsmTilesetPaletteAccess> = emptyMap()
+    private var asmTilesetPaletteAccessRevision = Long.MIN_VALUE
     private val asmTilesetGraphicsBridge = AsmTilesetGraphicsBridge()
     private var asmTilesetGraphicsAccesses: Map<AsmTilesetGraphicsKey, AsmTilesetGraphicsAccess> = emptyMap()
+    private var asmTilesetGraphicsAccessRevision = Long.MIN_VALUE
+    private var asmRoomTilesetVisualRevision = Long.MIN_VALUE
+    private var asmEditorTilesetVisualRevision = Long.MIN_VALUE
+    private var asmSourceWorkspace by mutableStateOf<AsmWorkspaceState?>(null)
+
+    /** Live source revision shared by ASM-backed tiles, metatiles, and palettes. */
+    internal val asmTilesetSourceRevision: Long
+        get() = asmSourceWorkspace?.takeIf(AsmWorkspaceState::hasProjectWorkspace)?.sourceBufferRevision ?: -1L
+
+    internal fun attachAsmWorkspaceState(workspace: AsmWorkspaceState) {
+        if (asmSourceWorkspace === workspace) return
+        asmSourceWorkspace = workspace
+        invalidateAsmTilesetState()
+    }
+
+    private fun invalidateAsmTilesetState() {
+        asmTilesetPaletteAccesses = emptyMap()
+        asmTilesetGraphicsAccesses = emptyMap()
+        asmTilesetPaletteAccessRevision = Long.MIN_VALUE
+        asmTilesetGraphicsAccessRevision = Long.MIN_VALUE
+        asmRoomTilesetVisualRevision = Long.MIN_VALUE
+        asmEditorTilesetVisualRevision = Long.MIN_VALUE
+    }
     internal val asmNavigationEnabled: Boolean get() {
         asmModeRevision // Nested project flags are not Compose state; mode changes must invalidate links.
         return projectAsmNavigationEnabled(project)
@@ -470,8 +494,7 @@ class EditorState(
         project.asmWorkspace.enabled = true
         project.asmWorkspace.sourceRevision = sourceRevision
         project.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
-        asmTilesetPaletteAccesses = emptyMap()
-        asmTilesetGraphicsAccesses = emptyMap()
+        invalidateAsmTilesetState()
         asmModeRevision++
         dirty = true
     }
@@ -484,8 +507,7 @@ class EditorState(
         }
         if (project.asmWorkspace.buildMode == mode) return
         project.asmWorkspace.buildMode = mode
-        asmTilesetPaletteAccesses = emptyMap()
-        asmTilesetGraphicsAccesses = emptyMap()
+        invalidateAsmTilesetState()
         asmModeRevision++
         dirty = true
     }
@@ -1825,13 +1847,17 @@ class EditorState(
                 }
             }
         } else emptyMap()
+        asmTilesetPaletteAccessRevision = asmTilesetSourceRevision
     }
 
     private fun asmTilesetPaletteAccess(tilesetId: Int): AsmTilesetPaletteAccess? {
         if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
             projectFilePath.isBlank()
         ) return null
-        if (asmTilesetPaletteAccesses.isEmpty()) refreshAsmTilesetPaletteAccesses()
+        if (
+            asmTilesetPaletteAccesses.isEmpty() ||
+            asmTilesetPaletteAccessRevision != asmTilesetSourceRevision
+        ) refreshAsmTilesetPaletteAccesses()
         return asmTilesetPaletteAccesses[tilesetId]
     }
 
@@ -1862,6 +1888,7 @@ class EditorState(
                 }
             }
         } else emptyMap()
+        asmTilesetGraphicsAccessRevision = asmTilesetSourceRevision
     }
 
     private fun asmTilesetGraphicsAccess(
@@ -1871,7 +1898,10 @@ class EditorState(
         if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
             projectFilePath.isBlank()
         ) return null
-        if (asmTilesetGraphicsAccesses.isEmpty()) refreshAsmTilesetGraphicsAccesses()
+        if (
+            asmTilesetGraphicsAccesses.isEmpty() ||
+            asmTilesetGraphicsAccessRevision != asmTilesetSourceRevision
+        ) refreshAsmTilesetGraphicsAccesses()
         val key = AsmTilesetGraphicsKey(
             kind,
             tilesetId.takeIf { kind == AsmTilesetGraphicsKind.AREA_TILES || kind == AsmTilesetGraphicsKind.AREA_METATILES },
@@ -1937,6 +1967,7 @@ class EditorState(
         if (!tg.loadTileset(tilesetId)) { editorTileGraphics = null; return false }
         applyCustomGfxToTileGraphics(tg, tilesetId)
         editorTileGraphics = tg
+        asmEditorTilesetVisualRevision = asmTilesetSourceRevision
         return true
     }
 
@@ -2258,8 +2289,29 @@ class EditorState(
         } else {
             null
         }
+        asmRoomTilesetVisualRevision = asmTilesetSourceRevision
         _editVersionState.value++
         return tileGraphics != null
+    }
+
+    /**
+     * Rebuild already-loaded visual graphics after durable ASM source is saved.
+     * The caller waits until no source buffers are dirty, so an in-progress ASM
+     * draft cannot unexpectedly replace visual editor state.
+     */
+    internal fun refreshTilesetVisualsAfterAsmSave(romParser: RomParser): Boolean {
+        val revision = asmTilesetSourceRevision
+        if (revision < 0) return false
+        var refreshed = false
+        if (asmRoomTilesetVisualRevision != revision) {
+            reloadCurrentRoomTileGraphics(romParser)
+            refreshed = true
+        }
+        if (asmEditorTilesetVisualRevision != revision) {
+            loadEditorTileset(editorTilesetId, romParser)
+            refreshed = true
+        }
+        return refreshed
     }
 
     // ─── Tileset graphics export / import ────────────────────────────
@@ -4525,8 +4577,7 @@ class EditorState(
         projectRoomWorkspaceParser = null
         projectFilePath = file.absolutePath
         project = loaded
-        asmTilesetPaletteAccesses = emptyMap()
-        asmTilesetGraphicsAccesses = emptyMap()
+        invalidateAsmTilesetState()
         resetForLoadedProject(seedPatches = true)
         editorLog("Loaded project: ${file.absolutePath} (${project.rooms.size} rooms, ${project.patches.size} patches)")
     }
@@ -4547,8 +4598,7 @@ class EditorState(
         projectRoomWorkspaceParser = null
         projectFilePath = ""
         project = SmEditProject(romPath = romPath)
-        asmTilesetPaletteAccesses = emptyMap()
-        asmTilesetGraphicsAccesses = emptyMap()
+        invalidateAsmTilesetState()
         resetForLoadedProject(seedPatches = true)
     }
 

@@ -50,6 +50,13 @@ internal data class AsmInstructionInfo(
     val practicalNote: String,
 )
 
+internal data class AsmDirectiveInfo(
+    val name: String,
+    val form: String,
+    val summary: String,
+    val practicalNote: String,
+)
+
 /**
  * SMEDIT-authored, practical introduction to the 65C816 and Asar syntax used by
  * the Super Metroid disassembly. This is intentionally a field guide rather
@@ -57,6 +64,89 @@ internal data class AsmInstructionInfo(
  */
 internal object AsmLibrary {
     private fun code(vararg lines: String) = lines.joinToString("\n")
+
+    private fun directive(name: String, form: String, summary: String, practicalNote: String) =
+        AsmDirectiveInfo(name, form, summary, practicalNote)
+
+    val directives: Map<String, AsmDirectiveInfo> = listOf(
+        directive("org", "org <address>", "Move Asar's output cursor to a SNES address or resolved label.",
+            "org does not allocate or reserve the destination. The bytes emitted afterward still need one verified owner."),
+        directive("warnpc", "warnpc <limit>", "Fail assembly if the output cursor advances beyond the supplied boundary.",
+            "warnpc bounds growth but does not reserve the unused part of its envelope. SMEDIT's ownership and collision checks remain authoritative."),
+        directive("incsrc", "incsrc <source path>", "Assemble another source file at this point.",
+            "Include order is semantic. Go to Definition on the path opens the included source in SMEDIT."),
+        directive("incbin", "incbin <binary path>", "Copy bytes from a binary file into the output.",
+            "The complete inserted byte count consumes ROM space even though the source line is short."),
+        directive("lorom", "lorom", "Select LoROM address-to-file mapping for the assembled image.",
+            "Super Metroid uses LoROM. Project modules should inherit the project mapping instead of switching it."),
+        directive("hirom", "hirom", "Select HiROM address-to-file mapping for the assembled image.",
+            "HiROM is not the Super Metroid project mapping; changing it inside a module invalidates address assumptions."),
+        directive("math", "math <mode>", "Configure Asar's expression-evaluation compatibility mode.",
+            "Changing math mode can change existing expressions. Prefer explicit parentheses in project code."),
+        directive("reset", "reset <setting>", "Reset supported assembler state to its default.",
+            "This is global build state, not a CPU instruction. Avoid changing inherited state in a standalone module."),
+        directive("print", "print <values...>", "Write a build-time message or expression value to assembler output.",
+            "print is diagnostic only and emits no runtime instruction bytes."),
+        directive("assert", "assert <condition>[, <message>]", "Stop assembly unless a build-time condition is true.",
+            "Use assertions to pin addresses and assumptions; they complement, but do not replace, SMEDIT's output-level checks."),
+        directive("if", "if <condition>", "Begin a conditional assembly branch.",
+            "The condition is evaluated while building; only the selected branch emits bytes."),
+        directive("else", "else", "Select the fallback branch of a conditional assembly block.",
+            "An else belongs to the current if/elseif block and must end with endif."),
+        directive("elseif", "elseif <condition>", "Test another build-time condition after a false if branch.",
+            "Module-order-dependent conditions are rejected when they make audited output unstable."),
+        directive("endif", "endif", "End a conditional assembly block.",
+            "Keep nested build-time branches visibly indented even though indentation has no assembler meaning."),
+        directive("while", "while <condition>", "Repeat an assembly-time block while its condition remains true.",
+            "This expands source during assembly; ensure the loop changes its condition and has an intentional output bound."),
+        directive("endwhile", "endwhile", "End an assembly-time while block.",
+            "The complete expanded output, not the source line count, determines space usage."),
+        directive("macro", "macro <name>(<parameters>)", "Define reusable source expansion.",
+            "A macro call can emit many bytes or directives. Navigate to the macro definition when its ownership is unclear."),
+        directive("endmacro", "endmacro", "End a macro definition.",
+            "Macro bodies emit nothing until invoked."),
+        directive("namespace", "namespace <name|off>", "Place following symbols in a named assembler namespace.",
+            "Changing namespace changes exported symbol names and can break references outside the block."),
+        directive("struct", "struct <name>", "Begin a named field-layout definition.",
+            "Struct definitions describe offsets; instances or data directives are what ultimately emit or address bytes."),
+        directive("endstruct", "endstruct", "End a struct field-layout definition.",
+            "Keep field widths explicit so later offsets remain reviewable."),
+        directive("db", "db <byte values...>", "Emit one byte per value.",
+            "Values must fit the intended eight-bit representation; strings and lists may emit multiple bytes."),
+        directive("dw", "dw <word values...>", "Emit one little-endian 16-bit word per value.",
+            "A dw pointer contains only 16 address bits and normally depends on an implied bank."),
+        directive("dl", "dl <long values...>", "Emit one little-endian 24-bit value per item.",
+            "Use dl for full SNES addresses only where the consuming format expects three bytes."),
+        directive("dd", "dd <double-word values...>", "Emit one little-endian 32-bit value per item.",
+            "The 65816 is not a 32-bit CPU; dd is a data-layout directive."),
+        directive("fill", "fill <count>[, <value>]", "Emit a repeated byte pattern for a requested count.",
+            "Large fill counts consume real output space and are included in collision ownership."),
+        directive("fillbyte", "fillbyte <value>", "Choose the byte used by subsequent fill operations.",
+            "This changes assembler state; keep the intended fill close to the operation that consumes it."),
+        directive("pad", "pad <address>", "Advance to an address while emitting the configured pad byte across the gap.",
+            "pad writes the entire gap. It is not equivalent to claiming only the final address."),
+        directive("padbyte", "padbyte <value>", "Choose the byte used by subsequent pad operations.",
+            "Padding is emitted output and can overwrite data if its range is not explicitly owned."),
+        directive("skip", "skip <count>", "Advance the current position by a byte count for layout purposes.",
+            "Confirm whether the surrounding construct is defining layout or ROM output before treating skipped space as free."),
+        directive("base", "base <address|off>", "Change the logical address used for labels without simply relocating output.",
+            "base deliberately separates logical and physical positions. Use it only when the mapping contract is understood."),
+        directive("table", "table <path>[, <mode>]", "Load a character-to-byte translation table for string data.",
+            "The table affects later string encoding until cleared or replaced."),
+        directive("cleartable", "cleartable", "Remove the active character translation table.",
+            "Strings assembled afterward return to the assembler's normal encoding behavior."),
+    ).associateBy(AsmDirectiveInfo::name)
+
+    val directiveNames: Set<String> = directives.keys
+
+    fun directive(name: String?): AsmDirectiveInfo? = name?.lowercase()?.let(directives::get)
+
+    private fun directiveTable(vararg names: String) = AsmLibraryTable(
+        headers = listOf("Directive", "Common form", "Purpose"),
+        rows = names.map { name -> directives.getValue(name).let { listOf(it.name, it.form, it.summary) } },
+        monospaceColumns = setOf(0, 1),
+        columnWeights = listOf(0.55f, 1.25f, 2.2f),
+    )
 
     private fun numberBaseRow(value: Int, meaning: String = "") = listOf(
         value.toString(),
@@ -181,6 +271,74 @@ internal object AsmLibrary {
                             "    RTS                   ;808127;",
                         ),
                         "The labels drive assembly. The trailing addresses document the original layout.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "asar-directives",
+            title = "Asar directives",
+            summary = "Build-time commands that place output, emit data, include files, and control assembly without executing on the SNES CPU.",
+            keywords = directives.keys + setOf("placement", "boundary", "include", "conditional", "macro", "data"),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Placement, limits, and emitted space",
+                    listOf(
+                        "org changes where following bytes are written; it neither searches for space nor reserves it. warnpc adds a hard upper boundary, but the unused portion before that boundary is not automatically owned. In SMEDIT, verified free-space ranges establish eligibility and compiled ownership establishes who actually emitted each byte.",
+                        "fill and pad emit bytes. skip and base alter layout/address behavior and deserve special review. For checked hooks, keep the generated org, boundary labels, continuation jump, and warnpc intact.",
+                    ),
+                    example = AsmCodeExample(
+                        "A bounded checked allocation",
+                        code(
+                            "org \$E08002",
+                            "Helper:",
+                            "    ; emitted code and data",
+                            "Helper_End:",
+                            "warnpc \$E08402",
+                        ),
+                        "The envelope is 1,024 bytes, but ownership ends at Helper_End; warnpc prevents overflow rather than reserving the unused tail.",
+                    ),
+                    table = directiveTable("org", "warnpc", "base", "skip", "fill", "fillbyte", "pad", "padbyte", "lorom", "hirom"),
+                ),
+                AsmLibrarySection(
+                    "Data, includes, and translation tables",
+                    listOf(
+                        "db, dw, dl, and dd emit one-, two-, three-, and four-byte values. incsrc expands another assembly file, while incbin copies the contents of a binary asset directly into the ROM image.",
+                        "A short directive can emit a large payload. Space accounting follows compiled bytes, not the number of visible source lines.",
+                    ),
+                    example = AsmCodeExample(
+                        "Data widths and included assets",
+                        code(
+                            "db \$7F",
+                            "dw \$1234",
+                            "dl \$90A000",
+                            "incbin \"data/Tiles.bin\"",
+                        ),
+                        "The numeric values occupy 1 + 2 + 3 bytes; the binary contributes its complete file length.",
+                    ),
+                    table = directiveTable("db", "dw", "dl", "dd", "incsrc", "incbin", "table", "cleartable"),
+                ),
+                AsmLibrarySection(
+                    "Build logic, reusable source, and diagnostics",
+                    listOf(
+                        "Conditionals and while loops run while assembling, not during gameplay. Macros expand reusable source. Namespaces and structs organize symbols and layouts. assert and print make assumptions visible during a build.",
+                        "SMEDIT audits final module composition as well as isolated module output, so conditional or order-dependent module behavior cannot silently acquire unowned writes.",
+                    ),
+                    example = AsmCodeExample(
+                        "Pin a build-time assumption",
+                        code(
+                            "assert NativeEntry == \$81A0A8, \"Unexpected hook address\"",
+                            "if !FeatureEnabled",
+                            "    db \$01",
+                            "else",
+                            "    db \$00",
+                            "endif",
+                        ),
+                        "assert emits no bytes. Exactly one conditional branch emits one byte.",
+                    ),
+                    table = directiveTable(
+                        "if", "elseif", "else", "endif", "while", "endwhile", "macro", "endmacro",
+                        "namespace", "struct", "endstruct", "assert", "print", "math", "reset",
                     ),
                 ),
             ),
@@ -1095,7 +1253,35 @@ internal object AsmLibrary {
                     "Module order and collisions",
                     listOf(
                         "Enabled Project Modules assemble from top to bottom after the pinned source. That order is meaningful: a later org can replace bytes emitted earlier. Reordering is not allocation, dependency resolution, or automatic conflict merging.",
-                        "A checked hook should fail closed when its native instruction changed, another module occupied its helper range, generated editor data overlaps it, a required label moved, or it emits outside its declared spans. Arbitrary handwritten modules remain your responsibility; SMEDIT cannot infer whether two overlapping writes are intentional from Asar syntax alone.",
+                        "SMEDIT now compiles each enabled module independently against one module-free baseline. That makes overlapping module ownership visible even when both modules emit the same replacement bytes. A module also cannot silently overwrite a project bank edit or editor-generated asset/room/patch span.",
+                        "The final ordered build must reproduce every independently audited module byte-for-byte and may not gain an unclaimed write through read-dependent or conditional interaction with another module. Module order remains useful for explicit include order, but it cannot be used to hide an overwrite.",
+                        "A checked hook adds a stricter contract: it fails closed when its native bytes changed, its helper left verified free space, a boundary label moved, its displaced prefix or final continuation changed, or it emits outside the declared hook/helper spans.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Create a checked hook from native source",
+                    listOf(
+                        "Build the project and Space Planner, then right-click the first native instruction and choose Create Checked Hook. SMEDIT collects complete contiguous instructions until a four-byte JML fits, rejects unsafe control flow and interior labels, and prefers a verified expanded-bank block for the helper.",
+                        "The generated Project Module contains the detour, displaced instructions, an obvious custom-code area, the exact continuation jump, boundary labels, warnpc, and a compact safety metadata comment. Keep that metadata and the structural lines intact; edit only the custom area unless you intend to recreate the hook.",
+                        "The Space Planner lists total verified bytes and the largest contiguous block separately. A hook or allocation must fit one listed block; fragmented totals are never treated as one address range.",
+                    ),
+                    AsmCodeExample(
+                        "Generated shape",
+                        code(
+                            "; @smedit-checked-hook-v1 ...",
+                            "org NativeInstruction",
+                            "Generated_Hook:",
+                            "    JML.L Generated_Helper",
+                            "",
+                            "org VerifiedExpandedSpace",
+                            "Generated_Helper:",
+                            "    ; displaced instructions",
+                            "    ; custom code",
+                            "    JML.L ExactContinuation",
+                            "Generated_Helper_End:",
+                            "warnpc VerifiedLimit",
+                        ),
+                        "Every build proves this source still encodes the reviewed shape and claims both complete spans.",
                     ),
                 ),
                 AsmLibrarySection(

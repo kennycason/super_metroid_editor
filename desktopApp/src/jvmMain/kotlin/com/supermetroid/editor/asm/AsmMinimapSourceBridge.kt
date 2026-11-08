@@ -6,6 +6,7 @@ import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.rom.MapStationData
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.RomParser
+import java.io.File
 
 internal const val MINIMAP_TILE_SOURCE_FILE = "bank_B5.asm"
 internal const val MINIMAP_REVEAL_SOURCE_FILE = "bank_82.asm"
@@ -32,6 +33,9 @@ internal data class AsmMinimapSourcePlan(
  * whitespace, line endings and address annotations remain handwritten source.
  */
 internal class AsmMinimapSourceBridge(private val workspace: AsmWorkspaceState) {
+    /** Compose-observable workspace revision used to invalidate an already-open visual map. */
+    val revision: Long get() = workspace.sourceBufferRevision
+
     private data class Token(val start: Int, val end: Int, val digits: Int, val lowerCase: Boolean)
     private data class ArrayBlock(val tokens: List<Token>, val values: IntArray) {
         fun render(text: String, replacement: IntArray): String {
@@ -56,6 +60,61 @@ internal class AsmMinimapSourceBridge(private val workspace: AsmWorkspaceState) 
         require(area in 0 until MinimapData.NUM_AREAS)
         val texts = workspace.projectSourceTextsForNavigation(SOURCE_FILES)
             ?: return AsmMinimapSourceView(null, null, "Pause-map source banks are unavailable.")
+        return view(area, texts)
+    }
+
+    /** Immutable project baseline used by the visual editor's explicit, undoable restore action. */
+    fun baselineView(area: Int): AsmMinimapSourceView {
+        require(area in 0 until MinimapData.NUM_AREAS)
+        val texts = runCatching(::baselineTexts).getOrElse { problem ->
+            return AsmMinimapSourceView(null, null, problem.message ?: "The project ASM baseline is unavailable.")
+        }
+        return view(area, texts)
+    }
+
+    fun planBaselineRestore(area: Int): AsmMinimapSourcePlan {
+        require(area in 0 until MinimapData.NUM_AREAS)
+        val current = workspace.projectSourceTextsForNavigation(SOURCE_FILES)
+            ?: error("Pause-map source banks are unavailable.")
+        val baseline = baselineTexts()
+        fun restoreBody(fileId: String, bounds: (String, Int) -> Pair<Int, Int>): String {
+            val currentText = current.getValue(fileId)
+            val baselineText = baseline.getValue(fileId)
+            val (currentStart, currentEnd) = bounds(currentText, area)
+            val (baselineStart, baselineEnd) = bounds(baselineText, area)
+            return currentText.replaceRange(
+                currentStart,
+                currentEnd,
+                baselineText.substring(baselineStart, baselineEnd),
+            )
+        }
+        val restored = linkedMapOf(
+            MINIMAP_TILE_SOURCE_FILE to restoreBody(MINIMAP_TILE_SOURCE_FILE, ::tileBodyBounds),
+            MINIMAP_REVEAL_SOURCE_FILE to restoreBody(MINIMAP_REVEAL_SOURCE_FILE, ::revealBodyBounds),
+        )
+        val restoredView = view(area, restored)
+        require(restoredView.editable) {
+            restoredView.problem ?: "Restoring this area would not make its source reciprocal."
+        }
+        return AsmMinimapSourcePlan(
+            restored.mapNotNull { (fileId, text) ->
+                (fileId to (current.getValue(fileId) to text)).takeIf { text != current.getValue(fileId) }
+            }.toMap(linkedMapOf()),
+            setOf(area),
+        )
+    }
+
+    private fun baselineTexts(): Map<String, String> {
+        val original = workspace.projectWorkspace?.originalDirectory
+            ?: error("The project ASM baseline is unavailable.")
+        return SOURCE_FILES.associateWith { fileId ->
+            File(original, "src/$fileId").also {
+                require(it.isFile) { "Baseline $fileId is unavailable." }
+            }.readText()
+        }
+    }
+
+    private fun view(area: Int, texts: Map<String, String>): AsmMinimapSourceView {
         return runCatching {
             val mapValues = tileBlock(texts.getValue(MINIMAP_TILE_SOURCE_FILE), area).values
             val tiles = IntArray(MinimapData.TILE_COUNT)
@@ -183,17 +242,27 @@ internal class AsmMinimapSourceBridge(private val workspace: AsmWorkspaceState) 
     }
 
     private fun tileBlock(text: String, area: Int): ArrayBlock {
+        val (start, end) = tileBodyBounds(text, area)
+        return parseArray(text, start, end, "dw", MinimapData.TILE_COUNT, TILE_LABELS.getValue(area))
+    }
+
+    private fun tileBodyBounds(text: String, area: Int): Pair<Int, Int> {
         val positions = TILE_LABELS.mapValues { (_, label) -> uniqueLabel(text, label, 0, text.length) }
         val boundary = uniqueLabel(text, TILE_END_LABEL, 0, text.length)
         val label = TILE_LABELS.getValue(area)
         val start = positions.getValue(area)
         val end = (positions.values + boundary).filter { it > start }.minOrNull()
             ?: error("The $label source boundary is missing; this map is ASM-only.")
-        return parseArray(text, lineEnd(text, start), end, "dw", MinimapData.TILE_COUNT, label)
+        return lineEnd(text, start) to end
     }
 
     private fun revealBlock(text: String, area: Int): ArrayBlock {
         validatePointers(text)
+        val (start, end) = revealBodyBounds(text, area)
+        return parseArray(text, start, end, "db", MinimapData.MAP_STATION_DATA_SIZE, "MapData.${REVEAL_LABELS.getValue(area)}")
+    }
+
+    private fun revealBodyBounds(text: String, area: Int): Pair<Int, Int> {
         val mapData = uniqueLabel(text, "MapData", 0, text.length)
         val boundary = uniqueLabel(text, REVEAL_END_LABEL, mapData, text.length)
         val positions = REVEAL_LABELS.mapValues { (_, label) -> uniqueLocalLabel(text, label, mapData, boundary) }
@@ -201,7 +270,7 @@ internal class AsmMinimapSourceBridge(private val workspace: AsmWorkspaceState) 
         val start = positions.getValue(area)
         val end = (positions.values + boundary).filter { it > start }.minOrNull()
             ?: error("MapData.$label has no safe source boundary; this reveal mask is ASM-only.")
-        return parseArray(text, lineEnd(text, start), end, "db", MinimapData.MAP_STATION_DATA_SIZE, "MapData.$label")
+        return lineEnd(text, start) to end
     }
 
     private fun parseArray(text: String, start: Int, end: Int, directive: String, count: Int, name: String): ArrayBlock {
@@ -247,7 +316,8 @@ internal class AsmMinimapSourceBridge(private val workspace: AsmWorkspaceState) 
             "AreaMapPointers is custom; pause maps are ASM-only."
         }
         val mapData = uniqueLabel(text, "MapData", 0, text.length)
-        val firstMask = uniqueLocalLabel(text, REVEAL_LABELS.getValue(0), mapData, text.length)
+        val boundary = uniqueLabel(text, REVEAL_END_LABEL, mapData, text.length)
+        val firstMask = uniqueLocalLabel(text, REVEAL_LABELS.getValue(0), mapData, boundary)
         val expected = REVEAL_POINTER_LABELS + REVEAL_POINTER_LABELS[5]
         require(symbolOperands(text, lineEnd(text, mapData), firstMask, "dw") == expected) {
             "MapData.pointers is custom; station reveal masks are ASM-only."

@@ -2,9 +2,13 @@ package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.data.MapStationTileEdit
 import com.supermetroid.editor.data.MinimapTileEdit
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.MapStationData
 import com.supermetroid.editor.rom.MinimapData
+import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.ui.EditorState
+import com.supermetroid.editor.ui.MinimapEditorState
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
@@ -79,7 +83,93 @@ class AsmMinimapSourceBridgeTest {
         assertTrue(problem.message.orEmpty().contains("newer", ignoreCase = true))
     }
 
+    @Test
+    fun `same local labels after the reveal table do not make maps ASM only`() = runBlocking {
+        val fixture = fixture()
+        val before = fixture.workspace.projectSourceText(MINIMAP_REVEAL_SOURCE_FILE)
+        fixture.workspace.replaceProjectSource(
+            MINIMAP_REVEAL_SOURCE_FILE,
+            before,
+            "$before\nLaterRoutine:\n  .crateria:\n    rts\n",
+        )
+
+        val view = fixture.bridge.view(6)
+
+        assertNull(view.problem)
+        assertTrue(view.editable)
+    }
+
+    @Test
+    fun `baseline restore repairs an ASM-only area and remains source-undoable`() = runBlocking {
+        val fixture = fixture()
+        val before = fixture.workspace.projectSourceText(MINIMAP_TILE_SOURCE_FILE)
+        val label = before.indexOf("UNUSED_MapTilemaps_ceres_B5E000:")
+        val lineStart = before.indexOf("    dw ", label)
+        val lineEnd = before.indexOf('\n', lineStart) + 1
+        val malformed = before.replaceRange(lineStart, lineEnd, "    dw CustomCeresMapExpression\n")
+        fixture.workspace.replaceProjectSource(MINIMAP_TILE_SOURCE_FILE, before, malformed)
+        assertTrue(fixture.bridge.view(6).problem.orEmpty().contains("ASM-only"))
+
+        val history = fixture.bridge.apply(
+            fixture.bridge.planBaselineRestore(6),
+            fixture.project,
+        ) {}
+
+        assertTrue(fixture.bridge.view(6).editable)
+        assertTrue(history.undo())
+        assertTrue(fixture.bridge.view(6).problem.orEmpty().contains("ASM-only"))
+    }
+
+    @Test
+    fun `open visual map observes manual ASM source revisions without reopening the project`() = runBlocking {
+        val fixture = fixture()
+        fixture.project.asmWorkspace.enabled = true
+        fixture.project.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
+        val parser = RomParser(objectSourceTestRom())
+        val catalog = AsmPlmSourceCatalog("", "", emptyMap(), parser, emptyMap())
+        val plmBridge = AsmPlmSourceBridge(catalog, fixture.workspace) { fixture.project }
+        val editor = EditorState().apply {
+            testMode = true
+            initForProject(fixture.file, fixture.project)
+        }
+        val state = MinimapEditorState()
+        state.loadArea(parser, 6, editor)
+        assertEquals(0, state.mapData.getTile(12, 9))
+
+        editor.asmPlmSourceBridge = plmBridge
+        state.initIfNeeded(parser, editor)
+        assertEquals(0x001F, state.mapData.getTile(12, 9))
+
+        val pending = state.mapData.withTile(1, 1, 0x0C21)
+        state.pendingStroke = pending
+        val main = fixture.workspace.projectSourceText("main.asm")
+        assertTrue(fixture.workspace.updateSourceEditText("main.asm", "$main; unrelated\n"))
+        state.initIfNeeded(parser, editor)
+        assertEquals(pending, state.pendingStroke, "Unrelated ASM edits must not discard a visual stroke")
+        state.pendingStroke = null
+
+        val current = fixture.bridge.view(6)
+        val changed = current.map!!.withTile(12, 9, 0x8C11)
+        val changedSource = fixture.bridge.plan(mapOf(6 to (changed to current.stations!!)))
+            .replacements.getValue(MINIMAP_TILE_SOURCE_FILE).second
+        assertTrue(fixture.workspace.updateSourceEditText(MINIMAP_TILE_SOURCE_FILE, changedSource))
+
+        state.initIfNeeded(parser, editor)
+
+        assertEquals(0x8C11, state.mapData.getTile(12, 9))
+        assertTrue(state.baselineRestoreAvailable)
+        assertTrue(state.restoreSelectedAreaBaseline(editor))
+        assertEquals(0x001F, state.mapData.getTile(12, 9))
+        assertFalse(state.baselineRestoreAvailable)
+
+        state.undo(editor)
+
+        assertEquals(0x8C11, state.mapData.getTile(12, 9))
+        assertTrue(state.baselineRestoreAvailable)
+    }
+
     private data class Fixture(
+        val file: File,
         val project: SmEditProject,
         val workspace: AsmWorkspaceState,
         val bridge: AsmMinimapSourceBridge,
@@ -112,7 +202,7 @@ class AsmMinimapSourceBridgeTest {
         val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
         repository.initialize(file.path, reference)
         val workspace = AsmWorkspaceState(projectRepository = repository).apply { bindProject(file.path, true) }
-        return Fixture(SmEditProject(File(root, "base.sfc").path), workspace, AsmMinimapSourceBridge(workspace))
+        return Fixture(file, SmEditProject(File(root, "base.sfc").path), workspace, AsmMinimapSourceBridge(workspace))
     }
 
     private fun tileSource(firstCount: Int): String = buildString {

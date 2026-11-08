@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -59,7 +60,11 @@ internal sealed interface AsmWorkspaceLocation {
         val path: String,
         val workspaceKind: AsmWorkspaceKind = AsmWorkspaceKind.REFERENCE,
     ) : AsmWorkspaceLocation
-    data class Library(val pageId: String, val instructionToken: String?) : AsmWorkspaceLocation
+    data class Library(
+        val pageId: String,
+        val instructionToken: String?,
+        val directiveToken: String? = null,
+    ) : AsmWorkspaceLocation
     data class Rom(val view: AsmRomPreviewView) : AsmWorkspaceLocation
     data class GeneratedRooms(val lineIndex: Int, val buildWrites: Boolean = false) : AsmWorkspaceLocation
     data class PlmPlacement(val snapshot: AsmPlmPlacementSnapshot) : AsmWorkspaceLocation
@@ -256,6 +261,8 @@ internal class AsmWorkspaceState(
     var selectedInstruction by mutableStateOf<String?>(null)
         private set
     var selectedInstructionToken by mutableStateOf<String?>(null)
+        private set
+    var selectedLibraryDirective by mutableStateOf<String?>(null)
         private set
     var selectedLibraryPageId by mutableStateOf(AsmLibrary.guides.first().id)
         private set
@@ -464,7 +471,7 @@ internal class AsmWorkspaceState(
         return AsmSourceBankBudget(
             bank = bank,
             capacityBytes = plannedBank?.capacityBytes ?: LOROM_BANK_CAPACITY_BYTES,
-            allocatableContiguousBytes = plannedBank?.remainingAfter,
+            allocatableContiguousBytes = plannedBank?.largestAfter,
             spaceIsCurrent = plannedBank != null && !sourceBuildRequired,
         )
     }
@@ -1058,6 +1065,7 @@ internal class AsmWorkspaceState(
         selectedAssetPath = null
         selectedInstruction = null
         selectedInstructionToken = null
+        selectedLibraryDirective = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
     }
@@ -1697,6 +1705,79 @@ internal class AsmWorkspaceState(
         }
     }
 
+    fun checkedHookCreationAvailable(fileId: String): Boolean =
+        workspaceKind == AsmWorkspaceKind.PROJECT && !isProjectModule(fileId) &&
+            referenceAssetsMatchCurrentRom && !sourceBuildRequired &&
+            buildReport?.succeeded == true && romSpacePlan != null
+
+    /** Resolves the clicked instruction against the exact successful build and
+     * the allocator's current verified fragments. Any ambiguity is surfaced in
+     * the normal ASM error strip instead of generating optimistic source. */
+    fun prepareCheckedHookCandidate(
+        fileId: String,
+        lineIndex: Int,
+        romParser: RomParser,
+    ): AsmCheckedHookCandidate? {
+        if (!checkedHookCreationAvailable(fileId)) {
+            error = when {
+                workspaceKind != AsmWorkspaceKind.PROJECT || isProjectModule(fileId) ->
+                    "Create checked hooks from native source in the project ASM workspace."
+                !referenceAssetsMatchCurrentRom ->
+                    "The loaded ROM does not match this ASM baseline. Reopen the project's base ROM before creating a hook."
+                sourceBuildRequired || buildReport?.succeeded != true ->
+                    "Build the current project before creating a checked hook."
+                romSpacePlan == null ->
+                    "Refresh the Space Planner before creating a checked hook."
+                else -> "This source is not ready for checked-hook creation."
+            }
+            return null
+        }
+        return try {
+            error = null
+            AsmCheckedHookPlanner.prepare(
+                fileId = fileId,
+                lineIndex = lineIndex,
+                text = sourceEditText(fileId),
+                symbols = checkNotNull(buildReport).symbols,
+                romParser = romParser,
+                spacePlan = checkNotNull(romSpacePlan),
+            )
+        } catch (problem: Exception) {
+            error = problem.message ?: "This instruction cannot be turned into a checked hook."
+            null
+        }
+    }
+
+    suspend fun createCheckedHookModule(candidate: AsmCheckedHookCandidate, name: String): Boolean {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || boundProjectFilePath.isBlank() || busy) return false
+        busy = true
+        error = null
+        return try {
+            progress = "Creating checked hook…"
+            val source = candidate.renderModule(name)
+            val (result, fileId) = withContext(Dispatchers.IO) {
+                projectRepository.createModule(
+                    projectFilePath = boundProjectFilePath,
+                    requestedName = name,
+                    description = "Checked hook at ${formatSnesAddress(candidate.hookAddress)}",
+                    initialSource = source,
+                )
+            }
+            adoptProjectWorkspace(result)
+            buildReport = null
+            romPreview = null
+            romSpacePlan = null
+            openSource(fileId, addToHistory = false)
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not create the checked hook"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
     /** Install only on first Enable; subsequent toggles edit the existing document, never regenerate it. */
     internal fun ensureFastDoorsModule(enabled: Boolean) {
         check(!busy && projectWorkspace != null && boundProjectFilePath.isNotBlank()) { "Wait for the project ASM workspace." }
@@ -1866,6 +1947,7 @@ internal class AsmWorkspaceState(
         selectedAssetCategory = asset.category
         selectedInstruction = null
         selectedInstructionToken = null
+        selectedLibraryDirective = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
     }
@@ -2034,6 +2116,7 @@ internal class AsmWorkspaceState(
         browserMode = AsmBrowserMode.LIBRARY
         selectedInstruction = normalized
         selectedInstructionToken = token
+        selectedLibraryDirective = null
         selectedLibraryPageId = AsmLibrary.instructionPageId(normalized)
         selectedAssetPath = null
         navigationSerial++
@@ -2047,6 +2130,7 @@ internal class AsmWorkspaceState(
         browserMode = AsmBrowserMode.LIBRARY
         selectedInstruction = null
         selectedInstructionToken = null
+        selectedLibraryDirective = null
         selectedLibraryPageId = guide.id
         selectedAssetPath = null
         navigationSerial++
@@ -2061,7 +2145,22 @@ internal class AsmWorkspaceState(
         browserMode = AsmBrowserMode.LIBRARY
         selectedInstruction = instruction.mnemonic
         selectedInstructionToken = token
+        selectedLibraryDirective = null
         selectedLibraryPageId = AsmLibrary.instructionPageId(instruction.mnemonic)
+        selectedAssetPath = null
+        navigationSerial++
+        if (addToHistory) forwardStack.clear()
+    }
+
+    fun openLibraryDirective(directive: String, addToHistory: Boolean = true) {
+        val info = AsmLibrary.directive(directive) ?: return
+        if (addToHistory) rememberCurrentLocation()
+        roomSourceInspection = null
+        browserMode = AsmBrowserMode.LIBRARY
+        selectedInstruction = null
+        selectedInstructionToken = null
+        selectedLibraryDirective = info.name
+        selectedLibraryPageId = "asar-directives"
         selectedAssetPath = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
@@ -2202,7 +2301,9 @@ internal class AsmWorkspaceState(
             )
         }
         AsmBrowserMode.ASSETS -> selectedAssetPath?.let { AsmWorkspaceLocation.Asset(it, workspaceKind) }
-        AsmBrowserMode.LIBRARY -> AsmWorkspaceLocation.Library(selectedLibraryPageId, selectedInstructionToken)
+        AsmBrowserMode.LIBRARY -> AsmWorkspaceLocation.Library(
+            selectedLibraryPageId, selectedInstructionToken, selectedLibraryDirective,
+        )
         AsmBrowserMode.ROM -> AsmWorkspaceLocation.Rom(romPreviewView)
         AsmBrowserMode.GENERATED_ROOMS -> AsmWorkspaceLocation.GeneratedRooms(generatedRoomLineIndex, showRoomBuildWrites)
         AsmBrowserMode.PLM_PLACEMENT -> plmPlacementSnapshot?.let(AsmWorkspaceLocation::PlmPlacement)
@@ -2235,6 +2336,7 @@ internal class AsmWorkspaceState(
             is AsmWorkspaceLocation.Library -> {
                 val mnemonic = AsmLibrary.mnemonicFromPageId(location.pageId)
                 if (mnemonic != null) openLibraryInstruction(location.instructionToken ?: mnemonic, addToHistory = false)
+                else if (location.directiveToken != null) openLibraryDirective(location.directiveToken, addToHistory = false)
                 else openLibraryGuide(location.pageId, addToHistory = false)
             }
             is AsmWorkspaceLocation.Rom -> selectRomPreviewView(location.view, addToHistory = false)

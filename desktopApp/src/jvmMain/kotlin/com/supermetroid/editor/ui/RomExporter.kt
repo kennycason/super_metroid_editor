@@ -424,6 +424,12 @@ internal class RomExporter(
             excludedRanges = compiledAsmBase?.sourceOwnedRanges.orEmpty().map {
                 (headerSize + it.pcOffset) until (headerSize + it.pcOffset + it.length)
             },
+            verifiedFreeRanges = compiledAsmBase?.verifiedFreeRanges.orEmpty().map { range ->
+                range.copy(
+                    pcStart = headerSize + range.pcStart,
+                    pcEndExclusive = headerSize + range.pcEndExclusive,
+                )
+            },
         )
         val allocatorBanks = List((exportBase.size - headerSize) / 0x8000) { 0x80 + it }
         val romSpaceBefore = freeSpaceAllocator.snapshot(allocatorBanks)

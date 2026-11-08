@@ -21,7 +21,7 @@ class AsmLibraryTest {
 
     @Test
     fun `guide and instruction page ids round trip`() {
-        assertEquals(12, AsmLibrary.guides.size)
+        assertEquals(13, AsmLibrary.guides.size)
         assertEquals(AsmLibrary.guides.size, AsmLibrary.guides.map { it.id }.toSet().size)
         AsmLibrary.guides.forEach { guide ->
             assertNotNull(AsmLibrary.guide(guide.id))
@@ -43,6 +43,17 @@ class AsmLibraryTest {
         assertTrue("\$90:9EB9" in jumpText)
         assertTrue("\$90:9EBF" in jumpText)
         assertTrue("cannot silently omit" in jumpText)
+        val directiveGuide = AsmLibrary.guide("asar-directives")!!
+        val documentedDirectives = directiveGuide.sections.flatMap { section ->
+            section.table?.rows.orEmpty().map { row -> row.first() }
+        }.toSet()
+        assertEquals(AsmLibrary.directiveNames, documentedDirectives)
+        assertTrue(setOf("org", "warnpc", "incsrc", "db", "assert").all(AsmLibrary.directiveNames::contains))
+        AsmLibrary.directives.values.forEach { directive ->
+            assertTrue(directive.form.isNotBlank(), directive.name)
+            assertTrue(directive.summary.isNotBlank(), directive.name)
+            assertTrue(directive.practicalNote.isNotBlank(), directive.name)
+        }
         val hooksGuide = AsmLibrary.guide("hooks-and-overrides")!!
         val hooksText = hooksGuide.sections.joinToString("\n") { section ->
             section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
@@ -98,6 +109,13 @@ class AsmLibraryTest {
         state.openLibraryInstruction("sta.l")
         assertEquals("instruction:STA", state.selectedLibraryPageId)
         assertEquals("STA.L", state.selectedInstructionToken)
+        assertEquals("old source search", state.query)
+
+        state.openLibraryDirective("warnpc")
+        assertEquals("asar-directives", state.selectedLibraryPageId)
+        assertEquals("warnpc", state.selectedLibraryDirective)
+        assertEquals(null, state.selectedInstruction)
+        assertEquals(null, state.selectedInstructionToken)
         assertEquals("old source search", state.query)
     }
 

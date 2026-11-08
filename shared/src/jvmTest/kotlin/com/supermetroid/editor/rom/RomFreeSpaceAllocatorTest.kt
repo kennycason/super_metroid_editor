@@ -182,6 +182,55 @@ class RomFreeSpaceAllocatorTest {
         assertEquals(4, blocked.availableBytes, "Snapshot reports what the next contiguous reservation can really use")
     }
 
+    @Test
+    fun `verified interior ranges expose fragments and never fall back to apparent trailing fill`() {
+        val rom = ByteArray(0x10000) { -1 }
+        val ranges = listOf(
+            RomVerifiedFreeRange(0x80, 0x100, 0x120, 0xFF, "first hole"),
+            RomVerifiedFreeRange(0x80, 0x180, 0x1A0, 0xFF, "second hole"),
+        )
+        val allocator = RomFreeSpaceAllocator(
+            rom, ::snesToPc, ::pcToSnes, guardBytes = 0,
+            excludedRanges = listOf(0x108 until 0x110),
+            verifiedFreeRanges = ranges,
+        )
+
+        val before = allocator.snapshot(listOf(0x80)).banks.single()
+        assertEquals(listOf(8, 16, 32), before.ranges.map(RomFreeSpaceRange::length))
+        assertEquals(56, before.totalAvailableBytes)
+        assertEquals(32, before.largestAvailableBytes)
+        assertNull(allocator.reserve(33, listOf(0x80), "fragmented request"))
+
+        val first = allocator.reserve(16, listOf(0x80), "fits second fragment")!!
+        assertEquals(0x110, first.pcOffset)
+        val second = allocator.reserve(32, listOf(0x80), "fits later range")!!
+        assertEquals(0x180, second.pcOffset)
+        assertEquals(0x100, allocator.reserve(8, listOf(0x80), "remaining first fragment")!!.pcOffset)
+        assertNull(allocator.reserve(1, listOf(0x80), "must not use unverified trailing fill"))
+        val undeclared = allocator.snapshot(listOf(0x81)).banks.single()
+        assertEquals(0, undeclared.totalAvailableBytes)
+        assertNull(allocator.reserve(1, listOf(0x81), "undeclared bank must not fall back to fill scanning"))
+    }
+
+    @Test
+    fun `verified ranges honor zero fill and expanded banks`() {
+        val rom = ByteArray(0x400000) { 0x55 }
+        val bank = 0xE0
+        val start = snesToPc((bank shl 16) or 0x8000)
+        rom.fill(0, start, start + 0x8000)
+        val allocator = RomFreeSpaceAllocator(
+            rom, ::snesToPc, ::pcToSnes, guardBytes = 2,
+            verifiedFreeRanges = listOf(
+                RomVerifiedFreeRange(bank, start, start + 0x8000, 0, "expanded bank E0"),
+            ),
+        )
+
+        val allocation = allocator.allocate(ByteArray(8) { 0x7A }, listOf(bank), "expanded helper")!!
+        assertEquals(start + 2, allocation.pcOffset)
+        assertEquals(0, allocation.fillByte)
+        assertEquals(0x8000 - 10, allocator.snapshot(listOf(bank)).banks.single().totalAvailableBytes)
+    }
+
     private fun snesToPc(snesAddress: Int): Int {
         val bank = (snesAddress shr 16) and 0xFF
         val address = snesAddress and 0xFFFF

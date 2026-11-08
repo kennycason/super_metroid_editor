@@ -237,6 +237,7 @@ fun TilesetCanvas(
     modifier: Modifier = Modifier,
     onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val asmLink = editorState.projectAsmNavigation(onNavigateToAsm)
     val zoomState = remember { mutableStateOf(2.0f) }
     val zoomLevel = zoomState.value
@@ -250,6 +251,12 @@ fun TilesetCanvas(
         com.supermetroid.editor.asm.AsmTilesetGraphicsKind.COMMON_TILES,
         tilesetId,
     )
+    val tilesetGraphicsProblem = listOf(areaTilesStatus, commonTilesStatus)
+        .filterNot(TilesetGraphicsEditingStatus::editable)
+        .mapNotNull(TilesetGraphicsEditingStatus::message)
+        .distinct()
+        .joinToString("\n")
+        .ifBlank { null }
     val selectedMeta = editorState.editorSelectedMetatile
     val gridData = tilesetEditorState.gridData
     val coroutineScope = rememberCoroutineScope()
@@ -319,8 +326,12 @@ fun TilesetCanvas(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                    Text("Tileset $tilesetId", fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                    Text("Tileset $tilesetId", fontSize = fs.body, fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary)
+
+                    tilesetGraphicsProblem?.let {
+                        AsmOnlyReasonBadge(it, "tileset graphics", fontSize = fs.detail)
+                    }
 
                     if (romParser != null && asmLink != null) {
                         val catalog = romParser.graphicsCatalog
@@ -341,7 +352,7 @@ fun TilesetCanvas(
                             Box {
                                 Text(
                                     "ASM ▾",
-                                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                    fontSize = fs.body,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.clickable { asmMenuExpanded = true }.padding(horizontal = 4.dp, vertical = 2.dp),
                                 )
@@ -353,10 +364,10 @@ fun TilesetCanvas(
                                         DropdownMenuItem(
                                             text = {
                                                 Column {
-                                                    Text(label, fontSize = LocalEditorTheme.current.fontSize.value.body)
+                                                    Text(label, fontSize = fs.body)
                                                     Text(
                                                         formatSnesAddress(address),
-                                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                                        fontSize = fs.detail,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     )
                                                 }
@@ -372,7 +383,7 @@ fun TilesetCanvas(
                         }
                     }
 
-                    Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+                    Text("│", fontSize = fs.detail, color = MaterialTheme.colorScheme.outlineVariant)
 
                     if (selectedMeta >= 0) {
                         TileToolbarInfo(
@@ -383,29 +394,37 @@ fun TilesetCanvas(
                             modifier = Modifier.weight(1f)
                         )
                     } else {
-                        Text("Click a tile to select", fontSize = 10.sp,
+                        Text("Click a tile to select", fontSize = fs.body,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f))
                     }
 
-                    Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+                    Text("│", fontSize = fs.detail, color = MaterialTheme.colorScheme.outlineVariant)
 
                     if (selectedMeta >= 0 && editorState.editorTileGraphics != null) {
                         FilterChip(
                             selected = false,
                             onClick = { showComposer = true },
-                            label = { Text("Compose", fontSize = 9.sp) },
+                            label = { Text("Compose", fontSize = fs.body) },
                             modifier = Modifier.height(28.dp)
                         )
                         FilterChip(
                             selected = false,
                             onClick = { showPixelEditor = true },
-                            label = { Icon(Icons.Default.Brush, contentDescription = "Edit Pixels", modifier = Modifier.size(14.dp)) },
+                            label = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Icon(Icons.Default.Brush, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Text("Pixels", fontSize = fs.body)
+                                }
+                            },
                             modifier = Modifier.height(28.dp)
                         )
                     }
 
-                    Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+                    Text("│", fontSize = fs.detail, color = MaterialTheme.colorScheme.outlineVariant)
 
                     // Export/Import buttons (Surface like Rooms Tile Meta dropdown)
                     var exportMenuExpanded by remember { mutableStateOf(false) }
@@ -421,8 +440,8 @@ fun TilesetCanvas(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(Icons.Default.GetApp, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Text("Export", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("▾", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                                Text("Export", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("▾", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
                             }
                         }
                         DropdownMenu(
@@ -430,7 +449,7 @@ fun TilesetCanvas(
                             onDismissRequest = { exportMenuExpanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Export Area Tiles (URE)", fontSize = 10.sp) },
+                                text = { Text("Export Area Tiles (URE)", fontSize = fs.body) },
                                 onClick = {
                                     exportMenuExpanded = false
                                     val fd = FileDialog(null as Frame?, "Export Area Tiles", FileDialog.SAVE)
@@ -441,10 +460,10 @@ fun TilesetCanvas(
                                         editorState.exportTileSheet(path, isCre = false)
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             DropdownMenuItem(
-                                text = { Text("Export Common Tiles (CRE)", fontSize = 10.sp) },
+                                text = { Text("Export Common Tiles (CRE)", fontSize = fs.body) },
                                 onClick = {
                                     exportMenuExpanded = false
                                     val fd = FileDialog(null as Frame?, "Export Common Tiles", FileDialog.SAVE)
@@ -455,11 +474,11 @@ fun TilesetCanvas(
                                         editorState.exportTileSheet(path, isCre = true)
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             Divider()
                             DropdownMenuItem(
-                                text = { Text("Export Palette Reference", fontSize = 10.sp) },
+                                text = { Text("Export Palette Reference", fontSize = fs.body) },
                                 onClick = {
                                     exportMenuExpanded = false
                                     val fd = FileDialog(null as Frame?, "Export Palette", FileDialog.SAVE)
@@ -470,7 +489,7 @@ fun TilesetCanvas(
                                         editorState.exportPalette(path)
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                         }
                     }
@@ -488,11 +507,11 @@ fun TilesetCanvas(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(Icons.Default.Publish, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Text("Import", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Import", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 if (editorState.hasCustomVarGfx() || editorState.hasCustomCreGfx()) {
-                                    Text("●", fontSize = 8.sp, color = Color(0xFF66BB6A))
+                                    Text("●", fontSize = fs.detail, color = Color(0xFF66BB6A))
                                 }
-                                Text("▾", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                                Text("▾", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
                             }
                         }
                         DropdownMenu(
@@ -503,9 +522,9 @@ fun TilesetCanvas(
                                 text = {
                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Import Area Tiles (URE)", fontSize = 10.sp)
+                                        Text("Import Area Tiles (URE)", fontSize = fs.body)
                                         if (editorState.hasCustomVarGfx()) {
-                                            Text("●", fontSize = 8.sp, color = Color(0xFF66BB6A))
+                                            Text("●", fontSize = fs.detail, color = Color(0xFF66BB6A))
                                         }
                                     }
                                 },
@@ -525,15 +544,15 @@ fun TilesetCanvas(
                                     }
                                 },
                                 enabled = areaTilesStatus.editable,
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             DropdownMenuItem(
                                 text = {
                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Import Common Tiles (CRE)", fontSize = 10.sp)
+                                        Text("Import Common Tiles (CRE)", fontSize = fs.body)
                                         if (editorState.hasCustomCreGfx()) {
-                                            Text("●", fontSize = 8.sp, color = Color(0xFF66BB6A))
+                                            Text("●", fontSize = fs.detail, color = Color(0xFF66BB6A))
                                         }
                                     }
                                 },
@@ -553,7 +572,7 @@ fun TilesetCanvas(
                                     }
                                 },
                                 enabled = commonTilesStatus.editable,
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                         }
                     }
@@ -589,17 +608,17 @@ fun TilesetCanvas(
                                 )
                                 Text(
                                     "Revert",
-                                    fontSize = 11.sp,
+                                    fontSize = fs.body,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
                                         alpha = if (hasRevertOptions) 1f else 0.45f
                                     )
                                 )
                                 if (hasRevertOptions) {
-                                    Text("●", fontSize = 8.sp, color = Color(0xFF66BB6A))
+                                    Text("●", fontSize = fs.detail, color = Color(0xFF66BB6A))
                                 }
                                 Text(
                                     "▾",
-                                    fontSize = 8.sp,
+                                    fontSize = fs.detail,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
                                         alpha = if (hasRevertOptions) 0.8f else 0.35f
                                     )
@@ -611,7 +630,7 @@ fun TilesetCanvas(
                             onDismissRequest = { revertMenuExpanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Revert Area Tiles (URE)", fontSize = 10.sp) },
+                                text = { Text("Revert Area Tiles (URE)", fontSize = fs.body) },
                                 enabled = editorState.hasCustomVarGfx(),
                                 onClick = {
                                     revertMenuExpanded = false
@@ -619,10 +638,10 @@ fun TilesetCanvas(
                                         reloadCurrentTileset()
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             DropdownMenuItem(
-                                text = { Text("Revert Common Tiles (CRE)", fontSize = 10.sp) },
+                                text = { Text("Revert Common Tiles (CRE)", fontSize = fs.body) },
                                 enabled = editorState.hasCustomCreGfx(),
                                 onClick = {
                                     revertMenuExpanded = false
@@ -630,10 +649,10 @@ fun TilesetCanvas(
                                         reloadCurrentTileset()
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             DropdownMenuItem(
-                                text = { Text("Revert Area Metatiles", fontSize = 10.sp) },
+                                text = { Text("Revert Area Metatiles", fontSize = fs.body) },
                                 enabled = editorState.hasCustomVarTileTable(),
                                 onClick = {
                                     revertMenuExpanded = false
@@ -648,10 +667,10 @@ fun TilesetCanvas(
                                         reloadCurrentTileset()
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             DropdownMenuItem(
-                                text = { Text("Revert Common Metatiles (CRE)", fontSize = 10.sp) },
+                                text = { Text("Revert Common Metatiles (CRE)", fontSize = fs.body) },
                                 enabled = editorState.hasCustomCreTileTable(),
                                 onClick = {
                                     revertMenuExpanded = false
@@ -666,10 +685,10 @@ fun TilesetCanvas(
                                         reloadCurrentTileset()
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             DropdownMenuItem(
-                                text = { Text("Revert Palette", fontSize = 10.sp) },
+                                text = { Text("Revert Palette", fontSize = fs.body) },
                                 enabled = hasPaletteOverride,
                                 onClick = {
                                     revertMenuExpanded = false
@@ -677,11 +696,11 @@ fun TilesetCanvas(
                                         reloadCurrentTileset()
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                             Divider()
                             DropdownMenuItem(
-                                text = { Text("Revert All", fontSize = 10.sp) },
+                                text = { Text("Revert All", fontSize = fs.body) },
                                 enabled = hasRevertOptions,
                                 onClick = {
                                     revertMenuExpanded = false
@@ -696,13 +715,13 @@ fun TilesetCanvas(
                                         reloadCurrentTileset()
                                     }
                                 },
-                                modifier = Modifier.height(28.dp)
+                                modifier = Modifier.height(32.dp)
                             )
                         }
                     }
 
-                    Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
-                    Text("${(zoomLevel * 100).toInt()}%", fontSize = 10.sp,
+                    Text("│", fontSize = fs.detail, color = MaterialTheme.colorScheme.outlineVariant)
+                    Text("${(zoomLevel * 100).toInt()}%", fontSize = fs.body,
                         color = MaterialTheme.colorScheme.onSurface)
             }
 
@@ -712,13 +731,13 @@ fun TilesetCanvas(
             ) {
                 when {
                     tilesetEditorState.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("Loading…", color = Color.White, fontSize = 12.sp)
+                        Text("Loading…", color = Color.White, fontSize = fs.body)
                     }
                     tilesetEditorState.errorMessage != null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text(tilesetEditorState.errorMessage!!, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                        Text(tilesetEditorState.errorMessage!!, color = MaterialTheme.colorScheme.error, fontSize = fs.body)
                     }
                     romParser == null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("Open a ROM first", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                        Text("Open a ROM first", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = fs.body)
                     }
                     gridData != null -> {
                         val data = gridData
@@ -879,11 +898,14 @@ private fun MetatileComposer(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (tableStatus.sourceManaged) {
-                    Text(
-                        if (tableStatus.editable) "ASM data" else "ASM only",
-                        fontSize = 9.sp,
-                        color = if (tableStatus.editable) Color(0xFF66BB6A) else Color(0xFFFFC857),
-                    )
+                    if (tableStatus.editable) {
+                        Text("ASM data", fontSize = 9.sp, color = Color(0xFF66BB6A))
+                    } else {
+                        AsmOnlyReasonBadge(
+                            tableStatus.message ?: "This metatile table uses a custom ASM source shape.",
+                            "metatile table",
+                        )
+                    }
                 }
                 if (!tileGraphics.isCreMetatileIndex(metatileIndex)) {
                     Text(
@@ -1308,6 +1330,7 @@ private fun TileToolbarInfo(
     previewVersion: Any?,
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val eff = editorState.getEffectiveTileDefault(tilesetId, metatileIndex)
     var blockType by remember(tilesetId, metatileIndex) { mutableStateOf(eff.blockType) }
     var bts by remember(tilesetId, metatileIndex) { mutableStateOf(eff.bts) }
@@ -1328,9 +1351,9 @@ private fun TileToolbarInfo(
     }
 
     val sourceText = when {
-        hasOverride -> "override"
-        hardcoded != null -> "hardcoded"
-        else -> "none"
+        hasOverride -> "Project default"
+        hardcoded != null -> "Built-in default"
+        else -> "No default"
     }
     val sourceColor = when {
         hasOverride -> Color(0xFF66BB6A)
@@ -1339,7 +1362,7 @@ private fun TileToolbarInfo(
     }
 
     Row(
-        modifier = modifier.height(28.dp),
+        modifier = modifier.height(32.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -1352,17 +1375,19 @@ private fun TileToolbarInfo(
             )
         }
 
-        val palText = if (palIndices.isNotEmpty()) " pal ${palIndices.sorted().joinToString(",")}" else ""
-        Text("#$metatileIndex (0x${metatileIndex.toString(16).uppercase().padStart(3, '0')})$palText",
-            fontSize = 10.sp)
+        val palText = if (palIndices.isNotEmpty()) " · pal ${palIndices.sorted().joinToString(",")}" else ""
+        Text(
+            "#$metatileIndex (0x${metatileIndex.toString(16).uppercase().padStart(3, '0')})$palText",
+            fontSize = fs.body,
+        )
 
-        Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+        Text("│", fontSize = fs.detail, color = MaterialTheme.colorScheme.outlineVariant)
 
         // Block Type dropdown
         var btExpanded by remember { mutableStateOf(false) }
         Box {
             Surface(
-                modifier = Modifier.width(140.dp).height(24.dp)
+                modifier = Modifier.width(144.dp).height(28.dp)
                     .clickable { btExpanded = true },
                 shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceVariant
@@ -1374,10 +1399,10 @@ private fun TileToolbarInfo(
                 ) {
                     Text(
                         "0x${blockType.toString(16).uppercase()} ${blockTypeName(blockType)}",
-                        fontSize = 9.sp,
+                        fontSize = fs.body,
                         modifier = Modifier.weight(1f)
                     )
-                    Text("▾", fontSize = 8.sp)
+                    Text("▾", fontSize = fs.detail)
                 }
             }
             DropdownMenu(expanded = btExpanded, onDismissRequest = { btExpanded = false }) {
@@ -1386,7 +1411,7 @@ private fun TileToolbarInfo(
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 RadioButton(selected = blockType == typeVal, onClick = null, modifier = Modifier.size(14.dp))
-                                Text("0x${typeVal.toString(16).uppercase()} $typeName", fontSize = 10.sp)
+                                Text("0x${typeVal.toString(16).uppercase()} $typeName", fontSize = fs.body)
                             }
                         },
                         onClick = {
@@ -1394,7 +1419,7 @@ private fun TileToolbarInfo(
                             blockType = typeVal
                             editorState.setTileDefault(tilesetId, metatileIndex, typeVal, bts)
                         },
-                        modifier = Modifier.height(26.dp)
+                        modifier = Modifier.height(32.dp)
                     )
                 }
             }
@@ -1406,7 +1431,7 @@ private fun TileToolbarInfo(
             var btsExpanded by remember { mutableStateOf(false) }
             Box {
                 Surface(
-                    modifier = Modifier.width(140.dp).height(24.dp)
+                    modifier = Modifier.width(144.dp).height(28.dp)
                         .clickable { btsExpanded = true },
                     shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surfaceVariant
@@ -1418,8 +1443,8 @@ private fun TileToolbarInfo(
                     ) {
                         val btsName = btsOptions.find { it.first == bts }?.second
                             ?: "0x${bts.toString(16).uppercase().padStart(2, '0')}"
-                        Text(btsName, fontSize = 9.sp, modifier = Modifier.weight(1f))
-                        Text("▾", fontSize = 8.sp)
+                        Text(btsName, fontSize = fs.body, modifier = Modifier.weight(1f))
+                        Text("▾", fontSize = fs.detail)
                     }
                 }
                 DropdownMenu(expanded = btsExpanded, onDismissRequest = { btsExpanded = false }) {
@@ -1428,7 +1453,7 @@ private fun TileToolbarInfo(
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     RadioButton(selected = bts == btsVal, onClick = null, modifier = Modifier.size(14.dp))
-                                    Text("0x${btsVal.toString(16).uppercase().padStart(2, '0')} $btsName", fontSize = 10.sp)
+                                    Text("0x${btsVal.toString(16).uppercase().padStart(2, '0')} $btsName", fontSize = fs.body)
                                 }
                             },
                             onClick = {
@@ -1436,17 +1461,17 @@ private fun TileToolbarInfo(
                                 bts = btsVal
                                 editorState.setTileDefault(tilesetId, metatileIndex, blockType, btsVal)
                             },
-                            modifier = Modifier.height(26.dp)
+                            modifier = Modifier.height(32.dp)
                         )
                     }
                 }
             }
         }
 
-        Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+        Text("│", fontSize = fs.detail, color = MaterialTheme.colorScheme.outlineVariant)
 
         // Source badge
-        Text(sourceText, fontSize = 8.sp, color = sourceColor)
+        Text(sourceText, fontSize = fs.detail, color = sourceColor)
 
         // Reset button
         if (hasOverride) {
@@ -1458,9 +1483,9 @@ private fun TileToolbarInfo(
                     bts = reverted.bts
                 },
                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                modifier = Modifier.height(22.dp)
+                modifier = Modifier.height(28.dp)
             ) {
-                Text("Reset", fontSize = 8.sp)
+                Text("Reset", fontSize = fs.detail)
             }
         }
     }

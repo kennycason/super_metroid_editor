@@ -152,9 +152,11 @@ import com.supermetroid.editor.asm.AsmAddressSpace
 import com.supermetroid.editor.asm.AsmBrowserMode
 import com.supermetroid.editor.asm.AsmBuildDiagnostic
 import com.supermetroid.editor.asm.AsmBuildReport
+import com.supermetroid.editor.asm.AsmCheckedHookCandidate
 import com.supermetroid.editor.asm.AsmCompletionEngine
 import com.supermetroid.editor.asm.AsmCompletionItem
 import com.supermetroid.editor.asm.AsmCompletionKind
+import com.supermetroid.editor.asm.AsmDirectiveInfo
 import com.supermetroid.editor.asm.AsmCompletionResult
 import com.supermetroid.editor.asm.AsmDiagnosticSeverity
 import com.supermetroid.editor.asm.AsmEditorLink
@@ -281,6 +283,13 @@ internal fun asmVisualEditorContextMenuItems(links: List<AsmEditorLink>, onOpen:
         ContextMenuItem(if (destinations.size == 1) "Visual Editor" else "Visual Editor…") { onOpen(destinations) },
     )
 }
+
+internal fun asmCheckedHookContextMenuItems(
+    nativeProjectSource: Boolean,
+    onCreate: () -> Unit,
+): List<ContextMenuItem> = if (nativeProjectSource) {
+    listOf(ContextMenuItem("Create Checked Hook…", onCreate))
+} else emptyList()
 
 @Composable
 @OptIn(ExperimentalComposeUiApi::class)
@@ -2101,6 +2110,7 @@ private fun AsmWorkspaceCanvasContent(
                                     isActivePane = pane.id == state.activeSourcePaneId,
                                     index = workspace.index,
                                     source = source,
+                                    romParser = romParser,
                                     semanticIndex = semanticIndex,
                                     onOpenInEditor = onOpenInEditor,
                                     onOpenRoomSource = onOpenRoomSource,
@@ -2353,12 +2363,15 @@ private fun AsmLibraryCanvas(
     modifier: Modifier,
 ) {
     val instruction = AsmInstructionReference.find(state.selectedInstruction)
+    val directive = AsmLibrary.directive(state.selectedLibraryDirective)
     val guide = if (instruction == null) AsmLibrary.guide(state.selectedLibraryPageId) ?: AsmLibrary.guides.first() else null
-    val title = instruction?.let { "${it.mnemonic} — ${it.name}" } ?: guide!!.title
-    val detail = instruction?.category?.displayName ?: "SNES ASM field guide"
+    val title = instruction?.let { "${it.mnemonic} — ${it.name}" }
+        ?: directive?.let { "${it.name} — Asar directive" }
+        ?: guide!!.title
+    val detail = instruction?.category?.displayName ?: if (directive != null) "Build-time assembler command" else "SNES ASM field guide"
     val listState = rememberLazyListState()
 
-    LaunchedEffect(state.navigationSerial, state.selectedLibraryPageId) {
+    LaunchedEffect(state.navigationSerial, state.selectedLibraryPageId, state.selectedLibraryDirective) {
         listState.scrollToItem(0)
     }
 
@@ -2398,6 +2411,9 @@ private fun AsmLibraryCanvas(
                         }
                         item { AsmLibraryAttribution() }
                     } else if (guide != null) {
+                        directive?.let { selected ->
+                            item { AsmDirectiveOverview(selected) }
+                        }
                         item {
                             Text(
                                 guide.summary,
@@ -2419,6 +2435,19 @@ private fun AsmLibraryCanvas(
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(ASM_SCROLLBAR_SIZE),
             )
         }
+    }
+}
+
+@Composable
+private fun AsmDirectiveOverview(directive: AsmDirectiveInfo) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Text(directive.summary, fontSize = fs.heading)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AsmFactChip("Directive", directive.name)
+            AsmFactChip("Common form", directive.form)
+        }
+        AsmLibraryCallout("Watch for", directive.practicalNote)
     }
 }
 
@@ -2906,6 +2935,7 @@ private fun AsmSourceCanvas(
     isActivePane: Boolean,
     index: AsmReferenceIndex,
     source: AsmSourceFile,
+    romParser: RomParser?,
     semanticIndex: AsmSemanticIndex?,
     onOpenInEditor: (AsmEditorTarget) -> Unit,
     onOpenRoomSource: ((AsmRoomSourceLink) -> Unit)?,
@@ -3168,6 +3198,7 @@ private fun AsmSourceCanvas(
                 state = state,
                 pane = pane,
                 source = source,
+                romParser = romParser,
                 onBuild = onBuildProject,
                 onRun = onRunInEmulator,
                 find = find,
@@ -3557,6 +3588,7 @@ private fun AsmEditableSourcePane(
     state: AsmWorkspaceState,
     pane: AsmSourcePaneState,
     source: AsmSourceFile,
+    romParser: RomParser?,
     onBuild: (() -> Unit)?,
     onRun: (() -> Unit)?,
     find: AsmDocumentFindState,
@@ -3567,6 +3599,7 @@ private fun AsmEditableSourcePane(
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
+    val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val sourceText = remember(source.id, state.sourceBufferRevision, state.editSessionSerial, state.roomSourceInspection) {
         state.sourceEditorText(source.id)
@@ -3616,6 +3649,62 @@ private fun AsmEditableSourcePane(
     var completionFromTyping by remember(pageKey) { mutableStateOf(false) }
     var selectedCompletionIndex by remember(pageKey) { mutableStateOf(0) }
     var dismissedCompletionSignature by remember(pageKey) { mutableStateOf<String?>(null) }
+    var checkedHookCandidate by remember(source.id) { mutableStateOf<AsmCheckedHookCandidate?>(null) }
+    var checkedHookName by remember(source.id) { mutableStateOf("") }
+    var checkedHookError by remember(source.id) { mutableStateOf<String?>(null) }
+    checkedHookError?.let { message ->
+        AlertDialog(
+            onDismissRequest = { checkedHookError = null },
+            title = { Text("Checked Hook Unavailable", fontSize = fs.heading) },
+            text = { Text(message, fontSize = fs.body) },
+            confirmButton = {
+                TextButton(onClick = { checkedHookError = null }) { Text("OK", fontSize = fs.body) }
+            },
+        )
+    }
+    checkedHookCandidate?.let { candidate ->
+        AlertDialog(
+            onDismissRequest = { checkedHookCandidate = null },
+            title = { Text("Create Checked Hook", fontSize = fs.heading) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "${formatSnesAddress(candidate.hookAddress)} → helper ${formatSnesAddress(candidate.helperAddress)}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = fs.body,
+                    )
+                    Text(
+                        "${candidate.displacedByteCount} native bytes will move into a verified free-space helper. SMEDIT will validate the detour, continuation, boundaries, and ownership on every build.",
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = checkedHookName,
+                        onValueChange = { checkedHookName = it },
+                        label = { Text("Module name", fontSize = fs.detail) },
+                        singleLine = true,
+                        textStyle = TextStyle(fontSize = fs.body, fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val selected = candidate
+                        val name = checkedHookName
+                        checkedHookCandidate = null
+                        scope.launch { state.createCheckedHookModule(selected, name) }
+                    },
+                    enabled = checkedHookName.isNotBlank() && !state.busy,
+                    shape = ASM_CONTROL_SHAPE,
+                ) { Text("Create hook", fontSize = fs.body) }
+            },
+            dismissButton = {
+                TextButton(onClick = { checkedHookCandidate = null }) { Text("Cancel", fontSize = fs.body) }
+            },
+        )
+    }
     LaunchedEffect(fieldValue.selection, fieldValue.text, pageKey) {
         onContextLineChanged(page.startLine + asmLineIndexAtOffset(fieldValue.text, fieldValue.selection.end.coerceIn(0, fieldValue.text.length)))
     }
@@ -3996,6 +4085,20 @@ private fun AsmEditableSourcePane(
                                     state.redoSourceEdit(source.id)
                                 })
                                 addAll(asmVisualEditorContextMenuItems(visualEditorLinksAt(contextLine), onOpenVisualEditors))
+                                addAll(asmCheckedHookContextMenuItems(
+                                    nativeProjectSource = romParser != null && !state.isProjectModule(source.id),
+                                ) {
+                                        state.activateSourcePane(pane.id)
+                                        val candidate = state.prepareCheckedHookCandidate(
+                                            source.id, contextLine, checkNotNull(romParser),
+                                        )
+                                        if (candidate == null) {
+                                            checkedHookError = state.error ?: "This instruction cannot be turned into a checked hook."
+                                        } else {
+                                            checkedHookName = "hook_${candidate.hookAddress.toString(16).uppercase()}"
+                                            checkedHookCandidate = candidate
+                                        }
+                                })
                                 add(ContextMenuItem("Find in this file\t$ASM_MODIFIER_LABEL+F") { find.show() })
                                 add(
                                 ContextMenuItem("Go to Definition\t$ASM_MODIFIER_LABEL+D") {
@@ -4448,6 +4551,7 @@ internal fun asmEditableReferenceIsNavigable(
     val tokenReference = asmEditableTokenAt(pageText, requestedOffset, pageStartLine) ?: return false
     val token = tokenReference.token
     if (state?.managedCodeLine(token) != null) return true
+    if (AsmLibrary.directive(token) != null) return true
     if (token.startsWith('"') && sourceIndex.resolveAsset(token.removeSurrounding("\"")) != null) return true
     if (token.startsWith('$')) {
         val resolution = parseAsmAddressQuery(token)?.let(sourceIndex.addressAtlas::resolve)
@@ -4510,6 +4614,10 @@ internal fun asmOpenEditableReference(
     }
     val reference = asmEditableSymbolAt(pageText, requestedOffset, pageStartLine) ?: return false
     if (state.openManagedCodeReference(reference.token)) return true
+    if (AsmLibrary.directive(reference.token) != null) {
+        state.openLibraryDirective(reference.token)
+        return true
+    }
     sourceIndex.macrosAt(fileId, reference.lineIndex)
         .firstOrNull { it.name.equals(reference.token, ignoreCase = true) }
         ?.let { macro ->
@@ -5775,8 +5883,4 @@ private val ASM_CONTEXT_MENU_WIDTH = 400.dp
 private const val MOUSE_BACK_BUTTON = 4
 private const val MOUSE_FORWARD_BUTTON = 5
 
-private val ASM_DIRECTIVES = setOf(
-    "org", "warnpc", "incsrc", "incbin", "lorom", "hirom", "math", "reset", "print", "assert",
-    "if", "else", "elseif", "endif", "while", "endwhile", "macro", "endmacro", "namespace", "struct", "endstruct",
-    "db", "dw", "dl", "dd", "fill", "fillbyte", "pad", "padbyte", "skip", "base", "table", "cleartable",
-)
+private val ASM_DIRECTIVES = AsmLibrary.directiveNames

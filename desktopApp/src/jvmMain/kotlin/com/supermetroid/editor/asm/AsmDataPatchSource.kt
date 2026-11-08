@@ -79,15 +79,6 @@ internal fun patchHex(value: Int, size: Int) = "$" + value.toUInt().toString(16)
 internal fun patchValueFits(value: Int, size: Int) = size == 4 || value in 0..if (size == 1) 255 else 65535
 
 private val patchWhitespace = Regex("[ \\t]+")
-private val patchInstructionWidths = buildMap<String, Int> {
-    for (op in "REP SEP BEQ BNE BPL BMI BCC BCS BVC BVS BRA".split(' ')) put(op, 2)
-    put("BRL", 3)
-    for (op in "PHP PLP PHB PLB PHK PHA PLA PHX PLX PHY PLY CLC SEC NOP RTS RTL TAX TXA TAY TYA TXY TYX INX DEX INY DEY INC DEC ASL LSR XBA".split(' ')) put(op, 1)
-    for (op in "LDA LDX LDY STA STX STY STZ CMP CPX CPY BIT TRB TSB AND ORA EOR ADC SBC INC DEC ASL LSR ROL ROR JSR JMP".split(' ')) put("$op.W", 3)
-    for (op in "LDA LDX LDY STA STX STY STZ CMP CPX CPY BIT AND ORA EOR ADC SBC".split(' ')) put("$op.B", 2)
-    for (op in "LDA STA CMP AND ORA EOR ADC SBC JSL JML".split(' ')) put("$op.L", 4)
-}
-
 /** Finite codecs for explicit native operands/data rows. No address-comment parsing or general Asar evaluation. */
 internal class AsmDataPatchSource(val originals: Map<String, String>, val symbolNames: AsmSourceSymbolNames = AsmSourceSymbolNames()) {
     val definitions = DATA_PATCH_DEFINITIONS.filter { def -> def.sites.all { it.file in originals } }.associateBy { it.id }
@@ -131,8 +122,8 @@ internal class AsmDataPatchSource(val originals: Map<String, String>, val symbol
         document(texts.getValue(file)).block(symbol).map { normalize(it.text) }
             .dropLastWhile { it.startsWith("ORG ") || it.startsWith("WARNPC ") }
     private fun width(code: String): Int {
-        val op = code.takeWhile { !it.isWhitespace() }.uppercase()
-        return patchInstructionWidths[op] ?: error("Unrecognized instruction before this field: $code. Edit its ASM directly.")
+        return AsmInstructionWidths.width(code)
+            ?: error("Unrecognized instruction before this field: $code. Edit its ASM directly.")
     }
     private fun tokens(code: Code): List<Pair<IntRange, String>> {
         val start = code.text.indexOfFirst { it.isWhitespace() } + 1

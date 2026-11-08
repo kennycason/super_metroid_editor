@@ -216,8 +216,10 @@ fun main() = application {
     var romLoadInFlight by remember { mutableStateOf(false) }
     var romLoadMessage by remember { mutableStateOf<String?>(null) }
     var romLoadMessageIsError by remember { mutableStateOf(false) }
-    val editorState = remember { EditorState() }
     val asmWorkspaceState = remember { AsmWorkspaceState() }
+    val editorState = remember(asmWorkspaceState) {
+        EditorState().apply { attachAsmWorkspaceState(asmWorkspaceState) }
+    }
     var showNewProject by remember { mutableStateOf(false) }
     var newProjectRom by remember { mutableStateOf<File?>(null) }
     var missingProjectRom by remember { mutableStateOf<OpenProject?>(null) }
@@ -774,6 +776,22 @@ fun main() = application {
                         editorState.refreshLinkedPlms()
                     }.onFailure { editorState.postStatus("Object/source linking unavailable: ${it.message}") }
                     editorState.objectPreviewLoading = false
+                }
+            }
+            val tilesetAsmRevision = editorState.asmTilesetSourceRevision
+            val hasUnsavedAsmSources = asmWorkspaceState.unsavedSourceFileIds.isNotEmpty()
+            LaunchedEffect(
+                editorState.projectFilePath,
+                tilesetAsmRevision,
+                hasUnsavedAsmSources,
+                romParser,
+            ) {
+                val parser = romParser
+                if (parser != null && tilesetAsmRevision >= 0 && !hasUnsavedAsmSources) {
+                    val refreshed = withContext(Dispatchers.Default) {
+                        editorState.refreshTilesetVisualsAfterAsmSave(parser)
+                    }
+                    if (refreshed) refreshCurrentEditorTilesetGrid()
                 }
             }
             LaunchedEffect(

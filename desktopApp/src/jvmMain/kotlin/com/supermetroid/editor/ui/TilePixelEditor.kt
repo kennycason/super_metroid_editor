@@ -119,6 +119,12 @@ fun TilePixelEditor(
     }?.toSet().orEmpty()
     val graphicsStatuses = editedKinds.associateWith { editorState.tilesetGraphicsEditingStatus(it) }
     val graphicsEditable = graphicsStatuses.values.all(TilesetGraphicsEditingStatus::editable)
+    val graphicsProblem = graphicsStatuses.values
+        .filterNot(TilesetGraphicsEditingStatus::editable)
+        .mapNotNull(TilesetGraphicsEditingStatus::message)
+        .distinct()
+        .joinToString("\n")
+        .ifBlank { "These tiles use a custom ASM source shape." }
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
 
@@ -383,19 +389,12 @@ fun TilePixelEditor(
                         fontSize = 10.sp, color = Color(0xFFB0B8D1)
                     )
                     if (graphicsStatuses.isNotEmpty() && graphicsStatuses.values.all { it.sourceManaged }) {
-                        Text(
-                            if (graphicsEditable) "ASM data" else "ASM only",
-                            fontSize = 9.sp,
-                            color = if (graphicsEditable) Color(0xFF66BB6A) else Color(0xFFFFC857),
-                        )
+                        if (graphicsEditable) {
+                            Text("ASM data", fontSize = 9.sp, color = Color(0xFF66BB6A))
+                        } else {
+                            AsmOnlyReasonBadge(graphicsProblem, "tile graphics")
+                        }
                     }
-                }
-                if (!graphicsEditable) {
-                    Text(
-                        "Tiles are ASM-only; edit their source directly.",
-                        fontSize = 9.sp,
-                        color = Color(0xFFFFC857),
-                    )
                 }
                 Spacer(Modifier.height(8.dp))
 
@@ -659,10 +658,9 @@ fun TilePixelEditor(
                 }
                 Spacer(Modifier.height(4.dp))
                 if (!paletteStatus.editable) {
-                    Text(
-                        "Palette is ASM-only; edit its source directly.",
-                        fontSize = 9.sp,
-                        color = Color(0xFFFFC857),
+                    AsmOnlyReasonBadge(
+                        paletteStatus.message ?: "This palette uses a custom ASM source shape.",
+                        "palette",
                     )
                 } else if (selectedColorIdx == 0) {
                     Text("Index 0 is transparent (cannot edit)", fontSize = 9.sp, color = Color(0xFF6A6F88))

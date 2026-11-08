@@ -270,7 +270,9 @@ class AsmBaselineDialogsTest {
             assertContains(texts(scene), "Plan fits")
             assertContains(texts(scene), "Room 91F8 level data")
             assertContains(texts(scene), "room-graph:project")
-            assertContains(texts(scene), "4.0 KiB → 3.8 KiB")
+            assertContains(texts(scene), "Allocatable before\n4.0 KiB")
+            assertContains(texts(scene), "Largest after\n3.8 KiB")
+            assertContains(texts(scene), "Verified free-space blocks")
             assertNotNull(tag(scene, "asm-space-bank-80"))
         }
     }

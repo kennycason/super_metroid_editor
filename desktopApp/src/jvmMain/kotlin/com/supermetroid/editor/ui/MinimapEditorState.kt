@@ -81,11 +81,14 @@ class MinimapEditorState {
     private var loadedSourceMap: MinimapData? = null
     private var loadedSourceStations: MapStationData? = null
     private var observedEditorEditVersion: Int = -1
+    private var observedAsmSourceRevision: Long? = null
     var areaReassignmentError by mutableStateOf<String?>(null)
         private set
     var sourceOwnershipProblem by mutableStateOf<String?>(null)
         private set
     var sourceBacked by mutableStateOf(false)
+        private set
+    var baselineRestoreAvailable by mutableStateOf(false)
         private set
 
     fun dismissAreaReassignmentError() {
@@ -109,6 +112,7 @@ class MinimapEditorState {
         val effective = effectiveData(parser, editorState, area)
         mapData = effective.first
         stationData = effective.second
+        observedAsmSourceRevision = editorState.asmPlmSourceBridge?.minimaps?.revision ?: -1
         if (resetHistory) {
             undoStack.clear()
             redoStack.clear()
@@ -176,6 +180,9 @@ class MinimapEditorState {
             sourceBacked = true
             val view = bridge.view(area)
             sourceOwnershipProblem = view.problem
+            val baseline = bridge.baselineView(area)
+            baselineRestoreAvailable = baseline.editable &&
+                (!view.editable || view.map != baseline.map || view.stations != baseline.stations)
             if (view.editable) {
                 val sourceMap = requireNotNull(view.map)
                 val sourceStations = requireNotNull(view.stations)
@@ -187,6 +194,7 @@ class MinimapEditorState {
         } else {
             sourceBacked = false
             sourceOwnershipProblem = null
+            baselineRestoreAvailable = false
         }
         loadedSourceMap = null
         loadedSourceStations = null
@@ -506,20 +514,33 @@ class MinimapEditorState {
     }
 
     private fun clearHistoryAfterExternalEdit(editorState: EditorState) {
-        if (observedEditorEditVersion >= 0 && observedEditorEditVersion != editorState.editVersion) {
-            undoStack.clear()
-            redoStack.clear()
-            pendingStroke = null
-            moveBuffer = null
-            moveBaseline = null
-            clearPointerMoveMode()
-            loadedParser?.let { parser ->
-                effectiveData(parser, editorState, selectedArea).let { (map, stations) ->
-                    mapData = map; stationData = stations
+        val asmRevision = editorState.asmPlmSourceBridge?.minimaps?.revision ?: -1
+        val editorChanged = observedEditorEditVersion >= 0 && observedEditorEditVersion != editorState.editVersion
+        val asmChanged = observedAsmSourceRevision?.let { it != asmRevision } == true
+        if (editorChanged || asmChanged) {
+            val previousSourceBacked = sourceBacked
+            val previousSourceMap = loadedSourceMap
+            val previousSourceStations = loadedSourceStations
+            val effective = loadedParser?.let { effectiveData(it, editorState, selectedArea) }
+            val selectedAreaSourceChanged = asmChanged &&
+                (previousSourceBacked != sourceBacked ||
+                    previousSourceMap != loadedSourceMap ||
+                    previousSourceStations != loadedSourceStations)
+            if (editorChanged || selectedAreaSourceChanged) {
+                undoStack.clear()
+                redoStack.clear()
+                pendingStroke = null
+                moveBuffer = null
+                moveBaseline = null
+                clearPointerMoveMode()
+                effective?.let { (map, stations) ->
+                    mapData = map
+                    stationData = stations
                 }
             }
         }
         observedEditorEditVersion = editorState.editVersion
+        observedAsmSourceRevision = asmRevision
     }
 
     /** Context/select a room without implicitly committing a floating preview. */
@@ -762,6 +783,50 @@ class MinimapEditorState {
 
     // ─── Project persistence ───
 
+    fun restoreSelectedAreaBaseline(editorState: EditorState): Boolean {
+        val parser = loadedParser ?: return false
+        if (pendingStroke != null || moveBuffer != null) {
+            editorState.postStatus("Finish the map stroke or Apply/Cancel the floating room before restoring defaults.")
+            return false
+        }
+        val bridge = editorState.asmPlmSourceBridge?.minimaps
+        if (editorState.project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE || bridge?.isAvailable() != true) {
+            editorState.postStatus("The project ASM minimap baseline is unavailable.")
+            return false
+        }
+        val plan = runCatching { bridge.planBaselineRestore(selectedArea) }.getOrElse { problem ->
+            editorState.postStatus(problem.message ?: "The project ASM minimap baseline cannot be restored.")
+            return false
+        }
+        if (plan.replacements.isEmpty()) {
+            baselineRestoreAvailable = false
+            editorState.postStatus("${MinimapData.AREA_NAMES[selectedArea]} already matches the project ASM baseline.")
+            return true
+        }
+        val before = captureSnapshot(editorState)
+        val history = runCatching {
+            bridge.apply(plan, editorState.project) { editorState.notifyProjectMutation(parser) }
+        }.getOrElse { problem ->
+            editorState.postStatus(problem.message ?: "The project ASM minimap baseline could not be restored.")
+            return false
+        }
+        effectiveData(parser, editorState, selectedArea).let { (map, stations) ->
+            mapData = map
+            stationData = stations
+        }
+        val marker = before.copy(sourceHistory = history)
+        undoStack.add(marker)
+        if (undoStack.size > 100) undoStack.removeAt(0)
+        redoStack.clear()
+        wireSourceHistory(before, marker, history, parser, editorState)
+        observedEditorEditVersion = editorState.editVersion
+        observedAsmSourceRevision = bridge.revision
+        editorState.postStatus(
+            "Restored ${MinimapData.AREA_NAMES[selectedArea]} map tiles and station reveal to the project ASM baseline."
+        )
+        return true
+    }
+
     private fun saveEditsToProject(editorState: EditorState): Boolean {
         val parser = loadedParser ?: return false
         val bridge = editorState.asmPlmSourceBridge?.minimaps
@@ -788,6 +853,7 @@ class MinimapEditorState {
             loadedSourceMap = mapData.copy(tiles = mapData.tiles.copyOf())
             loadedSourceStations = stationData.copy(revealed = stationData.revealed.copyOf())
             observedEditorEditVersion = editorState.editVersion
+            observedAsmSourceRevision = bridge.revision
             return true
         }
         persistMinimapData(parser, editorState.project, mapData)

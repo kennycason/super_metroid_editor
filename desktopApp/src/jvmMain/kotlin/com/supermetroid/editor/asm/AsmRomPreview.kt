@@ -27,6 +27,15 @@ internal data class AsmRomSpaceOwner(
     val kinds: Set<String>,
 )
 
+internal data class AsmRomSpaceRange(
+    val pcStart: Int,
+    val length: Int,
+    val fillByte: Int,
+    val label: String,
+) {
+    val endExclusive: Int get() = pcStart + length
+}
+
 internal data class AsmRomSpaceBank(
     val bank: Int,
     val pcStart: Int,
@@ -36,6 +45,11 @@ internal data class AsmRomSpaceBank(
     val fillByte: Int,
     val placements: List<AsmRomSpacePlacement>,
     val owners: List<AsmRomSpaceOwner>,
+    val largestBefore: Int = availableBefore,
+    val largestAfter: Int = remainingAfter,
+    val rangesAfter: List<AsmRomSpaceRange> = if (remainingAfter > 0) {
+        listOf(AsmRomSpaceRange(pcStart + capacityBytes - remainingAfter, remainingAfter, fillByte, "Trailing bank space"))
+    } else emptyList(),
 ) {
     val consumedBytes: Int get() = (availableBefore - remainingAfter).coerceAtLeast(0)
 }
@@ -49,7 +63,7 @@ internal data class AsmRomSpacePlan(
     val availableBefore: Int get() = banks.sumOf(AsmRomSpaceBank::availableBefore)
     val remainingAfter: Int get() = banks.sumOf(AsmRomSpaceBank::remainingAfter)
     val consumedBytes: Int get() = banks.sumOf(AsmRomSpaceBank::consumedBytes)
-    val largestRemainingBank: AsmRomSpaceBank? get() = banks.maxByOrNull(AsmRomSpaceBank::remainingAfter)
+    val largestRemainingBank: AsmRomSpaceBank? get() = banks.maxByOrNull(AsmRomSpaceBank::largestAfter)
 
     companion object {
         fun create(
@@ -96,11 +110,21 @@ internal data class AsmRomSpacePlan(
                     bank = finalBank.bank,
                     pcStart = pcStart,
                     capacityBytes = finalBank.capacityBytes,
-                    availableBefore = initialBank.availableBytes,
-                    remainingAfter = finalBank.availableBytes,
+                    availableBefore = initialBank.totalAvailableBytes,
+                    remainingAfter = finalBank.totalAvailableBytes,
                     fillByte = finalBank.fillByte,
                     placements = placementsByBank[finalBank.bank].orEmpty().sortedBy(AsmRomSpacePlacement::pcOffset),
                     owners = owners,
+                    largestBefore = initialBank.largestAvailableBytes,
+                    largestAfter = finalBank.largestAvailableBytes,
+                    rangesAfter = finalBank.ranges.map { range ->
+                        AsmRomSpaceRange(
+                            pcStart = range.pcStart - headerSize,
+                            length = range.length,
+                            fillByte = range.fillByte,
+                            label = range.label,
+                        )
+                    },
                 )
             }.sortedBy(AsmRomSpaceBank::bank)
             return AsmRomSpacePlan(bodySize, banks)

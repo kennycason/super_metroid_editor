@@ -16,6 +16,9 @@ class RomFreeSpaceAllocator(
     private val onReserve: (RomAllocation) -> Unit = {},
     /** Full live source ranges, including bytes which happen to equal erased fill. */
     private val excludedRanges: List<IntRange> = emptyList(),
+    /** Audited interior ranges. When present for a bank, allocation is limited
+     * to these ranges instead of guessing from the bank's trailing bytes. */
+    private val verifiedFreeRanges: List<RomVerifiedFreeRange> = emptyList(),
 ) {
     private class SessionState {
         val nextFreeByBank = mutableMapOf<Int, Int>()
@@ -24,6 +27,7 @@ class RomFreeSpaceAllocator(
     }
 
     private var sessionState = SessionState()
+    private val verifiedCatalogActive: Boolean get() = verifiedFreeRanges.isNotEmpty()
 
     private constructor(
         romData: ByteArray,
@@ -34,8 +38,23 @@ class RomFreeSpaceAllocator(
         onReserve: (RomAllocation) -> Unit,
         sessionState: SessionState,
         excludedRanges: List<IntRange>,
-    ) : this(romData, snesToPc, pcToSnes, guardBytes, freeFillByteForBank, onReserve, excludedRanges) {
+        verifiedFreeRanges: List<RomVerifiedFreeRange>,
+    ) : this(
+        romData, snesToPc, pcToSnes, guardBytes, freeFillByteForBank, onReserve,
+        excludedRanges, verifiedFreeRanges,
+    ) {
         this.sessionState = sessionState
+    }
+
+    init {
+        require(verifiedFreeRanges.all { range ->
+            range.bank in 0x80..0xFF && range.pcStart >= 0 &&
+                range.pcEndExclusive > range.pcStart && range.pcEndExclusive <= romData.size &&
+                range.fillByte in 0..0xFF && range.label.isNotBlank()
+        }) { "Invalid verified ROM free-space range" }
+        require(verifiedFreeRanges.sortedBy(RomVerifiedFreeRange::pcStart).zipWithNext().all { (a, b) ->
+            a.pcEndExclusive <= b.pcStart
+        }) { "Verified ROM free-space ranges overlap" }
     }
 
     /**
@@ -57,6 +76,7 @@ class RomFreeSpaceAllocator(
             },
             sessionState = sessionState,
             excludedRanges = excludedRanges,
+            verifiedFreeRanges = verifiedFreeRanges,
         )
 
     /** Protect live source bytes for this entire export session, including existing observer views. */
@@ -115,7 +135,7 @@ class RomFreeSpaceAllocator(
         require(allocation.pcOffset >= 0 && allocation.pcOffset + bytes.size <= romData.size) {
             "allocation ${allocation.label} is outside ROM bounds"
         }
-        val freeFillByte = freeFillByteForBank(allocation.bank).also {
+        val freeFillByte = (allocation.fillByte ?: freeFillByteForBank(allocation.bank)).also {
             require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
         }
         for (i in bytes.indices) {
@@ -139,6 +159,34 @@ class RomFreeSpaceAllocator(
 
     private fun inspectBank(bank: Int): RomFreeSpaceBank? {
         val (bankStart, bankEndExclusive) = bankBounds(bank) ?: return null
+        val verified = verifiedFreeRanges.filter { it.bank == bank }
+        if (verified.isNotEmpty()) {
+            val ranges = verifiedSegments(bank)
+            val first = ranges.firstOrNull()
+            return RomFreeSpaceBank(
+                bank = bank,
+                pcStart = bankStart,
+                pcEndExclusive = bankEndExclusive,
+                nextFreePcOffset = first?.pcStart ?: bankEndExclusive,
+                availableBytes = ranges.maxOfOrNull(RomFreeSpaceRange::length) ?: 0,
+                fillByte = first?.fillByte ?: verified.first().fillByte,
+                ranges = ranges,
+            )
+        }
+        if (verifiedCatalogActive) {
+            val fillByte = freeFillByteForBank(bank).also {
+                require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
+            }
+            return RomFreeSpaceBank(
+                bank = bank,
+                pcStart = bankStart,
+                pcEndExclusive = bankEndExclusive,
+                nextFreePcOffset = bankEndExclusive,
+                availableBytes = 0,
+                fillByte = fillByte,
+                ranges = emptyList(),
+            )
+        }
         val freeFillByte = freeFillByteForBank(bank).also {
             require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
         }
@@ -159,13 +207,17 @@ class RomFreeSpaceAllocator(
         ) {
             availableEnd++
         }
+        val availableBytes = availableEnd - cursor
         return RomFreeSpaceBank(
             bank = bank,
             pcStart = bankStart,
             pcEndExclusive = bankEndExclusive,
             nextFreePcOffset = cursor,
-            availableBytes = availableEnd - cursor,
+            availableBytes = availableBytes,
             fillByte = freeFillByte,
+            ranges = if (availableBytes > 0) {
+                listOf(RomFreeSpaceRange(cursor, availableEnd, freeFillByte, "Trailing bank space"))
+            } else emptyList(),
         )
     }
 
@@ -175,6 +227,21 @@ class RomFreeSpaceAllocator(
         label: String,
         alignment: Int,
     ): RomAllocation? {
+        if (verifiedCatalogActive) {
+            val segment = verifiedSegments(bank).firstOrNull { range ->
+                val start = alignUp(range.pcStart, alignment)
+                start + size <= range.pcEndExclusive
+            } ?: return null
+            val pcOffset = alignUp(segment.pcStart, alignment)
+            return RomAllocation(
+                bank = bank,
+                pcOffset = pcOffset,
+                snesAddress = pcToSnes(pcOffset),
+                size = size,
+                label = label,
+                fillByte = segment.fillByte,
+            ).also { sessionState.reservations += it; onReserve(it) }
+        }
         val (bankStart, bankEndExclusive) = bankBounds(bank) ?: return null
 
         val freeFillByte = freeFillByteForBank(bank).also {
@@ -204,6 +271,46 @@ class RomFreeSpaceAllocator(
             label = label,
         ).also { sessionState.reservations += it; onReserve(it) }
     }
+
+    /** Every returned segment is both source-verified and currently writable.
+     * Protection and unwritten reservations split ranges instead of causing the
+     * whole bank to be discarded, exposing real fragmentation to the planner. */
+    private fun verifiedSegments(bank: Int): List<RomFreeSpaceRange> = buildList {
+        val sourceBlockers = excludedRanges + sessionState.protectedRanges
+        val reservationBlockers = sessionState.reservations.map {
+            it.pcOffset until it.pcOffset + it.size
+        }
+        val blockers = sourceBlockers + reservationBlockers
+        verifiedFreeRanges.asSequence().filter { it.bank == bank }.sortedBy { it.pcStart }.forEach { verified ->
+            var cursor = verified.pcStart
+            while (cursor < verified.pcEndExclusive) {
+                while (cursor < verified.pcEndExclusive && !verifiedByteAvailable(cursor, verified.fillByte, blockers)) cursor++
+                val rawStart = cursor
+                while (cursor < verified.pcEndExclusive && verifiedByteAvailable(cursor, verified.fillByte, blockers)) cursor++
+                if (cursor > rawStart) {
+                    // Guard the source-declared edge and unknown/live source
+                    // blockers. Session reservations already own an exact end;
+                    // adding a fresh guard after every allocation would leak
+                    // bytes and make repeated planning disagree with placement.
+                    val needsGuard = rawStart == verified.pcStart || rawStart <= 0 ||
+                        sourceBlockers.any { rawStart - 1 in it } ||
+                        reservationBlockers.none { rawStart - 1 in it }
+                    val guardedStart = (rawStart + if (needsGuard) guardBytes else 0).coerceAtMost(cursor)
+                    if (guardedStart < cursor) add(
+                        RomFreeSpaceRange(
+                            pcStart = guardedStart,
+                            pcEndExclusive = cursor,
+                            fillByte = verified.fillByte,
+                            label = verified.label,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun verifiedByteAvailable(pc: Int, fillByte: Int, blockers: List<IntRange>): Boolean =
+        (romData[pc].toInt() and 0xFF) == fillByte && blockers.none { pc in it }
 
     private fun scanTrailingFreeStart(bankStart: Int, bankEndExclusive: Int, freeFillByte: Int): Int {
         var firstTrailingFree = bankEndExclusive
@@ -239,7 +346,30 @@ data class RomAllocation(
     val snesAddress: Int,
     val size: Int,
     val label: String,
+    /** Exact erased byte for a verified interior range; null uses the bank policy. */
+    val fillByte: Int? = null,
 )
+
+/** Source-audited allocation envelope, expressed as canonical headerless PC offsets. */
+data class RomVerifiedFreeRange(
+    val bank: Int,
+    val pcStart: Int,
+    val pcEndExclusive: Int,
+    val fillByte: Int,
+    val label: String,
+) {
+    val length: Int get() = pcEndExclusive - pcStart
+}
+
+/** One currently usable fragment inside a verified envelope. */
+data class RomFreeSpaceRange(
+    val pcStart: Int,
+    val pcEndExclusive: Int,
+    val fillByte: Int,
+    val label: String,
+) {
+    val length: Int get() = pcEndExclusive - pcStart
+}
 
 data class RomFreeSpaceBank(
     val bank: Int,
@@ -250,8 +380,13 @@ data class RomFreeSpaceBank(
     /** Contiguous bytes the next reservation can consume from [nextFreePcOffset]. */
     val availableBytes: Int,
     val fillByte: Int,
+    val ranges: List<RomFreeSpaceRange> = if (availableBytes > 0) {
+        listOf(RomFreeSpaceRange(nextFreePcOffset, nextFreePcOffset + availableBytes, fillByte, "Trailing bank space"))
+    } else emptyList(),
 ) {
     val capacityBytes: Int get() = pcEndExclusive - pcStart
+    val totalAvailableBytes: Int get() = ranges.sumOf(RomFreeSpaceRange::length)
+    val largestAvailableBytes: Int get() = ranges.maxOfOrNull(RomFreeSpaceRange::length) ?: 0
 }
 
 data class RomFreeSpaceSnapshot(
