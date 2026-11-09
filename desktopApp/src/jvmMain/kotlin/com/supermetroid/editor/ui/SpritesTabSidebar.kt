@@ -220,6 +220,7 @@ internal fun SpritesTabCanvas(
     selectedSpriteIdx: Int,
     romParser: RomParser?,
     editorState: EditorState,
+    onSelectSprite: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     VISUAL_SPRITE_WORKSPACES.firstOrNull { it.index == selectedSpriteIdx }?.let {
@@ -243,7 +244,13 @@ internal fun SpritesTabCanvas(
             0xEEFF -> TorizoSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xEC3F -> MotherBrainSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xE17F -> RidleySpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            else -> EnemySpriteViewer(entry = selected, romParser = romParser, editorState = editorState, modifier = modifier)
+            else -> EnemySpriteViewer(
+                entry = selected,
+                romParser = romParser,
+                editorState = editorState,
+                onSelectSprite = onSelectSprite,
+                modifier = modifier,
+            )
         }
     }
 }

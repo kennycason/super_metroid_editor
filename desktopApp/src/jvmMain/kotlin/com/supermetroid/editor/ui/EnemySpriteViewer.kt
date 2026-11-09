@@ -46,10 +46,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.EnemySpritemap
+import com.supermetroid.editor.rom.EnemyPreviewTileSource
 import com.supermetroid.editor.rom.GifEncoder
 import com.supermetroid.editor.rom.BossPoseScanner
 import com.supermetroid.editor.rom.MiniKraidSpritemap
+import com.supermetroid.editor.rom.NativeSpriteAssets
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomVisualAssets
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
 import com.supermetroid.editor.rom.SourceEnemyAnimations
@@ -63,11 +66,24 @@ import javax.imageio.ImageIO
 import javax.swing.JFileChooser
 import javax.swing.filechooser.FileNameExtensionFilter
 
+internal fun sharedSpriteSourceEditorIndex(source: EnemyPreviewTileSource): Int? {
+    source.sourceSpeciesId?.let { owner ->
+        EnemySpriteGraphics.EDITOR_ENEMIES.indexOfFirst { it.speciesId == owner }
+            .takeIf { it >= 0 }
+            ?.let { return it }
+    }
+    val nativeAsset = RomVisualAssets.ASSETS.firstOrNull { it.graphics == source.snesAddress }
+        ?.takeIf { runCatching { NativeSpriteAssets.source(NativeSpriteAssets.key(it.graphics)) }.isSuccess }
+        ?: return null
+    return VISUAL_SPRITE_WORKSPACES.firstOrNull { it.group == nativeAsset.group }?.index
+}
+
 @Composable
 fun EnemySpriteViewer(
     entry: EnemySpriteGraphics.Companion.EnemySpriteEntry,
     romParser: RomParser?,
     editorState: EditorState,
+    onSelectSprite: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val rp = romParser
@@ -253,6 +269,16 @@ fun EnemySpriteViewer(
                 }
                 if (previewTileSource?.editable == false) {
                     InfoRow("Preview GFX", "${previewTileSource.label} (read-only)")
+                    val editorIndex = sharedSpriteSourceEditorIndex(previewTileSource)
+                    if (editorIndex != null && onSelectSprite != null) {
+                        Button(
+                            onClick = { onSelectSprite(editorIndex) },
+                            modifier = Modifier.height(28.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        ) {
+                            Text("Edit real source", fontSize = 10.sp)
+                        }
+                    }
                 }
             }
         }

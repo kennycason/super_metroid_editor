@@ -712,12 +712,7 @@ private fun KraidAnimationsTab(
                     fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                AnimationPlayer(
-                    animation = previewAnimation,
-                    previewSize = 420,
-                    showExportButtons = false,
-                    modifier = Modifier.weight(1f),
-                )
+                NativeSpriteAnimationPlayer(previewAnimation, Modifier.weight(1f), previewSize = 420)
             }
         }
     }

@@ -1629,6 +1629,9 @@ fun main() = application {
                                         selectedSpriteIdx = selectedSpriteIdx,
                                         romParser = romParser,
                                         editorState = editorState,
+                                        onSelectSprite = { spriteIndex ->
+                                            if (selectedSpriteIdx != spriteIndex) navigate { selectedSpriteIdx = spriteIndex }
+                                        },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     TAB_MAP -> MinimapCanvas(

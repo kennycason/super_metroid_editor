@@ -642,12 +642,7 @@ private fun AnimationsTab(
                     fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                AnimationPlayer(
-                    animation = animation,
-                    previewSize = 420,
-                    showExportButtons = false,
-                    modifier = Modifier.weight(1f),
-                )
+                NativeSpriteAnimationPlayer(animation, Modifier.weight(1f), previewSize = 420)
             }
         }
     }

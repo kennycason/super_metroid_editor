@@ -84,7 +84,6 @@ fun AnimationPlayer(
     onExportPng: ((SpriteAnimationFrame, Int) -> Unit)? = null,
     onExportGif: ((SpriteAnimation) -> Unit)? = null,
     onExportSheet: ((SpriteAnimation) -> Unit)? = null,
-    showExportButtons: Boolean = true
 ) {
     if (animation == null || animation.frames.isEmpty()) {
         Box(modifier.size(previewSize.dp), contentAlignment = Alignment.Center) {
@@ -334,7 +333,7 @@ fun AnimationPlayer(
         }
 
         // ── Export buttons ──
-        if (showExportButtons && (onExportPng != null || onExportGif != null || onExportSheet != null)) {
+        if (onExportPng != null || onExportGif != null || onExportSheet != null) {
             Spacer(Modifier.height(8.dp))
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),

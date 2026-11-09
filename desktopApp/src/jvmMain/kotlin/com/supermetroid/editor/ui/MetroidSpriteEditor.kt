@@ -168,8 +168,7 @@ private fun MetroidAnimationsTab(
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            AnimationPlayer(animation, previewSize = 440, showExportButtons = false,
-                modifier = Modifier.weight(1f))
+            NativeSpriteAnimationPlayer(animation, Modifier.weight(1f), previewSize = 440)
         },
     )
 }

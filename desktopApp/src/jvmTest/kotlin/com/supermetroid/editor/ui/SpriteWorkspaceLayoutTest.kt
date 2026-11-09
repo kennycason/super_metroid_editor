@@ -72,6 +72,25 @@ class SpriteWorkspaceLayoutTest {
     }
 
     @Test
+    fun `shared native animation player keeps every export action visible`() {
+        val frames = listOf(
+            SpriteAnimationFrame(IntArray(16), 4, 4, durationTicks = 4, label = "first"),
+            SpriteAnimationFrame(IntArray(16), 4, 4, durationTicks = 6, label = "second"),
+        )
+        for (width in listOf(700, 1200)) for (font in FontSize.entries) {
+            withScene(width, font, content = {
+                NativeSpriteAnimationPlayer(SpriteAnimation("Export fixture", frames, loop = true))
+            }) { scene, _, _ ->
+                for (label in listOf("Frame PNG", "Animation GIF", "Sprite Sheet")) {
+                    val action = nodes(scene).single { text(it) == label }
+                    assertTrue(action.boundsInRoot.left >= 0 && action.boundsInRoot.right <= width, "$width/$font/$label")
+                    assertTrue(action.boundsInRoot.top >= 0 && action.boundsInRoot.bottom <= 800, "$width/$font/$label")
+                }
+            }
+        }
+    }
+
+    @Test
     fun `Samus background and animation checkerboard follow both editor themes`() {
         val parser = TestRomHelper.requireRomParser()
         for (theme in EditorTheme.entries) {

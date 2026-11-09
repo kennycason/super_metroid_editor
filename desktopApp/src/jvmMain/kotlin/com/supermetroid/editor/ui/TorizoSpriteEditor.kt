@@ -216,7 +216,7 @@ private fun TorizoAnimationsTab(
                 else "Bank \$86 instruction timing + bank \$8D projectile OAM",
                 fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            AnimationPlayer(animation, previewSize = 440, showExportButtons = false, modifier = Modifier.weight(1f))
+            NativeSpriteAnimationPlayer(animation, Modifier.weight(1f), previewSize = 440)
         },
     )
 }

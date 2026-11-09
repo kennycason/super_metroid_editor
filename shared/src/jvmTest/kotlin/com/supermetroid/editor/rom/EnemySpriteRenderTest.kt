@@ -11,7 +11,6 @@ class EnemySpriteRenderTest {
     @Test
     fun `enemy palette auto-detect picks correct row for all editor enemies`() {
         val rp = loadTestRom() ?: return
-        val rom = rp.getRomData()
 
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES.filter { it.category != "Boss" }) {
             val palette = EnemySpriteGraphics.readEnemyPalette(rp, entry.speciesId)
@@ -38,7 +37,7 @@ class EnemySpriteRenderTest {
     }
 
     @Test
-    fun `enemy tile data decompresses to correct size for all editor enemies`() {
+    fun `enemy preview tile source resolves to the owned or shared runtime bytes`() {
         val rp = loadTestRom() ?: return
 
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES.filter { it.category != "Boss" }) {
@@ -46,17 +45,22 @@ class EnemySpriteRenderTest {
             assertNotNull(stats, "${entry.name} stats should not be null")
             val (expectedSize, _, _) = stats!!
 
-            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, entry.speciesId)
-            assertNotNull(tileData, "${entry.name} tile data should not be null")
-            tileData!!
-            assertEquals(expectedSize, tileData.size,
-                "${entry.name} tile data should be $expectedSize bytes")
+            val source = EnemySpriteGraphics.loadEnemyPreviewTileSource(rp, entry.speciesId)
+            assertNotNull(source, "${entry.name} preview tile source should not be null")
+            source!!
+            if (source.editable) {
+                assertEquals(expectedSize, source.bytes.size,
+                    "${entry.name} owned tile data should be $expectedSize bytes")
+            } else {
+                assertNotEquals(EnemyPreviewAssetOwnership.SPECIES_HEADER, source.ownership,
+                    "${entry.name} borrowed runtime tiles must not claim species ownership")
+            }
 
-            val nonZero = tileData.count { it.toInt() != 0 }
-            assertTrue(nonZero > tileData.size / 10,
-                "${entry.name} should have >10% non-zero bytes, got ${nonZero * 100 / tileData.size}%")
+            val nonZero = source.bytes.count { it.toInt() != 0 }
+            assertTrue(nonZero > source.bytes.size / 10,
+                "${entry.name} should have >10% non-zero bytes, got ${nonZero * 100 / source.bytes.size}%")
 
-            println("${entry.name}: ${tileData.size} bytes, ${nonZero * 100 / tileData.size}% non-zero")
+            println("${entry.name}: ${source.bytes.size} bytes, ${nonZero * 100 / source.bytes.size}% non-zero")
         }
     }
 
@@ -65,10 +69,10 @@ class EnemySpriteRenderTest {
         val rp = loadTestRom() ?: return
 
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES.filter { it.category != "Boss" }) {
-            val palette = EnemySpriteGraphics.readEnemyPalette(rp, entry.speciesId)
+            val palette = EnemySpriteGraphics.loadEnemyPreviewPaletteSource(rp, entry.speciesId)?.colors
             assertNotNull(palette, "${entry.name} palette")
-            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, entry.speciesId)
-            assertNotNull(tileData, "${entry.name} tile data")
+            val tileData = EnemySpriteGraphics.loadEnemyPreviewTileSource(rp, entry.speciesId)?.bytes
+            assertNotNull(tileData, "${entry.name} preview tile data")
 
             val gfx = EnemySpriteGraphics(rp)
             gfx.loadFromRaw(listOf(tileData!!))
