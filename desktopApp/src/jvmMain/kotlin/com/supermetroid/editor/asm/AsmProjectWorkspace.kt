@@ -459,7 +459,7 @@ internal class AsmProjectWorkspaceRepository(
         requestedName: String,
         description: String = "",
         initialSource: String? = null,
-    ): Pair<AsmProjectWorkspace, String> {
+    ): Pair<AsmProjectWorkspace, String> = withSourceLock(projectFilePath) {
         val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
         val modulesDirectory = File(current.root, MODULES_DIRECTORY)
         ensureProjectModuleDirectory(modulesDirectory)
@@ -473,7 +473,7 @@ internal class AsmProjectWorkspaceRepository(
         writeModuleOrder(modulesDirectory, order)
         syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))
         val fileId = ASM_PROJECT_MODULE_PREFIX + fileName
-        return checkNotNull(load(projectFilePath)) {
+        checkNotNull(load(projectFilePath)) {
             "Project ASM workspace did not validate after creating $fileName"
         } to fileId
     }

@@ -84,14 +84,15 @@ jobs:
       - name: Bootstrap Gradle wrapper
         shell: bash
         run: |
-          for attempt in 1 2 3; do
+          for retry_delay in 15 30 60 120 120 0; do
             if ./gradlew --version; then
               exit 0
             fi
-            if [ "$attempt" -eq 3 ]; then
+            if [ "$retry_delay" -eq 0 ]; then
               exit 1
             fi
-            sleep $((attempt * 10))
+            echo "Gradle distribution download failed; retrying in ${retry_delay}s..."
+            sleep "$retry_delay"
           done
 
       - name: Build and verify packaged SPC runtime

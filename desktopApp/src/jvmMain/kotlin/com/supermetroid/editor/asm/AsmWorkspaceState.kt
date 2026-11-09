@@ -1172,7 +1172,9 @@ internal class AsmWorkspaceState(
         val source = requireNotNull(active.referenceWorkspace.index.file(fileId)) {
             "ASM source $fileId is unavailable. Wait for indexing or repair the project source."
         }
-        val text = source.file.readText()
+        val text = projectRepository.withBaselineUpdateLock(boundProjectFilePath) {
+            source.file.readText()
+        }
         savedSourceTexts[fileId] = text
         sourceBuffers[fileId] = text
         return text
