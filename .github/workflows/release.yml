@@ -81,6 +81,19 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      - name: Bootstrap Gradle wrapper
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew --version; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
       - name: Build and verify packaged SPC runtime
         run: ./gradlew :shared:spcRuntimeSmokeTest
         shell: bash
