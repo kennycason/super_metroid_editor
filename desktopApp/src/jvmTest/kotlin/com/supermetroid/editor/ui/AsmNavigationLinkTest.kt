@@ -44,6 +44,10 @@ class AsmNavigationLinkTest {
 
     @Test fun `mode toggles invalidate shortcuts even when the project is already dirty`() {
         val editor = EditorState().apply { testMode = true; markDirty() }
+        // State created since the last global snapshot advance is treated as initialization,
+        // so a same-snapshot write is not reported to apply observers. Make the boundary
+        // explicit instead of depending on whichever Compose test happened to run first.
+        Snapshot.notifyObjectsInitialized()
         val observer = SnapshotStateObserver { it() }
         var invalidations = 0
         val scope = Any()
