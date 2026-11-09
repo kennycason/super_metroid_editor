@@ -4,8 +4,22 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import kotlin.test.assertFailsWith
 
 class TextDataTest {
+
+    @Test
+    fun `native green text rejects characters beyond fixed record slots`() {
+        val twoCharacters = byteArrayOf(
+            0, 0, 1, 1, 0x85.toByte(), 0xD6.toByte(),
+            0, 0, 2, 1, 0x8B.toByte(), 0xD6.toByte(),
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            TextData.encodeGreenText("ABC", twoCharacters)
+        }
+        assertEquals(twoCharacters.size, TextData.encodeGreenText("AB", twoCharacters).size)
+    }
 
     @Test
     fun `green text decodes intro story from ROM`() {

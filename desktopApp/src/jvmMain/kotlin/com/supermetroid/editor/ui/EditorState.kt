@@ -68,6 +68,9 @@ import com.supermetroid.editor.data.ProjectNewRoomHeader
 import com.supermetroid.editor.data.ProjectNewRoomOrigin
 import com.supermetroid.editor.data.ProjectNewRoomState
 import com.supermetroid.editor.data.ProjectPlmEntry
+import com.supermetroid.editor.data.IntroImageSource
+import com.supermetroid.editor.data.IntroScene
+import com.supermetroid.editor.data.IntroSceneLayout
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.procgen.BiomeGenerator
@@ -1204,6 +1207,9 @@ class EditorState(
 
     internal fun patchHasCustomSettings(patch: SmPatch): Boolean =
         (patch.configType == com.supermetroid.editor.rom.RoomNamePauseMapPatch.CONFIG_TYPE && project.roomNameOverrides.isNotEmpty()) ||
+        (patch.configType == INTRO_SEQUENCE_CONFIG_TYPE && project.introSequence.scenes.any {
+            it.imagePngBase64.isNotBlank() || it.text.isNotBlank() || project.introSequence.scenes.size > 1
+        }) ||
         (asmNavigationEnabled && patch.configType in com.supermetroid.editor.asm.NATIVE_PATCH_CONFIG_TYPES &&
             runCatching { requireNotNull(patchToggleController).customized(requireNotNull(patch.configType)) }.getOrDefault(true)) ||
             runCatching { patchSettingsDifferFromBaseline(patch, currentRomParser) }.getOrDefault(true)
@@ -3083,6 +3089,91 @@ class EditorState(
     var patchVersion by mutableStateOf(0)
         private set
 
+    /** Shared invalidation key for the Patches, Text, and Sprites intro views. */
+    var introSequenceVersion by mutableStateOf(0)
+        private set
+
+    private val introSequenceHistory = java.util.IdentityHashMap<EditOperation, Pair<List<IntroScene>, List<IntroScene>>>()
+
+    private fun introSnapshot(): List<IntroScene> = project.introSequence.scenes.map(IntroScene::copy)
+
+    private fun restoreIntroSnapshot(snapshot: List<IntroScene>) {
+        project.introSequence.scenes.clear()
+        project.introSequence.scenes.addAll(snapshot.map(IntroScene::copy))
+        introSequenceVersion++
+        patchVersion++
+        dirty = true
+    }
+
+    private fun editIntroSequence(description: String, edit: (MutableList<IntroScene>) -> Unit): Boolean {
+        val before = introSnapshot()
+        edit(project.introSequence.scenes)
+        require(project.introSequence.scenes.size in 1..6) { "An intro sequence must contain 1–6 scenes." }
+        val after = introSnapshot()
+        if (before == after) return false
+        val operation = EditOperation(description)
+        introSequenceHistory.keys.retainAll(undoStack + redoStack)
+        introSequenceHistory[operation] = before to after
+        undoStack.add(operation)
+        redoStack.clear()
+        undoVersion++
+        introSequenceVersion++
+        patchVersion++
+        dirty = true
+        return true
+    }
+
+    fun updateIntroScene(sceneId: String, description: String = "Edit intro scene", edit: (IntroScene) -> Unit): Boolean =
+        editIntroSequence(description) { scenes -> edit(scenes.single { it.id == sceneId }) }
+
+    fun addIntroScene(afterSceneId: String? = null): IntroScene? {
+        if (project.introSequence.scenes.size >= 6) return null
+        val scene = IntroScene(name = "Story frame ${project.introSequence.scenes.size + 1}")
+        editIntroSequence("Add intro scene") { scenes ->
+            val index = afterSceneId?.let { id -> scenes.indexOfFirst { it.id == id }.takeIf { it >= 0 } } ?: scenes.lastIndex
+            scenes.add((index + 1).coerceIn(0, scenes.size), scene)
+        }
+        return scene
+    }
+
+    fun removeIntroScene(sceneId: String): Boolean {
+        if (project.introSequence.scenes.size <= 1) return false
+        return editIntroSequence("Remove intro scene") { scenes -> scenes.removeAll { it.id == sceneId } }
+    }
+
+    fun moveIntroScene(sceneId: String, delta: Int): Boolean = editIntroSequence("Reorder intro scene") { scenes ->
+        val from = scenes.indexOfFirst { it.id == sceneId }
+        val to = (from + delta).coerceIn(0, scenes.lastIndex)
+        if (from >= 0 && from != to) scenes.add(to, scenes.removeAt(from))
+    }
+
+    fun setIntroSceneText(index: Int, text: String): Boolean {
+        val scene = project.introSequence.scenes.getOrNull(index) ?: return false
+        if (com.supermetroid.editor.rom.IntroSceneCodec.textLineCount(text) > com.supermetroid.editor.rom.IntroSceneCodec.MAX_TEXT_LINES) {
+            postStatus("Intro text is too long: keep it within ${com.supermetroid.editor.rom.IntroSceneCodec.MAX_TEXT_LINES} wrapped lines.")
+            return false
+        }
+        return updateIntroScene(scene.id, "Edit intro scene text") { it.text = text }
+    }
+
+    /** Rebuild the managed sequence from the loaded ROM's native story text; disabling the patch remains the full vanilla restore. */
+    fun restoreIntroSequenceDefaults(parser: RomParser? = currentRomParser): Boolean {
+        val defaults = nativeIntroTextScenes(useProjectTextEdits = false, parser = parser)
+        return editIntroSequence("Restore intro sequence defaults") { scenes ->
+            scenes.clear()
+            scenes.addAll(defaults.map(IntroScene::copy))
+        }
+    }
+
+    private fun restoreIntroSequence(operation: EditOperation, undo: Boolean): Boolean {
+        val (before, after) = introSequenceHistory.getValue(operation)
+        restoreIntroSnapshot(if (undo) before else after)
+        if (undo) { undoStack.removeAt(undoStack.lastIndex); redoStack.add(operation) }
+        else { redoStack.removeAt(redoStack.lastIndex); undoStack.add(operation) }
+        undoVersion++
+        return true
+    }
+
     /** Application-wide favorites, persisted immediately rather than with a project save. */
     val favoritePatchIds: Set<String>
         get() = patchFavoriteStore.favoriteIds
@@ -3306,6 +3397,7 @@ class EditorState(
             return
         }
         if (enabled) {
+            if (!patch.enabled && patch.configType == INTRO_SEQUENCE_CONFIG_TYPE) initializeIntroSequenceFromRomIfPristine()
             patch.exclusiveGroup?.let { group ->
                 project.patches.forEach { other ->
                     if (other.id != patch.id && other.exclusiveGroup == group) {
@@ -3315,6 +3407,69 @@ class EditorState(
             }
         }
         patch.enabled = enabled
+    }
+
+    /**
+     * A pristine manager mirrors the loaded ROM before it is enabled or edited.
+     * Once any scene setting changes, reopening or toggling the patch never replaces that work.
+     */
+    internal fun initializeIntroSequenceFromRomIfPristine(parser: RomParser? = currentRomParser): Boolean {
+        val scenes = project.introSequence.scenes
+        val template = com.supermetroid.editor.data.IntroSequenceData().scenes.single()
+        val pristine = scenes.size == 1 && scenes.single().copy(id = template.id) == template
+        if (!pristine || parser == null) return false
+        val pages = nativeIntroTextScenes(useProjectTextEdits = true, parser = parser)
+        if (pages.isEmpty()) return false
+        scenes.clear()
+        scenes.addAll(pages)
+        introSequenceVersion++
+        return true
+    }
+
+    private fun nativeIntroTextScenes(
+        useProjectTextEdits: Boolean,
+        parser: RomParser? = currentRomParser,
+    ): List<IntroScene> {
+        parser
+            ?: return com.supermetroid.editor.data.IntroSequenceData().scenes.map(IntroScene::copy)
+        return com.supermetroid.editor.rom.TextData.readAllText(parser.getRomData())
+            .filter { it.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY }
+            .take(6)
+            .mapIndexed { index, page ->
+                val imageSource = com.supermetroid.editor.rom.IntroRomImageResolver.defaultForScene(index)
+                val vignetteSource = com.supermetroid.editor.rom.IntroRomImageResolver.defaultVignetteForScene(index)
+                IntroScene(
+                    name = "Story frame ${index + 1}",
+                    text = if (useProjectTextEdits) project.textEdits[page.id] ?: page.text else page.text,
+                    imageSource = imageSource,
+                    imageFrame = com.supermetroid.editor.rom.IntroRomImageResolver.defaultFrame(imageSource),
+                    layout = IntroSceneLayout.TEXT_OVER_IMAGE,
+                    portraitAnimation = if (index == 5) {
+                        com.supermetroid.editor.data.IntroPortraitAnimation.DEADPAN
+                    } else {
+                        com.supermetroid.editor.data.IntroPortraitAnimation.NATIVE_BLINK
+                    },
+                    textReveal = com.supermetroid.editor.data.IntroTextReveal.NATIVE_TYPEWRITER,
+                    typewriterFramesPerCharacter = 5,
+                    postRevealInputDelayFrames = 60,
+                    fadeInFrames = 32,
+                    fadeOutFrames = 32,
+                    vignetteSource = vignetteSource,
+                    vignetteFrame = com.supermetroid.editor.rom.IntroRomImageResolver.defaultFrame(vignetteSource),
+                    vignetteAnimation = com.supermetroid.editor.data.IntroVignetteAnimation.NATIVE,
+                    vignetteTiming = com.supermetroid.editor.data.IntroVignetteTiming.NATIVE,
+                    vignetteFrameDelay = when (index) { 0 -> 16; else -> 10 },
+                    vignetteLoopCount = when (index) { 2, 3 -> 10; else -> 1 },
+                    vignetteDurationFrames = when (index) { 0 -> 480; 1 -> 720; 2, 3 -> 400; else -> 320 },
+                    vignetteAdvanceMode = com.supermetroid.editor.data.IntroAdvanceMode.TIMED,
+                    vignetteFadeInFrames = 128,
+                    vignetteFadeOutFrames = 32,
+                    vignettePanStartX = if (index == 2) 32 else 0,
+                    vignettePanStartY = if (index == 3) -24 else 8,
+                    vignettePanEndX = 0,
+                    vignettePanEndY = 8,
+                )
+            }
     }
 
     internal fun openFastDoorsSource(): Boolean = runCatching {
@@ -11205,6 +11360,7 @@ class EditorState(
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         val pending = undoStack.last()
+        if (pending in introSequenceHistory) return restoreIntroSequence(pending, true)
         if (pending in musicCreationHistory) return restoreMusicCreation(pending, true)
         if (hasManagedLayouts() && pending.edits.isNotEmpty() && pending !in managedPlmUndo) {
             postStatus("Undo the layout source adoption in ASM before undoing older GUI tile edits."); return false
@@ -11301,6 +11457,7 @@ class EditorState(
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
         val pending = redoStack.last()
+        if (pending in introSequenceHistory) return restoreIntroSequence(pending, false)
         if (pending in musicCreationHistory) return restoreMusicCreation(pending, false)
         if (hasManagedEnemies() && (pending.enemyAdds.isNotEmpty() || pending.enemyRemoves.isNotEmpty() || pending.enemyUpdates.isNotEmpty())) {
             postStatus("Enemy edit blocked: older ROM enemy edits cannot overwrite authored population source."); return false

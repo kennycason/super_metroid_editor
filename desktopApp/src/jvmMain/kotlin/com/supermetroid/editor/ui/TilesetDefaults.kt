@@ -544,6 +544,18 @@ val CONTROLLER_CONFIG_PATCH = SmPatch(
     configType = "controller_config"
 )
 
+const val INTRO_SEQUENCE_CONFIG_TYPE = "intro_sequence"
+
+/** Project-owned still scenes that replace the native story/cinematic sequence when enabled. */
+val INTRO_SEQUENCE_PATCH = SmPatch(
+    id = "config_intro_sequence",
+    name = "Intro Sequence Manager",
+    description = "Compose 1–6 still scenes from text, the ROM's cinematic sprites, or PNG images. Leaves the native intro untouched when disabled.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = INTRO_SEQUENCE_CONFIG_TYPE,
+)
+
 /** Action order matches the in-game controller settings screen. */
 val CONTROLLER_SLOTS = com.supermetroid.editor.rom.ControllerBindings.slots
 
@@ -561,6 +573,7 @@ val SNES_BUTTONS = listOf(
 
 /** Configurable patches shown at the top of the Patches panel, in display order. */
 internal val GUI_CONFIG_PATCHES = listOf(
+    INTRO_SEQUENCE_PATCH,
     BEAM_DAMAGE_PATCH,
     BOSS_STATS_PATCH,
     PHANTOON_PATCH,

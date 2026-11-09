@@ -1040,6 +1040,126 @@ data class ProjectPlmSourceBinding(
     val entryCount: Int,
 )
 
+/** How an imported image is placed inside the fixed 256x224 SNES frame. */
+@Serializable
+enum class IntroImageFit { FIT, COVER, STRETCH }
+
+/** Image ownership for a managed still. ROM sources remain reciprocal with the sprite editor. */
+@Serializable
+enum class IntroImageSource {
+    NONE,
+    ROM_SAMUS_PORTRAIT,
+    ROM_MOTHER_BRAIN,
+    ROM_METROID_EGG,
+    ROM_EGG_HATCHING,
+    ROM_BABY_DELIVERED,
+    ROM_BABY_EXAMINED,
+    UPLOADED_PNG,
+}
+
+/** Deliberately small layout set: every option remains legible on a real SNES. */
+@Serializable
+enum class IntroSceneLayout { TEXT_ONLY, IMAGE_ONLY, TEXT_OVER_IMAGE, TEXT_PANEL_BOTTOM, TEXT_PANEL_TOP }
+
+@Serializable
+enum class IntroAdvanceMode { BUTTON, TIMED, EITHER }
+
+@Serializable
+enum class IntroTransition { CUT, FADE }
+
+/** Native portrait eye tracks are tilemap animations, not standalone sprites. */
+@Serializable
+enum class IntroPortraitAnimation { NATIVE_BLINK, DEADPAN, STATIC_OPEN, STATIC_CLOSED, OFF }
+
+@Serializable
+enum class IntroTextReveal { NATIVE_TYPEWRITER, INSTANT }
+
+@Serializable
+enum class IntroVignetteAnimation { NATIVE, STATIC }
+
+@Serializable
+enum class IntroVignetteTiming { NATIVE, UNIFORM }
+
+/**
+ * One flattened still in the managed intro. The original PNG is retained so
+ * changing fit/layout is lossless; generated SNES tiles are deterministic build output.
+ */
+@Serializable
+data class IntroScene(
+    val id: String = newProjectId(),
+    var name: String = "Scene",
+    var text: String = "",
+    /** Base64-encoded PNG. Empty means that the scene has no image. */
+    var imagePngBase64: String = "",
+    var imageFileName: String = "",
+    var imageSha256: String = "",
+    var imageSource: IntroImageSource = IntroImageSource.NONE,
+    /** Selected still within a ROM cinematic animation; ignored for uploaded PNGs. */
+    var imageFrame: Int = 0,
+    var imageFit: IntroImageFit = IntroImageFit.FIT,
+    var layout: IntroSceneLayout = IntroSceneLayout.TEXT_ONLY,
+    var advanceMode: IntroAdvanceMode = IntroAdvanceMode.BUTTON,
+    var durationFrames: Int = 300,
+    var transition: IntroTransition = IntroTransition.FADE,
+    /** Length of the brightness ramps surrounding the narration card. */
+    var fadeInFrames: Int = 32,
+    var fadeOutFrames: Int = 32,
+    var portraitAnimation: IntroPortraitAnimation = IntroPortraitAnimation.OFF,
+    var textReveal: IntroTextReveal = IntroTextReveal.INSTANT,
+    /** Vanilla English narration emits a character every five frames. */
+    var typewriterFramesPerCharacter: Int = 5,
+    /** Vanilla ignores input for 60 frames after the final narration character. */
+    var postRevealInputDelayFrames: Int = 60,
+    /** Optional phase played after this narration card. */
+    var vignetteSource: IntroImageSource = IntroImageSource.NONE,
+    var vignetteImagePngBase64: String = "",
+    var vignetteImageFileName: String = "",
+    var vignetteImageSha256: String = "",
+    var vignetteFrame: Int = 0,
+    var vignetteImageFit: IntroImageFit = IntroImageFit.COVER,
+    var vignetteAnimation: IntroVignetteAnimation = IntroVignetteAnimation.NATIVE,
+    var vignetteTiming: IntroVignetteTiming = IntroVignetteTiming.NATIVE,
+    var vignetteFrameDelay: Int = 10,
+    var vignetteLoopCount: Int = 1,
+    var vignetteDurationFrames: Int = 320,
+    var vignetteAdvanceMode: IntroAdvanceMode = IntroAdvanceMode.TIMED,
+    var vignetteTransition: IntroTransition = IntroTransition.FADE,
+    var vignetteFadeInFrames: Int = 128,
+    var vignetteFadeOutFrames: Int = 32,
+    /** Signed pixel scroll positions. Native delivery and examination scenes pan to (0, 8). */
+    var vignettePanStartX: Int = 0,
+    var vignettePanStartY: Int = 8,
+    var vignettePanEndX: Int = 0,
+    var vignettePanEndY: Int = 8,
+    /** Opaque ARGB values used by the deterministic scene renderer. */
+    var backgroundColor: Int = 0xFF000000.toInt(),
+    var textColor: Int = 0xFFE8F8E8.toInt(),
+    var panelColor: Int = 0xD8000000.toInt(),
+)
+
+/** Single owner for the Patches, Text, Sprites, direct-ROM, and ASM views. */
+@Serializable
+data class IntroSequenceData(
+    val scenes: MutableList<IntroScene> = mutableListOf(
+        IntroScene(name = "Scene 1", text = "THE LAST METROID IS IN CAPTIVITY.\nTHE GALAXY IS AT PEACE.")
+    ),
+)
+
+/** Projects created before explicit image sources treated any stored PNG as the active image. */
+val IntroScene.effectiveImageSource: IntroImageSource
+    get() = if (imageSource == IntroImageSource.NONE && imagePngBase64.isNotBlank()) {
+        IntroImageSource.UPLOADED_PNG
+    } else {
+        imageSource
+    }
+
+val IntroScene.effectiveVignetteSource: IntroImageSource
+    get() = if (vignetteSource == IntroImageSource.NONE && vignetteImagePngBase64.isNotBlank()) {
+        IntroImageSource.UPLOADED_PNG
+    } else {
+        vignetteSource
+    }
+
 /**
  * The .smedit project file. JSON-serializable.
  * Keys are hex room IDs (as strings), values are the list of edit operations.
@@ -1065,6 +1185,8 @@ data class SmEditProject(
     val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val mapStationEdits: MutableMap<String, MutableList<MapStationTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val textEdits: MutableMap<String, String> = mutableMapOf(), // key = text entry id (e.g. "area_0", "ceres_escape")
+    /** Managed replacement for the six-page vanilla intro; active only while its patch is enabled. */
+    val introSequence: IntroSequenceData = IntroSequenceData(),
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)

@@ -447,6 +447,7 @@ fun PatchEditorCanvas(
             FastDoorsSourcePanel(patch, editorState, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
         } else
         when (patch.configType) {
+            INTRO_SEQUENCE_CONFIG_TYPE -> IntroSceneEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             in com.supermetroid.editor.asm.DATA_PATCH_TYPES -> NativeDataPatchEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)

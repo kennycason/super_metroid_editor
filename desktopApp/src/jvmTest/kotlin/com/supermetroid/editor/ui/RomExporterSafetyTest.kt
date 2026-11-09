@@ -3,6 +3,10 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.data.IntroImageSource
+import com.supermetroid.editor.data.IntroSceneLayout
+import com.supermetroid.editor.asm.AsmPatchBackendRegistry
+import com.supermetroid.editor.asm.AsmSourcePatchMaterializer
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
@@ -24,6 +28,41 @@ import kotlin.random.Random
 class RomExporterSafetyTest {
     @TempDir
     lateinit var tempDir: File
+
+    @Test
+    fun `managed intro expands ROM installs checked hook and materializes to ASM`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "managed-intro.smc")
+        input.writeBytes(original!!)
+        val parser = RomParser(original)
+        val project = SmEditProject(romPath = input.absolutePath).also { project ->
+            project.patches += INTRO_SEQUENCE_PATCH.copy(enabled = true)
+            project.introSequence.scenes.single().apply {
+                name = "Friend's intro"
+                text = "THE ADVENTURE BEGINS."
+                imageSource = IntroImageSource.ROM_MOTHER_BRAIN
+                layout = IntroSceneLayout.TEXT_PANEL_BOTTOM
+            }
+        }
+
+        val build = requireNotNull(RomExporter(project, parser).build())
+
+        assertEquals(com.supermetroid.editor.rom.RomConstants.EXPANDED_ROM_SIZE, build.resultRom.size)
+        val hook = parser.snesToPc(0x8BA66F)
+        assertEquals(0x22, build.resultRom[hook].toInt() and 255)
+        assertEquals(0x60, build.resultRom[hook + 4].toInt() and 255)
+        assertTrue((build.resultRom[hook + 3].toInt() and 255) in 0xE0..0xFF)
+        val owners = AsmPatchBackendRegistry.sourceOwners(project.patches)
+        val materialized = AsmSourcePatchMaterializer().materialize(
+            build.writeReport,
+            owners,
+            com.supermetroid.editor.rom.RomConstants.EXPANDED_ROM_SIZE,
+        )
+        assertTrue(materialized.claims.isNotEmpty())
+        assertEquals(0, materialized.skippedWrites)
+        assertTrue(materialized.source.contains("Intro Sequence Manager"))
+    }
 
     @Test
     fun `final output replacement is staged through a complete temporary file`() {

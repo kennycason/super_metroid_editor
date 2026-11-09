@@ -62,6 +62,24 @@ class SpriteAnimationTest {
     }
 
     @Test
+    fun `anchored animation preserves the source OAM origin`() {
+        val map = EnemySpritemap.Spritemap(emptyList(), 0)
+        val sprite = EnemySpritemap.AssembledSprite(
+            width = 24,
+            height = 16,
+            pixels = IntArray(24 * 16) { 0xFFFFFFFF.toInt() },
+            originX = 20,
+            originY = 3,
+            spritemap = map,
+        )
+
+        val frame = anchoredSpriteAnimation("offset", listOf(4 to sprite), loop = true).frames.single()
+
+        assertEquals(20, frame.originX)
+        assertEquals(3, frame.originY)
+    }
+
+    @Test
     fun `animation total ticks sums frame durations`() {
         val frames = listOf(
             SpriteAnimationFrame(IntArray(1), 1, 1, durationTicks = 4),

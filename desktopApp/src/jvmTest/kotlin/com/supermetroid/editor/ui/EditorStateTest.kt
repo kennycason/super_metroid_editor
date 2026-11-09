@@ -45,6 +45,61 @@ class EditorStateTest {
         data[offset + 1] = ((word shr 8) and 0xFF).toByte()
     }
 
+    @Test
+    fun `pristine intro manager adopts loaded ROM text and cinematic sprite sources`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val expectedPages = com.supermetroid.editor.rom.TextData.readAllText(parser.getRomData())
+            .filter { it.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY }
+            .take(6)
+
+        assertTrue(state.initializeIntroSequenceFromRomIfPristine(parser))
+        assertEquals(expectedPages.map { it.text }, state.project.introSequence.scenes.map { it.text })
+        assertEquals((1..6).map { "Story frame $it" }, state.project.introSequence.scenes.map { it.name })
+        state.project.introSequence.scenes.forEachIndexed { index, scene ->
+            assertEquals(com.supermetroid.editor.rom.IntroRomImageResolver.defaultForScene(index), scene.imageSource)
+            assertEquals(60, scene.postRevealInputDelayFrames)
+            assertEquals(com.supermetroid.editor.data.IntroVignetteTiming.NATIVE, scene.vignetteTiming)
+        }
+
+        val first = state.project.introSequence.scenes.first()
+        state.updateIntroScene(first.id) { it.name = "CUSTOM" }
+        assertFalse(state.initializeIntroSequenceFromRomIfPristine(parser))
+        assertEquals("CUSTOM", state.project.introSequence.scenes.first().name)
+    }
+
+    @Test
+    fun `intro sequence edits share normal undo and redo history`() {
+        val scene = state.project.introSequence.scenes.single()
+        val original = scene.text
+
+        assertTrue(state.updateIntroScene(scene.id) { it.text = "A NEW INTRO" })
+        assertEquals("A NEW INTRO", state.project.introSequence.scenes.single().text)
+        assertTrue(state.undo())
+        assertEquals(original, state.project.introSequence.scenes.single().text)
+        assertTrue(state.redo())
+        assertEquals("A NEW INTRO", state.project.introSequence.scenes.single().text)
+    }
+
+    @Test
+    fun `restore intro defaults clears scene assets and remains undoable`() {
+        val first = state.project.introSequence.scenes.single()
+        state.updateIntroScene(first.id) {
+            it.text = "CUSTOM"
+            it.imagePngBase64 = "custom-image"
+            it.layout = com.supermetroid.editor.data.IntroSceneLayout.IMAGE_ONLY
+        }
+        state.addIntroScene(first.id)
+
+        assertTrue(state.restoreIntroSequenceDefaults())
+        assertEquals(1, state.project.introSequence.scenes.size)
+        assertTrue(state.project.introSequence.scenes.single().imagePngBase64.isBlank())
+        assertEquals(com.supermetroid.editor.data.IntroSceneLayout.TEXT_ONLY, state.project.introSequence.scenes.single().layout)
+
+        assertTrue(state.undo())
+        assertEquals(2, state.project.introSequence.scenes.size)
+        assertEquals("custom-image", state.project.introSequence.scenes.first().imagePngBase64)
+    }
+
     private fun writeBts(bx: Int, by: Int, bts: Int) {
         val data = state.workingLevelData!!
         val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)

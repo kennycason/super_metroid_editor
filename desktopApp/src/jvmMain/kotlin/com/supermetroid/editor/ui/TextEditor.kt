@@ -71,6 +71,11 @@ fun TextEditorSidebar(
     val fs = LocalEditorTheme.current.fontSize.value
     val parser = romParser ?: return
     val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
+    val introRevision = editorState.introSequenceVersion
+    val patchRevision = editorState.patchVersion
+    val managedIntro = remember(patchRevision, introRevision) {
+        editorState.project.patches.any { it.enabled && it.configType == INTRO_SEQUENCE_CONFIG_TYPE }
+    }
     val scrollState = rememberScrollState()
 
     Column(modifier = modifier.padding(8.dp).verticalScroll(scrollState)) {
@@ -83,7 +88,33 @@ fun TextEditorSidebar(
         )
         Spacer(Modifier.height(8.dp))
 
+        if (managedIntro) {
+            Text("Managed Intro Scenes", fontWeight = FontWeight.Bold, fontSize = fs.body,
+                color = MaterialTheme.colorScheme.primary)
+            Text("Shared with Patches › Intro Sequence Manager.", fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            editorState.project.introSequence.scenes.forEachIndexed { index, scene ->
+                val id = "managed_intro_$index"
+                val isSelected = id == textEditorState.selectedEntryId
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)
+                        .clickable { textEditorState.toggle(id) }
+                        .then(if (isSelected) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)) else Modifier),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Column(Modifier.padding(6.dp)) {
+                        Text("${index + 1}. ${scene.name}", fontSize = fs.body, fontWeight = FontWeight.Bold)
+                        Text(scene.text.replace('\n', ' ').take(40), fontSize = fs.detail, fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
         for (category in TextCategory.entries) {
+            if (managedIntro && category == TextCategory.INTRO_STORY) continue
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
 
@@ -163,6 +194,11 @@ fun TextEditorPreview(
     val asmLink = editorState.projectAsmNavigation(onNavigateToAsm)
     val parser = romParser ?: return
     val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
+    val introRevision = editorState.introSequenceVersion
+    val patchRevision = editorState.patchVersion
+    val managedIntro = remember(patchRevision, introRevision) {
+        editorState.project.patches.any { it.enabled && it.configType == INTRO_SEQUENCE_CONFIG_TYPE }
+    }
 
     val scrollState = rememberScrollState()
 
@@ -176,7 +212,36 @@ fun TextEditorPreview(
         )
         Spacer(Modifier.height(16.dp))
 
-        for (category in TextCategory.entries.filterNot { it == TextCategory.ITEM_NAME }) {
+        if (managedIntro) {
+            Text("Managed Intro Scenes", fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.primary)
+            Text("These fields and the Intro Sequence Manager edit the same scene data.",
+                fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            editorState.project.introSequence.scenes.forEachIndexed { index, scene ->
+                TextEntryEditor(
+                    entry = TextEntry(
+                        id = "managed_intro_$index",
+                        label = "${index + 1}. ${scene.name}",
+                        category = TextCategory.INTRO_STORY,
+                        pcOffset = -1,
+                        snesAddress = 0,
+                        maxLength = 900,
+                        text = scene.text,
+                        rawBytes = ByteArray(0),
+                    ),
+                    editorState = editorState,
+                    selected = textEditorState.selectedEntryId == "managed_intro_$index",
+                    navigationSerial = textEditorState.navigationSerial,
+                    onNavigateToAsm = null,
+                    managedIntroIndex = index,
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        for (category in TextCategory.entries.filterNot { it == TextCategory.ITEM_NAME || managedIntro && it == TextCategory.INTRO_STORY }) {
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
 
@@ -227,10 +292,13 @@ private fun TextEntryEditor(
     selected: Boolean,
     navigationSerial: Long,
     onNavigateToAsm: ((Int) -> Unit)?,
+    managedIntroIndex: Int? = null,
 ) {
     val editVersion = editorState.editVersion // observe edit changes for recomposition
-    val editedText = editorState.project.textEdits[entry.id]
-    var currentText by remember(entry.id, editedText, editVersion) { mutableStateOf(editedText ?: entry.text) }
+    val introVersion = editorState.introSequenceVersion
+    val managedText = managedIntroIndex?.let { editorState.project.introSequence.scenes.getOrNull(it)?.text }
+    val editedText = if (managedIntroIndex == null) editorState.project.textEdits[entry.id] else managedText
+    var currentText by remember(entry.id, editedText, editVersion, introVersion) { mutableStateOf(editedText ?: entry.text) }
     val isModified = currentText != entry.text
     val singleLine = entry.category in listOf(TextCategory.AREA_NAME, TextCategory.ITEM_NAME, TextCategory.UI_MESSAGE)
     val isReadOnly = !entry.writable
@@ -249,12 +317,26 @@ private fun TextEntryEditor(
                     TextCategory.ESCAPE_TEXT -> newText.uppercase()
                     TextCategory.ITEM_NAME -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' || it == '-' }.take(entry.maxLength)
                     TextCategory.UI_MESSAGE -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' || it == '.' }.take(entry.maxLength)
-                    TextCategory.INTRO_STORY -> newText.uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it in " \n.,\'!" }
+                    TextCategory.INTRO_STORY -> {
+                        val allowed = newText.uppercase().filter {
+                            if (managedIntroIndex != null) it == '\n' || it in ' '..'~'
+                            else it in 'A'..'Z' || it in '0'..'9' || it in " \n.,\'!"
+                        }
+                        if (managedIntroIndex != null) allowed.take(entry.maxLength)
+                        else {
+                            var visible = 0
+                            allowed.takeWhile { character -> character == '\n' || visible++ < entry.maxLength }
+                        }
+                    }
                 }
-                currentText = cleaned
-                if (cleaned == entry.text) editorState.project.textEdits.remove(entry.id)
-                else editorState.project.textEdits[entry.id] = cleaned
-                editorState.markDirty()
+                if (managedIntroIndex != null) {
+                    if (editorState.setIntroSceneText(managedIntroIndex, cleaned)) currentText = cleaned
+                } else {
+                    currentText = cleaned
+                    if (cleaned == entry.text) editorState.project.textEdits.remove(entry.id)
+                    else editorState.project.textEdits[entry.id] = cleaned
+                    editorState.markDirty()
+                }
             },
             modifier = modifier,
             textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
@@ -299,8 +381,8 @@ private fun TextEntryEditor(
             }
             // Footer: address + max + reset
             Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("\$${entry.snesAddress.toString(16).uppercase().padStart(6, '0')}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (entry.writable && onNavigateToAsm != null) {
+                Text(if (managedIntroIndex != null) "Managed intro scene" else "\$${entry.snesAddress.toString(16).uppercase().padStart(6, '0')}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (managedIntroIndex == null && entry.writable && onNavigateToAsm != null) {
                     Spacer(Modifier.width(4.dp))
                     AsmNavigationLink(entry.snesAddress, onNavigateToAsm, label = "ASM")
                 }
@@ -309,7 +391,9 @@ private fun TextEntryEditor(
                 Spacer(Modifier.weight(1f))
                 if (isModified) {
                     Text("Reset", fontSize = 9.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable {
-                        currentText = entry.text; editorState.project.textEdits.remove(entry.id); editorState.markDirty()
+                        currentText = entry.text
+                        if (managedIntroIndex != null) editorState.setIntroSceneText(managedIntroIndex, entry.text)
+                        else { editorState.project.textEdits.remove(entry.id); editorState.markDirty() }
                     })
                 }
             }

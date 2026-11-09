@@ -349,7 +349,9 @@ internal class RomExporter(
         val exportBase = try {
             communitySamusArtifact?.let {
                 CommunitySamusRomInjector.expandedBase(buildBase, headerSize, inputRomHash, it)
-            } ?: if (project.asmWorkspace.expandRomTo4MiB) {
+            } ?: if (project.asmWorkspace.expandRomTo4MiB || project.patches.any {
+                    it.enabled && it.configType == INTRO_SEQUENCE_CONFIG_TYPE
+                }) {
                 managedExpandedRomBase(buildBase, headerSize)
             } else {
                 buildBase
@@ -361,7 +363,11 @@ internal class RomExporter(
             return null
         }
         if (exportBase.size > buildBase.size) {
-            val source = if (communitySamusArtifact != null) "community Samus output" else "managed project capacity"
+            val source = when {
+                communitySamusArtifact != null -> "community Samus output"
+                project.patches.any { it.enabled && it.configType == INTRO_SEQUENCE_CONFIG_TYPE } -> "managed intro scenes"
+                else -> "managed project capacity"
+            }
             onLog("[ROM-SPACE] Expanded build to 4 MiB for $source; banks \$E0–\$FF are allocator-managed")
         }
         val writePlan = RomWritePlan(exportBase, headerSize)
@@ -1009,6 +1015,11 @@ internal class RomExporter(
                 continue
             } else if (patch.configType == "beam_damage") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(
+                    data,
+                    ALL_BEAMS.flatMapTo(mutableSetOf()) { listOf(it.key, it.chargedKey) },
+                    patch,
+                )
                 val values = beamDamageConfigValues(data)
                 for ((key, damage) in values) {
                     val beam = ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }
@@ -1294,6 +1305,26 @@ internal class RomExporter(
                     writeU16(romData, writePlan.headerSize + write.pc, write.value)
                 }
                 onLog("[EXPORT]   Controller defaults: ${writes.size} new-save/options-reset operands updated; button decoder unchanged")
+            } else if (patch.configType == INTRO_SEQUENCE_CONFIG_TYPE) {
+                validateConfigKeys(patch.configData, emptySet(), patch)
+                val introSourceParser = NativeSpriteEditorState(
+                    customGfx = { project.customGfx },
+                    onDirty = {},
+                ).previewParser(RomParser(writePlan.romData))
+                val result = IntroSequenceRomPatch.install(
+                    scenes = project.introSequence.scenes,
+                    writePlan = writePlan,
+                    freeSpaceAllocator = freeSpaceAllocator,
+                    snesToPc = romParser::snesToPc,
+                    sourceParser = introSourceParser,
+                )
+                onLog(
+                    "[EXPORT]   Managed intro: ${result.sceneCount} narration/image phase(s), ${result.tileCount} unique tiles, " +
+                        "${result.payloadBytes} bytes, runtime at SNES \$" +
+                        result.runtimeAddress.toString(16).uppercase().padStart(6, '0')
+                )
+                patchesApplied++
+                continue
             } else if (patch.configType == RoomNamePauseMapPatch.CONFIG_TYPE) {
                 validateConfigKeys(
                     patch.configData,

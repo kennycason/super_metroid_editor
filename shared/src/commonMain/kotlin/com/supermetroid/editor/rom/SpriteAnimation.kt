@@ -14,7 +14,11 @@ data class SpriteAnimationFrame(
     val width: Int,
     val height: Int,
     val durationTicks: Int = 0,
-    val label: String = ""
+    val label: String = "",
+    /** Pixel in this canvas that corresponds to the source object's position. */
+    val originX: Int = width / 2,
+    /** Pixel in this canvas that corresponds to the source object's position. */
+    val originY: Int = height / 2,
 ) {
     /** Duration in milliseconds at 60fps */
     val durationMs: Int get() = if (durationTicks > 0) (durationTicks * 1000) / 60 else 0
@@ -42,7 +46,13 @@ data class SpriteAnimationFrame(
             pixels.copyInto(cropped, (y - top + padding) * croppedWidth + padding,
                 y * width + left, y * width + right + 1)
         }
-        return copy(pixels = cropped, width = croppedWidth, height = croppedHeight)
+        return copy(
+            pixels = cropped,
+            width = croppedWidth,
+            height = croppedHeight,
+            originX = originX - left + padding,
+            originY = originY - top + padding,
+        )
     }
 
     override fun equals(other: Any?): Boolean {
@@ -50,6 +60,7 @@ data class SpriteAnimationFrame(
         if (other !is SpriteAnimationFrame) return false
         return width == other.width && height == other.height &&
                 durationTicks == other.durationTicks && label == other.label &&
+                originX == other.originX && originY == other.originY &&
                 pixels.contentEquals(other.pixels)
     }
 
@@ -59,6 +70,8 @@ data class SpriteAnimationFrame(
         result = 31 * result + height
         result = 31 * result + durationTicks
         result = 31 * result + label.hashCode()
+        result = 31 * result + originX
+        result = 31 * result + originY
         return result
     }
 }
@@ -106,7 +119,15 @@ fun anchoredSpriteAnimation(
                 pixels[(y - sprite.originY - top) * width + x - sprite.originX - left] = pixel
             }
         }
-        SpriteAnimationFrame(pixels, width, height, ticks, name)
+        SpriteAnimationFrame(
+            pixels = pixels,
+            width = width,
+            height = height,
+            durationTicks = ticks,
+            label = name,
+            originX = -left,
+            originY = -top,
+        )
     }, loop)
 }
 

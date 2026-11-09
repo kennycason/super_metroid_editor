@@ -32,6 +32,30 @@ class SmEditProjectFormatTest {
         assertEquals(project, SmEditProjectFormat.decode(SmEditProjectFormat.encode(project)))
     }
 
+    @Test fun `managed intro scene text images and playback settings round trip`() {
+        val project = SmEditProject("base.smc")
+        project.introSequence.scenes.single().apply {
+            name = "Opening"
+            text = "A FRIEND ARRIVES."
+            imagePngBase64 = "iVBORw0KGgo="
+            imageFileName = "opening.png"
+            imageSha256 = "abc123"
+            imageSource = IntroImageSource.UPLOADED_PNG
+            imageFrame = 3
+            layout = IntroSceneLayout.TEXT_PANEL_BOTTOM
+            imageFit = IntroImageFit.COVER
+            advanceMode = IntroAdvanceMode.EITHER
+            durationFrames = 420
+            postRevealInputDelayFrames = 60
+            vignetteTiming = IntroVignetteTiming.UNIFORM
+            transition = IntroTransition.CUT
+        }
+
+        val reopened = SmEditProjectFormat.decode(SmEditProjectFormat.encode(project))
+
+        assertEquals(project.introSequence, reopened.introSequence)
+    }
+
     @Test fun `missing old future malformed and wrong format headers are rejected before their contents`() {
         val header = minimal()
         val bad = listOf(JsonPrimitive(0), JsonPrimitive(2), JsonPrimitive(21), JsonPrimitive("1"), JsonNull, JsonPrimitive(true), JsonPrimitive(1.5))

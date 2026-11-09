@@ -77,6 +77,7 @@ const val TORIZO_CONFIG_TYPE = "torizo"
 const val MOTHER_BRAIN_CONFIG_TYPE = "mother_brain"
 const val SAMUS_PHYSICS_CONFIG_TYPE = "samus_physics"
 const val CONTROLLER_CONFIG_TYPE = "controller_config"
+const val INTRO_SEQUENCE_CONFIG_TYPE = "intro_sequence"
 
 object SmeditPatchCatalog {
     fun defaultPatches(): List<SmPatch> =
@@ -555,7 +556,16 @@ object SmeditPatchCatalog {
         )
     }
 
-    private fun unsupportedConfigPatches(): List<SmPatch> = emptyList()
+    /** Rich project-owned editors that cannot be represented by the scalar headless config API. */
+    private fun unsupportedConfigPatches(): List<SmPatch> = listOf(
+        SmPatch(
+            id = "config_intro_sequence",
+            name = "Intro Sequence Manager",
+            description = "Compose 1–6 story frames with narration, native portrait animation, interleaved ROM images, fades, pans, timing, or project PNGs.",
+            enabled = false,
+            configType = INTRO_SEQUENCE_CONFIG_TYPE,
+        ),
+    )
 
     private fun ceresSchema(): SmeditConfigSchema =
         SmeditConfigSchema(

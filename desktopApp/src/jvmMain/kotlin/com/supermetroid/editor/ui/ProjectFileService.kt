@@ -250,7 +250,8 @@ internal object ProjectFileService {
         val compiler = asmProjectCompiler
         val loadedRom = romParser.copyRomData()
         val communityExpanded = project.customGfx.samusCommunitySource?.injectionArtifact != null
-        val asmOutputRomSize = if (project.asmWorkspace.expandRomTo4MiB || communityExpanded) {
+        val introExpanded = project.patches.any { it.enabled && it.configType == INTRO_SEQUENCE_CONFIG_TYPE }
+        val asmOutputRomSize = if (project.asmWorkspace.expandRomTo4MiB || communityExpanded || introExpanded) {
             com.supermetroid.editor.rom.RomConstants.EXPANDED_ROM_SIZE
         } else {
             com.supermetroid.editor.rom.RomConstants.ROM_SIZE
@@ -561,7 +562,7 @@ internal object ProjectFileService {
         val patchMaterialization = AsmSourcePatchMaterializer().materialize(
             report = planned.writeReport,
             sourceOwners = AsmPatchBackendRegistry.sourceOwners(project.patches),
-            compiledRomSize = initial.referenceRomBody.size,
+            compiledRomSize = asmOutputRomSize,
         )
         val compiled = if (materialization.isEmpty && roomMaterialization.isEmpty && patchMaterialization.isEmpty) {
             onLog(

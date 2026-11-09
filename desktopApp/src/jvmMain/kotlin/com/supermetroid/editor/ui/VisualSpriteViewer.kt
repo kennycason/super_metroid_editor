@@ -14,11 +14,23 @@ import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomVisualAssets
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.NativeSpriteAssets
+import com.supermetroid.editor.rom.IntroSceneCodec
+import com.supermetroid.editor.rom.IntroRomImageResolver
+import com.supermetroid.editor.rom.SpriteAnimationFrame
 import com.supermetroid.editor.rom.TourianStatueSprites
+import com.supermetroid.editor.data.effectiveImageSource
+import com.supermetroid.editor.data.effectiveVignetteSource
+import com.supermetroid.editor.data.IntroImageSource
+import com.supermetroid.editor.data.IntroPortraitAnimation
+import com.supermetroid.editor.data.IntroScene
+import com.supermetroid.editor.data.IntroSceneLayout
+import com.supermetroid.editor.data.IntroVignetteAnimation
+import com.supermetroid.editor.data.IntroVignetteTiming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal data class VisualSpriteWorkspace(val index: Int, val name: String, val group: String)
+private data class ManagedIntroVisual(val beat: Int, val scene: IntroScene, val vignette: Boolean)
 
 internal val VISUAL_SPRITE_WORKSPACES = listOf(
     VisualSpriteWorkspace(-2, "Beams and projectiles", "Weapons"),
@@ -95,19 +107,90 @@ internal fun VisualSpriteViewer(workspace: VisualSpriteWorkspace, parser: RomPar
     }
     var selected by remember(workspace.index) { mutableStateOf(0) }
     var direction by remember { mutableStateOf(2) }
-    val names = remember(workspace) { visualSpriteNames(workspace) }
-    val targets = remember(parser, workspace, selected, direction) { visualSpriteTargets(parser, workspace, selected, direction) }
+    val introRevision = editor.introSequenceVersion
+    @Suppress("UNUSED_VARIABLE") val patchRevision = editor.patchVersion
+    val customVisuals = if (workspace.index == -3 && editor.project.patches.any { it.enabled && it.configType == INTRO_SEQUENCE_CONFIG_TYPE }) {
+        editor.project.introSequence.scenes.flatMapIndexed { index, scene ->
+            listOf(ManagedIntroVisual(index, scene, false)) +
+                listOfNotNull(ManagedIntroVisual(index, scene, true).takeIf { scene.effectiveVignetteSource != IntroImageSource.NONE })
+        }
+    } else emptyList()
+    val customCount = customVisuals.size
+    val names = remember(workspace, introRevision, customCount) {
+        customVisuals.map { visual ->
+            "Managed intro ${visual.beat + 1} · ${if (visual.vignette) "Image" else "Narration"}: ${visual.scene.name}"
+        } + visualSpriteNames(workspace)
+    }
+    if (selected !in names.indices) selected = 0
+    val nativeSelected = selected - customCount
+    val targets = remember(parser, workspace, nativeSelected, direction, customCount) {
+        if (nativeSelected >= 0) visualSpriteTargets(parser, workspace, nativeSelected, direction) else emptyList()
+    }
     var selectedSource by remember(workspace, selected) { mutableStateOf(0) }
     val target = targets.getOrNull(selectedSource)
     var paletteRow by remember(workspace, selected) { mutableStateOf(targets.firstOrNull()?.defaultRow ?: 0) }
     var editing by remember(parser, System.identityHashCode(editor.project), workspace) { mutableStateOf<NativeSpriteEditorState.Sheet?>(null) }
-    val renderPreview: (RomParser) -> SpriteAnimation? = { rom -> renderVisualSprite(rom, workspace, selected, direction, paletteRow) }
+    val renderPreview: (RomParser) -> SpriteAnimation? = { rom ->
+        if (selected < customCount) {
+            val visual = customVisuals[selected]
+            val scene = visual.scene
+            runCatching {
+                val source = if (visual.vignette) scene.effectiveVignetteSource else scene.effectiveImageSource
+                val card = if (visual.vignette) scene.copy(
+                    text = "",
+                    imagePngBase64 = scene.vignetteImagePngBase64,
+                    imageFileName = scene.vignetteImageFileName,
+                    imageSha256 = scene.vignetteImageSha256,
+                    imageSource = source,
+                    imageFrame = scene.vignetteFrame,
+                    imageFit = scene.vignetteImageFit,
+                    layout = IntroSceneLayout.IMAGE_ONLY,
+                ) else scene
+                val count = when {
+                    !IntroRomImageResolver.isRomSource(source) -> 1
+                    visual.vignette && scene.vignetteAnimation == IntroVignetteAnimation.NATIVE -> IntroRomImageResolver.frameCount(rom, source).coerceAtLeast(1)
+                    !visual.vignette && source == IntroImageSource.ROM_SAMUS_PORTRAIT && scene.portraitAnimation == IntroPortraitAnimation.NATIVE_BLINK -> 4
+                    else -> 1
+                }
+                val nativeDurations = if (visual.vignette && scene.vignetteTiming == IntroVignetteTiming.NATIVE) {
+                    IntroRomImageResolver.frameDurations(rom, source).takeIf { it.size == count }
+                } else null
+                val frames = (0 until count).map { frameIndex ->
+                    val progress = if (count == 1) 0.0 else frameIndex.toDouble() / (count - 1)
+                    val panX = (scene.vignettePanStartX + (scene.vignettePanEndX - scene.vignettePanStartX) * progress).toInt()
+                    val panY = (scene.vignettePanStartY + (scene.vignettePanEndY - scene.vignettePanStartY) * progress).toInt()
+                    val romImage = when {
+                        !IntroRomImageResolver.isRomSource(source) -> null
+                        !visual.vignette && source == IntroImageSource.ROM_SAMUS_PORTRAIT -> IntroRomImageResolver.renderPortrait(rom, scene.portraitAnimation, frameIndex)
+                        else -> IntroRomImageResolver.render(
+                            rom,
+                            source,
+                            if (visual.vignette) if (count == 1) scene.vignetteFrame else frameIndex else scene.imageFrame,
+                            if (visual.vignette) panX else 0,
+                            if (visual.vignette) panY else 0,
+                        )
+                    }
+                    val image = IntroSceneCodec.decode(IntroSceneCodec.compile(card, romImage))
+                    val pixels = IntArray(image.width * image.height)
+                    image.getRGB(0, 0, image.width, image.height, pixels, 0, image.width)
+                    SpriteAnimationFrame(
+                        pixels, image.width, image.height,
+                        durationTicks = if (visual.vignette) {
+                            nativeDurations?.get(frameIndex) ?: scene.vignetteFrameDelay
+                        } else listOf(128, 10, 10, 10).getOrElse(frameIndex) { 10 },
+                        label = "${scene.name} ${frameIndex + 1}",
+                    )
+                }
+                SpriteAnimation(scene.name, frames, loop = frames.size > 1)
+            }.getOrNull()
+        } else renderVisualSprite(rom, workspace, nativeSelected, direction, paletteRow)
+    }
     editing?.let { sheet ->
         NativeSpritePixelEditing(parser, editor, sheet, renderPreview, { editing = null }, modifier)
         return
     }
     val effective = remember(parser, editor.editVersion, editor.paletteVersion) { runCatching { editor.nativeSprites.previewParser(parser) } }
-    val animation by produceState<SpriteAnimation?>(null, effective, workspace.index, selected, direction, paletteRow) {
+    val animation by produceState<SpriteAnimation?>(null, effective, workspace.index, selected, direction, paletteRow, introRevision, customCount) {
         value = null
         value = withContext(Dispatchers.Default) {
             effective.getOrNull()?.let(renderPreview)
@@ -126,6 +209,7 @@ internal fun VisualSpriteViewer(workspace: VisualSpriteWorkspace, parser: RomPar
         }
         Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(animation?.name ?: workspace.name, fontSize = fs.heading)
+            if (selected < customCount) Text("Project-owned flattened intro scene. Edit it in Patches › Intro Sequence Manager.", fontSize = fs.detail)
             if (workspace.index == -6) Text("OBJ pieces are editable here; the Kraid/Draygon background sculpture belongs to room tileset 21.", fontSize = fs.detail)
             if (workspace.index == -2) {
                 SpriteOptionSelector(ProjectileSprites.DIRECTIONS, direction, { direction = it }, Modifier.fillMaxWidth())
