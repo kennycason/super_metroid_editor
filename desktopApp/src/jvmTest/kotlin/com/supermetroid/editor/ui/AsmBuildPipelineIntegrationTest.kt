@@ -32,8 +32,6 @@ import com.supermetroid.editor.rom.projectRoomStateCondition
 import com.supermetroid.editor.rom.words
 import java.io.File
 import java.util.Base64
-import java.util.concurrent.TimeUnit
-import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -1319,9 +1317,7 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(fixture.rom, fixture.romFile.readBytes())
     }
 
-    @Test
-    @Timeout(value = 5, unit = TimeUnit.MINUTES)
-    fun `shared native door records compile once update every consumer and protect unchanged bytes after reopen and reset`() = runBlocking {
+    @Test fun `shared native door records compile once update every consumer and protect unchanged bytes after reopen and reset`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val rom = com.supermetroid.editor.asm.saveSourceTestRom()
         com.supermetroid.editor.asm.DOOR_ARRIVAL_DISPATCH_BYTES.copyInto(rom, 0x7E8A3)

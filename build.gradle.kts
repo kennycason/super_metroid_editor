@@ -15,7 +15,10 @@ subprojects {
             testLogging.events("started", "passed", "skipped", "failed")
             timeout.set(java.time.Duration.ofMinutes(45))
             val junitTimeout = "junit.jupiter.execution.timeout.default"
-            systemProperty(junitTimeout, providers.systemProperty(junitTimeout).getOrElse("2 m"))
+            // ASM integration tests launch many short-lived native processes. Windows runners
+            // vary enough that healthy tests can exceed the tighter Unix timeout.
+            val defaultJunitTimeout = if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) "10 m" else "2 m"
+            systemProperty(junitTimeout, providers.systemProperty(junitTimeout).getOrElse(defaultJunitTimeout))
             // Keep Compose tests on their original thread while allowing interruption.
             systemProperty("junit.jupiter.execution.timeout.thread.mode.default", "SAME_THREAD")
         }
