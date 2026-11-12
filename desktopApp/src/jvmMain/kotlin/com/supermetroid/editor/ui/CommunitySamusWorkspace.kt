@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -39,8 +41,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.SamusCommunityAnimationCatalog
 import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
@@ -71,7 +75,8 @@ internal fun CommunitySamusWorkspace(
 
     Column(modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 12.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .background(MaterialTheme.colorScheme.surface).padding(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -83,7 +88,7 @@ internal fun CommunitySamusWorkspace(
                     modifier = Modifier.height(30.dp),
                 )
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(24.dp))
             Text(
                 "SpriteSomething ${SamusCommunitySheetDecoder.FORMAT_ID.substringAfter('-')}",
                 fontSize = font.detail,
@@ -147,156 +152,166 @@ private fun CommunitySamusAnimationBrowser(
             .toSortedSet()
     }
 
-    Row(modifier) {
-        Column(
-            Modifier.width(220.dp).fillMaxHeight().background(MaterialTheme.colorScheme.background)
-                .verticalScroll(rememberScrollState()).padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text("Animations", fontSize = font.body, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
-            Text(
-                "${catalog.groups.size} groups · ${catalog.variantCount} variants",
-                fontSize = font.detail,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 5.dp),
-            )
-            catalog.groups.forEachIndexed { index, choice ->
-                val selected = index == selectedGroupIndex
-                Surface(
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        selectedGroupIndex = index
-                        selectedVariantIndex = 0
-                        currentFrame = 0
-                    },
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    shape = RoundedCornerShape(4.dp),
-                ) {
-                    Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
-                        Text(
-                            choice.name,
-                            fontSize = font.body,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            "${choice.variants.size} variants · ${choice.variants.sumOf { it.frames.size }} frames",
-                            fontSize = font.detail,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-
-        Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-
-        Column(
-            Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(group.name, fontSize = font.heading, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-            Text(
-                "Community sheet animation · ${selectedSuit.name.lowercase().replaceFirstChar { it.uppercase() }} palette · SpriteSomething timing and composition",
-                fontSize = font.detail,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+    BoxWithConstraints(modifier) {
+        val contentWidth = responsiveCommunityPaneWidth(
+            availableWidth = maxWidth,
+            leadingWidth = (COMMUNITY_ANIMATION_SIDEBAR_WIDTH + COMMUNITY_PANE_DIVIDER_WIDTH).dp,
+            minimumWidth = COMMUNITY_ANIMATION_CONTENT_WIDTH.dp,
+        )
+        Row(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
+            Column(
+                Modifier.width(COMMUNITY_ANIMATION_SIDEBAR_WIDTH.dp).fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.background)
+                    .verticalScroll(rememberScrollState()).padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                group.variants.forEachIndexed { index, choice ->
-                    FilterChip(
-                        selected = index == selectedVariantIndex,
-                        onClick = {
-                            selectedVariantIndex = index
+                Text("Animations", fontSize = font.body, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${catalog.groups.size} groups · ${catalog.variantCount} variants",
+                    fontSize = font.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 5.dp),
+                )
+                catalog.groups.forEachIndexed { index, choice ->
+                    val selected = index == selectedGroupIndex
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            selectedGroupIndex = index
+                            selectedVariantIndex = 0
                             currentFrame = 0
                         },
-                        label = {
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
                             Text(
-                                SamusCommunityAnimationCatalog.humanize(choice.name),
+                                choice.name,
                                 fontSize = font.body,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                             )
-                        },
-                    )
+                            Text(
+                                "${choice.variants.size} variants · ${choice.variants.sumOf { it.frames.size }} frames",
+                                fontSize = font.detail,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
 
-            if (unresolved.isNotEmpty()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(5.dp),
-                    modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+            Box(Modifier.width(COMMUNITY_PANE_DIVIDER_WIDTH.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+
+            Column(
+                Modifier.width(contentWidth).fillMaxHeight()
+                    .testTag("community-samus-animation-details")
+                    .verticalScroll(rememberScrollState()).padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(group.name, fontSize = font.heading, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                Text(
+                    "Community sheet animation · ${selectedSuit.name.lowercase().replaceFirstChar { it.uppercase() }} palette · SpriteSomething timing and composition",
+                    fontSize = font.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Text(
-                        if (unresolved.all { it.startsWith("optional_ship_") }) {
-                            "This WIP preview references SpriteSomething's external ship art; the custom sheet does not contain those pieces."
-                        } else {
-                            "${unresolved.size} optional composition piece${if (unresolved.size == 1) " is" else "s are"} not stored in this sheet."
-                        },
-                        fontSize = font.detail,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                    )
+                    group.variants.forEachIndexed { index, choice ->
+                        FilterChip(
+                            selected = index == selectedVariantIndex,
+                            onClick = {
+                                selectedVariantIndex = index
+                                currentFrame = 0
+                            },
+                            label = {
+                                Text(
+                                    SamusCommunityAnimationCatalog.humanize(choice.name),
+                                    fontSize = font.body,
+                                )
+                            },
+                        )
+                    }
                 }
-            }
 
-            Spacer(Modifier.height(10.dp))
-            AnimationPlayer(
-                animation = animation,
-                previewSize = 320,
-                playing = playing,
-                onPlayingChanged = { playing = it },
-                currentFrame = currentFrame,
-                onFrameChanged = { currentFrame = it },
-                onExportPng = { frame, frameIndex ->
-                    val file = choosePngFile(
-                        dialogTitle = "Save Community Samus Frame as PNG",
-                        defaultName = "samus_community_${exportSafeName(group.name)}_${exportSafeName(variant.name)}_frame$frameIndex.png",
-                    ) ?: return@AnimationPlayer
-                    scope.launch {
-                        onStatus("Exporting ${file.name}…")
-                        val result = runCatching { withContext(Dispatchers.IO) { exportFramePng(frame, file) } }
-                        onStatus(result.fold(
-                            onSuccess = { "Exported ${file.name}" },
-                            onFailure = { problem -> "Export failed: ${problem.message ?: problem::class.simpleName}" },
-                        ))
+                if (unresolved.isNotEmpty()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = RoundedCornerShape(5.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                    ) {
+                        Text(
+                            if (unresolved.all { it.startsWith("optional_ship_") }) {
+                                "This WIP preview references SpriteSomething's external ship art; the custom sheet does not contain those pieces."
+                            } else {
+                                "${unresolved.size} optional composition piece${if (unresolved.size == 1) " is" else "s are"} not stored in this sheet."
+                            },
+                            fontSize = font.detail,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                        )
                     }
-                },
-                onExportGif = { selectedAnimation ->
-                    val file = chooseGifFile(
-                        dialogTitle = "Save Community Samus Animation as GIF",
-                        defaultName = "samus_community_${exportSafeName(group.name)}_${exportSafeName(variant.name)}.gif",
-                    ) ?: return@AnimationPlayer
-                    scope.launch {
-                        onStatus("Exporting ${file.name}…")
-                        val result = runCatching {
-                            withContext(Dispatchers.Default) { exportAnimationGif(selectedAnimation, file) }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                AnimationPlayer(
+                    animation = animation,
+                    previewSize = 320,
+                    playing = playing,
+                    onPlayingChanged = { playing = it },
+                    currentFrame = currentFrame,
+                    onFrameChanged = { currentFrame = it },
+                    onExportPng = { frame, frameIndex ->
+                        val file = choosePngFile(
+                            dialogTitle = "Save Community Samus Frame as PNG",
+                            defaultName = "samus_community_${exportSafeName(group.name)}_${exportSafeName(variant.name)}_frame$frameIndex.png",
+                        ) ?: return@AnimationPlayer
+                        scope.launch {
+                            onStatus("Exporting ${file.name}…")
+                            val result = runCatching { withContext(Dispatchers.IO) { exportFramePng(frame, file) } }
+                            onStatus(result.fold(
+                                onSuccess = { "Exported ${file.name}" },
+                                onFailure = { problem -> "Export failed: ${problem.message ?: problem::class.simpleName}" },
+                            ))
                         }
-                        onStatus(result.fold(
-                            onSuccess = { "Exported ${file.name}" },
-                            onFailure = { problem -> "Export failed: ${problem.message ?: problem::class.simpleName}" },
-                        ))
-                    }
-                },
-                onExportSheet = { selectedAnimation ->
-                    val file = choosePngFile(
-                        dialogTitle = "Save Community Samus Sprite Sheet as PNG",
-                        defaultName = "samus_community_${exportSafeName(group.name)}_${exportSafeName(variant.name)}_sheet.png",
-                    ) ?: return@AnimationPlayer
-                    scope.launch {
-                        onStatus("Exporting ${file.name}…")
-                        val result = runCatching {
-                            withContext(Dispatchers.IO) { exportAnimationSheet(selectedAnimation, file) }
+                    },
+                    onExportGif = { selectedAnimation ->
+                        val file = chooseGifFile(
+                            dialogTitle = "Save Community Samus Animation as GIF",
+                            defaultName = "samus_community_${exportSafeName(group.name)}_${exportSafeName(variant.name)}.gif",
+                        ) ?: return@AnimationPlayer
+                        scope.launch {
+                            onStatus("Exporting ${file.name}…")
+                            val result = runCatching {
+                                withContext(Dispatchers.Default) { exportAnimationGif(selectedAnimation, file) }
+                            }
+                            onStatus(result.fold(
+                                onSuccess = { "Exported ${file.name}" },
+                                onFailure = { problem -> "Export failed: ${problem.message ?: problem::class.simpleName}" },
+                            ))
                         }
-                        onStatus(result.fold(
-                            onSuccess = { "Exported ${file.name}" },
-                            onFailure = { problem -> "Export failed: ${problem.message ?: problem::class.simpleName}" },
-                        ))
-                    }
-                },
-            )
+                    },
+                    onExportSheet = { selectedAnimation ->
+                        val file = choosePngFile(
+                            dialogTitle = "Save Community Samus Sprite Sheet as PNG",
+                            defaultName = "samus_community_${exportSafeName(group.name)}_${exportSafeName(variant.name)}_sheet.png",
+                        ) ?: return@AnimationPlayer
+                        scope.launch {
+                            onStatus("Exporting ${file.name}…")
+                            val result = runCatching {
+                                withContext(Dispatchers.IO) { exportAnimationSheet(selectedAnimation, file) }
+                            }
+                            onStatus(result.fold(
+                                onSuccess = { "Exported ${file.name}" },
+                                onFailure = { problem -> "Export failed: ${problem.message ?: problem::class.simpleName}" },
+                            ))
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -321,7 +336,7 @@ private fun CommunitySamusFrameGallery(
 
     Column(modifier.background(MaterialTheme.colorScheme.background).padding(10.dp)) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -335,7 +350,7 @@ private fun CommunitySamusFrameGallery(
                 modifier = Modifier.width(270.dp),
             )
             Row(
-                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                Modifier.width(COMMUNITY_FRAME_FILTER_WIDTH.dp).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 CommunitySamusRegionCategory.entries.forEach { choice ->
@@ -351,67 +366,97 @@ private fun CommunitySamusFrameGallery(
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxSize()) {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(118.dp),
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                items(images, key = { it.name }) { image ->
-                    val active = image.name == selected.name
-                    val bitmap = remember(image, sheet, selectedSuit) { image.toImageBitmap(sheet, selectedSuit) }
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(142.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Surface(
-                            modifier = Modifier.width(118.dp).fillMaxHeight().clickable { selectedName = image.name },
-                            color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(7.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                            ),
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val detailsWidth = responsiveCommunityPaneWidth(
+                availableWidth = maxWidth,
+                leadingWidth = (COMMUNITY_FRAME_GRID_WIDTH + COMMUNITY_PANE_DIVIDER_WIDTH).dp,
+                minimumWidth = COMMUNITY_GALLERY_DETAILS_WIDTH.dp,
+            )
+            Row(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(COMMUNITY_FRAME_GRID_COLUMNS),
+                    modifier = Modifier.width(COMMUNITY_FRAME_GRID_WIDTH.dp).fillMaxHeight(),
+                    horizontalArrangement = Arrangement.spacedBy(COMMUNITY_FRAME_GAP.dp),
+                    verticalArrangement = Arrangement.spacedBy(COMMUNITY_FRAME_GAP.dp),
+                ) {
+                    items(images, key = { it.name }) { image ->
+                        val active = image.name == selected.name
+                        val bitmap = remember(image, sheet, selectedSuit) { image.toImageBitmap(sheet, selectedSuit) }
+                        Box(
+                            modifier = Modifier.requiredSize(COMMUNITY_FRAME_CELL_WIDTH.dp, COMMUNITY_FRAME_CELL_HEIGHT.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Column(
-                                Modifier.fillMaxSize().padding(7.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
+                            Surface(
+                                modifier = Modifier.fillMaxSize().clickable { selectedName = image.name },
+                                color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(7.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                ),
                             ) {
-                                Box(
-                                    Modifier.fillMaxWidth().weight(1f)
-                                        .background(MaterialTheme.colorScheme.background, RoundedCornerShape(4.dp)),
-                                    contentAlignment = Alignment.Center,
+                                Column(
+                                    Modifier.fillMaxSize().padding(7.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
-                                    Image(
-                                        bitmap = bitmap,
-                                        contentDescription = image.name,
-                                        modifier = Modifier.fillMaxSize().padding(4.dp),
-                                        contentScale = ContentScale.Fit,
-                                        filterQuality = FilterQuality.None,
+                                    Box(
+                                        Modifier.fillMaxWidth().weight(1f)
+                                            .background(MaterialTheme.colorScheme.background, RoundedCornerShape(4.dp)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Image(
+                                            bitmap = bitmap,
+                                            contentDescription = image.name,
+                                            modifier = Modifier.fillMaxSize().padding(4.dp),
+                                            contentScale = ContentScale.Fit,
+                                            filterQuality = FilterQuality.None,
+                                        )
+                                    }
+                                    Text(
+                                        humanizeCommunityName(image.name),
+                                        fontSize = font.detail,
+                                        color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 5.dp),
+                                    )
+                                    Text(
+                                        "${image.width} × ${image.height}",
+                                        fontSize = font.statusBar,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                Text(
-                                    humanizeCommunityName(image.name),
-                                    fontSize = font.detail,
-                                    color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 5.dp),
-                                )
-                                Text(
-                                    "${image.width} × ${image.height}",
-                                    fontSize = font.statusBar,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
                             }
                         }
                     }
                 }
-            }
 
-            Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-            CommunityRegionDetails(selected, sheet, selectedSuit, Modifier.width(330.dp))
+                Box(Modifier.width(COMMUNITY_PANE_DIVIDER_WIDTH.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+                CommunityRegionDetails(selected, sheet, selectedSuit, Modifier.width(detailsWidth))
+            }
         }
     }
 }
+
+internal fun responsiveCommunityPaneWidth(
+    availableWidth: Dp,
+    leadingWidth: Dp,
+    minimumWidth: Dp,
+): Dp = if (availableWidth.value.isFinite()) {
+    maxOf(minimumWidth, availableWidth - leadingWidth)
+} else {
+    minimumWidth
+}
+
+internal const val COMMUNITY_ANIMATION_SIDEBAR_WIDTH = 220
+internal const val COMMUNITY_ANIMATION_CONTENT_WIDTH = 620
+internal const val COMMUNITY_PANE_DIVIDER_WIDTH = 1
+internal const val COMMUNITY_FRAME_FILTER_WIDTH = 430
+internal const val COMMUNITY_FRAME_GRID_COLUMNS = 4
+internal const val COMMUNITY_FRAME_CELL_WIDTH = 118
+internal const val COMMUNITY_FRAME_CELL_HEIGHT = 142
+internal const val COMMUNITY_FRAME_GAP = 7
+internal const val COMMUNITY_FRAME_GRID_WIDTH =
+    COMMUNITY_FRAME_GRID_COLUMNS * COMMUNITY_FRAME_CELL_WIDTH +
+        (COMMUNITY_FRAME_GRID_COLUMNS - 1) * COMMUNITY_FRAME_GAP
+internal const val COMMUNITY_GALLERY_DETAILS_WIDTH = 440

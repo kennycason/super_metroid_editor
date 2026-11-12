@@ -4,6 +4,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -86,7 +89,7 @@ fun AnimationPlayer(
     onExportSheet: ((SpriteAnimation) -> Unit)? = null,
 ) {
     if (animation == null || animation.frames.isEmpty()) {
-        Box(modifier.size(previewSize.dp), contentAlignment = Alignment.Center) {
+        Box(modifier.requiredSize(previewSize.dp), contentAlignment = Alignment.Center) {
             Text(
                 "No animation data",
                 fontSize = LocalEditorTheme.current.fontSize.value.body,
@@ -180,32 +183,39 @@ fun AnimationPlayer(
 
         val checkerLight = MaterialTheme.colorScheme.surface
         val checkerDark = MaterialTheme.colorScheme.surfaceVariant
+        // The preview is fixed-size artwork. If the window is narrower, expose the rest through
+        // scrolling instead of allowing parent constraints to reshape the sprite viewport.
         Box(
-            modifier = Modifier.size(previewSize.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            contentAlignment = Alignment.Center,
         ) {
-            // Checkerboard
-            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                val cellSize = 12f
-                val cols = (size.width / cellSize).toInt() + 1
-                val rows = (size.height / cellSize).toInt() + 1
-                for (r in 0 until rows) {
-                    for (c in 0 until cols) {
-                        val color = if ((r + c) % 2 == 0) checkerLight else checkerDark
-                        drawRect(color, Offset(c * cellSize, r * cellSize), Size(cellSize, cellSize))
+            Box(
+                modifier = Modifier.requiredSize(previewSize.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Checkerboard
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    val cellSize = 12f
+                    val cols = (size.width / cellSize).toInt() + 1
+                    val rows = (size.height / cellSize).toInt() + 1
+                    for (r in 0 until rows) {
+                        for (c in 0 until cols) {
+                            val color = if ((r + c) % 2 == 0) checkerLight else checkerDark
+                            drawRect(color, Offset(c * cellSize, r * cellSize), Size(cellSize, cellSize))
+                        }
                     }
                 }
-            }
 
-            Image(
-                bitmap = img.toComposeImageBitmap(),
-                contentDescription = frame.label,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
-                filterQuality = FilterQuality.None
-            )
+                Image(
+                    bitmap = img.toComposeImageBitmap(),
+                    contentDescription = frame.label,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                    filterQuality = FilterQuality.None,
+                )
+            }
         }
 
         Spacer(Modifier.height(8.dp))

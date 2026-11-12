@@ -8,7 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +47,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -255,6 +259,7 @@ internal fun CommunitySamusSheetPreview(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun CommunitySheetHeader(
     session: CommunitySamusPreviewSession,
     onUseInProject: (() -> Unit)?,
@@ -266,17 +271,23 @@ private fun CommunitySheetHeader(
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Column(Modifier.width(COMMUNITY_HEADER_TEXT_WIDTH.dp)) {
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     Text(
                         session.metadata?.displayName ?: session.sourceName.substringBeforeLast('.'),
                         fontWeight = FontWeight.Bold,
                         fontSize = LocalEditorTheme.current.fontSize.value.heading,
                         color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
                     )
                     CompactBadge(
                         if (isProjectSource) "PROJECT SOURCE" else "PREVIEW",
@@ -409,21 +420,21 @@ private fun InvalidCommunitySheet(
 @Composable
 internal fun CommunitySheetMetrics(sheet: SamusCommunitySheetDecoder.DecodedSheet) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        MetricCard("Format", "876 × 2543", Modifier.weight(1f))
-        MetricCard("Named regions", "${sheet.images.size} / ${SamusCommunitySheetDecoder.IMAGE_COUNT}", Modifier.weight(1f))
-        MetricCard("Palette colors", sheet.masterPaletteRgb.size.toString(), Modifier.weight(1f))
+        MetricCard("Format", "876 × 2543", Modifier.width(COMMUNITY_METRIC_WIDTH.dp))
+        MetricCard("Named regions", "${sheet.images.size} / ${SamusCommunitySheetDecoder.IMAGE_COUNT}", Modifier.width(COMMUNITY_METRIC_WIDTH.dp))
+        MetricCard("Palette colors", sheet.masterPaletteRgb.size.toString(), Modifier.width(COMMUNITY_METRIC_WIDTH.dp))
         MetricCard(
             "Opaque pixels",
             NumberFormat.getIntegerInstance().format(sheet.opaqueIndexedPixelCount),
-            Modifier.weight(1f),
+            Modifier.width(COMMUNITY_METRIC_WIDTH.dp),
         )
         MetricCard(
             "Palette match",
             if (sheet.quantizedPixelCount == 0) "Exact" else "${sheet.quantizedPixelCount} adjusted",
-            Modifier.weight(1f),
+            Modifier.width(COMMUNITY_METRIC_WIDTH.dp),
         )
     }
 }
@@ -462,76 +473,84 @@ internal fun CommunityRegionBrowser(
         if (selectedIndex >= 0) listState.scrollToItem(selectedIndex)
     }
 
-    Row(modifier.fillMaxWidth()) {
-        Column(
-            Modifier.width(265.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(9.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Find named region", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
-                placeholder = { Text("run, morph, file select…", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = LocalEditorTheme.current.fontSize.value.body),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val detailsWidth = responsiveCommunityPaneWidth(
+            availableWidth = maxWidth,
+            leadingWidth = (COMMUNITY_REGION_SIDEBAR_WIDTH + COMMUNITY_PANE_DIVIDER_WIDTH).dp,
+            minimumWidth = COMMUNITY_REGION_DETAILS_WIDTH.dp,
+        )
+        Row(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
+            Column(
+                Modifier.width(COMMUNITY_REGION_SIDEBAR_WIDTH.dp).fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.surface).padding(9.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                CommunitySamusRegionCategory.entries.forEach { choice ->
-                    FilterChip(
-                        selected = category == choice,
-                        onClick = {
-                            category = choice
-                            if (!communitySamusRegionMatches(selected, query, choice)) {
-                                sheet.images.values.firstOrNull { image ->
-                                    communitySamusRegionMatches(image, query, choice)
-                                }?.let { image -> selectedName = image.name }
-                            }
-                        },
-                        label = { Text(choice.label, fontSize = LocalEditorTheme.current.fontSize.value.detail) },
-                        modifier = Modifier.height(27.dp),
-                    )
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Find named region", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
+                    placeholder = { Text("run, morph, file select…", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = LocalEditorTheme.current.fontSize.value.body),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CommunitySamusRegionCategory.entries.forEach { choice ->
+                        FilterChip(
+                            selected = category == choice,
+                            onClick = {
+                                category = choice
+                                if (!communitySamusRegionMatches(selected, query, choice)) {
+                                    sheet.images.values.firstOrNull { image ->
+                                        communitySamusRegionMatches(image, query, choice)
+                                    }?.let { image -> selectedName = image.name }
+                                }
+                            },
+                            label = { Text(choice.label, fontSize = LocalEditorTheme.current.fontSize.value.detail) },
+                            modifier = Modifier.height(27.dp),
+                        )
+                    }
                 }
-            }
-            Text("${filtered.size} regions", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(filtered, key = { it.name }) { image ->
-                    val active = image.name == selected.name
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { selectedName = image.name },
-                        color = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        shape = RoundedCornerShape(4.dp),
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                Text("${filtered.size} regions", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(filtered, key = { it.name }) { image ->
+                        val active = image.name == selected.name
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { selectedName = image.name },
+                            color = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            shape = RoundedCornerShape(4.dp),
                         ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    humanizeCommunityName(image.name),
-                                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                                    color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(image.name, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        humanizeCommunityName(image.name),
+                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                        color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(image.name, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                                }
+                                Text("${image.width}×${image.height}", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Text("${image.width}×${image.height}", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
             }
-        }
 
-        Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-        CommunityRegionDetails(selected, sheet, selectedSuit, Modifier.weight(1f))
+            Box(Modifier.width(COMMUNITY_PANE_DIVIDER_WIDTH.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+            CommunityRegionDetails(selected, sheet, selectedSuit, Modifier.width(detailsWidth))
+        }
     }
 }
 
@@ -553,7 +572,8 @@ internal fun CommunityRegionDetails(
         Spacer(Modifier.height(10.dp))
 
         Box(
-            Modifier.fillMaxWidth().height(380.dp)
+            Modifier.requiredSize(COMMUNITY_REGION_PREVIEW_SIZE.dp)
+                .testTag("community-samus-region-preview")
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center,
@@ -604,6 +624,12 @@ internal fun CommunityRegionDetails(
         }
     }
 }
+
+internal const val COMMUNITY_HEADER_TEXT_WIDTH = 560
+internal const val COMMUNITY_METRIC_WIDTH = 150
+internal const val COMMUNITY_REGION_SIDEBAR_WIDTH = 265
+internal const val COMMUNITY_REGION_DETAILS_WIDTH = 520
+internal const val COMMUNITY_REGION_PREVIEW_SIZE = 380
 
 @Composable
 private fun PaletteRow(colors: List<Int>) {

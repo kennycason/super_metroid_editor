@@ -6,7 +6,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -111,11 +114,12 @@ internal fun CommunitySamusCatalogBrowser(
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.width(COMMUNITY_CATALOG_HEADER_WIDTH.dp)) {
                     Text("Community Samus Catalog", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = fs.heading)
                     Text(
                         "${snapshot.sprites.size} sprites · upstream ${snapshot.revision.take(8)}" +
@@ -137,163 +141,172 @@ internal fun CommunitySamusCatalogBrowser(
             }
         }
 
-        Row(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.width(sidebarWidth).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("Find sprite or artist", fontSize = fs.detail) },
-                    placeholder = { Text("Zero Mission, TarThoron…", fontSize = fs.detail) },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = fs.body),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val detailsWidth = responsiveCommunityPaneWidth(
+                availableWidth = maxWidth,
+                leadingWidth = sidebarWidth + COMMUNITY_PANE_DIVIDER_WIDTH.dp,
+                minimumWidth = COMMUNITY_CATALOG_DETAILS_WIDTH.dp,
+            )
+            Row(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
+                Column(
+                    Modifier.width(sidebarWidth).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
-                    FilterChip(
-                        selected = category == null,
-                        onClick = { category = null },
-                        label = { Text("All", fontSize = fs.detail) },
-                        modifier = Modifier.height(30.dp),
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("Find sprite or artist", fontSize = fs.detail) },
+                        placeholder = { Text("Zero Mission, TarThoron…", fontSize = fs.detail) },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = fs.body),
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    categories.forEach { choice ->
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         FilterChip(
-                            selected = category == choice,
-                            onClick = { category = choice },
-                            label = { Text(choice, fontSize = fs.detail) },
+                            selected = category == null,
+                            onClick = { category = null },
+                            label = { Text("All", fontSize = fs.detail) },
                             modifier = Modifier.height(30.dp),
                         )
+                        categories.forEach { choice ->
+                            FilterChip(
+                                selected = category == choice,
+                                onClick = { category = choice },
+                                label = { Text(choice, fontSize = fs.detail) },
+                                modifier = Modifier.height(30.dp),
+                            )
+                        }
                     }
-                }
-                Text("${filtered.size} matches", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    items(filtered, key = { it.name }) { sprite ->
-                        val active = sprite.name == selected.name
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { selectedName = sprite.name },
-                            color = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                            shape = RoundedCornerShape(4.dp),
-                        ) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    Text("${filtered.size} matches", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        items(filtered, key = { it.name }) { sprite ->
+                            val active = sprite.name == selected.name
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable { selectedName = sprite.name },
+                                color = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                shape = RoundedCornerShape(4.dp),
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        sprite.displayName,
-                                        fontSize = fs.body,
-                                        fontWeight = if (sprite.name == activeCatalogName) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        sprite.authors.joinToString(),
-                                        fontSize = fs.detail,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                                Row(
+                                    Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            sprite.displayName,
+                                            fontSize = fs.body,
+                                            fontWeight = if (sprite.name == activeCatalogName) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            sprite.authors.joinToString(),
+                                            fontSize = fs.detail,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    if (sprite.name == activeCatalogName) CatalogBadge("PROJECT", MaterialTheme.colorScheme.tertiary)
+                                    else if (isDownloaded(sprite)) CatalogBadge("SAVED", MaterialTheme.colorScheme.primary)
                                 }
-                                if (sprite.name == activeCatalogName) CatalogBadge("PROJECT", MaterialTheme.colorScheme.tertiary)
-                                else if (isDownloaded(sprite)) CatalogBadge("SAVED", MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
                 }
-            }
 
-            Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-            Column(
-                Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
-            ) {
-                // ── Info header (always visible at top) ──
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth(),
+                Box(Modifier.width(COMMUNITY_PANE_DIVIDER_WIDTH.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+                Column(
+                    Modifier.width(detailsWidth).fillMaxHeight()
+                        .testTag("community-samus-catalog-details")
+                        .verticalScroll(rememberScrollState()),
                 ) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    // ── Info header (always visible at top) ──
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(selected.displayName, fontSize = fs.heading, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        Text("by ${selected.authors.joinToString()}", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text(
-                                "${selected.category} · v${selected.version}",
-                                fontSize = fs.detail,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            CatalogBadge(
-                                if (romReadyCatalog) "ROM-READY" else "PREVIEW",
-                                if (romReadyCatalog) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSecondaryContainer,
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        if (!selectedDownloaded) {
-                            CatalogAction(
-                                if (downloadingName == selected.name) "Downloading & validating…" else "Download Preview",
-                                onClick = { onDownloadPreview(selected) },
-                                enabled = downloadingName == null,
-                                emphasized = true,
-                            )
-                        } else {
+                            Text(selected.displayName, fontSize = fs.heading, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text("by ${selected.authors.joinToString()}", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                Text(
+                                    "${selected.category} · v${selected.version}",
+                                    fontSize = fs.detail,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                CatalogBadge(
+                                    if (romReadyCatalog) "ROM-READY" else "PREVIEW",
+                                    if (romReadyCatalog) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            if (!selectedDownloaded) {
                                 CatalogAction(
-                                    when {
-                                        downloadingName == selected.name -> "Preparing Project…"
-                                        selected.name == activeCatalogName -> "Using in Project"
-                                        showcaseLoading -> "Building Preview…"
-                                        showcase == null -> "Preview unavailable"
-                                        else -> "Use in Project"
-                                    },
-                                    onClick = { onUseInProject(selected) },
-                                    enabled = downloadingName == null &&
-                                        selected.name != activeCatalogName &&
-                                        !showcaseLoading &&
-                                        showcase != null,
+                                    if (downloadingName == selected.name) "Downloading & validating…" else "Download Preview",
+                                    onClick = { onDownloadPreview(selected) },
+                                    enabled = downloadingName == null,
                                     emphasized = true,
                                 )
-                                CatalogAction(
-                                    "Open Detailed View",
-                                    onClick = { onOpenDetails(selected) },
-                                    enabled = downloadingName == null,
-                                )
+                            } else {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CatalogAction(
+                                        when {
+                                            downloadingName == selected.name -> "Preparing Project…"
+                                            selected.name == activeCatalogName -> "Using in Project"
+                                            showcaseLoading -> "Building Preview…"
+                                            showcase == null -> "Preview unavailable"
+                                            else -> "Use in Project"
+                                        },
+                                        onClick = { onUseInProject(selected) },
+                                        enabled = downloadingName == null &&
+                                            selected.name != activeCatalogName &&
+                                            !showcaseLoading &&
+                                            showcase != null,
+                                        emphasized = true,
+                                    )
+                                    CatalogAction(
+                                        "Open Detailed View",
+                                        onClick = { onOpenDetails(selected) },
+                                        enabled = downloadingName == null,
+                                    )
+                                }
+                            }
+                            if (selected.name == activeCatalogName) {
+                                Text("This is the project’s selected Samus source.", fontSize = fs.detail, color = MaterialTheme.colorScheme.tertiary)
                             }
                         }
-                        if (selected.name == activeCatalogName) {
-                            Text("This is the project’s selected Samus source.", fontSize = fs.detail, color = MaterialTheme.colorScheme.tertiary)
-                        }
                     }
-                }
 
-                // ── All sprite poses (flowing grid, full width) ──
-                when {
-                    showcase != null -> CommunitySamusShowcase(showcase!!, selected.displayName)
-                    showcaseLoading -> ShowcaseLoading()
-                    else -> {
-                        Box(
-                            Modifier.fillMaxWidth().height(120.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                if (selectedDownloaded) "Saved preview unavailable" else "Download to see all in-game poses",
-                                fontSize = fs.detail,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                    // ── All sprite poses (flowing grid, full width) ──
+                    when {
+                        showcase != null -> CommunitySamusShowcase(showcase!!, selected.displayName)
+                        showcaseLoading -> ShowcaseLoading()
+                        else -> {
+                            Box(
+                                Modifier.fillMaxWidth().height(120.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (selectedDownloaded) "Saved preview unavailable" else "Download to see all in-game poses",
+                                    fontSize = fs.detail,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -304,7 +317,7 @@ internal fun CommunitySamusCatalogBrowser(
 
 @Composable
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-private fun CommunitySamusShowcase(
+internal fun CommunitySamusShowcase(
     showcase: CommunitySamusCatalogShowcase,
     displayName: String,
 ) {
@@ -327,7 +340,7 @@ private fun CommunitySamusShowcase(
                 }
             }
         } else {
-            androidx.compose.foundation.layout.FlowRow(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(SHOWCASE_GAP.dp, Alignment.CenterHorizontally),
                 verticalArrangement = Arrangement.spacedBy(SHOWCASE_GAP.dp),
@@ -368,6 +381,8 @@ private fun ShowcaseLoading() {
 
 private const val SHOWCASE_CELL_SIZE = 90
 private const val SHOWCASE_GAP = 5
+internal const val COMMUNITY_CATALOG_HEADER_WIDTH = 520
+internal const val COMMUNITY_CATALOG_DETAILS_WIDTH = 650
 
 @Composable
 internal fun CommunitySamusCatalogStatus(
