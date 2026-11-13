@@ -212,7 +212,7 @@ internal object IntroSequenceRomPatch {
             .dropLast(1)
         val initialVignetteImages: List<java.awt.image.BufferedImage?> = when {
             !IntroRomImageResolver.isRomSource(vignetteSource) -> listOf(null)
-            parser == null -> throw RomWritePlanException("${scene.name} requires loaded ROM vignette graphics.")
+            parser == null -> throw RomWritePlanException("${scene.name} requires loaded ROM image graphics.")
             scene.vignetteAnimation == IntroVignetteAnimation.STATIC -> listOf(
                 IntroRomImageResolver.render(parser, vignetteSource, scene.vignetteFrame, scene.vignettePanStartX, scene.vignettePanStartY)
             )
@@ -236,8 +236,8 @@ internal object IntroSequenceRomPatch {
             effectiveVignetteDurations + effectiveVignetteDurations
         } else effectiveVignetteDurations
         val vignette = Stage(
-            name = "${scene.name} vignette",
-            frames = compileCard(vignetteCard, vignetteImages, "Story beat ${index + 1} vignette"),
+            name = "${scene.name} image",
+            frames = compileCard(vignetteCard, vignetteImages, "Story frame ${index + 1} image"),
             advanceMode = scene.vignetteAdvanceMode,
             durationFrames = scene.vignetteDurationFrames,
             transition = scene.vignetteTransition,

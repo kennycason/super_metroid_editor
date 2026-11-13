@@ -63,7 +63,7 @@ object SmEditProjectFormat {
         require(project.introSequence.scenes.all {
             it.effectiveVignetteSource != IntroImageSource.UPLOADED_PNG || it.vignetteImagePngBase64.isNotBlank()
         }) {
-            "An intro vignette selected an uploaded PNG but contains no PNG data."
+            "An intro image selected an uploaded PNG but contains no PNG data."
         }
     }
 }

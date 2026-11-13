@@ -381,7 +381,7 @@ private fun VignetteSettings(scene: IntroScene, editor: EditorState, parser: Rom
     SourceMenu(source, listOf(IntroImageSource.NONE) + IntroRomImageResolver.vignetteSources +
         listOfNotNull(IntroImageSource.UPLOADED_PNG.takeIf { scene.vignetteImagePngBase64.isNotBlank() }), parser, sourceExpanded,
         { sourceExpanded = it }) { selected ->
-        editor.updateIntroScene(scene.id, "Change intro vignette") {
+        editor.updateIntroScene(scene.id, "Change intro image") {
             it.vignetteSource = selected
             it.vignetteFrame = IntroRomImageResolver.defaultFrame(selected)
         }
@@ -391,7 +391,7 @@ private fun VignetteSettings(scene: IntroScene, editor: EditorState, parser: Rom
         Button(onClick = {
             val file = chooseIntroPng("Import Intro Image PNG") ?: return@Button
             importPng(file, onMessage) { imported ->
-                editor.updateIntroScene(scene.id, "Import intro vignette") {
+                editor.updateIntroScene(scene.id, "Import intro image") {
                     it.vignetteImagePngBase64 = imported.base64; it.vignetteImageFileName = file.name
                     it.vignetteImageSha256 = imported.sha256; it.vignetteSource = IntroImageSource.UPLOADED_PNG
                 }
@@ -400,25 +400,25 @@ private fun VignetteSettings(scene: IntroScene, editor: EditorState, parser: Rom
     } else {
         if (IntroRomImageResolver.isRomSource(source)) {
             SettingChoices("Animation", IntroVignetteAnimation.entries, scene.vignetteAnimation, { if (it == IntroVignetteAnimation.NATIVE) "Native loop" else "Static frame" }) {
-                editor.updateIntroScene(scene.id, "Change vignette animation") { card -> card.vignetteAnimation = it }
+                editor.updateIntroScene(scene.id, "Change image animation") { card -> card.vignetteAnimation = it }
             }
             val count = parser?.let { IntroRomImageResolver.frameCount(it, source) } ?: 0
             if (scene.vignetteAnimation == IntroVignetteAnimation.STATIC && count > 1) FramePicker(scene.vignetteFrame, count) { value ->
-                editor.updateIntroScene(scene.id, "Change vignette frame") { it.vignetteFrame = value }
+                editor.updateIntroScene(scene.id, "Change image frame") { it.vignetteFrame = value }
             }
             if (scene.vignetteAnimation == IntroVignetteAnimation.NATIVE) {
                 SettingChoices("Frame timing", IntroVignetteTiming.entries, scene.vignetteTiming, {
                     if (it == IntroVignetteTiming.NATIVE) "Native timings" else "Uniform"
                 }) {
-                    editor.updateIntroScene(scene.id, "Change vignette timing") { card -> card.vignetteTiming = it }
+                    editor.updateIntroScene(scene.id, "Change image timing") { card -> card.vignetteTiming = it }
                 }
                 if (scene.vignetteTiming == IntroVignetteTiming.UNIFORM) {
                     NumericSetting("Frame delay", scene.vignetteFrameDelay, 1..255, "frames") {
-                        editor.updateIntroScene(scene.id, "Change vignette frame delay") { card -> card.vignetteFrameDelay = it }
+                        editor.updateIntroScene(scene.id, "Change image frame delay") { card -> card.vignetteFrameDelay = it }
                     }
                 }
                 NumericSetting("Loops", scene.vignetteLoopCount, 1..255, "Native delivery/exam: 10") {
-                    editor.updateIntroScene(scene.id, "Change vignette loops") { card -> card.vignetteLoopCount = it }
+                    editor.updateIntroScene(scene.id, "Change image loops") { card -> card.vignetteLoopCount = it }
                 }
             }
             Text(nativeVignetteNote(source), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -427,46 +427,46 @@ private fun VignetteSettings(scene: IntroScene, editor: EditorState, parser: Rom
             Button(onClick = {
                 val file = chooseIntroPng("Import Intro Image PNG") ?: return@Button
                 importPng(file, onMessage) { imported ->
-                    editor.updateIntroScene(scene.id, "Import intro vignette") {
+                    editor.updateIntroScene(scene.id, "Import intro image") {
                         it.vignetteImagePngBase64 = imported.base64; it.vignetteImageFileName = file.name
                         it.vignetteImageSha256 = imported.sha256; it.vignetteSource = IntroImageSource.UPLOADED_PNG
                     }
                 }
             }, shape = INTRO_BUTTON_SHAPE, contentPadding = INTRO_BUTTON_PADDING) { Text(if (scene.vignetteImagePngBase64.isBlank()) "Import PNG…" else "Replace PNG…") }
             OutlinedButton(onClick = {
-                editor.updateIntroScene(scene.id, "Clear intro vignette") {
+                editor.updateIntroScene(scene.id, "Clear intro image") {
                     it.vignetteImagePngBase64 = ""; it.vignetteImageFileName = ""; it.vignetteImageSha256 = ""
                     it.vignetteSource = IntroImageSource.NONE; it.vignetteFrame = 0
                 }
             }, shape = INTRO_BUTTON_SHAPE, contentPadding = INTRO_BUTTON_PADDING) { Text("Clear") }
         }
         if (source == IntroImageSource.UPLOADED_PNG) SettingChoices("Image fit", IntroImageFit.entries, scene.vignetteImageFit, ::enumLabel) {
-            editor.updateIntroScene(scene.id, "Change vignette image fit") { card -> card.vignetteImageFit = it }
+            editor.updateIntroScene(scene.id, "Change image fit") { card -> card.vignetteImageFit = it }
         }
         Text("Pan (BG scroll pixels)", fontWeight = FontWeight.SemiBold)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            NumericSetting("Start X", scene.vignettePanStartX, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change vignette pan") { it.vignettePanStartX = v } }
-            NumericSetting("Start Y", scene.vignettePanStartY, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change vignette pan") { it.vignettePanStartY = v } }
+            NumericSetting("Start X", scene.vignettePanStartX, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change image pan") { it.vignettePanStartX = v } }
+            NumericSetting("Start Y", scene.vignettePanStartY, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change image pan") { it.vignettePanStartY = v } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            NumericSetting("End X", scene.vignettePanEndX, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change vignette pan") { it.vignettePanEndX = v } }
-            NumericSetting("End Y", scene.vignettePanEndY, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change vignette pan") { it.vignettePanEndY = v } }
+            NumericSetting("End X", scene.vignettePanEndX, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change image pan") { it.vignettePanEndX = v } }
+            NumericSetting("End Y", scene.vignettePanEndY, -255..255, "", Modifier.weight(1f)) { v -> editor.updateIntroScene(scene.id, "Change image pan") { it.vignettePanEndY = v } }
         }
         SettingChoices("Advance", IntroAdvanceMode.entries, scene.vignetteAdvanceMode, ::advanceLabel) {
-            editor.updateIntroScene(scene.id, "Change vignette advance") { card -> card.vignetteAdvanceMode = it }
+            editor.updateIntroScene(scene.id, "Change image advance") { card -> card.vignetteAdvanceMode = it }
         }
         NumericSetting("Duration", scene.vignetteDurationFrames, 30..3600, "frames") {
-            editor.updateIntroScene(scene.id, "Change vignette duration") { card -> card.vignetteDurationFrames = it }
+            editor.updateIntroScene(scene.id, "Change image duration") { card -> card.vignetteDurationFrames = it }
         }
         SettingChoices("Transition", IntroTransition.entries, scene.vignetteTransition, ::enumLabel) {
-            editor.updateIntroScene(scene.id, "Change vignette transition") { card -> card.vignetteTransition = it }
+            editor.updateIntroScene(scene.id, "Change image transition") { card -> card.vignetteTransition = it }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NumericSetting("Fade in", scene.vignetteFadeInFrames, 0..255, "frames", Modifier.weight(1f)) {
-                editor.updateIntroScene(scene.id, "Change vignette fade in") { card -> card.vignetteFadeInFrames = it }
+                editor.updateIntroScene(scene.id, "Change image fade in") { card -> card.vignetteFadeInFrames = it }
             }
             NumericSetting("Fade out", scene.vignetteFadeOutFrames, 0..255, "frames", Modifier.weight(1f)) {
-                editor.updateIntroScene(scene.id, "Change vignette fade out") { card -> card.vignetteFadeOutFrames = it }
+                editor.updateIntroScene(scene.id, "Change image fade out") { card -> card.vignetteFadeOutFrames = it }
             }
         }
     }
