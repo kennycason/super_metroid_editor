@@ -15,15 +15,37 @@ import com.supermetroid.editor.asm.RoomAsmSourceRequest
 import com.supermetroid.editor.asm.RoomAsmSourceKind
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmWorkspaceState
+import com.supermetroid.editor.asm.AsmProjectWorkspaceRepository
 import com.supermetroid.editor.asm.AsmTilesetPaletteAccess
 import com.supermetroid.editor.asm.AsmTilesetPaletteBridge
 import com.supermetroid.editor.asm.AsmTilesetGraphicsAccess
 import com.supermetroid.editor.asm.AsmTilesetGraphicsBridge
 import com.supermetroid.editor.asm.AsmTilesetGraphicsKey
 import com.supermetroid.editor.asm.AsmTilesetGraphicsKind
+import com.supermetroid.editor.asm.AsmNativeSpriteAssetAccess
+import com.supermetroid.editor.asm.AsmNativeSpriteAssetBridge
+import com.supermetroid.editor.asm.AsmNativeSpriteAssetSnapshot
+import com.supermetroid.editor.asm.AsmNativeSpritePaletteAccess
+import com.supermetroid.editor.asm.AsmNativeSpritePaletteBridge
+import com.supermetroid.editor.asm.AsmNativeSpritePaletteSnapshot
+import com.supermetroid.editor.asm.AsmCinematicMapAssetAccess
+import com.supermetroid.editor.asm.AsmCinematicMapAssetBridge
+import com.supermetroid.editor.asm.AsmCinematicMapAssetSnapshot
+import com.supermetroid.editor.asm.AsmTextSourceAccess
+import com.supermetroid.editor.asm.AsmTextSourceBridge
+import com.supermetroid.editor.asm.AsmTextSourceSnapshot
+import com.supermetroid.editor.asm.AsmTypewriterTextAccess
+import com.supermetroid.editor.asm.AsmTypewriterTextBridge
+import com.supermetroid.editor.asm.AsmTypewriterTextSnapshot
+import com.supermetroid.editor.asm.AsmIntroStoryTextAccess
+import com.supermetroid.editor.asm.AsmIntroStoryTextBridge
+import com.supermetroid.editor.asm.AsmIntroStoryTextSnapshot
+import com.supermetroid.editor.asm.snapshot
+import com.supermetroid.editor.asm.AsmAssetRelocationRequiredException
 import com.supermetroid.editor.asm.publishSourceModelChanges
 import com.supermetroid.editor.rom.withFxChange
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
+import com.supermetroid.editor.rom.CinematicMapAssets
 import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.CommunitySamusSpriteSource
 import com.supermetroid.editor.data.DoorChange
@@ -87,6 +109,7 @@ import com.supermetroid.editor.procgen.PreparedLearnedRoomCandidate
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.NativeSpriteAssets
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.MapStationData
 import com.supermetroid.editor.rom.PaletteEffects
@@ -109,6 +132,7 @@ import com.supermetroid.editor.rom.stateEditsForId
 import com.supermetroid.editor.rom.stateEditsForSourceIndex
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
+import com.supermetroid.editor.rom.TextEntry
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.toSigned16
 import com.supermetroid.editor.rom.toUnsigned16
@@ -183,6 +207,83 @@ internal data class TilesetGraphicsEditingStatus(
     val message: String? = null,
     val affectedTilesetIds: List<Int> = emptyList(),
 )
+
+internal data class NativeSpriteEditingStatus(
+    val editable: Boolean,
+    val sourceManaged: Boolean,
+    val modified: Boolean = false,
+    val message: String? = null,
+)
+
+internal sealed interface TilesetAssetRelocationProposal {
+    val projectFilePath: String
+    val assetPath: String
+    val requiredBytes: Int
+    val inPlaceCapacity: Int
+    val affectedTilesetIds: List<Int>
+    val sourceFileId: String
+
+    data class Graphics(
+        override val projectFilePath: String,
+        override val assetPath: String,
+        override val requiredBytes: Int,
+        override val inPlaceCapacity: Int,
+        override val affectedTilesetIds: List<Int>,
+        override val sourceFileId: String,
+        val kind: AsmTilesetGraphicsKind,
+        val tilesetId: Int?,
+        val rawData: ByteArray,
+        val expectedSourceBytes: ByteArray,
+    ) : TilesetAssetRelocationProposal
+
+    data class Palette(
+        override val projectFilePath: String,
+        override val assetPath: String,
+        override val requiredBytes: Int,
+        override val inPlaceCapacity: Int,
+        override val affectedTilesetIds: List<Int>,
+        override val sourceFileId: String,
+        val tilesetId: Int,
+        val rawData: ByteArray,
+        val expectedSourceBytes: ByteArray,
+    ) : TilesetAssetRelocationProposal
+
+    data class NativeSpriteGraphics(
+        override val projectFilePath: String,
+        override val assetPath: String,
+        override val requiredBytes: Int,
+        override val inPlaceCapacity: Int,
+        override val sourceFileId: String,
+        val sourceKey: String,
+        val rawData: ByteArray,
+        val expectedSourceBytes: ByteArray,
+        override val affectedTilesetIds: List<Int> = emptyList(),
+    ) : TilesetAssetRelocationProposal
+
+    data class CinematicMap(
+        override val projectFilePath: String,
+        override val assetPath: String,
+        override val requiredBytes: Int,
+        override val inPlaceCapacity: Int,
+        override val sourceFileId: String,
+        val sourceKey: String,
+        val rawData: ByteArray,
+        val expectedSourceBytes: ByteArray,
+        override val affectedTilesetIds: List<Int> = emptyList(),
+    ) : TilesetAssetRelocationProposal
+
+    data class TypewriterText(
+        override val projectFilePath: String,
+        override val assetPath: String,
+        override val requiredBytes: Int,
+        override val inPlaceCapacity: Int,
+        override val sourceFileId: String,
+        val entry: TextEntry,
+        val rawData: ByteArray,
+        val expected: AsmTypewriterTextSnapshot,
+        override val affectedTilesetIds: List<Int> = emptyList(),
+    ) : TilesetAssetRelocationProposal
+}
 
 data class EffectiveSaveStationSpawn(
     val area: Int,
@@ -356,6 +457,49 @@ class EditorState(
     val redoStack = mutableListOf<EditOperation>()
     var undoVersion by mutableStateOf(0)
         private set
+    private sealed interface NativeSpriteSourceUndo {
+        val projectFilePath: String
+
+        data class Pixels(
+            override val projectFilePath: String,
+            val before: AsmNativeSpriteAssetSnapshot,
+            val after: AsmNativeSpriteAssetSnapshot,
+        ) : NativeSpriteSourceUndo
+
+        data class Palette(
+            override val projectFilePath: String,
+            val before: AsmNativeSpritePaletteSnapshot,
+            val after: AsmNativeSpritePaletteSnapshot,
+        ) : NativeSpriteSourceUndo
+
+        data class CinematicMap(
+            override val projectFilePath: String,
+            val before: AsmCinematicMapAssetSnapshot,
+            val after: AsmCinematicMapAssetSnapshot,
+        ) : NativeSpriteSourceUndo
+
+        data class Text(
+            override val projectFilePath: String,
+            val entry: TextEntry,
+            val before: AsmTextSourceSnapshot,
+            val after: AsmTextSourceSnapshot,
+        ) : NativeSpriteSourceUndo
+
+        data class TypewriterText(
+            override val projectFilePath: String,
+            val entry: TextEntry,
+            val before: AsmTypewriterTextSnapshot,
+            val after: AsmTypewriterTextSnapshot,
+        ) : NativeSpriteSourceUndo
+
+        data class IntroStoryText(
+            override val projectFilePath: String,
+            val entry: TextEntry,
+            val before: AsmIntroStoryTextSnapshot,
+            val after: AsmIntroStoryTextSnapshot,
+        ) : NativeSpriteSourceUndo
+    }
+    private val nativeSpriteSourceUndo = java.util.IdentityHashMap<EditOperation, NativeSpriteSourceUndo>()
 
     private val pendingEdits = mutableListOf<TileEdit>()
     private val pendingPositions = mutableSetOf<Long>()
@@ -430,6 +574,7 @@ class EditorState(
         private set(value) {
             if (value) projectDirtyRevision++
             dirtyValue = value
+            asmSourceWorkspace?.observeProjectRevision(projectDirtyRevision)
         }
     var projectSaveInProgress by mutableStateOf(false)
         private set
@@ -448,33 +593,70 @@ class EditorState(
     }
 
     private var asmModeRevision by mutableStateOf(0)
-    private val asmTilesetPaletteBridge = AsmTilesetPaletteBridge()
+    private val asmVisualWorkspaceRepository = AsmProjectWorkspaceRepository()
+    private val asmTilesetPaletteBridge = AsmTilesetPaletteBridge(asmVisualWorkspaceRepository)
     private var asmTilesetPaletteAccesses: Map<Int, AsmTilesetPaletteAccess> = emptyMap()
     private var asmTilesetPaletteAccessRevision = Long.MIN_VALUE
-    private val asmTilesetGraphicsBridge = AsmTilesetGraphicsBridge()
+    private val asmTilesetGraphicsBridge = AsmTilesetGraphicsBridge(asmVisualWorkspaceRepository)
     private var asmTilesetGraphicsAccesses: Map<AsmTilesetGraphicsKey, AsmTilesetGraphicsAccess> = emptyMap()
     private var asmTilesetGraphicsAccessRevision = Long.MIN_VALUE
+    private val asmNativeSpriteAssetBridge = AsmNativeSpriteAssetBridge(asmVisualWorkspaceRepository)
+    private var asmNativeSpriteAccesses: Map<String, AsmNativeSpriteAssetAccess> = emptyMap()
+    private var asmNativeSpriteAccessRevision = Long.MIN_VALUE
+    private val asmNativeSpritePaletteBridge = AsmNativeSpritePaletteBridge(asmVisualWorkspaceRepository)
+    private var asmNativeSpritePaletteAccesses: Map<Int, AsmNativeSpritePaletteAccess> = emptyMap()
+    private var asmNativeSpritePaletteAccessRevision = Long.MIN_VALUE
+    private val asmCinematicMapAssetBridge = AsmCinematicMapAssetBridge(asmVisualWorkspaceRepository)
+    private var asmCinematicMapAccesses: Map<String, AsmCinematicMapAssetAccess> = emptyMap()
+    private var asmCinematicMapAccessRevision = Long.MIN_VALUE
+    private val asmTextSourceBridge = AsmTextSourceBridge(asmVisualWorkspaceRepository)
+    private var asmTextSourceAccesses: Map<String, AsmTextSourceAccess> = emptyMap()
+    private var asmTextSourceAccessRevision = Long.MIN_VALUE
+    private val asmTypewriterTextBridge = AsmTypewriterTextBridge(asmVisualWorkspaceRepository)
+    private var asmTypewriterTextAccesses: Map<String, AsmTypewriterTextAccess> = emptyMap()
+    private var asmTypewriterTextAccessRevision = Long.MIN_VALUE
+    private val asmIntroStoryTextBridge = AsmIntroStoryTextBridge(asmVisualWorkspaceRepository)
+    private var asmIntroStoryTextAccesses: Map<String, AsmIntroStoryTextAccess> = emptyMap()
+    private var asmIntroStoryTextAccessRevision = Long.MIN_VALUE
     private var asmRoomTilesetVisualRevision = Long.MIN_VALUE
     private var asmEditorTilesetVisualRevision = Long.MIN_VALUE
     private var asmSourceWorkspace by mutableStateOf<AsmWorkspaceState?>(null)
+    internal var pendingTilesetAssetRelocation by mutableStateOf<TilesetAssetRelocationProposal?>(null)
+        private set
 
-    /** Live source revision shared by ASM-backed tiles, metatiles, and palettes. */
+    /** Live source revision shared by ASM-backed visual resources. */
     internal val asmTilesetSourceRevision: Long
         get() = asmSourceWorkspace?.takeIf(AsmWorkspaceState::hasProjectWorkspace)?.sourceBufferRevision ?: -1L
+
+    internal val asmVisualSourceRevision: Long get() = asmTilesetSourceRevision
 
     internal fun attachAsmWorkspaceState(workspace: AsmWorkspaceState) {
         if (asmSourceWorkspace === workspace) return
         asmSourceWorkspace = workspace
+        workspace.observeProjectRevision(projectDirtyRevision)
         invalidateAsmTilesetState()
     }
 
     private fun invalidateAsmTilesetState() {
         asmTilesetPaletteAccesses = emptyMap()
         asmTilesetGraphicsAccesses = emptyMap()
+        asmNativeSpriteAccesses = emptyMap()
+        asmNativeSpritePaletteAccesses = emptyMap()
+        asmCinematicMapAccesses = emptyMap()
+        asmTextSourceAccesses = emptyMap()
+        asmTypewriterTextAccesses = emptyMap()
+        asmIntroStoryTextAccesses = emptyMap()
         asmTilesetPaletteAccessRevision = Long.MIN_VALUE
         asmTilesetGraphicsAccessRevision = Long.MIN_VALUE
+        asmNativeSpriteAccessRevision = Long.MIN_VALUE
+        asmNativeSpritePaletteAccessRevision = Long.MIN_VALUE
+        asmCinematicMapAccessRevision = Long.MIN_VALUE
+        asmTextSourceAccessRevision = Long.MIN_VALUE
+        asmTypewriterTextAccessRevision = Long.MIN_VALUE
+        asmIntroStoryTextAccessRevision = Long.MIN_VALUE
         asmRoomTilesetVisualRevision = Long.MIN_VALUE
         asmEditorTilesetVisualRevision = Long.MIN_VALUE
+        pendingTilesetAssetRelocation = null
     }
     internal val asmNavigationEnabled: Boolean get() {
         asmModeRevision // Nested project flags are not Compose state; mode changes must invalidate links.
@@ -565,9 +747,25 @@ class EditorState(
     var spriteVersion by mutableStateOf(0)
         private set
 
-    val nativeSprites = NativeSpriteEditorState(
+    internal val nativeSprites = NativeSpriteEditorState(
         customGfx = { project.customGfx },
+        asmAccess = ::asmNativeSpriteAccess,
+        saveAsmPixels = ::saveNativeSpritePixels,
+        restoreAsmPixels = ::restoreNativeSpritePixels,
+        asmPaletteAccess = ::asmNativeSpritePaletteAccess,
+        asmPaletteAccessAll = ::asmNativeSpritePaletteAccessAll,
+        saveAsmPalette = ::saveNativeSpritePalette,
+        restoreAsmPalette = ::restoreNativeSpritePalette,
+        asmCinematicMapAccessAll = ::asmCinematicMapAccessAll,
+        onBlocked = ::postStatus,
         onDirty = { dirty = true; spriteVersion++; editVersion++; paletteVersion++ },
+    )
+
+    internal val cinematicMaps = CinematicMapEditorState(
+        asmAccess = ::asmCinematicMapAccess,
+        saveAsm = ::saveCinematicMap,
+        restoreAsm = ::restoreCinematicMap,
+        onDirty = { dirty = true; spriteVersion++; editVersion++ },
     )
 
     val enemySprite = EnemySpriteEditorState(
@@ -666,6 +864,9 @@ class EditorState(
         statusMessage.startsWith("Patch toggle blocked", ignoreCase = true) ||
         statusMessage.startsWith("Patch synchronization blocked", ignoreCase = true) ||
         statusMessage.startsWith("Source edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Source Undo/Redo blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Text edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Text restore blocked", ignoreCase = true) ||
         statusMessage.startsWith("Palette edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Object edit blocked", ignoreCase = true)
 
@@ -1245,12 +1446,12 @@ class EditorState(
 
     internal fun openBeamDamageSource(key: String? = null): Boolean = runCatching {
         require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
-        val bridge = requireNotNull(beamDamageBridge) { "Wait for beam source indexing." }
+        val bridge = requireNotNull(beamDamageBridge) { "Wait for projectile source indexing." }
         val line = bridge.line(key)
         bridge.workspace.showProjectWorkspace()
         bridge.workspace.openSource(com.supermetroid.editor.asm.BEAM_DAMAGE_SOURCE_FILE, line)
         true
-    }.getOrElse { postStatus("Beam source unavailable: ${it.message}"); false }
+    }.getOrElse { postStatus("Projectile source unavailable: ${it.message}"); false }
 
     internal fun openBossStatsSource(key: String? = null): Boolean = runCatching {
         require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
@@ -1915,6 +2116,834 @@ class EditorState(
         return asmTilesetGraphicsAccesses[key]
     }
 
+    internal fun refreshAsmNativeSpriteAccesses() {
+        asmNativeSpriteAccesses = if (
+            project.asmWorkspace.enabled &&
+            project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
+            projectFilePath.isNotBlank()
+        ) {
+            runCatching { asmNativeSpriteAssetBridge.accessAll(projectFilePath) }.getOrElse { problem ->
+                NativeSpriteAssets.SOURCES.associate { source ->
+                    source.key to AsmNativeSpriteAssetAccess.AsmOnly(
+                        source.key,
+                        "Sprite source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+        } else emptyMap()
+        asmNativeSpriteAccessRevision = asmVisualSourceRevision
+    }
+
+    private fun asmNativeSpriteAccess(sourceKey: String): AsmNativeSpriteAssetAccess? {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return null
+        if (asmNativeSpriteAccesses.isEmpty() || asmNativeSpriteAccessRevision != asmVisualSourceRevision) {
+            refreshAsmNativeSpriteAccesses()
+        }
+        return asmNativeSpriteAccesses[sourceKey]
+            ?: AsmNativeSpriteAssetAccess.AsmOnly(sourceKey, "This sprite source is not in the supported ASM asset catalog.")
+    }
+
+    internal fun nativeSpriteEditingStatus(sourceKey: String): NativeSpriteEditingStatus =
+        when (val access = asmNativeSpriteAccess(sourceKey)) {
+            null -> NativeSpriteEditingStatus(editable = true, sourceManaged = false)
+            is AsmNativeSpriteAssetAccess.AsmOnly -> NativeSpriteEditingStatus(
+                editable = false,
+                sourceManaged = true,
+                message = access.reason,
+            )
+            is AsmNativeSpriteAssetAccess.Editable -> NativeSpriteEditingStatus(
+                editable = true,
+                sourceManaged = true,
+                modified = access.modified,
+                message = if (access.managedAssetId != null) {
+                    "ASM data · ${access.assetPath} · ${access.encodedSize} B in checked project space"
+                } else {
+                    "ASM data · ${access.assetPath} · ${access.encodedSize} / ${access.capacity} B native envelope"
+                },
+            )
+        }
+
+    private fun asmNativeSpritePaletteAccessAll(addresses: Set<Int>): Map<Int, AsmNativeSpritePaletteAccess> {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return emptyMap()
+        if (asmNativeSpritePaletteAccessRevision != asmVisualSourceRevision) {
+            asmNativeSpritePaletteAccesses = emptyMap()
+            asmNativeSpritePaletteAccessRevision = asmVisualSourceRevision
+        }
+        val missing = addresses - asmNativeSpritePaletteAccesses.keys
+        if (missing.isNotEmpty()) {
+            val resolved = runCatching {
+                asmNativeSpritePaletteBridge.accessAll(projectFilePath, missing)
+            }.getOrElse { problem ->
+                missing.associateWith { address ->
+                    AsmNativeSpritePaletteAccess.AsmOnly(
+                        address,
+                        "Palette source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+            asmNativeSpritePaletteAccesses = asmNativeSpritePaletteAccesses + resolved
+        }
+        return addresses.associateWith { address -> asmNativeSpritePaletteAccesses.getValue(address) }
+    }
+
+    private fun asmNativeSpritePaletteAccess(address: Int): AsmNativeSpritePaletteAccess? =
+        asmNativeSpritePaletteAccessAll(setOf(address))[address]
+
+    internal fun nativeSpritePaletteEditingStatus(address: Int): NativeSpriteEditingStatus =
+        when (val access = asmNativeSpritePaletteAccess(address)) {
+            null -> NativeSpriteEditingStatus(editable = true, sourceManaged = false)
+            is AsmNativeSpritePaletteAccess.AsmOnly -> NativeSpriteEditingStatus(
+                editable = false,
+                sourceManaged = true,
+                message = access.reason,
+            )
+            is AsmNativeSpritePaletteAccess.Editable -> NativeSpriteEditingStatus(
+                editable = true,
+                sourceManaged = true,
+                modified = access.modified,
+                message = "ASM data · ${access.sourceFileId} · ${access.address.toString(16).uppercase().padStart(6, '0')}",
+            )
+        }
+
+    internal fun refreshAsmCinematicMapAccesses() {
+        asmCinematicMapAccesses = if (
+            project.asmWorkspace.enabled &&
+            project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
+            projectFilePath.isNotBlank()
+        ) {
+            runCatching { asmCinematicMapAssetBridge.accessAll(projectFilePath) }.getOrElse { problem ->
+                CinematicMapAssets.SUPPORTED.associate { asset ->
+                    asset.key to AsmCinematicMapAssetAccess.AsmOnly(
+                        asset.key,
+                        "Scene-map source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+        } else emptyMap()
+        asmCinematicMapAccessRevision = asmVisualSourceRevision
+    }
+
+    private fun asmCinematicMapAccessAll(): Map<String, AsmCinematicMapAssetAccess> {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return emptyMap()
+        if (asmCinematicMapAccesses.isEmpty() || asmCinematicMapAccessRevision != asmVisualSourceRevision) {
+            refreshAsmCinematicMapAccesses()
+        }
+        return asmCinematicMapAccesses
+    }
+
+    private fun asmCinematicMapAccess(sourceKey: String): AsmCinematicMapAssetAccess? =
+        asmCinematicMapAccessAll()[sourceKey]
+
+    internal fun cinematicMapEditingStatus(sourceKey: String): NativeSpriteEditingStatus =
+        when (val access = asmCinematicMapAccess(sourceKey)) {
+            null -> NativeSpriteEditingStatus(
+                editable = false,
+                sourceManaged = false,
+                message = "Scene-layout editing is available in ASM source mode.",
+            )
+            is AsmCinematicMapAssetAccess.AsmOnly -> NativeSpriteEditingStatus(
+                editable = false,
+                sourceManaged = true,
+                message = access.reason,
+            )
+            is AsmCinematicMapAssetAccess.Editable -> NativeSpriteEditingStatus(
+                editable = true,
+                sourceManaged = true,
+                modified = access.modified,
+                message = if (access.managedAssetId != null) {
+                    "ASM map · ${access.assetPath} · ${access.encodedSize} B in checked project space"
+                } else {
+                    "ASM map · ${access.assetPath} · ${access.encodedSize} / ${access.capacity} B native envelope"
+                },
+            )
+        }
+
+    private fun saveCinematicMap(
+        sourceKey: String,
+        rawData: ByteArray,
+        expectedSourceBytes: ByteArray,
+    ): Boolean {
+        val access = asmCinematicMapAccess(sourceKey)
+        if (access !is AsmCinematicMapAssetAccess.Editable) {
+            postStatus("Scene-map edit blocked: ${(access as? AsmCinematicMapAssetAccess.AsmOnly)?.reason ?: "ASM source is unavailable."}")
+            return false
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Scene-map edit blocked: save or discard the ASM declaration draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val saved = asmCinematicMapAssetBridge.save(
+                projectFilePath,
+                sourceKey,
+                rawData,
+                expectedSourceBytes,
+            )
+            val after = saved.snapshot()
+            if (!before.sourceBytes.contentEquals(after.sourceBytes) || before.managedAssetId != after.managedAssetId) {
+                recordNativeSpriteSourceUndo(
+                    "Edit cinematic map layout",
+                    NativeSpriteSourceUndo.CinematicMap(projectFilePath, before, after),
+                )
+            }
+            refreshAsmCinematicMapAccesses()
+            postStatus("Updated ASM scene map ${saved.assetPath}")
+            !before.sourceBytes.contentEquals(after.sourceBytes)
+        } catch (relocation: AsmAssetRelocationRequiredException) {
+            pendingTilesetAssetRelocation = TilesetAssetRelocationProposal.CinematicMap(
+                projectFilePath,
+                relocation.assetPath,
+                relocation.requiredBytes,
+                relocation.inPlaceCapacity,
+                access.sourceFileId,
+                sourceKey,
+                rawData.copyOf(),
+                expectedSourceBytes.copyOf(),
+            )
+            postStatus(
+                "Scene map needs ${relocation.requiredBytes} bytes; its native envelope has " +
+                    "${relocation.inPlaceCapacity}. Choose whether to move it to project space.",
+            )
+            false
+        } catch (problem: Exception) {
+            postStatus("Scene-map edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun restoreCinematicMap(sourceKey: String): Boolean {
+        val access = asmCinematicMapAccess(sourceKey)
+        if (access !is AsmCinematicMapAssetAccess.Editable || !access.modified) return false
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Scene-map restore blocked: save or discard the ASM declaration draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val restored = asmCinematicMapAssetBridge.restore(
+                projectFilePath,
+                sourceKey,
+                access.sourceBytes,
+            )
+            val after = restored.snapshot()
+            recordNativeSpriteSourceUndo(
+                "Restore cinematic map layout",
+                NativeSpriteSourceUndo.CinematicMap(projectFilePath, before, after),
+            )
+            if (access.managedAssetId != null) {
+                asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(access.sourceFileId))
+            }
+            refreshAsmCinematicMapAccesses()
+            postStatus("Restored ASM scene map ${restored.assetPath}")
+            true
+        } catch (problem: Exception) {
+            postStatus("Scene-map restore blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun asmTextAccessAll(entries: Collection<TextEntry>): Map<String, AsmTextSourceAccess> {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return emptyMap()
+        if (asmTextSourceAccessRevision != asmVisualSourceRevision) {
+            asmTextSourceAccesses = emptyMap()
+            asmTextSourceAccessRevision = asmVisualSourceRevision
+        }
+        val missing = entries.filter { TextData.isFixedTilemapEntry(it) && it.id !in asmTextSourceAccesses }
+        if (missing.isNotEmpty()) {
+            val resolved = runCatching {
+                asmTextSourceBridge.accessAll(projectFilePath, missing)
+            }.getOrElse { problem ->
+                missing.associate { entry ->
+                    entry.id to AsmTextSourceAccess.AsmOnly(
+                        entry.id,
+                        "Text source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+            asmTextSourceAccesses = asmTextSourceAccesses + resolved
+        }
+        return entries.mapNotNull { entry -> asmTextSourceAccesses[entry.id]?.let { entry.id to it } }.toMap()
+    }
+
+    private fun asmTextAccess(entry: TextEntry): AsmTextSourceAccess? =
+        asmTextAccessAll(listOf(entry))[entry.id]
+
+    private fun asmTypewriterTextAccessAll(entries: Collection<TextEntry>): Map<String, AsmTypewriterTextAccess> {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return emptyMap()
+        if (asmTypewriterTextAccessRevision != asmVisualSourceRevision) {
+            asmTypewriterTextAccesses = emptyMap()
+            asmTypewriterTextAccessRevision = asmVisualSourceRevision
+        }
+        val missing = entries.filter { TextData.isTypewriterEntry(it) && it.id !in asmTypewriterTextAccesses }
+        if (missing.isNotEmpty()) {
+            val resolved = runCatching {
+                asmTypewriterTextBridge.accessAll(projectFilePath, missing)
+            }.getOrElse { problem ->
+                missing.associate { entry ->
+                    entry.id to AsmTypewriterTextAccess.AsmOnly(
+                        entry.id,
+                        "Typewriter source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+            asmTypewriterTextAccesses = asmTypewriterTextAccesses + resolved
+        }
+        return entries.mapNotNull { entry -> asmTypewriterTextAccesses[entry.id]?.let { entry.id to it } }.toMap()
+    }
+
+    private fun asmTypewriterTextAccess(entry: TextEntry): AsmTypewriterTextAccess? =
+        asmTypewriterTextAccessAll(listOf(entry))[entry.id]
+
+    private fun asmIntroStoryTextAccessAll(entries: Collection<TextEntry>): Map<String, AsmIntroStoryTextAccess> {
+        if (!project.asmWorkspace.enabled || project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE ||
+            projectFilePath.isBlank()
+        ) return emptyMap()
+        if (asmIntroStoryTextAccessRevision != asmVisualSourceRevision) {
+            asmIntroStoryTextAccesses = emptyMap()
+            asmIntroStoryTextAccessRevision = asmVisualSourceRevision
+        }
+        val missing = entries.filter {
+            it.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY && it.id !in asmIntroStoryTextAccesses
+        }
+        if (missing.isNotEmpty()) {
+            val resolved = runCatching {
+                asmIntroStoryTextBridge.accessAll(projectFilePath, missing)
+            }.getOrElse { problem ->
+                missing.associate { entry ->
+                    entry.id to AsmIntroStoryTextAccess.AsmOnly(
+                        entry.id,
+                        "Intro-story source could not be resolved: ${problem.message ?: problem::class.simpleName}",
+                    )
+                }
+            }
+            asmIntroStoryTextAccesses = asmIntroStoryTextAccesses + resolved
+        }
+        return entries.mapNotNull { entry -> asmIntroStoryTextAccesses[entry.id]?.let { entry.id to it } }.toMap()
+    }
+
+    private fun asmIntroStoryTextAccess(entry: TextEntry): AsmIntroStoryTextAccess? =
+        asmIntroStoryTextAccessAll(listOf(entry))[entry.id]
+
+    internal fun textEntries(parser: RomParser): List<TextEntry> {
+        val native = TextData.readAllText(parser.getRomData())
+        val accesses = asmTextAccessAll(native)
+        val typewriterAccesses = asmTypewriterTextAccessAll(native)
+        val introAccesses = asmIntroStoryTextAccessAll(native)
+        return native.map { entry ->
+            when (val intro = introAccesses[entry.id]) {
+                is AsmIntroStoryTextAccess.Editable -> entry.copy(
+                    text = intro.text,
+                    rawBytes = intro.rawData.copyOf(),
+                    maxLength = intro.lineCapacities.sum(),
+                )
+                else -> when (val access = typewriterAccesses[entry.id]) {
+                is AsmTypewriterTextAccess.Editable -> entry.copy(
+                    text = access.text,
+                    rawBytes = access.rawData.copyOf(),
+                    maxLength = TextData.decodeTypewriterStream(access.rawData)?.lines?.sumOf { it.text.length }
+                        ?: entry.maxLength,
+                )
+                    else -> when (val fixed = accesses[entry.id]) {
+                    is AsmTextSourceAccess.Editable -> entry.copy(
+                        text = fixed.text,
+                        rawBytes = fixed.rawData.copyOf(),
+                    )
+                    else -> entry
+                    }
+                }
+            }
+        }
+    }
+
+    internal fun textEntryEditingStatus(entry: TextEntry): NativeSpriteEditingStatus {
+        if (entry.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY) {
+            return when (val access = asmIntroStoryTextAccess(entry)) {
+                null -> NativeSpriteEditingStatus(editable = entry.writable, sourceManaged = false)
+                is AsmIntroStoryTextAccess.AsmOnly -> NativeSpriteEditingStatus(
+                    editable = false,
+                    sourceManaged = true,
+                    message = access.reason,
+                )
+                is AsmIntroStoryTextAccess.Editable -> NativeSpriteEditingStatus(
+                    editable = true,
+                    sourceManaged = true,
+                    modified = access.modified,
+                    message = "ASM intro page · ${access.sourceFileId} · ${access.lineCapacities.sum()} fixed glyph slots",
+                )
+            }
+        }
+        if (TextData.isTypewriterEntry(entry)) return when (val access = asmTypewriterTextAccess(entry)) {
+            null -> NativeSpriteEditingStatus(editable = entry.writable, sourceManaged = false)
+            is AsmTypewriterTextAccess.AsmOnly -> NativeSpriteEditingStatus(
+                editable = false,
+                sourceManaged = true,
+                message = access.reason,
+            )
+            is AsmTypewriterTextAccess.Editable -> NativeSpriteEditingStatus(
+                editable = true,
+                sourceManaged = true,
+                modified = access.modified,
+                message = if (access.managedAssetId == null) {
+                    "ASM typewriter · ${access.sourceFileId} · ${access.rawData.size} / ${access.capacity} B native"
+                } else {
+                    "ASM typewriter · ${access.rawData.size} B · checked bank \$A6 space"
+                },
+            )
+        }
+        return when (val access = asmTextAccess(entry)) {
+            null -> NativeSpriteEditingStatus(editable = entry.writable, sourceManaged = false)
+            is AsmTextSourceAccess.AsmOnly -> NativeSpriteEditingStatus(
+                editable = false,
+                sourceManaged = true,
+                message = access.reason,
+            )
+            is AsmTextSourceAccess.Editable -> NativeSpriteEditingStatus(
+                editable = true,
+                sourceManaged = true,
+                modified = access.modified,
+                message = "ASM text · ${access.sourceFileId} · ${access.address.toString(16).uppercase().padStart(6, '0')}",
+            )
+        }
+    }
+
+    internal fun updateTextEntry(entry: TextEntry, newText: String): Boolean {
+        if (entry.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY) {
+            return updateIntroStoryTextEntry(entry, newText)
+        }
+        if (TextData.isTypewriterEntry(entry)) return updateTypewriterTextEntry(entry, newText)
+        val access = asmTextAccess(entry)
+        if (access == null) {
+            if (newText == entry.text) project.textEdits.remove(entry.id) else project.textEdits[entry.id] = newText
+            markDirty()
+            editVersion++
+            return true
+        }
+        if (access !is AsmTextSourceAccess.Editable) {
+            postStatus("Text edit blocked: ${(access as AsmTextSourceAccess.AsmOnly).reason}")
+            return false
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Text edit blocked: save or discard the ASM text draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val saved = asmTextSourceBridge.save(projectFilePath, entry, newText, access.sourceText)
+            val legacyRemoved = project.textEdits.remove(entry.id) != null
+            val after = saved.snapshot()
+            if (before.sourceText != after.sourceText) {
+                recordNativeSpriteSourceUndo(
+                    "Edit ${entry.label}",
+                    NativeSpriteSourceUndo.Text(projectFilePath, entry, before, after),
+                )
+            }
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(saved.sourceFileId))
+            asmTextSourceAccesses = emptyMap()
+            asmTextSourceAccessRevision = Long.MIN_VALUE
+            dirty = true
+            editVersion++
+            postStatus("Updated ASM text ${entry.label}")
+            legacyRemoved || before.sourceText != after.sourceText
+        } catch (problem: Exception) {
+            postStatus("Text edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun updateTypewriterTextEntry(entry: TextEntry, newText: String): Boolean {
+        val access = asmTypewriterTextAccess(entry)
+        if (access == null) {
+            if (newText == entry.text) project.textEdits.remove(entry.id) else project.textEdits[entry.id] = newText
+            markDirty()
+            editVersion++
+            return true
+        }
+        if (access !is AsmTypewriterTextAccess.Editable) {
+            postStatus("Text edit blocked: ${(access as AsmTypewriterTextAccess.AsmOnly).reason}")
+            return false
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Text edit blocked: save or discard the ASM typewriter draft first.")
+            return false
+        }
+        val before = access.snapshot()
+        return try {
+            val saved = asmTypewriterTextBridge.save(projectFilePath, entry, newText, before)
+            val legacyRemoved = project.textEdits.remove(entry.id) != null
+            val after = saved.snapshot()
+            if (!before.rawData.contentEquals(after.rawData) || before.sourceText != after.sourceText ||
+                before.managedAssetId != after.managedAssetId
+            ) {
+                recordNativeSpriteSourceUndo(
+                    "Edit ${entry.label}",
+                    NativeSpriteSourceUndo.TypewriterText(projectFilePath, entry, before, after),
+                )
+            }
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(saved.sourceFileId))
+            refreshAsmTypewriterTextAccesses()
+            dirty = true
+            editVersion++
+            postStatus("Updated ASM typewriter ${entry.label}")
+            legacyRemoved || !before.rawData.contentEquals(after.rawData)
+        } catch (relocation: AsmAssetRelocationRequiredException) {
+            val rawData = runCatching {
+                TextData.encodeTypewriterText(newText, access.rawData, preserveLineSlots = false)
+            }.getOrElse { problem ->
+                postStatus("Text edit blocked: ${problem.message ?: problem::class.simpleName}")
+                return false
+            }
+            pendingTilesetAssetRelocation = TilesetAssetRelocationProposal.TypewriterText(
+                projectFilePath = projectFilePath,
+                assetPath = relocation.assetPath,
+                requiredBytes = relocation.requiredBytes,
+                inPlaceCapacity = relocation.inPlaceCapacity,
+                sourceFileId = access.sourceFileId,
+                entry = entry,
+                rawData = rawData,
+                expected = before,
+            )
+            postStatus(
+                "Typewriter text needs ${relocation.requiredBytes} bytes; its native slots have " +
+                    "${relocation.inPlaceCapacity}. Choose whether to move it within bank \$A6.",
+            )
+            false
+        } catch (problem: Exception) {
+            postStatus("Text edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun refreshAsmTypewriterTextAccesses() {
+        asmTypewriterTextAccesses = emptyMap()
+        asmTypewriterTextAccessRevision = Long.MIN_VALUE
+    }
+
+    private fun updateIntroStoryTextEntry(entry: TextEntry, newText: String): Boolean {
+        val access = asmIntroStoryTextAccess(entry)
+        if (access == null) {
+            if (newText == entry.text) project.textEdits.remove(entry.id) else project.textEdits[entry.id] = newText
+            markDirty()
+            editVersion++
+            return true
+        }
+        if (access !is AsmIntroStoryTextAccess.Editable) {
+            postStatus("Text edit blocked: ${(access as AsmIntroStoryTextAccess.AsmOnly).reason}")
+            return false
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Text edit blocked: save or discard the ASM intro-page draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val saved = asmIntroStoryTextBridge.save(projectFilePath, entry, newText, before)
+            val legacyRemoved = project.textEdits.remove(entry.id) != null
+            val after = saved.snapshot()
+            if (before.sourceText != after.sourceText) {
+                recordNativeSpriteSourceUndo(
+                    "Edit ${entry.label}",
+                    NativeSpriteSourceUndo.IntroStoryText(projectFilePath, entry, before, after),
+                )
+            }
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(saved.sourceFileId))
+            refreshAsmIntroStoryTextAccesses()
+            dirty = true
+            editVersion++
+            postStatus("Updated ASM intro page ${entry.label}")
+            legacyRemoved || before.sourceText != after.sourceText
+        } catch (problem: Exception) {
+            postStatus("Text edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun refreshAsmIntroStoryTextAccesses() {
+        asmIntroStoryTextAccesses = emptyMap()
+        asmIntroStoryTextAccessRevision = Long.MIN_VALUE
+    }
+
+    internal fun resetTextEntry(entry: TextEntry): Boolean {
+        if (entry.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY) {
+            return resetIntroStoryTextEntry(entry)
+        }
+        if (TextData.isTypewriterEntry(entry)) return resetTypewriterTextEntry(entry)
+        val access = asmTextAccess(entry)
+        if (access == null) {
+            val changed = project.textEdits.remove(entry.id) != null
+            if (changed) {
+                markDirty()
+                editVersion++
+            }
+            return changed
+        }
+        if (access !is AsmTextSourceAccess.Editable || !access.modified) {
+            return project.textEdits.remove(entry.id) != null
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Text restore blocked: save or discard the ASM text draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val restored = asmTextSourceBridge.restore(projectFilePath, entry, access.sourceText)
+            project.textEdits.remove(entry.id)
+            val after = restored.snapshot()
+            recordNativeSpriteSourceUndo(
+                "Restore ${entry.label}",
+                NativeSpriteSourceUndo.Text(projectFilePath, entry, before, after),
+            )
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(restored.sourceFileId))
+            asmTextSourceAccesses = emptyMap()
+            asmTextSourceAccessRevision = Long.MIN_VALUE
+            dirty = true
+            editVersion++
+            postStatus("Restored ASM text ${entry.label}")
+            true
+        } catch (problem: Exception) {
+            postStatus("Text restore blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun resetTypewriterTextEntry(entry: TextEntry): Boolean {
+        val access = asmTypewriterTextAccess(entry)
+        if (access == null) {
+            val changed = project.textEdits.remove(entry.id) != null
+            if (changed) { markDirty(); editVersion++ }
+            return changed
+        }
+        if (access !is AsmTypewriterTextAccess.Editable || !access.modified) return false
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Text restore blocked: save or discard the ASM typewriter draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val restored = asmTypewriterTextBridge.restore(projectFilePath, entry, before)
+            project.textEdits.remove(entry.id)
+            val after = restored.snapshot()
+            recordNativeSpriteSourceUndo(
+                "Restore ${entry.label}",
+                NativeSpriteSourceUndo.TypewriterText(projectFilePath, entry, before, after),
+            )
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(restored.sourceFileId))
+            refreshAsmTypewriterTextAccesses()
+            dirty = true
+            editVersion++
+            postStatus("Restored ASM typewriter ${entry.label}")
+            true
+        } catch (problem: Exception) {
+            postStatus("Text restore blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun resetIntroStoryTextEntry(entry: TextEntry): Boolean {
+        val access = asmIntroStoryTextAccess(entry)
+        if (access == null) {
+            val changed = project.textEdits.remove(entry.id) != null
+            if (changed) { markDirty(); editVersion++ }
+            return changed
+        }
+        if (access !is AsmIntroStoryTextAccess.Editable || !access.modified) return false
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Text restore blocked: save or discard the ASM intro-page draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val restored = asmIntroStoryTextBridge.restore(projectFilePath, entry, before)
+            project.textEdits.remove(entry.id)
+            val after = restored.snapshot()
+            recordNativeSpriteSourceUndo(
+                "Restore ${entry.label}",
+                NativeSpriteSourceUndo.IntroStoryText(projectFilePath, entry, before, after),
+            )
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(restored.sourceFileId))
+            refreshAsmIntroStoryTextAccesses()
+            dirty = true
+            editVersion++
+            postStatus("Restored ASM intro page ${entry.label}")
+            true
+        } catch (problem: Exception) {
+            postStatus("Text restore blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun saveNativeSpritePalette(
+        address: Int,
+        rawPalette: ByteArray,
+        expectedSourceText: String,
+    ): Boolean {
+        val access = asmNativeSpritePaletteAccess(address)
+        if (access !is AsmNativeSpritePaletteAccess.Editable) {
+            postStatus("Palette edit blocked: ${(access as? AsmNativeSpritePaletteAccess.AsmOnly)?.reason ?: "ASM source is unavailable."}")
+            return false
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Palette edit blocked: save or discard the ASM palette draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val saved = asmNativeSpritePaletteBridge.save(
+                projectFilePath,
+                address,
+                rawPalette,
+                expectedSourceText,
+            )
+            val after = saved.snapshot()
+            if (before.sourceText != after.sourceText) {
+                recordNativeSpriteSourceUndo(
+                    "Edit native sprite palette",
+                    NativeSpriteSourceUndo.Palette(projectFilePath, before, after),
+                )
+            }
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(saved.sourceFileId))
+            asmNativeSpritePaletteAccesses = emptyMap()
+            asmNativeSpritePaletteAccessRevision = Long.MIN_VALUE
+            postStatus("Updated ASM palette row ${address.toString(16).uppercase().padStart(6, '0')}")
+            before.sourceText != after.sourceText
+        } catch (problem: Exception) {
+            postStatus("Palette edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun restoreNativeSpritePalette(address: Int): Boolean {
+        val access = asmNativeSpritePaletteAccess(address) ?: return false
+        if (access !is AsmNativeSpritePaletteAccess.Editable || !access.modified) return false
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Palette restore blocked: save or discard the ASM palette draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val restored = asmNativeSpritePaletteBridge.restore(
+                projectFilePath,
+                address,
+                access.sourceText,
+            )
+            val after = restored.snapshot()
+            recordNativeSpriteSourceUndo(
+                "Restore native sprite palette",
+                NativeSpriteSourceUndo.Palette(projectFilePath, before, after),
+            )
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(restored.sourceFileId))
+            asmNativeSpritePaletteAccesses = emptyMap()
+            asmNativeSpritePaletteAccessRevision = Long.MIN_VALUE
+            postStatus("Restored ASM palette row ${address.toString(16).uppercase().padStart(6, '0')}")
+            true
+        } catch (problem: Exception) {
+            postStatus("Palette restore blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun retireNativeSpriteJson(sourceKey: String): Boolean =
+        if (sourceKey == "ADB600") project.customGfx.spriteTileBlocks.remove("enemy:D07F") != null
+        else project.customGfx.visualTileBlocks.remove(sourceKey) != null
+
+    private fun recordNativeSpriteSourceUndo(description: String, history: NativeSpriteSourceUndo) {
+        nativeSpriteSourceUndo.keys.retainAll(undoStack + redoStack)
+        val operation = EditOperation(description)
+        nativeSpriteSourceUndo[operation] = history
+        undoStack.add(operation)
+        redoStack.clear()
+        undoVersion++
+    }
+
+    private fun saveNativeSpritePixels(
+        sourceKey: String,
+        rawData: ByteArray,
+        expectedSourceBytes: ByteArray,
+    ): Boolean {
+        val access = asmNativeSpriteAccess(sourceKey)
+        if (access !is AsmNativeSpriteAssetAccess.Editable) {
+            postStatus("Sprite edit blocked: ${(access as? AsmNativeSpriteAssetAccess.AsmOnly)?.reason ?: "ASM source is unavailable."}")
+            return false
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(access.sourceFileId) == true) {
+            postStatus("Sprite edit blocked: save or discard the ASM declaration draft first.")
+            return false
+        }
+        return try {
+            val before = access.snapshot()
+            val saved = asmNativeSpriteAssetBridge.save(projectFilePath, sourceKey, rawData, expectedSourceBytes)
+            val legacyRemoved = retireNativeSpriteJson(sourceKey)
+            val after = saved.snapshot()
+            if (!before.sourceBytes.contentEquals(after.sourceBytes) || before.managedAssetId != after.managedAssetId) {
+                recordNativeSpriteSourceUndo(
+                    "Edit native sprite pixels",
+                    NativeSpriteSourceUndo.Pixels(projectFilePath, before, after),
+                )
+            }
+            refreshAsmNativeSpriteAccesses()
+            postStatus("Updated ASM sprite asset ${saved.assetPath}")
+            legacyRemoved || !before.sourceBytes.contentEquals(after.sourceBytes)
+        } catch (relocation: AsmAssetRelocationRequiredException) {
+            pendingTilesetAssetRelocation = TilesetAssetRelocationProposal.NativeSpriteGraphics(
+                projectFilePath = projectFilePath,
+                assetPath = relocation.assetPath,
+                requiredBytes = relocation.requiredBytes,
+                inPlaceCapacity = relocation.inPlaceCapacity,
+                sourceFileId = requireNotNull(access.relocation).sourceFileId,
+                sourceKey = sourceKey,
+                rawData = rawData.copyOf(),
+                expectedSourceBytes = expectedSourceBytes.copyOf(),
+            )
+            postStatus(
+                "Sprite data needs ${relocation.requiredBytes} bytes; its native envelope has " +
+                    "${relocation.inPlaceCapacity}. Choose whether to move it to project space.",
+            )
+            false
+        } catch (problem: Exception) {
+            postStatus("Sprite edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    private fun restoreNativeSpritePixels(sourceKey: String): Boolean {
+        val access = asmNativeSpriteAccess(sourceKey)
+        if (access !is AsmNativeSpriteAssetAccess.Editable) return retireNativeSpriteJson(sourceKey)
+        if (access.sourceFileId.let { asmSourceWorkspace?.hasUnsavedSourceChanges(it) } == true) {
+            postStatus("Sprite restore blocked: save or discard the ASM declaration draft first.")
+            return false
+        }
+        if (!access.modified) return retireNativeSpriteJson(sourceKey)
+        return try {
+            val before = access.snapshot()
+            val restored = asmNativeSpriteAssetBridge.restore(projectFilePath, sourceKey, access.sourceBytes)
+            retireNativeSpriteJson(sourceKey)
+            val after = restored.snapshot()
+            recordNativeSpriteSourceUndo(
+                "Restore native sprite pixels",
+                NativeSpriteSourceUndo.Pixels(projectFilePath, before, after),
+            )
+            if (access.managedAssetId != null) {
+                asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(access.sourceFileId))
+            }
+            refreshAsmNativeSpriteAccesses()
+            postStatus("Restored ASM sprite asset ${restored.assetPath}")
+            true
+        } catch (problem: Exception) {
+            postStatus("Sprite restore blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
     internal fun tilesetGraphicsEditingStatus(
         kind: AsmTilesetGraphicsKind,
         tilesetId: Int = editorTilesetId,
@@ -1927,14 +2956,19 @@ class EditorState(
         )
         is AsmTilesetGraphicsAccess.Editable -> {
             val aliases = access.affectedTilesetIds.filterNot { it == tilesetId }
+            val storage = if (access.managedAssetId != null) {
+                "${access.encodedSize} B · managed address planned at build"
+            } else {
+                "${access.encodedSize} / ${access.capacity} B native envelope"
+            }
             TilesetGraphicsEditingStatus(
                 editable = true,
                 sourceManaged = true,
                 message = when {
                     kind == AsmTilesetGraphicsKind.COMMON_TILES || kind == AsmTilesetGraphicsKind.COMMON_METATILES ->
-                        "ASM data · ${access.assetPath} · shared common resource"
-                    aliases.isEmpty() -> "ASM data · ${access.assetPath}"
-                    else -> "ASM data · ${access.assetPath} · shared with ${aliases.joinToString()}"
+                        "ASM data · ${access.assetPath} · $storage · shared common resource"
+                    aliases.isEmpty() -> "ASM data · ${access.assetPath} · $storage"
+                    else -> "ASM data · ${access.assetPath} · $storage · shared with ${aliases.joinToString()}"
                 },
                 affectedTilesetIds = access.affectedTilesetIds,
             )
@@ -1951,13 +2985,18 @@ class EditorState(
             )
             is AsmTilesetPaletteAccess.Editable -> {
                 val aliases = access.affectedTilesetIds.filterNot { it == tilesetId }
+                val storage = if (access.managedAssetId != null) {
+                    "${access.encodedSize} B · managed address planned at build"
+                } else {
+                    "${access.encodedSize} / ${access.capacity} B native envelope"
+                }
                 TilesetPaletteEditingStatus(
                     editable = true,
                     sourceManaged = true,
                     message = if (aliases.isEmpty()) {
-                        "ASM data · ${access.assetPath}"
+                        "ASM data · ${access.assetPath} · $storage"
                     } else {
-                        "ASM data · ${access.assetPath} · shared with ${aliases.joinToString() }"
+                        "ASM data · ${access.assetPath} · $storage · shared with ${aliases.joinToString() }"
                     },
                     affectedTilesetIds = access.affectedTilesetIds,
                 )
@@ -1965,6 +3004,7 @@ class EditorState(
         }
 
     fun loadEditorTileset(tilesetId: Int, romParser: RomParser): Boolean {
+        pendingTilesetAssetRelocation = null
         refreshAsmTilesetPaletteAccesses()
         refreshAsmTilesetGraphicsAccesses()
         editorTilesetId = tilesetId
@@ -2072,6 +3112,23 @@ class EditorState(
                 else "Updated shared ASM palette asset ${saved.assetPath} (tilesets ${saved.affectedTilesetIds.joinToString()})",
             )
             true
+        } catch (relocation: AsmAssetRelocationRequiredException) {
+            pendingTilesetAssetRelocation = TilesetAssetRelocationProposal.Palette(
+                projectFilePath = projectFilePath,
+                assetPath = relocation.assetPath,
+                requiredBytes = relocation.requiredBytes,
+                inPlaceCapacity = relocation.inPlaceCapacity,
+                affectedTilesetIds = access.affectedTilesetIds,
+                sourceFileId = requireNotNull(access.relocation).sourceFileId,
+                tilesetId = tilesetId,
+                rawData = rawBgr.copyOf(),
+                expectedSourceBytes = access.sourceBytes.copyOf(),
+            )
+            postStatus(
+                "Palette needs ${relocation.requiredBytes} bytes; its native envelope has " +
+                    "${relocation.inPlaceCapacity}. Choose whether to move it to project space.",
+            )
+            false
         } catch (problem: Exception) {
             postStatus("Palette edit blocked: ${problem.message ?: problem::class.simpleName}")
             false
@@ -2086,6 +3143,10 @@ class EditorState(
         var restoredSourceIds = listOf(tilesetId)
         val access = asmTilesetPaletteAccess(tilesetId)
         if (access is AsmTilesetPaletteAccess.Editable && access.modified) {
+            if (access.managedSourceFileId?.let { asmSourceWorkspace?.hasUnsavedSourceChanges(it) } == true) {
+                postStatus("Palette restore blocked: save or discard the ASM declaration draft first.")
+                return false
+            }
             restoredSourceIds = access.affectedTilesetIds.ifEmpty { listOf(tilesetId) }
             restoredSource = try {
                 val restored = asmTilesetPaletteBridge.restore(
@@ -2093,6 +3154,7 @@ class EditorState(
                     tilesetId,
                     access.sourceBytes,
                 )
+                access.managedSourceFileId?.let { asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(it)) }
                 refreshAsmTilesetPaletteAccesses()
                 val aliases = restored.affectedTilesetIds.filterNot { it == tilesetId }
                 postStatus(
@@ -2392,8 +3454,156 @@ class EditorState(
                 currentRomParser?.let(::reloadCurrentRoomTileGraphics)
             }
             true
+        } catch (relocation: AsmAssetRelocationRequiredException) {
+            pendingTilesetAssetRelocation = TilesetAssetRelocationProposal.Graphics(
+                projectFilePath = projectFilePath,
+                assetPath = relocation.assetPath,
+                requiredBytes = relocation.requiredBytes,
+                inPlaceCapacity = relocation.inPlaceCapacity,
+                affectedTilesetIds = access.affectedTilesetIds,
+                sourceFileId = requireNotNull(access.relocation).sourceFileId,
+                kind = kind,
+                tilesetId = targetId,
+                rawData = rawData.copyOf(),
+                expectedSourceBytes = access.sourceBytes.copyOf(),
+            )
+            postStatus(
+                "Graphics data needs ${relocation.requiredBytes} bytes; its native envelope has " +
+                    "${relocation.inPlaceCapacity}. Choose whether to move it to project space.",
+            )
+            false
         } catch (problem: Exception) {
             postStatus("Graphics edit blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    internal fun dismissTilesetAssetRelocation() {
+        pendingTilesetAssetRelocation = null
+    }
+
+    internal fun confirmTilesetAssetRelocation(): Boolean {
+        val proposal = pendingTilesetAssetRelocation ?: return false
+        pendingTilesetAssetRelocation = null
+        if (proposal.projectFilePath != projectFilePath) {
+            postStatus("Relocation cancelled: the project changed. Reopen the resource and try again.")
+            return false
+        }
+        val unsavedSources = asmSourceWorkspace?.unsavedSourceFileIds.orEmpty()
+        if (unsavedSources.isNotEmpty()) {
+            postStatus(
+                "Relocation cancelled: save or discard the open ASM draft${if (unsavedSources.size == 1) "" else "s"} first " +
+                    "(${unsavedSources.sorted().joinToString()}).",
+            )
+            return false
+        }
+        return try {
+            val affected = when (proposal) {
+                is TilesetAssetRelocationProposal.Graphics -> {
+                    val saved = asmTilesetGraphicsBridge.relocate(
+                        projectFilePath = projectFilePath,
+                        kind = proposal.kind,
+                        tilesetId = proposal.tilesetId,
+                        rawData = proposal.rawData,
+                        expectedSourceBytes = proposal.expectedSourceBytes,
+                    )
+                    when (proposal.kind) {
+                        AsmTilesetGraphicsKind.AREA_TILES -> proposal.tilesetId?.let {
+                            project.customGfx.varGfx.remove(it.toString())
+                        }
+                        AsmTilesetGraphicsKind.AREA_METATILES -> proposal.tilesetId?.let {
+                            project.customGfx.tileTables.remove(it.toString())
+                        }
+                        AsmTilesetGraphicsKind.COMMON_TILES -> project.customGfx.creGfx = null
+                        AsmTilesetGraphicsKind.COMMON_METATILES -> project.customGfx.creTileTable = null
+                    }
+                    refreshAsmTilesetGraphicsAccesses()
+                    saved.affectedTilesetIds
+                }
+                is TilesetAssetRelocationProposal.Palette -> {
+                    val saved = asmTilesetPaletteBridge.relocate(
+                        projectFilePath = projectFilePath,
+                        tilesetId = proposal.tilesetId,
+                        rawPalette = proposal.rawData,
+                        expectedSourceBytes = proposal.expectedSourceBytes,
+                    )
+                    saved.affectedTilesetIds.forEach { project.customGfx.palettes.remove(it.toString()) }
+                    refreshAsmTilesetPaletteAccesses()
+                    paletteVersion++
+                    saved.affectedTilesetIds
+                }
+                is TilesetAssetRelocationProposal.NativeSpriteGraphics -> {
+                    val before = (asmNativeSpriteAccess(proposal.sourceKey) as? AsmNativeSpriteAssetAccess.Editable)
+                        ?.snapshot() ?: error("Sprite source changed before relocation")
+                    val saved = asmNativeSpriteAssetBridge.relocate(
+                        projectFilePath = projectFilePath,
+                        sourceKey = proposal.sourceKey,
+                        rawData = proposal.rawData,
+                        expectedSourceBytes = proposal.expectedSourceBytes,
+                    )
+                    recordNativeSpriteSourceUndo(
+                        "Move native sprite pixels to project space",
+                        NativeSpriteSourceUndo.Pixels(projectFilePath, before, saved.snapshot()),
+                    )
+                    retireNativeSpriteJson(proposal.sourceKey)
+                    refreshAsmNativeSpriteAccesses()
+                    spriteVersion++
+                    editVersion++
+                    emptyList()
+                }
+                is TilesetAssetRelocationProposal.CinematicMap -> {
+                    val before = (asmCinematicMapAccess(proposal.sourceKey) as? AsmCinematicMapAssetAccess.Editable)
+                        ?.snapshot() ?: error("Scene-map source changed before relocation")
+                    val saved = asmCinematicMapAssetBridge.relocate(
+                        projectFilePath = projectFilePath,
+                        sourceKey = proposal.sourceKey,
+                        rawData = proposal.rawData,
+                        expectedSourceBytes = proposal.expectedSourceBytes,
+                    )
+                    recordNativeSpriteSourceUndo(
+                        "Move cinematic map to project space",
+                        NativeSpriteSourceUndo.CinematicMap(projectFilePath, before, saved.snapshot()),
+                    )
+                    refreshAsmCinematicMapAccesses()
+                    spriteVersion++
+                    editVersion++
+                    emptyList()
+                }
+                is TilesetAssetRelocationProposal.TypewriterText -> {
+                    val beforeAccess = asmTypewriterTextAccess(proposal.entry)
+                    require(beforeAccess is AsmTypewriterTextAccess.Editable) {
+                        "Typewriter source changed before relocation"
+                    }
+                    val before = beforeAccess.snapshot()
+                    val saved = asmTypewriterTextBridge.relocate(
+                        projectFilePath,
+                        proposal.entry,
+                        proposal.rawData,
+                        proposal.expected,
+                    )
+                    project.textEdits.remove(proposal.entry.id)
+                    recordNativeSpriteSourceUndo(
+                        "Move ${proposal.entry.label} to checked bank-A6 space",
+                        NativeSpriteSourceUndo.TypewriterText(projectFilePath, proposal.entry, before, saved.snapshot()),
+                    )
+                    refreshAsmTypewriterTextAccesses()
+                    editVersion++
+                    emptyList()
+                }
+            }
+            dirty = true
+            asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(proposal.sourceFileId))
+            currentRomParser?.let { parser ->
+                if (currentTilesetId in affected) reloadCurrentRoomTileGraphics(parser)
+                if (editorTilesetId in affected) loadEditorTileset(editorTilesetId, parser)
+            }
+            postStatus(
+                "Moved ${proposal.assetPath} to checked project space" +
+                    if (affected.size > 1) " (shared by tilesets ${affected.joinToString()})" else "",
+            )
+            true
+        } catch (problem: Exception) {
+            postStatus("Relocation blocked: ${problem.message ?: problem::class.simpleName}")
             false
         }
     }
@@ -2405,6 +3615,10 @@ class EditorState(
         val access = asmTilesetGraphicsAccess(kind, tilesetId)
         var restored = false
         if (access is AsmTilesetGraphicsAccess.Editable && access.modified) {
+            if (access.managedSourceFileId?.let { asmSourceWorkspace?.hasUnsavedSourceChanges(it) } == true) {
+                postStatus("Graphics restore blocked: save or discard the ASM declaration draft first.")
+                return false
+            }
             restored = try {
                 val sourceId = tilesetId.takeIf {
                     kind == AsmTilesetGraphicsKind.AREA_TILES || kind == AsmTilesetGraphicsKind.AREA_METATILES
@@ -2415,6 +3629,7 @@ class EditorState(
                     sourceId,
                     access.sourceBytes,
                 )
+                access.managedSourceFileId?.let { asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(it)) }
                 refreshAsmTilesetGraphicsAccesses()
                 postStatus("Restored ASM data asset ${result.assetPath}")
                 true
@@ -3432,7 +4647,7 @@ class EditorState(
     ): List<IntroScene> {
         parser
             ?: return com.supermetroid.editor.data.IntroSequenceData().scenes.map(IntroScene::copy)
-        return com.supermetroid.editor.rom.TextData.readAllText(parser.getRomData())
+        return textEntries(parser)
             .filter { it.category == com.supermetroid.editor.rom.TextCategory.INTRO_STORY }
             .take(6)
             .mapIndexed { index, page ->
@@ -3440,7 +4655,9 @@ class EditorState(
                 val vignetteSource = com.supermetroid.editor.rom.IntroRomImageResolver.defaultVignetteForScene(index)
                 IntroScene(
                     name = "Story frame ${index + 1}",
-                    text = if (useProjectTextEdits) project.textEdits[page.id] ?: page.text else page.text,
+                    text = if (useProjectTextEdits && !textEntryEditingStatus(page).sourceManaged) {
+                        project.textEdits[page.id] ?: page.text
+                    } else page.text,
                     imageSource = imageSource,
                     imageFrame = com.supermetroid.editor.rom.IntroRomImageResolver.defaultFrame(imageSource),
                     layout = IntroSceneLayout.TEXT_OVER_IMAGE,
@@ -3547,8 +4764,8 @@ class EditorState(
             return
         }
         if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && patch.configType == "beam_damage") {
-            runCatching { requireNotNull(beamDamageBridge) { "Wait for the beam ASM workspace." }.edit(key, value) }
-                .onFailure { postStatus("Beam edit blocked: ${it.message}") }
+            runCatching { requireNotNull(beamDamageBridge) { "Wait for the projectile ASM workspace." }.edit(key, value) }
+                .onFailure { postStatus("Projectile edit blocked: ${it.message}") }
             return
         }
         if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
@@ -4257,6 +5474,14 @@ class EditorState(
                     configType = guiPatch.configType,
                     configValue = guiPatch.configValue
                 ))
+            } else {
+                project.patches.find { it.id == guiPatch.id }?.let { existing ->
+                    if (existing.name != guiPatch.name || existing.description != guiPatch.description) {
+                        existing.name = guiPatch.name
+                        existing.description = guiPatch.description
+                        refreshed++
+                    }
+                }
             }
         }
 
@@ -11357,9 +12582,103 @@ class EditorState(
 
     // ─── Undo / Redo ────────────────────────────────────────────
 
+    private fun restoreNativeSpriteSourceHistory(operation: EditOperation, undo: Boolean): Boolean {
+        val history = nativeSpriteSourceUndo[operation] ?: return false
+        if (history.projectFilePath != projectFilePath) {
+            postStatus("Source Undo/Redo blocked: the project changed.")
+            return false
+        }
+        val sourceFileId = when (history) {
+            is NativeSpriteSourceUndo.Pixels -> if (undo) history.after.sourceFileId else history.before.sourceFileId
+            is NativeSpriteSourceUndo.Palette -> if (undo) history.after.sourceFileId else history.before.sourceFileId
+            is NativeSpriteSourceUndo.CinematicMap -> if (undo) history.after.sourceFileId else history.before.sourceFileId
+            is NativeSpriteSourceUndo.Text -> if (undo) history.after.sourceFileId else history.before.sourceFileId
+            is NativeSpriteSourceUndo.TypewriterText -> if (undo) history.after.sourceFileId else history.before.sourceFileId
+            is NativeSpriteSourceUndo.IntroStoryText -> if (undo) history.after.sourceFileId else history.before.sourceFileId
+        }
+        if (asmSourceWorkspace?.hasUnsavedSourceChanges(sourceFileId) == true) {
+            postStatus("Source Undo/Redo blocked: save or discard the newer ASM draft first.")
+            return false
+        }
+        return runCatching {
+            when (history) {
+                is NativeSpriteSourceUndo.Pixels -> {
+                    val target = if (undo) history.before else history.after
+                    val expected = if (undo) history.after else history.before
+                    asmNativeSpriteAssetBridge.applySnapshot(projectFilePath, target, expected)
+                    if (target.managedAssetId != expected.managedAssetId) {
+                        asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(sourceFileId))
+                    }
+                    retireNativeSpriteJson(target.sourceKey)
+                    refreshAsmNativeSpriteAccesses()
+                }
+                is NativeSpriteSourceUndo.Palette -> {
+                    val target = if (undo) history.before else history.after
+                    val expected = if (undo) history.after else history.before
+                    asmNativeSpritePaletteBridge.applySnapshot(projectFilePath, target, expected)
+                    asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(sourceFileId))
+                    asmNativeSpritePaletteAccesses = emptyMap()
+                    asmNativeSpritePaletteAccessRevision = Long.MIN_VALUE
+                }
+                is NativeSpriteSourceUndo.CinematicMap -> {
+                    val target = if (undo) history.before else history.after
+                    val expected = if (undo) history.after else history.before
+                    asmCinematicMapAssetBridge.applySnapshot(projectFilePath, target, expected)
+                    if (target.managedAssetId != expected.managedAssetId) {
+                        asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(sourceFileId))
+                    }
+                    refreshAsmCinematicMapAccesses()
+                }
+                is NativeSpriteSourceUndo.Text -> {
+                    val target = if (undo) history.before else history.after
+                    val expected = if (undo) history.after else history.before
+                    asmTextSourceBridge.applySnapshot(projectFilePath, history.entry, target, expected)
+                    asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(sourceFileId))
+                    asmTextSourceAccesses = emptyMap()
+                    asmTextSourceAccessRevision = Long.MIN_VALUE
+                }
+                is NativeSpriteSourceUndo.TypewriterText -> {
+                    val target = if (undo) history.before else history.after
+                    val expected = if (undo) history.after else history.before
+                    asmTypewriterTextBridge.applySnapshot(projectFilePath, history.entry, target, expected)
+                    asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(sourceFileId))
+                    refreshAsmTypewriterTextAccesses()
+                }
+                is NativeSpriteSourceUndo.IntroStoryText -> {
+                    val target = if (undo) history.before else history.after
+                    val expected = if (undo) history.after else history.before
+                    asmIntroStoryTextBridge.applySnapshot(projectFilePath, history.entry, target, expected)
+                    asmSourceWorkspace?.refreshPersistedSourceFiles(setOf(sourceFileId))
+                    refreshAsmIntroStoryTextAccesses()
+                }
+            }
+            if (undo) {
+                check(undoStack.lastOrNull() === operation)
+                undoStack.removeAt(undoStack.lastIndex)
+                redoStack.add(operation)
+            } else {
+                check(redoStack.lastOrNull() === operation)
+                redoStack.removeAt(redoStack.lastIndex)
+                undoStack.add(operation)
+            }
+            pendingTilesetAssetRelocation = null
+            dirty = true
+            undoVersion++
+            spriteVersion++
+            paletteVersion++
+            editVersion++
+            postStatus(if (undo) "Undid ${operation.description}" else "Redid ${operation.description}")
+            true
+        }.getOrElse { problem ->
+            postStatus("Source Undo/Redo blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         val pending = undoStack.last()
+        if (pending in nativeSpriteSourceUndo) return restoreNativeSpriteSourceHistory(pending, true)
         if (pending in introSequenceHistory) return restoreIntroSequence(pending, true)
         if (pending in musicCreationHistory) return restoreMusicCreation(pending, true)
         if (hasManagedLayouts() && pending.edits.isNotEmpty() && pending !in managedPlmUndo) {
@@ -11457,6 +12776,7 @@ class EditorState(
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
         val pending = redoStack.last()
+        if (pending in nativeSpriteSourceUndo) return restoreNativeSpriteSourceHistory(pending, false)
         if (pending in introSequenceHistory) return restoreIntroSequence(pending, false)
         if (pending in musicCreationHistory) return restoreMusicCreation(pending, false)
         if (hasManagedEnemies() && (pending.enemyAdds.isNotEmpty() || pending.enemyRemoves.isNotEmpty() || pending.enemyUpdates.isNotEmpty())) {
@@ -11761,6 +13081,7 @@ class EditorState(
         )
         val preview = result?.let { built -> com.supermetroid.editor.asm.AsmRomPreview.create(
             loadedRom = built.loadedRom,
+            baselineRom = built.baselineRom,
             resultRom = built.resultRom,
             headerSize = built.headerSize,
             writeReport = built.writeReport,

@@ -16,4 +16,13 @@ interface EmulatorBackend : Closeable {
     suspend fun listStates(): List<StateInfo>
     suspend fun readMemory(address: Int, size: Int): ByteArray
     suspend fun writeMemory(address: Int, data: ByteArray)
+
+    /** CPU debugging is an optional SMEDIT extension, not a libretro promise. */
+    suspend fun debugCpuState(): CpuDebugState = unsupportedCpuDebugging()
+    suspend fun stepInstruction(): DebugExecutionResult = unsupportedCpuDebugging()
+    suspend fun runUntil(request: DebugRunRequest): DebugExecutionResult = unsupportedCpuDebugging()
+    suspend fun readBusMemory(address: Int, size: Int): ByteArray = unsupportedCpuDebugging()
+
+    private fun unsupportedCpuDebugging(): Nothing =
+        throw UnsupportedOperationException("This emulator backend does not support CPU debugging")
 }

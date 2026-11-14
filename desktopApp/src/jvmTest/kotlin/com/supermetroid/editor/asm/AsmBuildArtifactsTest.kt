@@ -108,6 +108,32 @@ class AsmBuildArtifactsTest {
         assertEquals(0x908029, symbols.addressAt("bank_90.asm", 26))
         assertEquals(0x90802C, symbols.addressAt("bank_90.asm", 27))
         assertEquals(2, symbols.mappedLineCount)
+        assertEquals(
+            listOf(0x908029, 0x90802C),
+            symbols.orderedLocations().map(AsmCompiledLocation::snesAddress),
+        )
+    }
+
+    @Test
+    fun `generated diagnostic input is retained separately and labeled as generated authority`() {
+        val directory = createTempDirectory("smedit-generated-diagnostic-").toFile()
+        try {
+            val projectFile = File(directory, "Example.smedit").apply { writeText("{}") }
+            val repository = AsmBuildArtifactRepository(sourceFingerprintProvider = { "fixture" })
+            val generated = "; @room 91F8 Waterway\nSmeditRoom_91F8_Header:\n    db ${'$'}GG\n"
+            repository.publishFailure(
+                projectFile.path,
+                listOf("src/__smedit_generated_rooms.asm:3: error: Invalid hex value"),
+                generatedSources = mapOf("__smedit_generated_rooms.asm" to generated),
+            )
+
+            val report = requireNotNull(repository.load(projectFile.path))
+            assertEquals("    db ${'$'}GG", report.generatedSources.getValue("__smedit_generated_rooms.asm")[2])
+            assertTrue(generatedAsmAuthority("__smedit_generated_rooms.asm")!!.contains("Generated build input"))
+            assertEquals(generated.lines(), requireNotNull(repository.loadGeneratedRooms(projectFile.path)).lines)
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test
@@ -267,6 +293,11 @@ class AsmBuildArtifactsTest {
             .firstOrNull(File::isDirectory)
             ?: return
 
-        assertEquals(emptyList(), AsmSourceLinter.lintTree(sourceRoot))
+        val diagnostics = AsmSourceLinter.lintTree(sourceRoot)
+        assertEquals(emptyList(), diagnostics.filter { it.severity == AsmDiagnosticSeverity.ERROR })
+        diagnostics.forEach { diagnostic ->
+            assertTrue(diagnostic.severity == AsmDiagnosticSeverity.WARNING,
+                "Pinned-source inspections may expose review warnings but must not invent build-blocking errors: $diagnostic")
+        }
     }
 }

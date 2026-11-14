@@ -49,6 +49,8 @@ class AsmSemanticBridgeTest {
             val address = 0x930000 or parser.readUInt16At(parser.snesToPc(binding))
             for (source in listOf(binding, address)) assertTrue(index.linksFor(source).any { it.target == AsmEditorTarget.BeamDamage(key) })
         }
+        for (projectile in com.supermetroid.editor.ui.OTHER_PROJECTILE_DAMAGE)
+            assertTrue(index.linksFor(projectile.snesAddress).any { it.target == AsmEditorTarget.BeamDamage(projectile.key) })
     }
 
     @Test

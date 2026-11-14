@@ -1,6 +1,11 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomFreeSpaceAllocator
+import com.supermetroid.editor.rom.RomSegmentAllocationRegistry
+import com.supermetroid.editor.rom.RomSegmentKind
+import com.supermetroid.editor.rom.RomSegmentPlacement
+import com.supermetroid.editor.rom.RomSegmentRequest
 import com.supermetroid.editor.rom.RomVerifiedFreeRange
 import java.io.File
 import java.nio.file.AccessDeniedException
@@ -54,6 +59,9 @@ internal data class AsmCompiledBuildBase(
     val generatedNewRoomIds: Map<String, Int> = emptyMap(),
     val generatedRoomSource: String = "",
     val generatedPatchClaims: List<AsmGeneratedPatchClaim> = emptyList(),
+    /** Exact typed placements used by generated source and managed assets.
+     * Addresses are build output, never durable project intent. */
+    val segmentPlacements: List<RomSegmentPlacement> = emptyList(),
     val assemblerVersion: String,
     val compilerOutput: List<String>,
     val compilerSymbols: ByteArray = ByteArray(0),
@@ -91,6 +99,17 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     generatedRoomIds = generatedRoomIds.toSet(),
     generatedNewRoomIds = generatedNewRoomIds.toMap(),
     generatedPatchClaims = generatedPatchClaims.map { it.copy(bytes = it.bytes.copyOf()) },
+    segmentPlacements = segmentPlacements.map { placement ->
+        val allocationRequest = placement.allocation.request
+        placement.copy(
+            request = placement.request.copy(allowedBanks = placement.request.allowedBanks.toList()),
+            allocation = placement.allocation.copy(
+                request = allocationRequest?.copy(
+                    allowedBanks = allocationRequest.allowedBanks.toList(),
+                ),
+            ),
+        )
+    },
     compilerOutput = compilerOutput.toList(),
     compilerSymbols = compilerSymbols.copyOf(),
     beamDamageLocations = beamDamageLocations.toMap(),
@@ -226,6 +245,7 @@ internal class AsmProjectCompiler(
         materialization: AsmAssetMaterialization = AsmAssetMaterialization.EMPTY,
         patchMaterialization: AsmPatchMaterialization = AsmPatchMaterialization.EMPTY,
         roomMaterialization: AsmRoomMaterialization = AsmRoomMaterialization.EMPTY,
+        preplannedSegments: List<RomSegmentPlacement> = emptyList(),
         referenceRomBody: ByteArray? = null,
         managedBank8FStart: Int? = null,
         outputRomSize: Int = loadedRom.size - if (loadedRom.size % 0x8000 == 0x200) 0x200 else 0,
@@ -233,7 +253,7 @@ internal class AsmProjectCompiler(
         onProgress: (String) -> Unit = {},
     ): AsmCompiledBuildBase = workspaceRepository.withBaselineUpdateLock(projectFilePath) {
         compileLocked(projectFilePath, loadedRom, materialization, patchMaterialization, roomMaterialization,
-            referenceRomBody, managedBank8FStart, outputRomSize, expandedFillByte, onProgress)
+            preplannedSegments, referenceRomBody, managedBank8FStart, outputRomSize, expandedFillByte, onProgress)
     }
 
     private fun compileLocked(
@@ -242,6 +262,7 @@ internal class AsmProjectCompiler(
         materialization: AsmAssetMaterialization,
         patchMaterialization: AsmPatchMaterialization,
         roomMaterialization: AsmRoomMaterialization,
+        preplannedSegments: List<RomSegmentPlacement>,
         referenceRomBody: ByteArray?,
         managedBank8FStart: Int?,
         outputRomSize: Int,
@@ -260,11 +281,13 @@ internal class AsmProjectCompiler(
             sourceRoot = File(workspace.workingDirectory, "src"),
             excludedFileIds = workspace.disabledProjectModuleFileIds,
         )
-        if (sourceDiagnostics.isNotEmpty()) {
-            val output = sourceDiagnostics.map(AsmSourceLinter::format)
+        val sourceDiagnosticOutput = sourceDiagnostics.map(AsmSourceLinter::format)
+        val sourceErrors = sourceDiagnostics.filter { it.severity == AsmDiagnosticSeverity.ERROR }
+        if (sourceErrors.isNotEmpty()) {
+            val output = sourceErrors.map(AsmSourceLinter::format)
             runCatching { buildArtifacts.publishFailure(projectFilePath, output) }
             throw AsmCompilationException(
-                "SMEDIT source validation found ${sourceDiagnostics.size} source issue(s)",
+                "SMEDIT source validation found ${sourceErrors.size} source error(s)",
                 compilerOutput = output,
             )
         }
@@ -279,6 +302,7 @@ internal class AsmProjectCompiler(
             materialization = materialization,
             patchMaterialization = patchMaterialization,
             roomMaterialization = roomMaterialization,
+            preplannedSegments = preplannedSegments,
             referenceRomBody = referenceRomBody,
             managedBank8FStart = managedBank8FStart,
             outputRomSize = outputRomSize,
@@ -307,9 +331,21 @@ internal class AsmProjectCompiler(
         val project: CompiledTree
         var predicateStart: Int? = null
         var predicateClaims: List<AsmSourceOwnedRange> = emptyList()
+        var predicatePlacement: RomSegmentPlacement? = null
         var curatedBaseline: ByteArray? = null
         var checkedHookDemoBaseline: ByteArray? = null
         var auditedModuleClaims: List<AsmSourceOwnedRange> = emptyList()
+        var auditedModuleSegments: List<RomSegmentPlacement> = emptyList()
+        var managedAssetPlacements: List<AsmManagedAssetPlacement> = emptyList()
+        var managedAssetSource = ""
+        var managedHookPlacements: List<RomSegmentPlacement> = emptyList()
+        var managedHookOverrides: Map<String, Map<String, AsmManagedHookHelperOverride>> = emptyMap()
+        var generatedSourcesForDiagnostics = generatedSourceArtifacts(
+            roomMaterialization.source,
+            patchMaterialization.source,
+            "",
+            "",
+        )
         val verifiedFreeRanges: List<RomVerifiedFreeRange>
         try {
             reference = if (referenceRomBody == null) {
@@ -328,19 +364,173 @@ internal class AsmProjectCompiler(
                 originalRomBodySize = loadedBodySize,
                 expandedFillByte = expandedFillByte,
             )
+            val managedManifest = AsmManagedAssets.validateWorkspace(
+                workspace.root,
+                workspace.workingDirectory,
+            )
+            val managedRecords = managedManifest.assets
+            val mutedManagedAssets = AsmManagedAssets.mutedSource(managedRecords)
+            val enabledModules = AsmProjectModuleGateway.enabledModules(File(workspace.workingDirectory, "src"))
+            val managedHookContractsByFile = enabledModules.mapNotNull { fileId ->
+                val contracts = try {
+                    AsmCheckedHookContract.parseAll(File(workspace.workingDirectory, "src/$fileId").readText())
+                        .filter(AsmCheckedHookContract::managed)
+                } catch (problem: Exception) {
+                    throw AsmCompilationException("$fileId: ${problem.message}")
+                }
+                contracts.takeIf { it.isNotEmpty() }?.let { fileId to it }
+            }.toMap()
+            val hasManagedHooks = managedHookContractsByFile.isNotEmpty()
             val sourceText = File(workspace.workingDirectory, "src/$PLM_SOURCE_FILE").takeIf(File::isFile)?.readText().orEmpty()
             val predicates = try { (AsmRoomSelectorsSource(sourceText).managedPredicates() + AsmDoorArrivalsSource(sourceText).routines()).sortedBy { it.label } }
             catch (error: Exception) {
                 throw AsmCompilationException("$PLM_SOURCE_FILE: ${error.message}")
             }
+            generatedSourcesForDiagnostics = generatedSourceArtifacts(
+                roomMaterialization.source,
+                patchMaterialization.source,
+                AsmManagedBank8FCode.render(predicates, predicateStart),
+                mutedManagedAssets,
+            )
             if (predicates.isNotEmpty()) {
                 predicateStart = managedBank8FStart ?: run {
                     onProgress("Finding verified space for managed bank-8F code…")
+                    // Predicate discovery must retain every module's fixed writes,
+                    // but a managed helper's authored seed is not placement
+                    // authority. Keep those helpers in independent non-$8F probe
+                    // banks until the shared registry resolves final placements.
+                    val discoveryHookOverrides = managedHookProbeOverrides(
+                        managedHookContractsByFile,
+                        outputRomSize,
+                        excludedBanks = setOf(0x8F),
+                    )
                     val authored = compileTree(workspace.workingDirectory, asar,
                         generatedBank8FSource = AsmManagedBank8FCode.render(predicates, null),
+                        generatedManagedAssetSource = mutedManagedAssets,
+                        managedHookHelperOverrides = discoveryHookOverrides,
                         romSize = outputRomSize, fillByte = expandedFillByte)
-                    AsmManagedBank8FCode.chooseStart(reference.rom, authored.rom, authored.symbols, predicates)
+                    val sizeProbe = compileTree(
+                        sourceTree = workspace.workingDirectory,
+                        asar = asar,
+                        generatedBank8FSource = AsmManagedBank8FCode.render(predicates, 0x8F8000),
+                        generatedManagedAssetSource = mutedManagedAssets,
+                        managedHookHelperOverrides = discoveryHookOverrides,
+                        romSize = outputRomSize,
+                        fillByte = expandedFillByte,
+                    )
+                    val requiredSize = AsmManagedBank8FCode.measuredSize(predicates, sizeProbe.symbols)
+                    AsmManagedBank8FCode.choosePlacement(
+                        reference.rom,
+                        authored.rom,
+                        authored.symbols,
+                        predicates,
+                        requiredSize,
+                        verifiedFreeRanges,
+                    ).also { predicatePlacement = it }.allocation.snesAddress
                 }
+            }
+            if (managedRecords.isNotEmpty() || hasManagedHooks) {
+                val planningKinds = listOfNotNull(
+                    managedRecords.takeIf { it.isNotEmpty() }?.let { "${it.size} source asset${if (it.size == 1) "" else "s"}" },
+                    "managed checked-hook helpers".takeIf { hasManagedHooks },
+                ).joinToString(" and ")
+                onProgress("Planning $planningKinds…")
+                val allocationBase = compileTree(
+                    sourceTree = workspace.workingDirectory,
+                    asar = asar,
+                    assetOverrides = materialization.assetOverrides,
+                    generatedRoomSource = roomMaterialization.source,
+                    generatedPatchSource = patchMaterialization.source,
+                    generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    generatedManagedAssetSource = mutedManagedAssets,
+                    onlyProjectModules = emptySet(),
+                    romSize = outputRomSize,
+                    fillByte = expandedFillByte,
+                )
+                val occupied = changedRanges(
+                    reference.rom,
+                    allocationBase.rom,
+                    listOf(SNES_CHECKSUM_RANGE),
+                ).map { it.pcOffset until it.pcOffset + it.length }.toMutableList()
+                if (predicates.isNotEmpty()) {
+                    val labels = AsmWlaSymbolParser.parse(allocationBase.symbols.toString(Charsets.UTF_8)).labels
+                    predicates.forEach { routine ->
+                        val start = requireNotNull(labels[routine.label]) { "Missing managed code label ${routine.label}" }
+                        val end = requireNotNull(labels[routine.label + "_End"]) { "Missing managed code boundary ${routine.label}_End" }
+                        val pc = requireNotNull(snesLoRomToPc(start))
+                        occupied += pc until pc + end - start
+                    }
+                }
+                val hookInspection = inspectManagedHookHelpers(
+                    sourceTree = workspace.workingDirectory,
+                    asar = asar,
+                    enabledModules = enabledModules,
+                    moduleFree = allocationBase,
+                    assetOverrides = materialization.assetOverrides,
+                    generatedRoomSource = roomMaterialization.source,
+                    generatedPatchSource = patchMaterialization.source,
+                    generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    generatedManagedAssetSource = mutedManagedAssets,
+                    romSize = outputRomSize,
+                    fillByte = expandedFillByte,
+                )
+                occupied += hookInspection.fixedClaims.map { it.pcOffset until it.pcOffset + it.length }
+                occupied += materialization.claims.map { it.pcOffset until it.endExclusive }
+                occupied += roomMaterialization.claims.map { it.pcOffset until it.endExclusive }
+                occupied += patchMaterialization.claims.map { it.pcOffset until it.endExclusive }
+                predicatePlacement?.allocation?.let { occupied += it.pcOffset until it.pcOffset + it.size }
+                val byBank = verifiedFreeRanges.groupBy(RomVerifiedFreeRange::bank)
+                val bankOrder = byBank.keys.sortedWith(
+                    compareByDescending<Int> { it >= 0xE0 }
+                        .thenByDescending { byBank.getValue(it).maxOf(RomVerifiedFreeRange::length) }
+                        .thenBy { it },
+                )
+                val registry = RomSegmentAllocationRegistry(
+                    RomFreeSpaceAllocator(
+                        romData = allocationBase.rom.copyOf(),
+                        snesToPc = { snesLoRomToPc(it) ?: -1 },
+                        pcToSnes = { pcToSnesLoRom(it) ?: -1 },
+                        guardBytes = 1,
+                        freeFillByteForBank = { bank ->
+                            byBank[bank]?.firstOrNull()?.fillByte ?: expandedFillByte
+                        },
+                        excludedRanges = occupied,
+                        verifiedFreeRanges = verifiedFreeRanges,
+                    ),
+                )
+                managedHookPlacements = hookInspection.requests.map { inspected ->
+                    val allowed = if (bankOrder.isEmpty()) inspected.request.allowedBanks
+                    else bankOrder.filter(inspected.request.allowedBanks::contains)
+                    require(allowed.isNotEmpty()) {
+                        "${inspected.request.label} has no verified bank permitted by its helper_banks contract"
+                    }
+                    try {
+                        registry.reserve(inspected.request.copy(allowedBanks = allowed))
+                    } catch (problem: Exception) {
+                        throw AsmCompilationException(problem.message ?: "Managed checked-hook helper could not be placed")
+                    }
+                }
+                managedHookOverrides = managedHookPlacements.groupBy { placement ->
+                    hookInspection.requests.single { it.request.id == placement.request.id }.fileId
+                }.mapValues { (_, placements) -> placements.associate { placement ->
+                    val inspected = hookInspection.requests.single { it.request.id == placement.request.id }
+                    inspected.helperLabel to AsmManagedHookHelperOverride(
+                        placement.allocation.snesAddress,
+                        placement.allocation.snesAddress + placement.allocation.size,
+                    )
+                } }
+                managedAssetPlacements = try {
+                    AsmManagedAssets.planWithRegistry(managedRecords, workspace.root, registry, bankOrder)
+                } catch (problem: Exception) {
+                    throw AsmCompilationException(problem.message ?: "Managed ASM assets could not be placed")
+                }
+                managedAssetSource = AsmManagedAssets.source(managedAssetPlacements)
+                generatedSourcesForDiagnostics = generatedSourceArtifacts(
+                    roomMaterialization.source,
+                    patchMaterialization.source,
+                    AsmManagedBank8FCode.render(predicates, predicateStart),
+                    managedAssetSource,
+                )
             }
             onProgress("Compiling project ASM source…")
             project = compileTree(
@@ -350,6 +540,8 @@ internal class AsmProjectCompiler(
                 generatedRoomSource = roomMaterialization.source,
                 generatedPatchSource = patchMaterialization.source,
                 generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                generatedManagedAssetSource = managedAssetSource,
+                managedHookHelperOverrides = managedHookOverrides,
                 romSize = outputRomSize,
                 fillByte = expandedFillByte,
             )
@@ -357,76 +549,77 @@ internal class AsmProjectCompiler(
                 predicateClaims = AsmManagedBank8FCode.claims(
                     predicates, predicateStart, reference.rom, project.rom, project.symbols,
                 )
+                val totalSize = predicateClaims.sumOf(AsmSourceOwnedRange::length)
+                val placement = predicatePlacement
+                if (placement == null) {
+                    val request = com.supermetroid.editor.rom.RomSegmentRequest(
+                        id = "asm-managed-code:room-bank8f",
+                        owner = "asm-managed-code:room-bank8f",
+                        kind = com.supermetroid.editor.rom.RomSegmentKind.MANAGED_CODE,
+                        label = "Managed room predicates and door arrivals",
+                        size = totalSize,
+                        allowedBanks = listOf(0x8F),
+                        constraint = "Native room-state and door pointers are 16-bit bank-\$8F addresses",
+                    )
+                    val pc = requireNotNull(snesLoRomToPc(predicateStart))
+                    val range = verifiedFreeRanges.singleOrNull { verified ->
+                        verified.bank == 0x8F && pc >= verified.pcStart && pc + totalSize <= verified.pcEndExclusive
+                    }
+                    require(verifiedFreeRanges.isEmpty() || range != null) {
+                        "Managed bank-8F code is outside verified free space"
+                    }
+                    val allocation = com.supermetroid.editor.rom.RomAllocation(
+                        bank = 0x8F,
+                        pcOffset = pc,
+                        snesAddress = predicateStart,
+                        size = totalSize,
+                        label = request.label,
+                        fillByte = range?.fillByte ?: (reference.rom[pc].toInt() and 0xFF),
+                        request = request,
+                    )
+                    predicatePlacement = RomSegmentPlacement(request, allocation)
+                } else {
+                    require(placement.allocation.size == totalSize) {
+                        "Managed bank-8F code size changed between its size probe and final compile"
+                    }
+                }
                 val generatedClaims = materialization.claims.map { it.pcOffset until it.endExclusive } +
                     roomMaterialization.claims.map { it.pcOffset until it.endExclusive } +
-                    patchMaterialization.claims.map { it.pcOffset until it.endExclusive }
+                    patchMaterialization.claims.map { it.pcOffset until it.endExclusive } +
+                    managedAssetPlacements.map { it.allocation.pcOffset until it.allocation.pcOffset + it.allocation.size }
                 if (predicateClaims.any { claim -> generatedClaims.any { range ->
                     claim.pcOffset <= range.last && range.first < claim.pcOffset + claim.length
                 } }) throw AsmCompilationException(
                     "Generated room/assets/patches overlap managed bank-8F code; no ROM was produced.",
                 )
             }
-            val enabledModules = AsmProjectModuleGateway.enabledModules(File(workspace.workingDirectory, "src"))
             if (enabledModules.isNotEmpty()) {
                 onProgress("Auditing ${enabledModules.size} Project Module${if (enabledModules.size == 1) "" else "s"} for ROM collisions…")
-                val moduleFree = compileTree(
+                val audit = auditProjectModules(
                     sourceTree = workspace.workingDirectory,
                     asar = asar,
+                    enabledModules = enabledModules,
                     assetOverrides = materialization.assetOverrides,
                     generatedRoomSource = roomMaterialization.source,
                     generatedPatchSource = patchMaterialization.source,
                     generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
-                    onlyProjectModules = emptySet(),
+                    generatedManagedAssetSource = managedAssetSource,
+                    managedHookHelperOverrides = managedHookOverrides,
+                    immutableRom = reference.rom,
+                    verifiedFreeRanges = verifiedFreeRanges,
                     romSize = outputRomSize,
                     fillByte = expandedFillByte,
                 )
-                val auditedModules = enabledModules.map { fileId ->
-                    val isolated = try {
-                        compileTree(
-                            sourceTree = workspace.workingDirectory,
-                            asar = asar,
-                            assetOverrides = materialization.assetOverrides,
-                            generatedRoomSource = roomMaterialization.source,
-                            generatedPatchSource = patchMaterialization.source,
-                            generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
-                            onlyProjectModules = setOf(fileId),
-                            romSize = outputRomSize,
-                            fillByte = expandedFillByte,
-                        )
-                    } catch (problem: AsmCompilationException) {
-                        throw AsmCompilationException(
-                            "$fileId cannot be audited independently. Keep shared code in an incsrc file or make dependencies explicit inside the module. ${problem.message}",
-                            problem.compilerOutput,
-                        )
-                    }
-                    val changedClaims = AsmProjectModuleAuditor.claims(fileId, moduleFree.rom, isolated.rom)
-                    val moduleSource = File(workspace.workingDirectory, "src/$fileId").readText()
-                    val contracts = try {
-                        AsmCheckedHookContract.parseAll(moduleSource)
-                    } catch (problem: Exception) {
-                        throw AsmCompilationException("$fileId: ${problem.message}")
-                    }
-                    val validatedClaims = try {
-                        AsmCheckedHookValidator.validate(
-                            fileId = fileId,
-                            contracts = contracts,
-                            immutable = reference.rom,
-                            moduleFree = moduleFree.rom,
-                            isolated = isolated.rom,
-                            symbolsBytes = isolated.symbols,
-                            verifiedFreeRanges = verifiedFreeRanges,
-                            changedClaims = changedClaims,
-                        )
-                    } catch (problem: Exception) {
-                        throw AsmCompilationException(problem.message ?: "$fileId failed checked-hook validation")
-                    }
-                    AsmProjectModuleAuditor.capture(fileId, validatedClaims, isolated.rom)
-                }
+                val moduleFree = audit.moduleFree
+                val auditedModules = audit.modules
                 auditedModuleClaims = auditedModules.flatMap(AsmAuditedModuleOutput::claims)
+                auditedModuleSegments = auditedModules.flatMap(AsmAuditedModuleOutput::segmentPlacements)
                 AsmProjectModuleAuditor.requireNoCollisions(auditedModuleClaims)
                 val generated = materialization.claims.map { (it.pcOffset until it.endExclusive) to "asset ${it.label}" } +
                     roomMaterialization.claims.map { (it.pcOffset until it.endExclusive) to "room data ${it.label}" } +
                     patchMaterialization.claims.map { (it.pcOffset until it.endExclusive) to "patch ${it.label}" } +
+                    managedAssetPlacements.map { (it.allocation.pcOffset until it.allocation.pcOffset + it.allocation.size) to
+                        "managed asset ${it.record.sourceLabel}" } +
                     predicateClaims.map { (it.pcOffset until it.pcOffset + it.length) to "managed bank-8F code" }
                 AsmProjectModuleAuditor.requireNoGeneratedCollisions(auditedModuleClaims, generated)
                 AsmProjectModuleAuditor.requireNoProjectSourceCollisions(
@@ -442,6 +635,8 @@ internal class AsmProjectCompiler(
                     assetOverrides = materialization.assetOverrides, generatedRoomSource = roomMaterialization.source,
                     generatedPatchSource = patchMaterialization.source,
                     generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    generatedManagedAssetSource = managedAssetSource,
+                    managedHookHelperOverrides = managedHookOverrides,
                     muteFastDoors = true, romSize = outputRomSize, fillByte = expandedFillByte).rom
             }
             if (AsmCheckedHookDemo.active(workspace)) {
@@ -453,6 +648,8 @@ internal class AsmProjectCompiler(
                     generatedRoomSource = roomMaterialization.source,
                     generatedPatchSource = patchMaterialization.source,
                     generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    generatedManagedAssetSource = managedAssetSource,
+                    managedHookHelperOverrides = managedHookOverrides,
                     muteCheckedHookDemo = true,
                     romSize = outputRomSize,
                     fillByte = expandedFillByte,
@@ -464,6 +661,7 @@ internal class AsmProjectCompiler(
                     projectFilePath = projectFilePath,
                     output = problem.compilerOutput.ifEmpty { listOfNotNull(problem.message) },
                     assemblerVersion = version,
+                    generatedSources = generatedSourcesForDiagnostics,
                 )
             }
             throw problem
@@ -484,11 +682,55 @@ internal class AsmProjectCompiler(
         materialization.claims.forEach { claim ->
             validateCompiledClaim(project.rom, claim.pcOffset, claim.bytes, "source asset ${claim.assetPath}")
         }
+        val managedAssetClaims = managedAssetPlacements.map(AsmManagedAssetPlacement::claim)
+        managedAssetClaims.forEach { claim ->
+            validateCompiledClaim(project.rom, claim.pcOffset, claim.bytes, "managed source asset ${claim.assetPath}")
+        }
+        if (managedAssetPlacements.isNotEmpty()) {
+            val compiledSymbols = AsmWlaSymbolParser.parse(project.symbols.toString(Charsets.UTF_8))
+            val labels = compiledSymbols.labels
+            managedAssetPlacements.forEach { placement ->
+                val record = placement.record
+                val start = labels[record.sourceLabel]
+                val end = labels[record.endLabel]
+                require(start == placement.allocation.snesAddress &&
+                    end == placement.allocation.snesAddress + placement.allocation.size) {
+                    "Managed ASM asset ${record.sourceLabel} moved outside its checked allocation"
+                }
+            }
+            AsmManagedAssets.validatePointerBindings(
+                placements = managedAssetPlacements,
+                workingDirectory = workspace.workingDirectory,
+                compiledRom = project.rom,
+                symbols = compiledSymbols,
+            )
+        }
         patchMaterialization.claims.forEach { claim ->
             validateCompiledClaim(project.rom, claim.pcOffset, claim.bytes, "patch ${claim.owner}/${claim.label}")
         }
         roomMaterialization.claims.forEach { claim ->
             validateCompiledClaim(project.rom, claim.pcOffset, claim.bytes, "room graph ${claim.label}")
+        }
+        val generatedSegmentClaims = roomMaterialization.claims.map {
+            Triple(it.owner, it.pcOffset, it.endExclusive)
+        } + patchMaterialization.claims.map {
+            Triple(it.owner, it.pcOffset, it.endExclusive)
+        }
+        preplannedSegments.forEach { placement ->
+            val request = placement.request
+            val allocation = placement.allocation
+            require(pcToSnesLoRom(allocation.pcOffset) == allocation.snesAddress) {
+                "${request.id} has inconsistent PC/SNES placement"
+            }
+            require(verifiedFreeRanges.isEmpty() || verifiedFreeRanges.any { range ->
+                range.bank == allocation.bank && allocation.pcOffset >= range.pcStart &&
+                    allocation.pcOffset + allocation.size <= range.pcEndExclusive
+            }) { "${request.id} is outside the compiler's verified free-space catalog" }
+            require((allocation.pcOffset until allocation.pcOffset + allocation.size).all { pc ->
+                generatedSegmentClaims.any { (owner, start, endExclusive) ->
+                    owner == request.owner && pc in start until endExclusive
+                }
+            }) { "${request.id} is not completely owned by its generated ASM transaction" }
         }
         val output = if (headerSize == 0) {
             project.rom
@@ -513,19 +755,37 @@ internal class AsmProjectCompiler(
                     listOf(SNES_CHECKSUM_RANGE) +
                         predicateClaims.map { it.pcOffset until it.pcOffset + it.length } +
                         materialization.claims.map { it.pcOffset until it.endExclusive } +
+                        managedAssetClaims.map { it.pcOffset until it.endExclusive } +
                         roomMaterialization.claims.map { it.pcOffset until it.endExclusive } +
                         patchMaterialization.claims.map { it.pcOffset until it.endExclusive },
                 ),
                 symbols = project.symbols,
-            ) + predicateClaims, auditedModuleClaims),
-            generatedAssetClaims = materialization.claims,
+            ), auditedModuleClaims.filterNot { claim -> auditedModuleSegments.any { placement ->
+                claim.pcOffset >= placement.allocation.pcOffset &&
+                    claim.pcOffset + claim.length <= placement.allocation.pcOffset + placement.allocation.size
+            } }),
+            generatedAssetClaims = materialization.claims + managedAssetClaims,
             generatedRoomClaims = roomMaterialization.claims,
             generatedRoomIds = roomMaterialization.roomIds,
             generatedNewRoomIds = roomMaterialization.newRoomIds,
             generatedRoomSource = roomMaterialization.source,
             generatedPatchClaims = patchMaterialization.claims,
+            segmentPlacements = (preplannedSegments + managedAssetPlacements.map {
+                RomSegmentPlacement(requireNotNull(it.allocation.request), it.allocation)
+            } + listOfNotNull(predicatePlacement) + managedHookPlacements + auditedModuleSegments.filter { audited ->
+                managedHookPlacements.none { it.request.id == audited.request.id }
+            }).also { placements ->
+                require(placements.map { it.request.id }.distinct().size == placements.size) {
+                    "Compiled ROM segment IDs must be unique"
+                }
+                require(placements.indices.all { first -> placements.indices.drop(first + 1).none { second ->
+                    val a = placements[first].allocation
+                    val b = placements[second].allocation
+                    a.pcOffset < b.pcOffset + b.size && b.pcOffset < a.pcOffset + a.size
+                } }) { "Compiled ROM segment placements overlap" }
+            },
             assemblerVersion = version.lineSequence().firstOrNull().orEmpty(),
-            compilerOutput = (reference.output + project.output).distinct(),
+            compilerOutput = (sourceDiagnosticOutput + reference.output + project.output).distinct(),
             compilerSymbols = project.symbols,
             managedBank8FStart = predicateStart,
             curatedBaselineRomBody = curatedBaseline,
@@ -544,6 +804,7 @@ internal class AsmProjectCompiler(
                 output = protected.compilerOutput,
                 assemblerVersion = version,
                 generatedRoomSource = roomMaterialization.source,
+                generatedSources = generatedSourcesForDiagnostics,
             )
         }
         AsmCompiledBuildCache.put(cacheKey, protected)
@@ -569,6 +830,7 @@ internal class AsmProjectCompiler(
             materialization = AsmAssetMaterialization.EMPTY,
             patchMaterialization = AsmPatchMaterialization.EMPTY,
             roomMaterialization = AsmRoomMaterialization.EMPTY,
+            preplannedSegments = emptyList(),
             referenceRomBody = null,
             managedBank8FStart = null,
             outputRomSize = outputRomSize,
@@ -600,6 +862,7 @@ internal class AsmProjectCompiler(
         materialization: AsmAssetMaterialization,
         patchMaterialization: AsmPatchMaterialization,
         roomMaterialization: AsmRoomMaterialization,
+        preplannedSegments: List<RomSegmentPlacement>,
         referenceRomBody: ByteArray?,
         managedBank8FStart: Int?,
         outputRomSize: Int,
@@ -625,6 +888,15 @@ internal class AsmProjectCompiler(
             excludedRelativePaths = workspace.disabledProjectModuleFileIds,
         )
         fingerprint.addTree("project-data", File(workspace.workingDirectory, "data"))
+        fingerprint.addText("managed-assets:${AsmManagedAssets.encode(AsmManagedAssets.load(workspace.root))}")
+        preplannedSegments.sortedBy { it.request.id }.forEach { placement ->
+            val request = placement.request
+            val allocation = placement.allocation
+            fingerprint.addText(
+                "segment:${request.id}:${request.owner}:${request.kind}:${request.size}:${request.alignment}:" +
+                    "${request.allowedBanks.joinToString()}:${request.constraint}:${allocation.pcOffset}:${allocation.snesAddress}",
+            )
+        }
         materialization.assetOverrides.toSortedMap().forEach { (path, bytes) ->
             fingerprint.addBytes("asset:$path", bytes)
         }
@@ -652,6 +924,218 @@ internal class AsmProjectCompiler(
         return fingerprint.finish()
     }
 
+    private data class ProjectModuleAudit(
+        val moduleFree: CompiledTree,
+        val modules: List<AsmAuditedModuleOutput>,
+    )
+
+    private data class ManagedHookRequest(
+        val fileId: String,
+        val helperLabel: String,
+        val request: RomSegmentRequest,
+    )
+
+    private data class ManagedHookInspection(
+        val requests: List<ManagedHookRequest>,
+        val fixedClaims: List<AsmSourceOwnedRange>,
+    )
+
+    /** Temporary compile-only locations used only to measure semantic helper
+     * bodies. Each helper gets a whole independent LoROM bank envelope so one
+     * helper's growth cannot move or overwrite another during discovery. */
+    private fun managedHookProbeOverrides(
+        contractsByFile: Map<String, List<AsmCheckedHookContract>>,
+        romSize: Int,
+        excludedBanks: Set<Int> = emptySet(),
+    ): Map<String, Map<String, AsmManagedHookHelperOverride>> {
+        if (contractsByFile.isEmpty()) return emptyMap()
+        val contracts = contractsByFile.values.flatten()
+        val unavailableBanks = excludedBanks + contracts.map { it.hookAddress ushr 16 and 0xFF }
+        val probeBanks = (0 until romSize / 0x8000)
+            .map { 0x80 + it }
+            .asReversed()
+            .filterNot(unavailableBanks::contains)
+        require(contracts.size <= probeBanks.size) {
+            "${contracts.size} managed checked-hook helpers need independent size probes, but only " +
+                "${probeBanks.size} LoROM banks are available"
+        }
+        var bankIndex = 0
+        return contractsByFile.mapValues { (_, fileContracts) ->
+            fileContracts.associate { contract ->
+                val address = probeBanks[bankIndex++] shl 16 or 0x8000
+                contract.helperLabel to AsmManagedHookHelperOverride(address, address + 0x7FFF)
+            }
+        }
+    }
+
+    private fun inspectManagedHookHelpers(
+        sourceTree: File,
+        asar: File,
+        enabledModules: List<String>,
+        moduleFree: CompiledTree,
+        assetOverrides: Map<String, ByteArray>,
+        generatedRoomSource: String,
+        generatedPatchSource: String,
+        generatedBank8FSource: String,
+        generatedManagedAssetSource: String,
+        romSize: Int,
+        fillByte: Int,
+    ): ManagedHookInspection {
+        val requests = mutableListOf<ManagedHookRequest>()
+        val fixedClaims = mutableListOf<AsmSourceOwnedRange>()
+        enabledModules.forEach { fileId ->
+            val text = File(sourceTree, "src/$fileId").readText()
+            val contracts = try {
+                AsmCheckedHookContract.parseAll(text)
+            } catch (problem: Exception) {
+                throw AsmCompilationException("$fileId: ${problem.message}")
+            }
+            val managed = contracts.filter(AsmCheckedHookContract::managed)
+            val probeOverrides = managedHookProbeOverrides(mapOf(fileId to managed), romSize)[fileId].orEmpty()
+            val isolated = try {
+                compileTree(
+                    sourceTree = sourceTree,
+                    asar = asar,
+                    assetOverrides = assetOverrides,
+                    generatedRoomSource = generatedRoomSource,
+                    generatedPatchSource = generatedPatchSource,
+                    generatedBank8FSource = generatedBank8FSource,
+                    generatedManagedAssetSource = generatedManagedAssetSource,
+                    managedHookHelperOverrides = if (probeOverrides.isEmpty()) emptyMap()
+                        else mapOf(fileId to probeOverrides),
+                    onlyProjectModules = setOf(fileId),
+                    romSize = romSize,
+                    fillByte = fillByte,
+                )
+            } catch (problem: AsmCompilationException) {
+                throw AsmCompilationException(
+                    "$fileId cannot be size-probed independently. ${problem.message}",
+                    problem.compilerOutput,
+                )
+            }
+            val labels = AsmWlaSymbolParser.parse(isolated.symbols.toString(Charsets.UTF_8)).labels
+            val helperRanges = managed.map { contract ->
+                val start = requireNotNull(labels[contract.helperLabel]) { "$fileId: missing ${contract.helperLabel}" }
+                val end = requireNotNull(labels[contract.helperEndLabel]) { "$fileId: missing ${contract.helperEndLabel}" }
+                require(end > start && end - start <= 0x7FFF) {
+                    "$fileId: ${contract.helperLabel} exceeds the single-bank managed-helper limit"
+                }
+                val pc = requireNotNull(snesLoRomToPc(start))
+                val owner = "asm-module:${fileId.removePrefix(ASM_PROJECT_MODULE_PREFIX).removeSuffix(".asm")}"
+                val request = RomSegmentRequest(
+                    id = "checked-hook-helper:$fileId:${contract.helperLabel}",
+                    owner = owner,
+                    kind = RomSegmentKind.HOOK_HELPER,
+                    label = "Checked-hook helper · ${contract.helperLabel}",
+                    size = end - start,
+                    alignment = contract.helperAlignment,
+                    allowedBanks = contract.managedBanks,
+                    constraint = "The native JML detour and exact continuation bind this helper symbolically",
+                )
+                requests += ManagedHookRequest(fileId, contract.helperLabel, request)
+                pc until pc + request.size
+            }
+            AsmProjectModuleAuditor.claims(fileId, moduleFree.rom, isolated.rom).forEach { claim ->
+                var pieces = listOf(claim.pcOffset until claim.pcOffset + claim.length)
+                helperRanges.forEach { helper ->
+                    pieces = pieces.flatMap { piece ->
+                        val start = maxOf(piece.first, helper.first)
+                        val end = minOf(piece.last + 1, helper.last + 1)
+                        if (start >= end) listOf(piece) else listOfNotNull(
+                            (piece.first until start).takeIf { !it.isEmpty() },
+                            (end until piece.last + 1).takeIf { !it.isEmpty() },
+                        )
+                    }
+                }
+                fixedClaims += pieces.map { piece -> AsmSourceOwnedRange(piece.first, piece.count(), fileId) }
+            }
+        }
+        require(requests.map { it.request.id }.distinct().size == requests.size) {
+            "Managed checked-hook helper identities must be unique"
+        }
+        return ManagedHookInspection(requests, fixedClaims)
+    }
+
+    private fun auditProjectModules(
+        sourceTree: File,
+        asar: File,
+        enabledModules: List<String>,
+        assetOverrides: Map<String, ByteArray>,
+        generatedRoomSource: String,
+        generatedPatchSource: String,
+        generatedBank8FSource: String,
+        generatedManagedAssetSource: String,
+        managedHookHelperOverrides: Map<String, Map<String, AsmManagedHookHelperOverride>>,
+        immutableRom: ByteArray,
+        verifiedFreeRanges: List<RomVerifiedFreeRange>,
+        romSize: Int,
+        fillByte: Int,
+    ): ProjectModuleAudit {
+        val moduleFree = compileTree(
+            sourceTree = sourceTree,
+            asar = asar,
+            assetOverrides = assetOverrides,
+            generatedRoomSource = generatedRoomSource,
+            generatedPatchSource = generatedPatchSource,
+            generatedBank8FSource = generatedBank8FSource,
+            generatedManagedAssetSource = generatedManagedAssetSource,
+            managedHookHelperOverrides = managedHookHelperOverrides,
+            onlyProjectModules = emptySet(),
+            romSize = romSize,
+            fillByte = fillByte,
+        )
+        val modules = enabledModules.map { fileId ->
+            val isolated = try {
+                compileTree(
+                    sourceTree = sourceTree,
+                    asar = asar,
+                    assetOverrides = assetOverrides,
+                    generatedRoomSource = generatedRoomSource,
+                    generatedPatchSource = generatedPatchSource,
+                    generatedBank8FSource = generatedBank8FSource,
+                    generatedManagedAssetSource = generatedManagedAssetSource,
+                    managedHookHelperOverrides = managedHookHelperOverrides,
+                    onlyProjectModules = setOf(fileId),
+                    romSize = romSize,
+                    fillByte = fillByte,
+                )
+            } catch (problem: AsmCompilationException) {
+                throw AsmCompilationException(
+                    "$fileId cannot be audited independently. Keep shared code in an incsrc file or make dependencies explicit inside the module. ${problem.message}",
+                    problem.compilerOutput,
+                )
+            }
+            val changedClaims = AsmProjectModuleAuditor.claims(fileId, moduleFree.rom, isolated.rom)
+            val moduleSource = File(sourceTree, "src/$fileId").readText()
+            val contracts = try {
+                AsmCheckedHookContract.parseAll(moduleSource)
+            } catch (problem: Exception) {
+                throw AsmCompilationException("$fileId: ${problem.message}")
+            }
+            val validatedClaims = try {
+                AsmCheckedHookValidator.validate(
+                    fileId = fileId,
+                    contracts = contracts,
+                    immutable = immutableRom,
+                    moduleFree = moduleFree.rom,
+                    isolated = isolated.rom,
+                    symbolsBytes = isolated.symbols,
+                    verifiedFreeRanges = verifiedFreeRanges,
+                    changedClaims = changedClaims,
+                )
+            } catch (problem: Exception) {
+                throw AsmCompilationException(problem.message ?: "$fileId failed checked-hook validation")
+            }
+            val segmentPlacements = try {
+                AsmCheckedHookValidator.segmentPlacements(fileId, contracts, isolated.symbols, verifiedFreeRanges)
+            } catch (problem: Exception) {
+                throw AsmCompilationException(problem.message ?: "$fileId failed checked-hook segment planning")
+            }
+            AsmProjectModuleAuditor.capture(fileId, validatedClaims, isolated.rom, segmentPlacements)
+        }
+        return ProjectModuleAudit(moduleFree, modules)
+    }
+
     private fun compileTree(
         sourceTree: File,
         asar: File,
@@ -659,6 +1143,8 @@ internal class AsmProjectCompiler(
         generatedRoomSource: String = "",
         generatedPatchSource: String = "",
         generatedBank8FSource: String = "",
+        generatedManagedAssetSource: String = "",
+        managedHookHelperOverrides: Map<String, Map<String, AsmManagedHookHelperOverride>> = emptyMap(),
         muteFastDoors: Boolean = false,
         muteCheckedHookDemo: Boolean = false,
         onlyProjectModules: Set<String>? = null,
@@ -680,8 +1166,16 @@ internal class AsmProjectCompiler(
                 module.writeText(AsmCheckedHookDemo.withEnabled(module.readText(), false))
             }
             applyAssetOverrides(File(staging, "data"), assetOverrides)
+            managedHookHelperOverrides.forEach { (fileId, overrides) ->
+                val module = File(staging, "src/$fileId")
+                require(module.isFile && fileId.startsWith(ASM_PROJECT_MODULE_PREFIX)) {
+                    "Managed checked-hook override references invalid module $fileId"
+                }
+                module.writeText(applyManagedHookHelperOverrides(module.readText(), overrides))
+            }
             AsmProjectModuleGateway.apply(File(staging, "src"), onlyProjectModules)
             applyGeneratedBank8FSource(File(staging, "src"), generatedBank8FSource)
+            applyGeneratedManagedAssetSource(File(staging, "src"), generatedManagedAssetSource)
             applyGeneratedRoomSource(File(staging, "src"), generatedRoomSource)
             applyGeneratedPatchSource(File(staging, "src"), generatedPatchSource)
             val rom = File(staging, "SM.sfc")
@@ -747,6 +1241,18 @@ internal class AsmProjectCompiler(
         val main = File(sourceRoot, "main.asm")
         val original = main.readText()
         val include = "; SMEDIT managed bank-8F code\nincsrc \"$GENERATED_BANK8F_FILE\"\n\n"
+        val marker = "print \"Assembly complete. Total bytes written: \", bytes"
+        main.writeText(if (marker in original) original.replaceFirst(marker, include + marker) else original + "\n" + include)
+    }
+
+    private fun applyGeneratedManagedAssetSource(sourceRoot: File, source: String) {
+        if (source.isBlank()) return
+        val generated = File(sourceRoot, GENERATED_MANAGED_ASSET_FILE)
+        require(!generated.exists()) { "Project source uses reserved SMEDIT file name $GENERATED_MANAGED_ASSET_FILE" }
+        generated.writeText(source)
+        val main = File(sourceRoot, "main.asm")
+        val original = main.readText()
+        val include = "; SMEDIT managed source assets\nincsrc \"$GENERATED_MANAGED_ASSET_FILE\"\n\n"
         val marker = "print \"Assembly complete. Total bytes written: \", bytes"
         main.writeText(if (marker in original) original.replaceFirst(marker, include + marker) else original + "\n" + include)
     }
@@ -833,9 +1339,22 @@ internal class AsmProjectCompiler(
         private const val GENERATED_ROOM_FILE = "__smedit_generated_rooms.asm"
         private const val GENERATED_PATCH_FILE = "__smedit_generated_patches.asm"
         private const val GENERATED_BANK8F_FILE = "__smedit_managed_bank8f.asm"
-        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v11-checked-hooks-and-module-audit"
+        private const val GENERATED_MANAGED_ASSET_FILE = "__smedit_managed_assets.asm"
+        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v12-managed-assets"
 
         internal fun clearBuildCacheForTests() = AsmCompiledBuildCache.clear()
+
+        private fun generatedSourceArtifacts(
+            roomSource: String,
+            patchSource: String,
+            bank8fSource: String,
+            managedAssetSource: String,
+        ): Map<String, String> = buildMap {
+            if (roomSource.isNotBlank()) put(GENERATED_ROOM_FILE, roomSource)
+            if (patchSource.isNotBlank()) put(GENERATED_PATCH_FILE, patchSource)
+            if (bank8fSource.isNotBlank()) put(GENERATED_BANK8F_FILE, bank8fSource)
+            if (managedAssetSource.isNotBlank()) put(GENERATED_MANAGED_ASSET_FILE, managedAssetSource)
+        }
 
         internal fun changedRanges(
             reference: ByteArray,

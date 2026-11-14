@@ -101,6 +101,34 @@ open class RetroSystemInfo : Structure() {
     fun getLibraryVersion(): String? = library_version?.getString(0)
 }
 
+@Structure.FieldOrder(
+    "struct_size", "pc", "a", "x", "y", "d", "s", "p", "db", "pb",
+    "memory_width", "index_width", "emulation", "waiting_for_interrupt", "halted", "reserved",
+    "cycles", "v_counter", "core_frame", "instructions",
+)
+open class SmeditDebugCpuState : Structure() {
+    @JvmField var struct_size: Int = 0
+    @JvmField var pc: Int = 0
+    @JvmField var a: Short = 0
+    @JvmField var x: Short = 0
+    @JvmField var y: Short = 0
+    @JvmField var d: Short = 0
+    @JvmField var s: Short = 0
+    @JvmField var p: Short = 0
+    @JvmField var db: Byte = 0
+    @JvmField var pb: Byte = 0
+    @JvmField var memory_width: Byte = 0
+    @JvmField var index_width: Byte = 0
+    @JvmField var emulation: Byte = 0
+    @JvmField var waiting_for_interrupt: Byte = 0
+    @JvmField var halted: Byte = 0
+    @JvmField var reserved: Byte = 0
+    @JvmField var cycles: Int = 0
+    @JvmField var v_counter: Int = 0
+    @JvmField var core_frame: Int = 0
+    @JvmField var instructions: Long = 0
+}
+
 // ── Callback interfaces ────────────────────────────────────────────────────
 
 fun interface RetroVideoRefreshCallback : Callback {
@@ -157,4 +185,12 @@ interface LibretroLib : Library {
 
     fun retro_get_memory_data(id: Int): Pointer?
     fun retro_get_memory_size(id: Int): Long
+
+    // Optional SMEDIT extension. Missing symbols are expected for stock cores;
+    // callers must successfully probe smedit_debug_api_version first.
+    fun smedit_debug_api_version(): Int
+    fun smedit_debug_get_cpu_state(state: SmeditDebugCpuState): Int
+    fun smedit_debug_step_instruction(): Int
+    fun smedit_debug_run_until(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
+    fun smedit_debug_read_bus(address: Int, data: Pointer, size: Int): Int
 }

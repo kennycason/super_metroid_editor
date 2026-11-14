@@ -96,6 +96,36 @@ class AsmCompletionTest {
     }
 
     @Test
+    fun `operand completion offers expression functions with an insertion caret`() {
+        val index = index()
+        val text = "    LDA ba"
+
+        val result = assertNotNull(
+            AsmCompletionEngine.complete(index, "bank_80.asm", 4, text, text.length, explicit = false),
+        )
+        val bank = result.items.single { it.text == "bank" }
+
+        assertEquals(AsmCompletionKind.EXPRESSION_FUNCTION, bank.kind)
+        assertEquals("bank()", bank.replacement)
+        assertEquals(1, bank.caretBacktrack)
+        assertTrue(bank.detail.contains("address bank byte"))
+    }
+
+    @Test
+    fun `define completion explains an exactly known constant`() {
+        val index = index()
+        val text = "    LDA !Sp"
+
+        val result = assertNotNull(
+            AsmCompletionEngine.complete(index, "bank_80.asm", 4, text, text.length, explicit = false),
+        )
+        val define = result.items.single { it.text == "!Speed" }
+
+        assertEquals(AsmCompletionKind.DEFINE, define.kind)
+        assertTrue(define.detail.contains("\$10 (16)"))
+    }
+
+    @Test
     fun `macro completion includes the indexed signature and source`() {
         val index = index()
         val text = "    %spr"

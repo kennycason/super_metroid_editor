@@ -92,6 +92,11 @@ class ProjectRoomExporter(
             excludedRanges = sourceSelectors.values.flatMap { it.routines.values }.mapNotNull { routine ->
                 routine.snesAddress?.let { start -> romParser.snesToPc(start).let { it until it + routine.sizeBytes!! } }
             },
+        ).scoped(
+            owner = "room-graph:project",
+            kind = RomSegmentKind.ROOM_DATA,
+            idPrefix = "room-graph:project",
+            constraint = "Each native room pointer retains its bank-specific width and bank",
         )
         ).observing(allocations::add)
 

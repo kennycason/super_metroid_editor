@@ -38,6 +38,11 @@ class ProjectNewRoomMaterializer(
             snesToPc = parser::snesToPc,
             pcToSnes = parser::pcToSnes,
             guardBytes = 2,
+        ).scoped(
+            owner = "room-graph:project",
+            kind = RomSegmentKind.ROOM_DATA,
+            idPrefix = "room-graph:project/new-room",
+            constraint = "Each native room pointer retains its bank-specific width and bank",
         )
         ).observing(allocations::add)
 

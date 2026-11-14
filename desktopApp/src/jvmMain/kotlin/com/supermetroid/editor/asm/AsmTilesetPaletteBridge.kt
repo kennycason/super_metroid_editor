@@ -16,9 +16,13 @@ internal sealed interface AsmTilesetPaletteAccess {
         val baselineRawPalette: ByteArray,
         /** Exact compressed source bytes used for optimistic save/restore guards. */
         val sourceBytes: ByteArray,
+        val encodedSize: Int,
         val capacity: Int,
         val affectedTilesetIds: List<Int>,
         val modified: Boolean,
+        val managedAssetId: String? = null,
+        val managedSourceFileId: String? = null,
+        val relocation: AsmAssetRelocationCandidate? = null,
     ) : AsmTilesetPaletteAccess
 
     data class AsmOnly(
@@ -43,12 +47,12 @@ internal class AsmTilesetPaletteBridge(
     }
 
     fun accessAll(projectFilePath: String): Map<Int, AsmTilesetPaletteAccess> {
-        val workspace = repository.loadForBuild(projectFilePath)
+        val workspace = repository.loadForRead(projectFilePath)
             ?: return (0 until TileGraphics.NUM_TILESETS).associateWith { tilesetId ->
                 AsmTilesetPaletteAccess.AsmOnly(tilesetId, "Project ASM workspace is unavailable.")
             }
         val sources = readAsmSourceTree(File(workspace.workingDirectory, "src"))
-        val resolutions = resolvePaletteAssets(sources, workspace.assets)
+        val resolutions = resolvePaletteAssets(sources, workspace.assets, AsmManagedAssets.load(workspace.root))
         return (0 until TileGraphics.NUM_TILESETS).associateWith { tilesetId ->
             access(workspace, resolutions, tilesetId)
         }
@@ -64,9 +68,10 @@ internal class AsmTilesetPaletteBridge(
                 tilesetId,
                 "This tileset's palette pointer is custom or is not a direct source asset. Edit it in ASM.",
             )
-        val source = File(workspace.workingDirectory, "data/${resolution.asset.path}")
+        val sourcePath = resolution.managed?.managedAssetPath ?: resolution.asset.path
+        val source = File(workspace.workingDirectory, "data/$sourcePath")
         val original = File(workspace.originalDirectory, "data/${resolution.asset.path}")
-        if (!source.isFile || source.length() != resolution.asset.length.toLong() ||
+        if (!source.isFile || source.length() <= 0L ||
             !original.isFile || original.length() != resolution.asset.length.toLong()
         ) {
             return AsmTilesetPaletteAccess.AsmOnly(
@@ -110,16 +115,20 @@ internal class AsmTilesetPaletteBridge(
         }
         return AsmTilesetPaletteAccess.Editable(
             tilesetId = tilesetId,
-            assetPath = resolution.asset.path,
+            assetPath = sourcePath,
             rawPalette = decoded.data,
             baselineRawPalette = baseline.data,
             sourceBytes = sourceBytes,
+            encodedSize = decoded.consumed,
             capacity = resolution.asset.length,
             affectedTilesetIds = resolutions.entries
                 .filter { it.value.asset.path == resolution.asset.path }
                 .map(Map.Entry<Int, PaletteAssetResolution>::key)
                 .sorted(),
-            modified = !sourceBytes.contentEquals(originalBytes),
+            modified = resolution.managed != null || !sourceBytes.contentEquals(originalBytes),
+            managedAssetId = resolution.managed?.id,
+            managedSourceFileId = resolution.managed?.sourceFileId,
+            relocation = resolution.relocation,
         )
     }
 
@@ -138,7 +147,37 @@ internal class AsmTilesetPaletteBridge(
         }
         if (current.rawPalette.contentEquals(rawPalette)) return current
         val sourceBytes = encode(current, rawPalette)
-        repository.saveAsset(projectFilePath, current.assetPath, sourceBytes, expectedSourceBytes)
+        if (current.managedAssetId == null) {
+            repository.saveAsset(projectFilePath, current.assetPath, sourceBytes, expectedSourceBytes)
+        } else {
+            repository.saveManagedAsset(projectFilePath, current.managedAssetId, sourceBytes, expectedSourceBytes)
+        }
+        return access(projectFilePath, tilesetId).editableOrThrow()
+    }
+
+    fun relocate(
+        projectFilePath: String,
+        tilesetId: Int,
+        rawPalette: ByteArray,
+        expectedSourceBytes: ByteArray,
+    ): AsmTilesetPaletteAccess.Editable {
+        require(rawPalette.size == PALETTE_BYTES) { "Tileset $tilesetId palette must contain $PALETTE_BYTES bytes" }
+        val current = access(projectFilePath, tilesetId).editableOrThrow()
+        require(current.managedAssetId == null) { "${current.assetPath} is already in managed project space" }
+        require(current.sourceBytes.contentEquals(expectedSourceBytes)) {
+            "${current.assetPath} changed after the palette was opened. Reload it before relocating."
+        }
+        val candidate = requireNotNull(current.relocation) {
+            "${current.assetPath} does not have a safe direct source declaration to relocate"
+        }
+        val compressed = encodeUnbounded(tilesetId, rawPalette)
+        val workspace = requireNotNull(repository.loadForRead(projectFilePath)) { "Project ASM workspace is unavailable" }
+        repository.installManagedAsset(
+            projectFilePath = projectFilePath,
+            record = candidate.record(),
+            bytes = compressed,
+            expectedSourceText = File(workspace.workingDirectory, "src/${candidate.sourceFileId}").readText(),
+        )
         return access(projectFilePath, tilesetId).editableOrThrow()
     }
 
@@ -146,16 +185,24 @@ internal class AsmTilesetPaletteBridge(
         require(rawPalette.size == PALETTE_BYTES) {
             "Tileset ${access.tilesetId} palette must contain exactly $PALETTE_BYTES bytes"
         }
-        val compressed = LZ5Compressor.compress(rawPalette)
-        require(LZ5Codec.decompress(compressed, maxOutputSize = PALETTE_BYTES).data.contentEquals(rawPalette)) {
-            "Tileset ${access.tilesetId} palette failed LZ5 round-trip validation"
-        }
-        require(compressed.size <= access.capacity) {
-            "Tileset ${access.tilesetId} palette needs ${compressed.size} compressed bytes, but its source asset " +
-                "${access.assetPath} has a fixed ${access.capacity}-byte envelope. Edit its pointer/allocation in ASM."
+        val compressed = encodeUnbounded(access.tilesetId, rawPalette)
+        if (access.managedAssetId != null) return compressed
+        if (compressed.size > access.capacity) {
+            require(access.relocation != null) {
+                "${access.assetPath} needs ${compressed.size} compressed bytes, but its frozen source envelope has " +
+                    "${access.capacity} bytes and its pointer consumers are not a supported relocatable shape. Edit it in ASM."
+            }
+            throw AsmAssetRelocationRequiredException(access.assetPath, compressed.size, access.capacity)
         }
         return ByteArray(access.capacity) { 0xFF.toByte() }.also(compressed::copyInto)
     }
+
+    private fun encodeUnbounded(tilesetId: Int, rawPalette: ByteArray): ByteArray =
+        LZ5Compressor.compress(rawPalette).also { compressed ->
+            require(LZ5Codec.decompress(compressed, maxOutputSize = PALETTE_BYTES).data.contentEquals(rawPalette)) {
+                "Tileset $tilesetId palette failed LZ5 round-trip validation"
+            }
+        }
 
     fun replaceSourceBytes(
         projectFilePath: String,
@@ -167,8 +214,8 @@ internal class AsmTilesetPaletteBridge(
         require(current.sourceBytes.contentEquals(expectedSourceBytes)) {
             "${current.assetPath} changed after the palette transaction began. Reload it before continuing."
         }
-        require(sourceBytes.size == current.capacity) {
-            "${current.assetPath} must remain exactly ${current.capacity} bytes"
+        require(current.managedAssetId != null || sourceBytes.size == current.capacity) {
+            "${current.assetPath} must remain exactly ${current.capacity} bytes until it is moved to project space"
         }
         val decoded = LZ5Codec.decompress(sourceBytes, maxOutputSize = PALETTE_BYTES)
         require(decoded.data.size == PALETTE_BYTES &&
@@ -176,7 +223,11 @@ internal class AsmTilesetPaletteBridge(
         ) {
             "${current.assetPath} is not a supported fixed-envelope palette asset"
         }
-        repository.saveAsset(projectFilePath, current.assetPath, sourceBytes, expectedSourceBytes)
+        if (current.managedAssetId == null) {
+            repository.saveAsset(projectFilePath, current.assetPath, sourceBytes, expectedSourceBytes)
+        } else {
+            repository.saveManagedAsset(projectFilePath, current.managedAssetId, sourceBytes, expectedSourceBytes)
+        }
         return access(projectFilePath, tilesetId).editableOrThrow()
     }
 
@@ -189,7 +240,11 @@ internal class AsmTilesetPaletteBridge(
         require(current.sourceBytes.contentEquals(expectedSourceBytes)) {
             "${current.assetPath} changed after the palette was opened. Reload it before restoring."
         }
-        repository.restoreAsset(projectFilePath, current.assetPath, expectedSourceBytes)
+        if (current.managedAssetId == null) {
+            repository.restoreAsset(projectFilePath, current.assetPath, expectedSourceBytes)
+        } else {
+            repository.restoreManagedAsset(projectFilePath, current.managedAssetId, expectedSourceBytes)
+        }
         return access(projectFilePath, tilesetId).editableOrThrow()
     }
 
@@ -201,6 +256,8 @@ internal class AsmTilesetPaletteBridge(
     private data class PaletteAssetResolution(
         val targetLabel: String,
         val asset: AsmAssetRange,
+        val relocation: AsmAssetRelocationCandidate?,
+        val managed: AsmManagedAssetRecord? = null,
     )
 
     private data class SourceLine(
@@ -212,6 +269,7 @@ internal class AsmTilesetPaletteBridge(
     private fun resolvePaletteAssets(
         sources: Map<String, String>,
         assets: List<AsmAssetRange>,
+        managed: AsmManagedAssetManifest,
     ): Map<Int, PaletteAssetResolution> {
         val labels = linkedMapOf<String, MutableList<SourceLine>>()
         sources.forEach { (fileId, text) ->
@@ -223,6 +281,14 @@ internal class AsmTilesetPaletteBridge(
             }
         }
         val assetsByPath = assets.associateBy(AsmAssetRange::path)
+        val paletteLabels = labels.mapNotNullTo(linkedSetOf()) { (label, definitions) ->
+            val table = TILESET_TABLE_LABEL.matchEntire(label) ?: return@mapNotNullTo null
+            val tilesetId = table.groupValues[1].toInt(16)
+            if (tilesetId !in 0 until TileGraphics.NUM_TILESETS || definitions.size != 1) return@mapNotNullTo null
+            followingStatements(definitions.single(), limit = 3).takeIf { it.size == 3 }
+                ?.let { DATA_LONG.matchEntire(it[2])?.groupValues?.get(1) }
+        }
+        val pointerBindings = repository.pointerBindings(sources, paletteLabels)
         val result = linkedMapOf<Int, PaletteAssetResolution>()
         labels.forEach { (label, definitions) ->
             val table = TILESET_TABLE_LABEL.matchEntire(label) ?: return@forEach
@@ -231,12 +297,37 @@ internal class AsmTilesetPaletteBridge(
             val fields = followingStatements(definitions.single(), limit = 3)
             if (fields.size != 3) return@forEach
             val paletteLabel = DATA_LONG.matchEntire(fields[2])?.groupValues?.get(1) ?: return@forEach
+            managed.assets.singleOrNull { it.sourceLabel == paletteLabel }?.let { record ->
+                val asset = assetsByPath[record.originalAssetPath] ?: return@forEach
+                if (asset.pcOffset != record.originalPcOffset || asset.length != record.originalLength) return@forEach
+                result[tilesetId] = PaletteAssetResolution(paletteLabel, asset, relocation = null, managed = record)
+                return@forEach
+            }
             val paletteDefinition = labels[paletteLabel]?.singleOrNull() ?: return@forEach
-            val statement = followingStatements(paletteDefinition, limit = 1).singleOrNull() ?: return@forEach
-            val reference = DIRECT_INCBIN.matchEntire(statement)?.groupValues?.get(1) ?: return@forEach
+            val statement = followingStatement(paletteDefinition) ?: return@forEach
+            val reference = DIRECT_INCBIN.matchEntire(statement.second)?.groupValues?.get(1) ?: return@forEach
             val path = normalizeAssetReference(reference)
             val asset = assetsByPath[path] ?: return@forEach
-            result[tilesetId] = PaletteAssetResolution(paletteLabel, asset)
+            val declaration = paletteDefinition.lines
+                .subList(paletteDefinition.lineIndex, statement.first + 1).joinToString("\n")
+            val id = AsmManagedAssets.stableId("tileset-palette", paletteLabel, asset.path)
+            val bindings = pointerBindings[paletteLabel] ?: return@forEach
+            result[tilesetId] = PaletteAssetResolution(
+                paletteLabel,
+                asset,
+                AsmAssetRelocationCandidate(
+                    id = id,
+                    kind = "tileset-palette",
+                    sourceFileId = paletteDefinition.fileId,
+                    sourceLabel = paletteLabel,
+                    originalAssetPath = asset.path,
+                    managedAssetPath = "$ASM_MANAGED_ASSET_DATA_DIRECTORY/$id.bin",
+                    originalPcOffset = asset.pcOffset,
+                    originalLength = asset.length,
+                    originalDeclaration = declaration,
+                    pointerBindings = bindings,
+                ),
+            )
         }
         return result
     }
@@ -251,6 +342,16 @@ internal class AsmTilesetPaletteBridge(
             if (statements.size == limit) break
         }
         return statements
+    }
+
+    private fun followingStatement(definition: SourceLine): Pair<Int, String>? {
+        for (index in definition.lineIndex + 1 until definition.lines.size) {
+            val code = asmExecutableCode(definition.lines[index]).trim()
+            if (code.isBlank()) continue
+            if (GLOBAL_LABEL.matches(code)) return null
+            return index to code
+        }
+        return null
     }
 
     private fun normalizeAssetReference(reference: String): String = reference.replace('\\', '/')

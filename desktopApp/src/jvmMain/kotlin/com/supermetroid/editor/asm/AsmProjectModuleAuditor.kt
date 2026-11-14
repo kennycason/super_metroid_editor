@@ -1,9 +1,12 @@
 package com.supermetroid.editor.asm
 
+import com.supermetroid.editor.rom.RomSegmentPlacement
+
 internal data class AsmAuditedModuleOutput(
     val fileId: String,
     val claims: List<AsmSourceOwnedRange>,
     val expectedBytes: List<ByteArray>,
+    val segmentPlacements: List<RomSegmentPlacement> = emptyList(),
 )
 
 /** Output-level module ownership derived from one isolated Asar build per
@@ -18,6 +21,7 @@ internal object AsmProjectModuleAuditor {
         fileId: String,
         claims: List<AsmSourceOwnedRange>,
         isolated: ByteArray,
+        segmentPlacements: List<RomSegmentPlacement> = emptyList(),
     ): AsmAuditedModuleOutput = AsmAuditedModuleOutput(
         fileId = fileId,
         claims = claims,
@@ -25,6 +29,7 @@ internal object AsmProjectModuleAuditor {
             require(claim.pcOffset >= 0 && claim.pcOffset + claim.length <= isolated.size)
             isolated.copyOfRange(claim.pcOffset, claim.pcOffset + claim.length)
         },
+        segmentPlacements = segmentPlacements,
     )
 
     fun requireNoCollisions(claims: List<AsmSourceOwnedRange>) {

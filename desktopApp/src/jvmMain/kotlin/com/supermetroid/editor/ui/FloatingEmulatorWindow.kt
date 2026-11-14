@@ -171,6 +171,7 @@ fun FloatingEmulatorWindow(
     workspaceState: EmulatorWorkspaceState,
     editorState: EditorState,
     romParser: RomParser?,
+    debugBuildIdentity: suspend () -> String? = { null },
     containerSizePx: IntSize,
     density: Float,
     rooms: List<RoomInfo> = emptyList(),
@@ -242,6 +243,7 @@ fun FloatingEmulatorWindow(
             }
             if (workspaceState.isConnected) workspaceState.disconnectBridge()
             workspaceState.updateRomPath(patchedPath)
+            workspaceState.attachDebugBuildIdentity(debugBuildIdentity())
         }
         if (!workspaceState.isConnected) workspaceState.connectBridge()
         workspaceState.propagateAudioState()
@@ -250,6 +252,7 @@ fun FloatingEmulatorWindow(
                 val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                 if (patchedPath != null) {
                     workspaceState.updateRomPath(patchedPath)
+                    workspaceState.attachDebugBuildIdentity(debugBuildIdentity())
                 } else {
                     workspaceState.setStatus("Export failed; emulator was not started.")
                     return
@@ -282,6 +285,7 @@ fun FloatingEmulatorWindow(
                     val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                     if (patchedPath != null) {
                         workspaceState.updateRomPath(patchedPath)
+                        workspaceState.attachDebugBuildIdentity(debugBuildIdentity())
                     } else {
                         workspaceState.setStatus("Export failed; emulator was not restarted.")
                         return@LaunchedEffect

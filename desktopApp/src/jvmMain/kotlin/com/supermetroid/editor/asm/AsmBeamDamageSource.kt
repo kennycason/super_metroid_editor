@@ -3,6 +3,7 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.ui.ALL_BEAMS
+import com.supermetroid.editor.ui.OTHER_PROJECTILE_DAMAGE
 import com.supermetroid.editor.ui.beamDamageConfigValues
 import java.io.File
 
@@ -10,11 +11,11 @@ internal const val BEAM_DAMAGE_SOURCE_FILE = "bank_93.asm"
 internal val BEAM_POINTER_KEYS = listOf("power", "wave", "ice", "iw", "spazer", "ws", "is", "iws", "plasma", "wp", "ip", "iwp")
 internal fun beamPointerLabel(charged: Boolean) = "SamusProjectileDataPointers_${if (charged) "Charged" else "Uncharged"}Beams"
 internal data class AsmBeamDamageField(val key: String, val table: String, val span: IntRange, val value: Int,
-    val pointerLabel: String, val slot: Int, val bindingSpan: IntRange)
+    val pointerLabel: String? = null, val slot: Int? = null, val bindingSpan: IntRange? = null)
 
 /** Literal damage words reached through the live native projectile pointer lists. Not an Asar evaluator. */
 internal class AsmBeamDamageSource(val originalText: String, val symbolNames: AsmSourceSymbolNames = AsmSourceSymbolNames()) {
-    val keys = ALL_BEAMS.flatMap { listOf(it.key, it.chargedKey) }.toSet()
+    val keys = (ALL_BEAMS.flatMap { listOf(it.key, it.chargedKey) } + OTHER_PROJECTILE_DAMAGE.map { it.key }).toSet()
     private data class Document(val text: String, val labels: List<MatchResult>,
         val words: MutableMap<Pair<String, Int>, List<Pair<IntRange, String>>> = mutableMapOf()) {
         val sections by lazy { AsmSourceSections(text) }
@@ -62,7 +63,16 @@ internal class AsmBeamDamageSource(val originalText: String, val symbolNames: As
         return result.also { doc.words[label to size] = it }
     }
     fun field(key: String, text: String): AsmBeamDamageField {
-        require(key in keys) { "Unknown beam damage field $key." }
+        require(key in keys) { "Unknown projectile damage field $key." }
+        OTHER_PROJECTILE_DAMAGE.firstOrNull { it.key == key }?.let { projectile ->
+            val table = symbolNames.active(projectile.sourceLabel)
+            val word = words(text, table, projectile.sourceWords).first()
+            val value = AsmPlmDocument.literal(word.second)
+            require(value != null && value in 0..65535) {
+                "$table: damage must be a 16-bit literal. This field is managed in ASM until repaired."
+            }
+            return AsmBeamDamageField(key, table, word.first, value)
+        }
         val charged = key.endsWith("_charged")
         val slot = BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))
         val pointer = symbolNames.active(beamPointerLabel(charged))
@@ -82,7 +92,7 @@ internal class AsmBeamDamageSource(val originalText: String, val symbolNames: As
             val next = runCatching { field(key, after) }.getOrNull()
             if (old == null) next != null
             else if (next != null) old.value != next.value || old.table != next.table else
-                listOf(old.span, old.bindingSpan).any { delta.offset <= it.last + 1 && delta.offset + delta.removed.length >= it.first }
+                listOfNotNull(old.span, old.bindingSpan).any { delta.offset <= it.last + 1 && delta.offset + delta.removed.length >= it.first }
         }.toSet()
     }
     /** Navigation needs a proven binding/section, not a valid numeric draft or a prior build. */
@@ -90,6 +100,9 @@ internal class AsmBeamDamageSource(val originalText: String, val symbolNames: As
         val sections = document(text).sections
         val section = sections.at(line) ?: return emptyList()
         return keys.filter { key -> runCatching {
+            OTHER_PROJECTILE_DAMAGE.firstOrNull { it.key == key }?.let { projectile ->
+                return@runCatching sections.unique(symbolNames.active(projectile.sourceLabel)) == section
+            }
             val pointer = symbolNames.active(beamPointerLabel(key.endsWith("_charged")))
             val binding = words(text, pointer, 12)[BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))]
             val atBinding = sections.unique(pointer) == section &&
@@ -105,7 +118,10 @@ internal class AsmBeamDamageSource(val originalText: String, val symbolNames: As
     }
     fun line(key: String, text: String): Int {
         runCatching { field(key, text) }.getOrNull()?.let { return text.take(it.span.first).count { c -> c == '\n' } }
-        require(key in keys) { "Unknown beam damage field $key." }
+        require(key in keys) { "Unknown projectile damage field $key." }
+        OTHER_PROJECTILE_DAMAGE.firstOrNull { it.key == key }?.let {
+            return labelLine(text, symbolNames.active(it.sourceLabel))
+        }
         val pointer = symbolNames.active(beamPointerLabel(key.endsWith("_charged")))
         val binding = runCatching { words(text, pointer, 12)[BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))] }.getOrNull()
         return binding?.let { runCatching { labelLine(text, it.second) }.getOrNull() }
@@ -121,12 +137,12 @@ internal class AsmBeamDamageSource(val originalText: String, val symbolNames: As
 internal fun protectBeamDamageSource(catalog: AsmBeamDamageSource?, text: String, project: SmEditProject,
     compiled: AsmCompiledBuildBase): AsmCompiledBuildBase {
     val owned = project.asmWorkspace.beamDamageSourceKeys
-    require(catalog != null || owned.isEmpty()) { "Beam damage source is missing from this ASM workspace." }
+    require(catalog != null || owned.isEmpty()) { "Projectile damage source is missing from this ASM workspace." }
     val configs = project.patches.filter { it.enabled && it.configType == "beam_damage" }
         .flatMap { beamDamageConfigValues(it.configData.orEmpty()).keys }.toSet()
-    require(catalog != null || configs.isEmpty()) { "Beam damage patches require native symbolic source in ASM mode." }
+    require(catalog != null || configs.isEmpty()) { "Projectile damage patches require native symbolic source in ASM mode." }
     if (catalog == null) return compiled
-    require(catalog.keys.containsAll(owned)) { "Unknown authored beam damage identities." }
+    require(catalog.keys.containsAll(owned)) { "Unknown authored projectile damage identities." }
     val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
     val parser = RomParser(compiled.romBytes)
     val headerSize = if (compiled.romBytes.size % 0x8000 == 512) 512 else 0
@@ -138,33 +154,37 @@ internal fun protectBeamDamageSource(catalog: AsmBeamDamageSource?, text: String
         val original = runCatching { catalog.original(key) }.getOrNull()
         val authored = key in owned || field != null && (original == null || field.value != original.value || field.table != original.table)
         val table = field?.let { labels[it.table] }
-        val pointer = field?.let { labels[it.pointerLabel] }
-        val beam = ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }
+        val pointer = field?.pointerLabel?.let(labels::get)
+        val projectile = OTHER_PROJECTILE_DAMAGE.firstOrNull { it.key == key }
+        val beam = ALL_BEAMS.firstOrNull { it.key == key.removeSuffix("_charged") }
         val charged = key.endsWith("_charged")
-        val relocated = field != null && (table != (if (charged) beam.chargedSnesAddress else beam.snesAddress) ||
-            pointer != (if (charged) 0x9383D9 else 0x9383C1))
+        val expectedTable = projectile?.snesAddress ?: if (charged) requireNotNull(beam).chargedSnesAddress else requireNotNull(beam).snesAddress
+        val expectedPointer = if (projectile == null) if (charged) 0x9383D9 else 0x9383C1 else null
+        val relocated = field != null && (table != expectedTable || expectedPointer != null && pointer != expectedPointer)
         if (!authored && !relocated && key !in configs) continue
         require(field != null) { "$key: ${input.exceptionOrNull()?.message}" }
         require(!authored || key !in configs) { "$key has both authored ASM and a GUI patch value. Use ASM values or remove the patch override before building." }
-        require(table != null && table in 0x938000..0x93FFEA && pointer != null && pointer in 0x938000..0x93FFE8) {
+        val tableWords = projectile?.sourceWords ?: 11
+        require(table != null && table in 0x938000..(0x940000 - tableWords * 2) &&
+            (field.pointerLabel == null || pointer != null && pointer in 0x938000..0x93FFE8)) {
             "$key: projectile tables and pointers must resolve within bank 93 without crossing its end."
         }
         val pc = parser.snesToPc(table)
-        val bindingPc = parser.snesToPc(pointer) + field.slot * 2
-        require(parser.readUInt16At(bindingPc) == (table and 65535) && parser.readUInt16At(pc) == field.value) {
+        val bindingPc = pointer?.let { parser.snesToPc(it) + requireNotNull(field.slot) * 2 }
+        require((bindingPc == null || parser.readUInt16At(bindingPc) == (table and 65535)) && parser.readUInt16At(pc) == field.value) {
             "$key: compiled projectile binding or damage differs from its typed source. No fixed-address patch was applied."
         }
         locations[key] = pc - headerSize
         if (authored || relocated && key !in configs) claims[pc - headerSize] = BEAM_DAMAGE_SOURCE_FILE
-        if (authored || relocated) claims[bindingPc - headerSize] = BEAM_DAMAGE_SOURCE_FILE
+        if ((authored || relocated) && bindingPc != null) claims[bindingPc - headerSize] = BEAM_DAMAGE_SOURCE_FILE
     }
     // Aliased records cannot have competing patch values, even if both keys look independent in the GUI.
     val writes = configs.groupBy { locations.getValue(it) }
     val values = project.patches.filter { it.enabled && it.configType == "beam_damage" }
         .flatMap { beamDamageConfigValues(it.configData.orEmpty()).entries }.groupBy { locations.getValue(it.key) }
-    require(configs.none { locations.getValue(it) in claims }) { "A beam patch competes with an ASM-owned shared damage record. Use ASM values or remove the override." }
+    require(configs.none { locations.getValue(it) in claims }) { "A projectile patch competes with an ASM-owned shared damage record. Use ASM values or remove the override." }
     require(writes.keys.all { pc -> values.getValue(pc).map { it.value }.distinct().size == 1 }) {
-        "Shared beam damage tables have competing patch values. Use ASM values or make the tables independent."
+        "Shared projectile damage tables have competing patch values. Use ASM values or make the tables independent."
     }
     val typedWords = claims.keys + configs.map { locations.getValue(it) }
     val retained = compiled.sourceOwnedRanges.flatMap { range ->

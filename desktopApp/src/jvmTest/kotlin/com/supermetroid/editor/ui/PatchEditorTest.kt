@@ -11,6 +11,19 @@ import org.junit.jupiter.api.Test
 
 class PatchEditorTest {
     @Test
+    fun `existing beam patch metadata upgrades to the projectile editor label without changing settings`() {
+        val editor = EditorState().apply { testMode = true }
+        val existing = SmPatch(BEAM_DAMAGE_PATCH.id, "Beam Damage Override", "Old beam-only description",
+            enabled = true, configType = "beam_damage", configData = mutableMapOf("missile" to 444))
+        editor.project.patches += existing
+        editor.seedDefaultPatches()
+        assertEquals("Projectile Damage", existing.name)
+        assertEquals(BEAM_DAMAGE_PATCH.description, existing.description)
+        assertEquals(444, existing.configData?.get("missile"))
+        assertTrue(existing.enabled)
+    }
+
+    @Test
     fun `simple and unchanged patches toggle immediately but changed settings require a cancellable confirmation`() {
         val editor = EditorState().apply { testMode = true }
         val simple = editor.addPatch("Simple")
@@ -47,6 +60,8 @@ class PatchEditorTest {
         patch.configData!![model.HEAT_KEY] = 15
         assertTrue(patchSettingsDifferFromBaseline(patch, parser))
         assertFalse(patchSettingsDifferFromBaseline(SmPatch("beam", "Beam", configType = "beam_damage", configData = mutableMapOf("power" to 20)), null))
+        assertFalse(patchSettingsDifferFromBaseline(SmPatch("missile", "Missile", configType = "beam_damage", configData = mutableMapOf("missile" to 100)), null))
+        assertTrue(patchSettingsDifferFromBaseline(SmPatch("missile", "Missile", configType = "beam_damage", configData = mutableMapOf("missile" to 101)), null))
         assertFalse(patchSettingsDifferFromBaseline(SmPatch("bomb", "Bomb", configType = BOMB_CONFIG_TYPE, configData = mutableMapOf(BOMB_FUSE_FRAMES_KEY to BOMB_DEFAULT_FUSE_FRAMES)), null))
         rom[model.FIELDS.last().lowWordPc] = 1
         val rounded = SmPatch("fraction", "Fraction", configType = model.CONFIG_TYPE, configData = mutableMapOf(model.ACID_KEY to 60))

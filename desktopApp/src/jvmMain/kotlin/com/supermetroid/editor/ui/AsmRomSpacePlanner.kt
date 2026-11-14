@@ -289,6 +289,30 @@ private fun RomSpaceBankDetails(bank: AsmRomSpaceBank, modifier: Modifier = Modi
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            if (placement.segmentId != null) {
+                                Text(
+                                    buildString {
+                                        append(placement.segmentKind ?: "segment")
+                                        append(" · requested ").append(plannerBytes(placement.requestedSize))
+                                        append(" · align ").append(placement.alignment)
+                                        append(" · banks ").append(placement.allowedBanks.joinToString { "\$${it.hex2()}" })
+                                    },
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = fs.detail,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                placement.constraint?.let { constraint ->
+                                    Text(
+                                        constraint,
+                                        fontSize = fs.detail,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
                         }
                     }
                 }

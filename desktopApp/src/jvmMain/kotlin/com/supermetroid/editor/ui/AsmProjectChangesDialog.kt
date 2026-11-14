@@ -17,9 +17,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.supermetroid.editor.asm.AsmProjectSourceChange
-import com.supermetroid.editor.asm.AsmProjectAssetChange
-import com.supermetroid.editor.asm.AsmThreeWayMerge
+import com.supermetroid.editor.asm.*
 
 private enum class AsmProjectChangeComparison {
     BASELINE_TO_SAVED,
@@ -27,15 +25,18 @@ private enum class AsmProjectChangeComparison {
     BASELINE_TO_CURRENT,
 }
 
-/** Read-only review of source already owned by this project. This intentionally
- * has no Apply action: saving source and updating the bundled ASM version are
- * separate workflows. */
+/** Semantic review of source already owned by this project. Changes are already
+ * active; Restore operates only on complete, guarded ownership transactions. */
 @Composable
 internal fun AsmProjectChangesDialog(
     changes: List<AsmProjectSourceChange>,
     onDismiss: () -> Unit,
     onOpenSource: (String) -> Unit,
     assetChanges: List<AsmProjectAssetChange> = emptyList(),
+    restoring: Boolean = false,
+    error: String? = null,
+    onOpenVisualEditor: (AsmEditorTarget) -> Unit = {},
+    onRestore: (AsmProjectRestoreRequest) -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     var selectedFileId by remember(changes) { mutableStateOf(changes.firstOrNull()?.fileId) }
@@ -47,6 +48,9 @@ internal fun AsmProjectChangesDialog(
     val savedOverrides = changes.count(AsmProjectSourceChange::savedBankOverride)
     val modules = changes.count(AsmProjectSourceChange::projectModule)
     val unsaved = changes.count(AsmProjectSourceChange::unsavedBuffer)
+    val selectedRestore = selected?.restoreRequest ?: selectedAsset?.restoreRequest
+    val selectedRestoreBlocked = selected?.restoreBlockedReason ?: selectedAsset?.restoreBlockedReason
+    var confirmRestore by remember(selectedRestore) { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -114,17 +118,28 @@ internal fun AsmProjectChangesDialog(
                         }
                         Box(Modifier.fillMaxHeight().width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
                         selected?.let { change ->
-                            AsmProjectSourceDiff(change, Modifier.weight(1f).fillMaxHeight())
+                            AsmProjectSourceDiff(change, onOpenVisualEditor, Modifier.weight(1f).fillMaxHeight())
                         }
                         selectedAsset?.let { change ->
-                            AsmProjectAssetSummary(change, Modifier.weight(1f).fillMaxHeight())
+                            AsmProjectAssetSummary(change, onOpenVisualEditor, Modifier.weight(1f).fillMaxHeight())
                         }
                     }
                 }
 
                 Divider()
+                selectedRestoreBlocked?.let {
+                    Text(it, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("asm-project-changes-restore-blocked"))
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("Close", fontSize = fs.body) }
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        enabled = !restoring && selectedRestore != null,
+                        onClick = { confirmRestore = true },
+                        modifier = Modifier.testTag("asm-project-changes-restore"),
+                    ) { Text(if (restoring) "Restoring…" else "Restore selected", fontSize = fs.body) }
                     Spacer(Modifier.width(8.dp))
                     Button(
                         enabled = selected != null,
@@ -134,6 +149,23 @@ internal fun AsmProjectChangesDialog(
                 }
             }
         }
+    }
+    if (confirmRestore && selectedRestore != null) {
+        AlertDialog(
+            onDismissRequest = { if (!restoring) confirmRestore = false },
+            title = { Text("Restore ${selectedRestore.label}?") },
+            text = { Text(restoreTransactionDescription(selectedRestore)) },
+            confirmButton = {
+                Button(
+                    enabled = !restoring,
+                    onClick = { confirmRestore = false; onRestore(selectedRestore) },
+                    modifier = Modifier.testTag("asm-project-changes-restore-confirm"),
+                ) { Text("Restore transaction") }
+            },
+            dismissButton = {
+                TextButton(enabled = !restoring, onClick = { confirmRestore = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -160,7 +192,7 @@ private fun AsmProjectAssetChangeRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "Saved data asset · ${change.changedBytes} changed byte${if (change.changedBytes == 1) "" else "s"}",
+                "${change.semantic.kind.label} · ${change.semantic.origin.label}",
                 fontSize = fs.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -169,12 +201,22 @@ private fun AsmProjectAssetChangeRow(
 }
 
 @Composable
-private fun AsmProjectAssetSummary(change: AsmProjectAssetChange, modifier: Modifier = Modifier) {
+private fun AsmProjectAssetSummary(
+    change: AsmProjectAssetChange,
+    onOpenVisualEditor: (AsmEditorTarget) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val fs = LocalEditorTheme.current.fontSize.value
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(change.assetPath, fontFamily = FontFamily.Monospace, fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+        AsmSemanticChangeHeader(change.semantic, onOpenVisualEditor)
+        AsmProjectAllocations(change.allocations)
         Text(
-            "Binary ASM data · ${change.size} bytes · ${change.changedBytes} changed",
+            if (change.managed) {
+                "Managed ASM asset · ${change.size} bytes · native envelope ${change.originalCapacity} bytes"
+            } else {
+                "Binary ASM data · ${change.size} bytes · ${change.changedBytes} changed"
+            },
             fontSize = fs.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -187,8 +229,34 @@ private fun AsmProjectAssetSummary(change: AsmProjectAssetChange, modifier: Modi
             )
         }
         Text(
-            "This portable data override is consumed directly by the project's incbin source. " +
-                "Open its visual editor to inspect or restore it.",
+            "Restore scope · " + if (change.managed) {
+                "managed manifest + authored asset + source marker${if (change.inlineSource) "" else " + native asset override"}"
+            } else {
+                "complete binary asset"
+            },
+            fontSize = fs.detail,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (change.managed) {
+            Text(
+                "${change.sourceLabel} moved from " +
+                    (if (change.inlineSource) "its fixed inline source" else change.originalAssetPath) +
+                    " because its encoded data no longer " +
+                    "fit the native envelope. " + (change.compiledAddress?.let {
+                        "Current build: ${com.supermetroid.editor.asm.formatSnesAddress(it)}."
+                    } ?: "Its address will be chosen and validated by the next build."),
+                fontFamily = FontFamily.Monospace,
+                fontSize = fs.detail,
+            )
+        }
+        Text(
+            if (change.managed) {
+                "This authored project asset is consumed by generated checked placement source. " +
+                    "Restore it from its Visual Editor to return to the native declaration."
+            } else {
+                "This portable data override is consumed directly by the project's incbin source. " +
+                    "Open its visual editor to inspect or restore it."
+            },
             fontSize = fs.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -219,8 +287,9 @@ private fun AsmProjectChangeFileRow(
             )
             Text(
                 buildList {
+                    add(change.semantic.kind.label)
+                    add(change.semantic.origin.label)
                     if (change.savedBankOverride) add("Saved bank override")
-                    if (change.projectModule) add("Project module")
                     if (change.unsavedBuffer) add("Unsaved buffer")
                     if (change.projectModule && !change.enabled) add("Disabled module")
                 }.joinToString(" · "),
@@ -234,7 +303,11 @@ private fun AsmProjectChangeFileRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AsmProjectSourceDiff(change: AsmProjectSourceChange, modifier: Modifier = Modifier) {
+private fun AsmProjectSourceDiff(
+    change: AsmProjectSourceChange,
+    onOpenVisualEditor: (AsmEditorTarget) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val fs = LocalEditorTheme.current.fontSize.value
     val defaultComparison = remember(change) {
         if (change.unsavedBuffer) AsmProjectChangeComparison.SAVED_TO_UNSAVED
@@ -264,6 +337,8 @@ private fun AsmProjectSourceDiff(change: AsmProjectSourceChange, modifier: Modif
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text(change.fileId, fontFamily = FontFamily.Monospace, fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+        AsmSemanticChangeHeader(change.semantic, onOpenVisualEditor)
+        AsmProjectAllocations(change.allocations)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             AsmProjectChangeComparison.entries.forEach { option ->
                 FilterChip(
@@ -338,6 +413,65 @@ private fun AsmProjectSourceDiff(change: AsmProjectSourceChange, modifier: Modif
             }
         }
     }
+}
+
+@Composable
+private fun AsmSemanticChangeHeader(
+    semantic: AsmSemanticChangeSummary,
+    onOpenVisualEditor: (AsmEditorTarget) -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("${semantic.kind.label} · ${semantic.origin.label}", fontSize = fs.detail,
+                fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Text(semantic.detail, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(semantic.originDetail, fontSize = fs.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            semantic.editorLinks.forEachIndexed { index, link ->
+                TextButton(
+                    onClick = { onOpenVisualEditor(link.target) },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.testTag("asm-project-changes-visual-$index"),
+                ) { Text("${link.title} · ${link.detail}", fontSize = fs.detail) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsmProjectAllocations(allocations: List<AsmProjectAllocationSummary>) {
+    if (allocations.isEmpty()) return
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f),
+        shape = MaterialTheme.shapes.small) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Allocation${if (allocations.size == 1) "" else "s"}", fontSize = fs.detail,
+                fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.tertiary)
+            allocations.forEach { allocation ->
+                Text(
+                    "${allocation.label} · ${allocation.size} B at ${formatSnesAddress(allocation.snesAddress)} · ${allocation.kind}",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = fs.detail,
+                )
+                allocation.constraint?.let {
+                    Text(it, fontSize = fs.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+private fun restoreTransactionDescription(request: AsmProjectRestoreRequest): String = when (request) {
+    is AsmProjectRestoreRequest.SourceFile ->
+        "Restore this complete source file to the immutable project baseline. A newer editor draft or disk edit will cancel the operation."
+    is AsmProjectRestoreRequest.ProjectModule ->
+        "Delete this complete project module and update its build-order metadata. A newer editor draft or disk edit will cancel the operation."
+    is AsmProjectRestoreRequest.DirectAsset ->
+        "Restore this complete fixed-envelope data asset to the immutable project baseline. A newer asset edit will cancel the operation."
+    is AsmProjectRestoreRequest.ManagedAsset ->
+        "Atomically remove this managed allocation, authored asset and manifest record, restore its source declaration, and restore the native asset when applicable. A newer source or asset edit will cancel the operation."
 }
 
 private fun projectComparisonLabel(comparison: AsmProjectChangeComparison): String = when (comparison) {

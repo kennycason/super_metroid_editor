@@ -19,12 +19,36 @@ internal data class AsmBuildDiagnostic(
     val lineIndex: Int? = null,
 )
 
+internal data class AsmCompiledLocation(
+    val fileId: String,
+    val lineIndex: Int,
+    val snesAddress: Int,
+)
+
 /** Compact representation of Asar's WLA symbol map. Address/line pairs are
  * stored as primitive arrays: [SNES address, zero-based line, ...]. */
 internal data class AsmCompiledSymbols(
     val labels: Map<String, Int>,
     val lineAddressesByFile: Map<String, IntArray>,
+    /** Complete WLA address order. Unlike the compact per-file lookup this
+     * retains the next emitted statement across include/file boundaries. */
+    val emittedLocations: List<AsmCompiledLocation> = emptyList(),
 ) {
+    private val compiledBoundaries: List<Int> by lazy {
+        (orderedLocations().map(AsmCompiledLocation::snesAddress) + labels.values)
+            .distinct()
+            .sorted()
+    }
+    private val locationsByAddress: Map<Int, List<AsmCompiledLocation>> by lazy {
+        orderedLocations().groupBy(AsmCompiledLocation::snesAddress)
+    }
+    private val labelsByAddress: Map<Int, List<String>> by lazy {
+        labels.entries.groupBy(Map.Entry<String, Int>::value) { it.key }
+            .mapValues { (_, names) -> names.sorted() }
+    }
+    private val orderedLabels: List<Map.Entry<String, Int>> by lazy {
+        labels.entries.sortedWith(compareBy<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+    }
     val labelCount: Int get() = labels.size
     val mappedLineCount: Int get() = lineAddressesByFile.values.sumOf { it.size / 2 }
 
@@ -68,6 +92,70 @@ internal data class AsmCompiledSymbols(
         }
     }
 
+    fun addressesAt(fileId: String, lineIndex: Int): List<Int> {
+        val entries = lineAddressesByFile[fileId] ?: return emptyList()
+        return buildList {
+            var index = 0
+            while (index < entries.size) {
+                if (entries[index + 1] == lineIndex) add(entries[index])
+                index += 2
+            }
+        }.distinct()
+    }
+
+    fun locationsAt(snesAddress: Int): List<AsmCompiledLocation> =
+        locationsByAddress[snesAddress].orEmpty()
+
+    fun labelsAt(snesAddress: Int): List<String> = labelsByAddress[snesAddress].orEmpty()
+
+    fun nearestLabelAtOrBefore(snesAddress: Int): Pair<String, Int>? {
+        val bank = snesAddress ushr 16
+        var low = 0
+        var high = orderedLabels.size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (orderedLabels[middle].value <= snesAddress) low = middle + 1 else high = middle
+        }
+        var index = low - 1
+        while (index >= 0) {
+            val candidate = orderedLabels[index--]
+            val candidateBank = candidate.value ushr 16
+            if (candidateBank < bank) return null
+            if (candidateBank == bank) return candidate.key to candidate.value
+        }
+        return null
+    }
+
+    fun orderedLocations(): List<AsmCompiledLocation> = emittedLocations.ifEmpty {
+        lineAddressesByFile.flatMap { (fileId, entries) ->
+            buildList {
+                var index = 0
+                while (index < entries.size) {
+                    add(AsmCompiledLocation(fileId, entries[index + 1], entries[index]))
+                    index += 2
+                }
+            }
+        }.sortedBy(AsmCompiledLocation::snesAddress)
+    }
+
+    fun nextBoundaryInBank(snesAddress: Int): Int? {
+        val bank = snesAddress ushr 16
+        var low = 0
+        var high = compiledBoundaries.size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (compiledBoundaries[middle] <= snesAddress) low = middle + 1 else high = middle
+        }
+        var index = low
+        while (index < compiledBoundaries.size) {
+            val candidate = compiledBoundaries[index++]
+            val candidateBank = candidate ushr 16
+            if (candidateBank > bank) return null
+            if (candidateBank == bank && snesLoRomToPc(candidate) != null) return candidate
+        }
+        return null
+    }
+
     companion object {
         val EMPTY = AsmCompiledSymbols(emptyMap(), emptyMap())
     }
@@ -81,26 +169,35 @@ internal data class AsmBuildReport(
     val diagnostics: List<AsmBuildDiagnostic>,
     val symbols: AsmCompiledSymbols,
     val validationOnly: Boolean = false,
+    /** Disposable compiler inputs, retained only so generated-source errors can
+     * show the exact failing statement without pretending it is authored. */
+    val generatedSources: Map<String, List<String>> = emptyMap(),
 )
 
 internal object AsmSourceLinter {
-    private val dataDirective = Regex("^\\s*(db|dw|dl|dd)\\b(.*)$", RegexOption.IGNORE_CASE)
-    private val hexLiteral = Regex("\\$([0-9A-Fa-f]+)")
-    private val widths = mapOf("db" to 2, "dw" to 4, "dl" to 6, "dd" to 8)
-
     fun lintTree(
         sourceRoot: File,
         excludedFileIds: Set<String> = emptySet(),
     ): List<AsmBuildDiagnostic> {
         if (!sourceRoot.isDirectory) return emptyList()
-        val sourceFiles = sourceRoot.walkTopDown()
+        val sourceTexts = sourceRoot.walkTopDown()
             .filter { it.isFile && it.extension.equals("asm", ignoreCase = true) }
-            .filterNot { it.relativeTo(sourceRoot).invariantSeparatorsPath in excludedFileIds }
-            .map { file -> file.relativeTo(sourceRoot).invariantSeparatorsPath to file.readText() }
-            .toList()
-        val macros = sourceFiles.flatMap { (fileId, text) -> parseAsmMacros(fileId, text) }
-        return sourceFiles.flatMap { (fileId, text) ->
-            lintText(fileId, text, macros)
+            .associate { file -> file.relativeTo(sourceRoot).invariantSeparatorsPath to file.readText() }
+        val activeTexts = sourceTexts.filterKeys { it !in excludedFileIds }
+        val macros = activeTexts.flatMap { (fileId, text) -> parseAsmMacros(fileId, text) }
+        val index = if (File(sourceRoot, "main.asm").isFile) {
+            runCatching {
+                AsmSourceParser().parse(
+                    sourceRoot,
+                    File(sourceRoot.parentFile, "data"),
+                    emptyList(),
+                    sourceTexts = sourceTexts,
+                )
+            }.getOrNull()
+        } else null
+        val context = AsmEditorAnalysisContext(index, sourceTexts, excludedFileIds)
+        return activeTexts.flatMap { (fileId, text) ->
+            lintText(fileId, text, macros, context)
         }
     }
 
@@ -108,68 +205,21 @@ internal object AsmSourceLinter {
         fileId: String,
         text: String,
         macros: List<AsmMacro>? = null,
-    ): List<AsmBuildDiagnostic> = buildList {
-        val macrosByName = macros?.associateBy(AsmMacro::name)
-        text.lineSequence().forEachIndexed { lineIndex, sourceLine ->
-            val code = asmCodeBeforeComment(sourceLine)
-            splitStatements(code).forEach statementLoop@{ statement ->
-                val match = dataDirective.matchEntire(statement) ?: return@statementLoop
-                val directive = match.groupValues[1].lowercase()
-                val digits = checkNotNull(widths[directive])
-                val operand = match.groupValues[2]
-                val explicitMask = "&\\s*\\$${"F".repeat(digits)}\\b".toRegex(RegexOption.IGNORE_CASE)
-                if (explicitMask.containsMatchIn(operand)) return@statementLoop
-                hexLiteral.findAll(operand).firstOrNull { it.groupValues[1].length > digits }?.let { literal ->
-                    val bits = digits * 4
-                    add(
-                        AsmBuildDiagnostic(
-                            severity = AsmDiagnosticSeverity.ERROR,
-                            message = "${literal.value} does not fit $directive ($bits bits); Asar would silently keep only the low $bits bits. Use an in-range value or mask explicitly with &\$${"F".repeat(digits)} if truncation is intentional.",
-                            fileId = fileId,
-                            lineIndex = lineIndex,
-                        ),
-                    )
-                }
-            }
-            if (macrosByName != null) {
-                parseMacroCalls(code).forEach { call ->
-                    val macro = macrosByName[call.name]
-                        ?: macros.firstOrNull { it.name.equals(call.name, ignoreCase = true) }
-                    if (macro == null) {
-                        add(
-                            AsmBuildDiagnostic(
-                                severity = AsmDiagnosticSeverity.ERROR,
-                                message = "Unknown macro %${call.name}(...).",
-                                fileId = fileId,
-                                lineIndex = lineIndex,
-                            ),
-                        )
-                        return@forEach
-                    }
-                    val fixedParameters = macro.parameters.count { it != "..." }
-                    val validArity = if (macro.variadic) {
-                        call.argumentCount >= fixedParameters
-                    } else {
-                        call.argumentCount == fixedParameters
-                    }
-                    if (validArity) return@forEach
-                    val expectation = if (macro.variadic) "at least $fixedParameters" else fixedParameters.toString()
-                    add(
-                        AsmBuildDiagnostic(
-                            severity = AsmDiagnosticSeverity.ERROR,
-                            message = "${macro.signature} expects $expectation argument${if (fixedParameters == 1 && !macro.variadic) "" else "s"}; found ${call.argumentCount}.",
-                            fileId = fileId,
-                            lineIndex = lineIndex,
-                        ),
-                    )
-                }
-            }
-        }
+        context: AsmEditorAnalysisContext? = null,
+    ): List<AsmBuildDiagnostic> {
+        val analysis = context ?: AsmEditorAnalysisContext(
+            index = null,
+            sourceTexts = mapOf(fileId to text),
+        )
+        return AsmEditorAnalyzer.inspectFile(fileId, text, macros, analysis)
     }
 
     fun report(diagnostics: List<AsmBuildDiagnostic>): AsmBuildReport? {
         if (diagnostics.isEmpty()) return null
         return AsmBuildReport(
+            // A validation snapshot is not compiled output, even when it contains
+            // warnings only. Runtime/source-map consumers must keep requiring a
+            // real successful Asar build.
             succeeded = false,
             generatedAt = Instant.now().toString(),
             assemblerVersion = "SMEDIT source validation",
@@ -184,76 +234,6 @@ internal object AsmSourceLinter {
         val file = diagnostic.fileId?.let { "src/$it" } ?: "source"
         val line = diagnostic.lineIndex?.plus(1) ?: 1
         return "$file:$line: ${diagnostic.severity.name.lowercase()}: (SMEDIT): ${diagnostic.message}"
-    }
-
-    private fun splitStatements(code: String): List<String> {
-        val result = mutableListOf<String>()
-        val current = StringBuilder()
-        var quoted = false
-        code.forEachIndexed { index, character ->
-            if (character == '"') quoted = !quoted
-            val addressColon = character == ':' && !quoted &&
-                current.takeLast(3).matches(Regex("\\$[0-9A-Fa-f]{2}")) &&
-                code.drop(index + 1).take(4).matches(Regex("[0-9A-Fa-f]{4}"))
-            if (character == ':' && !quoted && !addressColon) {
-                result += current.toString()
-                current.clear()
-            } else {
-                current.append(character)
-            }
-        }
-        result += current.toString()
-        return result
-    }
-
-    private data class MacroCall(val name: String, val argumentCount: Int)
-
-    private val macroCallStart = Regex("%([A-Za-z_][A-Za-z0-9_]*)\\s*\\(")
-
-    private fun parseMacroCalls(code: String): List<MacroCall> = macroCallStart.findAll(code).mapNotNull { match ->
-        if (asmOffsetInsideString(code, match.range.first)) return@mapNotNull null
-        val open = match.range.last
-        var depth = 1
-        var quoted = false
-        var escaped = false
-        var close = -1
-        var cursor = open + 1
-        while (cursor < code.length && close < 0) {
-            val character = code[cursor]
-            when {
-                escaped -> escaped = false
-                character == '\\' && quoted -> escaped = true
-                character == '"' -> quoted = !quoted
-                !quoted && character == '(' -> depth++
-                !quoted && character == ')' -> {
-                    depth--
-                    if (depth == 0) close = cursor
-                }
-            }
-            cursor++
-        }
-        if (close < 0) return@mapNotNull null
-        val arguments = code.substring(open + 1, close)
-        MacroCall(match.groupValues[1], countMacroArguments(arguments))
-    }.toList()
-
-    private fun countMacroArguments(arguments: String): Int {
-        if (arguments.isBlank()) return 0
-        var count = 1
-        var depth = 0
-        var quoted = false
-        var escaped = false
-        arguments.forEach { character ->
-            when {
-                escaped -> escaped = false
-                character == '\\' && quoted -> escaped = true
-                character == '"' -> quoted = !quoted
-                !quoted && character == '(' -> depth++
-                !quoted && character == ')' -> depth--
-                !quoted && character == ',' && depth == 0 -> count++
-            }
-        }
-        return count
     }
 }
 
@@ -318,6 +298,7 @@ internal object AsmWlaSymbolParser {
         val labels = linkedMapOf<String, Int>()
         val sourceFiles = mutableMapOf<Int, String>()
         val addresses = mutableMapOf<String, MutableList<Int>>()
+        val emittedLocations = mutableListOf<AsmCompiledLocation>()
         text.lineSequence().forEach { rawLine ->
             val line = rawLine.trim()
             when (line) {
@@ -344,6 +325,7 @@ internal object AsmWlaSymbolParser {
                         val entries = addresses.getOrPut(fileId) { mutableListOf() }
                         entries += address
                         entries += lineIndex
+                        emittedLocations += AsmCompiledLocation(fileId, lineIndex, address)
                     }
                     Section.NONE -> Unit
                 }
@@ -352,6 +334,7 @@ internal object AsmWlaSymbolParser {
         return AsmCompiledSymbols(
             labels = labels,
             lineAddressesByFile = addresses.mapValues { (_, values) -> values.toIntArray() },
+            emittedLocations = emittedLocations,
         )
     }
 }
@@ -370,6 +353,7 @@ internal class AsmBuildArtifactRepository(
         output: List<String>,
         assemblerVersion: String,
         generatedRoomSource: String = "",
+        generatedSources: Map<String, String> = emptyMap(),
     ) {
         val directory = writableBuildDirectory(projectFilePath) ?: return
         directory.mkdirs()
@@ -378,6 +362,7 @@ internal class AsmBuildArtifactRepository(
             File(directory, AsmGeneratedRoomSource.FILE_NAME),
             generatedRoomSource.ifBlank { "; This compilation has no generated room source.\n" },
         )
+        publishGeneratedSources(directory, generatedSources)
         writeTextAtomically(
             File(directory, OUTPUT_FILE),
             output.joinToString("\n", postfix = if (output.isEmpty()) "" else "\n"),
@@ -390,13 +375,22 @@ internal class AsmBuildArtifactRepository(
         )
     }
 
-    fun publishFailure(projectFilePath: String, output: List<String>, assemblerVersion: String = "") {
+    fun publishFailure(
+        projectFilePath: String,
+        output: List<String>,
+        assemblerVersion: String = "",
+        generatedSources: Map<String, String> = emptyMap(),
+    ) {
         val directory = writableBuildDirectory(projectFilePath) ?: return
         directory.mkdirs()
         writeTextAtomically(
             File(directory, OUTPUT_FILE),
             output.joinToString("\n", postfix = if (output.isEmpty()) "" else "\n"),
         )
+        publishGeneratedSources(directory, generatedSources)
+        generatedSources["__smedit_generated_rooms.asm"]?.let { source ->
+            writeTextAtomically(File(directory, AsmGeneratedRoomSource.FILE_NAME), source)
+        }
         writeMetadata(
             directory = directory,
             succeeded = false,
@@ -442,6 +436,7 @@ internal class AsmBuildArtifactRepository(
                 output = output,
                 diagnostics = AsmBuildOutputParser.diagnostics(output),
                 symbols = symbols,
+                generatedSources = loadGeneratedSources(directory),
             )
         }.getOrNull()
     }
@@ -488,6 +483,29 @@ internal class AsmBuildArtifactRepository(
         if (existing.lineSequence().any { it.trim() == "/$BUILD_DIRECTORY/" }) return
         val separator = if (existing.isEmpty() || existing.endsWith('\n')) "" else "\n"
         writeTextAtomically(ignore, existing + separator + "/$BUILD_DIRECTORY/\n")
+    }
+
+    private fun publishGeneratedSources(directory: File, sources: Map<String, String>) {
+        val generated = File(directory, GENERATED_DIRECTORY)
+        if (generated.isDirectory) {
+            generated.listFiles()?.filter(File::isFile)?.forEach { Files.deleteIfExists(it.toPath()) }
+        }
+        if (sources.isEmpty()) return
+        generated.mkdirs()
+        sources.forEach { (fileId, source) ->
+            require('/' !in fileId && '\\' !in fileId && fileId.endsWith(".asm", ignoreCase = true)) {
+                "Invalid generated ASM artifact name: $fileId"
+            }
+            writeTextAtomically(File(generated, fileId), source)
+        }
+    }
+
+    private fun loadGeneratedSources(directory: File): Map<String, List<String>> {
+        val generated = File(directory, GENERATED_DIRECTORY)
+        return generated.listFiles().orEmpty().asSequence()
+            .filter { it.isFile && it.extension.equals("asm", ignoreCase = true) }
+            .sortedBy { it.name }
+            .associate { it.name to it.readLines() }
     }
 
     private fun writeMetadata(
@@ -543,6 +561,7 @@ internal class AsmBuildArtifactRepository(
         const val METADATA_FILE = "report.properties"
         const val OUTPUT_FILE = "asar.log"
         const val SYMBOLS_FILE = "symbols.sym"
+        const val GENERATED_DIRECTORY = "generated"
 
         fun fingerprintProjectSource(
             workspaceRepository: AsmProjectWorkspaceRepository,

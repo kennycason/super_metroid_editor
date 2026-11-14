@@ -6,10 +6,13 @@ import com.supermetroid.editor.rom.RomWritePlanReport
 import com.supermetroid.editor.rom.RomAllocation
 import com.supermetroid.editor.rom.RomFreeSpaceBank
 import com.supermetroid.editor.rom.RomFreeSpaceSnapshot
+import com.supermetroid.editor.rom.RomSegmentKind
+import com.supermetroid.editor.rom.RomSegmentRequest
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 
@@ -42,6 +45,26 @@ class AsmRomPreviewTest {
         assertEquals(loaded[512].toInt() and 0xFF, preview.loadedByte(0))
         assertEquals(0xAA, preview.resultByte(2))
         assertContentEquals(loaded, preview.loadedRom)
+    }
+
+    @Test
+    fun `preview retains immutable baseline separately from loaded and result bytes`() {
+        val baseline = byteArrayOf(0x10, 0x20, 0x30)
+        val loaded = byteArrayOf(0x10, 0x21, 0x30)
+        val result = byteArrayOf(0x10, 0x22, 0x30)
+        val preview = AsmRomPreview.create(
+            loadedRom = loaded,
+            baselineRom = baseline,
+            resultRom = result,
+            headerSize = 0,
+            writeReport = RomWritePlanReport(emptyList(), emptyList(), emptyList(), emptyList()),
+        )
+
+        assertEquals(0x20, preview.baselineByte(1))
+        assertEquals(0x21, preview.loadedByte(1))
+        assertEquals(0x22, preview.resultByte(1))
+        baseline[1] = 0
+        assertEquals(0x20, preview.baselineByte(1), "the preview owns an immutable copy")
     }
 
     @Test
@@ -108,7 +131,17 @@ class AsmRomPreviewTest {
             banks = listOf(RomFreeSpaceBank(0x80, header, header + 0x8000, header + 0x7000, 0x1000, 0xFF)),
             allocations = emptyList(),
         )
-        val allocation = RomAllocation(0x80, header + 0x7000, 0x80F000, 0x100, "Room 91F8 level data")
+        val request = RomSegmentRequest(
+            id = "room-graph:project/room-91f8-level-data",
+            owner = "room-graph:project",
+            kind = RomSegmentKind.ROOM_DATA,
+            label = "Room 91F8 level data",
+            size = 0x100,
+            allowedBanks = listOf(0x80),
+        )
+        val allocation = RomAllocation(
+            0x80, header + 0x7000, 0x80F000, 0x100, request.label, request = request,
+        )
         val after = RomFreeSpaceSnapshot(
             banks = listOf(RomFreeSpaceBank(0x80, header, header + 0x8000, header + 0x7100, 0x0F00, 0xFF)),
             allocations = listOf(allocation),
@@ -132,6 +165,56 @@ class AsmRomPreviewTest {
         assertEquals(0x100, space.allocationBytes)
         assertEquals("room-graph:project", bank.placements.single().owner)
         assertEquals(0x7000, bank.placements.single().pcOffset)
+    }
+
+    @Test
+    fun `space plan refuses to infer an owner for an anonymous allocation`() {
+        val bank = RomFreeSpaceBank(0x80, 0, 0x8000, 0x100, 0x7F00, 0xFF)
+        val allocation = RomAllocation(0x80, 0x100, 0x808100, 4, "anonymous")
+
+        val problem = assertFailsWith<IllegalArgumentException> {
+            AsmRomSpacePlan.create(
+                bodySize = 0x8000,
+                headerSize = 0,
+                report = RomWritePlanReport(emptyList(), emptyList(), emptyList(), emptyList()),
+                before = RomFreeSpaceSnapshot(listOf(bank), emptyList()),
+                after = RomFreeSpaceSnapshot(listOf(bank), listOf(allocation)),
+            )
+        }
+
+        assertEquals("ROM Space Planner received an untyped allocation 'anonymous'", problem.message)
+    }
+
+    @Test
+    fun `space plan lists compiler managed assets without double counting allocator availability`() {
+        val loaded = ByteArray(0x8000) { -1 }
+        val plan = RomWritePlan(loaded)
+        plan.add(
+            "asm-managed-asset:tiles-test",
+            "Managed ASM asset · Tiles_Test",
+            0x7000,
+            List(0x180) { 0x5A },
+            RomWriteKind.ASM_ASSET,
+        )
+        val bankSnapshot = RomFreeSpaceBank(0x80, 0, 0x8000, 0x7180, 0x0E80, 0xFF)
+        val snapshot = RomFreeSpaceSnapshot(listOf(bankSnapshot), emptyList())
+
+        val preview = AsmRomPreview.create(
+            loadedRom = loaded,
+            resultRom = plan.finalRom(),
+            headerSize = 0,
+            writeReport = plan.report(),
+            romSpaceBefore = snapshot,
+            romSpaceAfter = snapshot,
+        )
+
+        val space = requireNotNull(preview.spacePlan)
+        val placement = space.placements.single()
+        assertEquals("asm-managed-asset:tiles-test", placement.owner)
+        assertEquals(0x80F000, placement.snesAddress)
+        assertEquals(0x180, placement.size)
+        assertEquals(0, space.consumedBytes, "The compiler placement was already removed from both allocator snapshots")
+        assertEquals(0x0E80, space.remainingAfter)
     }
 
     @Test
@@ -170,5 +253,26 @@ class AsmRomPreviewTest {
 
         state.selectRomPreviewView(AsmRomPreviewView.DIFF)
         assertNull(state.requestedRomSpaceBank)
+    }
+
+    @Test
+    fun `compiled output navigation focuses its ROM diff and requests project changes`() = runBlocking {
+        val loaded = ByteArray(16)
+        val writes = RomWritePlan(loaded).also {
+            it.add("asm-source:project", "First", 2, listOf(1), RomWriteKind.ASM_SOURCE)
+            it.add("asm-source:project", "Second", 8, listOf(2), RomWriteKind.ASM_SOURCE)
+        }
+        val preview = AsmRomPreview.create(loaded, writes.finalRom(), 0, writes.report())
+        val state = AsmWorkspaceState()
+        state.buildRomPreview { AsmRomPreviewBuild(preview, null, null) }
+
+        state.openRomComparison(8)
+        assertEquals(AsmBrowserMode.ROM, state.browserMode)
+        assertEquals(AsmRomPreviewView.DIFF, state.romPreviewView)
+        assertEquals(1, state.selectedRomDiffIndex)
+
+        state.requestProjectChanges()
+        state.requestProjectChanges()
+        assertEquals(2L, state.projectChangesRequestSerial)
     }
 }

@@ -73,7 +73,7 @@ fun SamusSpriteViewer(
         return
     }
 
-    val nativePreview = remember(rp, editorState.editVersion, editorState.paletteVersion) {
+    val nativePreview = remember(rp, editorState.editVersion, editorState.paletteVersion, editorState.asmVisualSourceRevision) {
         runCatching { editorState.nativeSprites.previewParser(rp) }
     }
     // A failed edit plan is shown below, never silently displayed/exported as base art.

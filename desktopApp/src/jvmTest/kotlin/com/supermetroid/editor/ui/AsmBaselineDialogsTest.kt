@@ -16,6 +16,8 @@ import com.supermetroid.editor.asm.*
 import com.supermetroid.editor.rom.RomAllocation
 import com.supermetroid.editor.rom.RomFreeSpaceBank
 import com.supermetroid.editor.rom.RomFreeSpaceSnapshot
+import com.supermetroid.editor.rom.RomSegmentKind
+import com.supermetroid.editor.rom.RomSegmentRequest
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import java.io.File
@@ -99,6 +101,7 @@ class AsmBaselineDialogsTest {
         var applied: Map<String, Map<Int, String>>? = null
         withDialog({ AsmBaselineUpdateDialog(plan, false, null, null, {}, { applied = it }) }) { scene, render ->
             assertContains(texts(scene), "comments/formatting only")
+            assertContains(texts(scene), "ASM source · Project + ASM version")
             assertContains(texts(scene), "bank_A3.asm")
             assertContains(texts(scene), "\$0009")
             assertContains(texts(scene), "+1 / -1")
@@ -214,10 +217,19 @@ class AsmBaselineDialogsTest {
             projectModule = true,
             enabled = false,
         )
-        val asset = AsmProjectAssetChange("Palettes_0.bin", 225, 17, listOf(1, 2, 9))
+        val asset = AsmProjectAssetChange(
+            "Palettes_0.bin", 225, 17, listOf(1, 2, 9),
+            semantic = AsmSemanticChanges.asset("Palettes_0.bin", listOf(AsmEditorLink(
+                "Open tileset palette", "Tileset palette", AsmEditorTarget.Tileset(0, palette = true),
+            ))),
+            restoreRequest = AsmProjectRestoreRequest.DirectAsset("Palettes_0.bin", ByteArray(225)),
+            allocations = listOf(AsmProjectAllocationSummary("Palette relocation", 0xE08000, 225, "source asset")),
+        )
         var opened: String? = null
+        var restored: AsmProjectRestoreRequest? = null
 
-        withDialog({ AsmProjectChangesDialog(listOf(bank, module), {}, { opened = it }, listOf(asset)) }) { scene, render ->
+        withDialog({ AsmProjectChangesDialog(listOf(bank, module), {}, { opened = it }, listOf(asset),
+            onRestore = { restored = it }) }) { scene, render ->
             assertContains(texts(scene), "reciprocal Visual Editor changes")
             assertContains(texts(scene), "Saved bank override")
             assertContains(texts(scene), "Unsaved buffer")
@@ -230,9 +242,15 @@ class AsmBaselineDialogsTest {
             assertContains(texts(scene), "whole-file addition")
             assertTrue(tag(scene, "asm-project-change-view-saved_to_unsaved").config.contains(SemanticsProperties.Disabled))
             click(scene, "asm-project-change-asset-Palettes_0.bin"); render()
+            assertContains(texts(scene), "Palette · Reciprocal Visual Editor")
+            assertContains(texts(scene), "225 B at \$E0:8000")
             assertContains(texts(scene), "17 changed")
             assertContains(texts(scene), "+\$0001")
             assertTrue(tag(scene, "asm-project-changes-open-source").config.contains(SemanticsProperties.Disabled))
+            click(scene, "asm-project-changes-restore"); render()
+            assertContains(texts(scene), "complete fixed-envelope data asset")
+            click(scene, "asm-project-changes-restore-confirm"); render()
+            assertTrue(restored is AsmProjectRestoreRequest.DirectAsset)
             click(scene, "asm-project-change-file-project/custom.asm"); render()
             click(scene, "asm-project-changes-open-source")
             assertEquals("project/custom.asm", opened)
@@ -255,7 +273,17 @@ class AsmBaselineDialogsTest {
         )
         val after = RomFreeSpaceSnapshot(
             listOf(RomFreeSpaceBank(0x80, 0, 0x8000, 0x7100, 0x0F00, 0xFF)),
-            listOf(RomAllocation(0x80, 0x7000, 0x80F000, 0x100, "Room 91F8 level data")),
+            listOf(RomAllocation(
+                0x80, 0x7000, 0x80F000, 0x100, "Room 91F8 level data",
+                request = RomSegmentRequest(
+                    id = "room-91f8-level",
+                    owner = "room-graph:project",
+                    kind = RomSegmentKind.ROOM_DATA,
+                    label = "Room 91F8 level data",
+                    size = 0x100,
+                    allowedBanks = listOf(0x80),
+                ),
+            )),
         )
         val preview = AsmRomPreview.create(
             loaded,

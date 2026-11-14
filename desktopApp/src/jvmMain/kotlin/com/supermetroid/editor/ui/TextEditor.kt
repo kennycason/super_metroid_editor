@@ -70,7 +70,9 @@ fun TextEditorSidebar(
     val asmLink = editorState.projectAsmNavigation(onNavigateToAsm)
     val fs = LocalEditorTheme.current.fontSize.value
     val parser = romParser ?: return
-    val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
+    val editVersion = editorState.editVersion
+    val sourceRevision = editorState.asmVisualSourceRevision
+    val entries = remember(parser, editVersion, sourceRevision) { editorState.textEntries(parser) }
     val introRevision = editorState.introSequenceVersion
     val patchRevision = editorState.patchVersion
     val managedIntro = remember(patchRevision, introRevision) {
@@ -124,9 +126,10 @@ fun TextEditorSidebar(
 
             for (entry in categoryEntries) {
                 val isSelected = entry.id == textEditorState.selectedEntryId
-                val editedText = editorState.project.textEdits[entry.id]
+                val status = editorState.textEntryEditingStatus(entry)
+                val editedText = editorState.project.textEdits[entry.id].takeUnless { status.sourceManaged }
                 val displayText = editedText ?: entry.text
-                val isModified = editedText != null
+                val isModified = status.modified || editedText != null
                 val bringIntoViewRequester = remember(entry.id) { BringIntoViewRequester() }
                 androidx.compose.runtime.LaunchedEffect(
                     isSelected,
@@ -174,6 +177,15 @@ fun TextEditorSidebar(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                         )
+                        if (status.sourceManaged && status.message != null) {
+                            Text(
+                                if (status.editable) status.message else "ASM only · ${status.message}",
+                                fontSize = fs.detail,
+                                color = if (status.editable) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.tertiary,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -193,7 +205,9 @@ fun TextEditorPreview(
 ) {
     val asmLink = editorState.projectAsmNavigation(onNavigateToAsm)
     val parser = romParser ?: return
-    val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
+    val editVersion = editorState.editVersion
+    val sourceRevision = editorState.asmVisualSourceRevision
+    val entries = remember(parser, editVersion, sourceRevision) { editorState.textEntries(parser) }
     val introRevision = editorState.introSequenceVersion
     val patchRevision = editorState.patchVersion
     val managedIntro = remember(patchRevision, introRevision) {
@@ -296,12 +310,18 @@ private fun TextEntryEditor(
 ) {
     val editVersion = editorState.editVersion // observe edit changes for recomposition
     val introVersion = editorState.introSequenceVersion
+    val sourceRevision = editorState.asmVisualSourceRevision
+    val sourceStatus = if (managedIntroIndex == null) editorState.textEntryEditingStatus(entry) else null
     val managedText = managedIntroIndex?.let { editorState.project.introSequence.scenes.getOrNull(it)?.text }
-    val editedText = if (managedIntroIndex == null) editorState.project.textEdits[entry.id] else managedText
-    var currentText by remember(entry.id, editedText, editVersion, introVersion) { mutableStateOf(editedText ?: entry.text) }
-    val isModified = currentText != entry.text
+    val editedText = if (managedIntroIndex == null) {
+        editorState.project.textEdits[entry.id].takeUnless { sourceStatus?.sourceManaged == true }
+    } else managedText
+    var currentText by remember(entry.id, entry.text, editedText, editVersion, introVersion, sourceRevision) {
+        mutableStateOf(editedText ?: entry.text)
+    }
+    val isModified = sourceStatus?.modified == true || currentText != entry.text
     val singleLine = entry.category in listOf(TextCategory.AREA_NAME, TextCategory.ITEM_NAME, TextCategory.UI_MESSAGE)
-    val isReadOnly = !entry.writable
+    val isReadOnly = !entry.writable || sourceStatus?.editable == false
     val bringIntoViewRequester = remember(entry.id) { BringIntoViewRequester() }
     androidx.compose.runtime.LaunchedEffect(selected, navigationSerial) {
         if (selected) bringIntoViewRequester.bringIntoView()
@@ -314,7 +334,9 @@ private fun TextEntryEditor(
                 if (isReadOnly) return@TextField
                 val cleaned = when (entry.category) {
                     TextCategory.AREA_NAME -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' }.take(entry.maxLength)
-                    TextCategory.ESCAPE_TEXT -> newText.uppercase()
+                    TextCategory.ESCAPE_TEXT -> newText.uppercase().filter {
+                        it in 'A'..'Z' || it == ' ' || it == '!' || it == '\n'
+                    }
                     TextCategory.ITEM_NAME -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' || it == '-' }.take(entry.maxLength)
                     TextCategory.UI_MESSAGE -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' || it == '.' }.take(entry.maxLength)
                     TextCategory.INTRO_STORY -> {
@@ -332,10 +354,7 @@ private fun TextEntryEditor(
                 if (managedIntroIndex != null) {
                     if (editorState.setIntroSceneText(managedIntroIndex, cleaned)) currentText = cleaned
                 } else {
-                    currentText = cleaned
-                    if (cleaned == entry.text) editorState.project.textEdits.remove(entry.id)
-                    else editorState.project.textEdits[entry.id] = cleaned
-                    editorState.markDirty()
+                    if (editorState.updateTextEntry(entry, cleaned)) currentText = cleaned
                 }
             },
             modifier = modifier,
@@ -387,13 +406,30 @@ private fun TextEntryEditor(
                     AsmNavigationLink(entry.snesAddress, onNavigateToAsm, label = "ASM")
                 }
                 Spacer(Modifier.width(8.dp))
-                Text("${entry.maxLength} max", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.weight(1f))
+                Text(
+                    if (entry.category == TextCategory.ESCAPE_TEXT && sourceStatus?.sourceManaged == true) {
+                        "${entry.text.count { it == '\n' } + 1} fixed lines"
+                    } else "${entry.maxLength} max",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                sourceStatus?.message?.let { message ->
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (sourceStatus.editable) message else "ASM only · $message",
+                        fontSize = 9.sp,
+                        color = if (sourceStatus.editable) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.tertiary,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (sourceStatus?.message == null) Spacer(Modifier.weight(1f))
                 if (isModified) {
                     Text("Reset", fontSize = 9.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable {
-                        currentText = entry.text
-                        if (managedIntroIndex != null) editorState.setIntroSceneText(managedIntroIndex, entry.text)
-                        else { editorState.project.textEdits.remove(entry.id); editorState.markDirty() }
+                        if (managedIntroIndex != null) {
+                            if (editorState.setIntroSceneText(managedIntroIndex, entry.text)) currentText = entry.text
+                        } else editorState.resetTextEntry(entry)
                     })
                 }
             }

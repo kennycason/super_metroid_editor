@@ -1,6 +1,10 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomAllocation
+import com.supermetroid.editor.rom.RomSegmentKind
+import com.supermetroid.editor.rom.RomSegmentPlacement
+import com.supermetroid.editor.rom.RomSegmentRequest
 import com.supermetroid.editor.rom.RomVerifiedFreeRange
 
 /** A deliberately finite 65816 width table used only where source must be
@@ -54,11 +58,13 @@ internal data class AsmCheckedHookCandidate(
         return buildString {
             append("; Project module: ").append(stem.replace('_', ' ')).append('\n')
             append("; SMEDIT description: Checked hook at ").append(formatSnesAddress(hookAddress)).append('\n')
-            append("; @smedit-checked-hook-v1")
+            append("; @smedit-checked-hook-v2")
             append(" hook=").append(patchHex(hookAddress, 3))
             append(" continuation=").append(patchHex(continuationAddress, 3))
-            append(" helper=").append(patchHex(helperAddress, 3))
-            append(" limit=").append(patchHex(helperLimitAddress, 3))
+            append(" seed=").append(patchHex(helperAddress, 3))
+            append(" probe_limit=").append(patchHex(helperLimitAddress, 3))
+            append(" helper_banks=80-FF")
+            append(" helper_alignment=1")
             append(" native=").append(nativeHex)
             append(" hook_label=").append(hookLabel)
             append(" helper_label=").append(helperLabel)
@@ -66,6 +72,8 @@ internal data class AsmCheckedHookCandidate(
             append("; Generated from ").append(sourceFileId).append(':').append(sourceLineIndex + 1).append(".\n")
             append("; SMEDIT verifies the native bytes, detour, displaced instructions, helper range,\n")
             append("; continuation jump, and every byte this module emits on each build.\n\n")
+            append("; The helper org/warnpc are creation-time preview hints. Each clean build measures\n")
+            append("; the helper and substitutes its exact managed placement in temporary build source.\n\n")
             append("org ").append(patchHex(hookAddress, 3)).append('\n')
             append(hookLabel).append(":\n")
             append("    JML.L ").append(helperLabel).append('\n')
@@ -177,26 +185,44 @@ internal data class AsmCheckedHookContract(
     val hookLabel: String,
     val helperLabel: String,
     val helperEndLabel: String,
+    val managedBanks: List<Int> = emptyList(),
+    val helperAlignment: Int = 1,
 ) {
-    fun ownership(fileId: String, helperEndAddress: Int): List<AsmSourceOwnedRange> = listOf(
+    val managed: Boolean get() = managedBanks.isNotEmpty()
+    fun ownership(
+        fileId: String,
+        helperEndAddress: Int,
+        actualHelperAddress: Int = helperAddress,
+    ): List<AsmSourceOwnedRange> = listOf(
         AsmSourceOwnedRange(checkNotNull(snesLoRomToPc(hookAddress)), nativeBytes.size, fileId),
-        AsmSourceOwnedRange(checkNotNull(snesLoRomToPc(helperAddress)), helperEndAddress - helperAddress, fileId),
+        AsmSourceOwnedRange(
+            checkNotNull(snesLoRomToPc(actualHelperAddress)),
+            helperEndAddress - actualHelperAddress,
+            fileId,
+        ),
     )
 
     companion object {
-        private const val MARKER = "@smedit-checked-hook-v1"
+        private const val MARKER_V1 = "@smedit-checked-hook-v1"
+        private const val MARKER_V2 = "@smedit-checked-hook-v2"
         private val field = Regex("([a-z_]+)=([^ \\t]+)")
         private val label = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
         fun parseAll(text: String): List<AsmCheckedHookContract> {
-            val markerLines = text.lineSequence().filter { MARKER in it }.toList()
+            val markerLines = text.lineSequence().filter { MARKER_V1 in it || MARKER_V2 in it }.toList()
             require(markerLines.isNotEmpty() || "; SMEDIT description: Checked hook at " !in text) {
-                "Checked-hook safety metadata is missing. Recreate the hook or restore its @smedit-checked-hook-v1 line."
+                "Checked-hook safety metadata is missing. Recreate the hook or restore its @smedit-checked-hook line."
             }
             return markerLines.map { line ->
-                require(line.trim().startsWith("; $MARKER ")) { "Checked-hook metadata must be one comment line beginning '; $MARKER'." }
+                val version = if (MARKER_V2 in line) 2 else 1
+                val marker = if (version == 2) MARKER_V2 else MARKER_V1
+                require(line.trim().startsWith("; $marker ")) { "Checked-hook metadata must be one comment line beginning '; $marker'." }
                 val fields = field.findAll(line).associate { it.groupValues[1] to it.groupValues[2] }
-                val expected = setOf("hook", "continuation", "helper", "limit", "native", "hook_label", "helper_label", "helper_end_label")
+                val expected = if (version == 2) {
+                    setOf("hook", "continuation", "seed", "probe_limit", "helper_banks", "helper_alignment", "native", "hook_label", "helper_label", "helper_end_label")
+                } else {
+                    setOf("hook", "continuation", "helper", "limit", "native", "hook_label", "helper_label", "helper_end_label")
+                }
                 require(fields.keys == expected) { "Checked-hook metadata fields changed. Recreate the hook or restore its metadata line." }
                 fun address(name: String): Int = fields.getValue(name).removePrefix("$").toIntOrNull(16)
                     ?.takeIf { it in 0..0xFFFFFF && (name == "limit" || snesLoRomToPc(it) != null) }
@@ -208,15 +234,25 @@ internal data class AsmCheckedHookContract(
                 fun checkedLabel(name: String) = fields.getValue(name).also {
                     require(label.matches(it)) { "Checked-hook $name is not a safe global label." }
                 }
+                // v1 was generated only by SMEDIT and always used a long JML
+                // detour, so its former helper/limit fields are safe placement
+                // seeds. Treat them as managed intent instead of preserving a
+                // stale fixed address during the beta-format migration.
+                val managedBanks = if (version == 2) parseBanks(fields.getValue("helper_banks"))
+                    else (0x80..0xFF).toList()
+                val alignment = if (version == 2) fields.getValue("helper_alignment").toIntOrNull()
+                    ?.takeIf { it in 1..0x8000 } ?: error("Checked-hook helper_alignment is invalid.") else 1
                 AsmCheckedHookContract(
                     hookAddress = address("hook"),
                     continuationAddress = address("continuation"),
-                    helperAddress = address("helper"),
-                    helperLimitAddress = address("limit"),
+                    helperAddress = address(if (version == 2) "seed" else "helper"),
+                    helperLimitAddress = address(if (version == 2) "probe_limit" else "limit"),
                     nativeBytes = nativeHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray(),
                     hookLabel = checkedLabel("hook_label"),
                     helperLabel = checkedLabel("helper_label"),
                     helperEndLabel = checkedLabel("helper_end_label"),
+                    managedBanks = managedBanks,
+                    helperAlignment = alignment,
                 ).also { contract ->
                     require(contract.continuationAddress == contract.hookAddress + contract.nativeBytes.size) {
                         "Checked-hook continuation must immediately follow the displaced native bytes."
@@ -228,10 +264,117 @@ internal data class AsmCheckedHookContract(
                 }
             }
         }
+
+        private fun parseBanks(value: String): List<Int> = buildList {
+            value.split(',').forEach { token ->
+                val bounds = token.split('-')
+                require(bounds.size in 1..2 && bounds.all { it.length == 2 && it.all { c -> c.digitToIntOrNull(16) != null } }) {
+                    "Checked-hook helper_banks must use hex banks or inclusive ranges."
+                }
+                val first = bounds.first().toInt(16)
+                val last = bounds.last().toInt(16)
+                require(first in 0x80..0xFF && last in first..0xFF)
+                addAll(first..last)
+            }
+        }.distinct()
     }
 }
 
+internal data class AsmManagedHookHelperOverride(val address: Int, val limitAddress: Int)
+
+/** Build-only rewrite. Authored modules retain semantic helper bodies while
+ * the checked allocator supplies each compile's address and exact boundary. */
+internal fun applyManagedHookHelperOverrides(
+    source: String,
+    overrides: Map<String, AsmManagedHookHelperOverride>,
+): String {
+    if (overrides.isEmpty()) return source
+    val contracts = AsmCheckedHookContract.parseAll(source).filter(AsmCheckedHookContract::managed)
+    if (contracts.isEmpty()) return source
+    val lines = source.lines().toMutableList()
+    fun replaceStatement(index: Int, statement: String) {
+        val raw = lines[index]
+        val indent = raw.takeWhile { it == ' ' || it == '\t' }
+        val comment = raw.indexOf(';').takeIf { it >= 0 }?.let { raw.substring(it) }.orEmpty()
+        lines[index] = indent + statement + if (comment.isBlank()) "" else " $comment"
+    }
+    contracts.forEach { contract ->
+        val override = requireNotNull(overrides[contract.helperLabel]) {
+            "Missing managed placement for ${contract.helperLabel}."
+        }
+        val helperLine = lines.indexOfFirst { asmExecutableCode(it).trim() == "${contract.helperLabel}:" }
+        require(helperLine >= 0) { "Missing checked-hook helper label ${contract.helperLabel}." }
+        val orgLine = (helperLine - 1 downTo 0).firstOrNull { asmExecutableCode(lines[it]).isNotBlank() }
+            ?: error("${contract.helperLabel} has no placement directive.")
+        require(asmExecutableCode(lines[orgLine]).trim().startsWith("org ", true)) {
+            "${contract.helperLabel} must immediately follow its managed org directive."
+        }
+        val endLine = lines.indices.firstOrNull { index ->
+            index > helperLine && asmExecutableCode(lines[index]).trim() == "${contract.helperEndLabel}:"
+        } ?: -1
+        require(endLine > helperLine) { "Missing checked-hook helper boundary ${contract.helperEndLabel}." }
+        val warnLine = (endLine + 1 until lines.size).firstOrNull { asmExecutableCode(lines[it]).isNotBlank() }
+            ?: error("${contract.helperEndLabel} has no checked boundary.")
+        require(asmExecutableCode(lines[warnLine]).trim().startsWith("warnpc ", true)) {
+            "${contract.helperEndLabel} must be followed by warnpc."
+        }
+        replaceStatement(orgLine, "org ${patchHex(override.address, 3)}")
+        replaceStatement(warnLine, "warnpc ${patchHex(override.limitAddress, 3)}")
+    }
+    return lines.joinToString("\n")
+}
+
 internal object AsmCheckedHookValidator {
+    fun segmentPlacements(
+        fileId: String,
+        contracts: List<AsmCheckedHookContract>,
+        symbolsBytes: ByteArray,
+        verifiedFreeRanges: List<RomVerifiedFreeRange>,
+    ): List<RomSegmentPlacement> {
+        if (contracts.isEmpty()) return emptyList()
+        val labels = AsmWlaSymbolParser.parse(symbolsBytes.toString(Charsets.UTF_8)).labels
+        return contracts.map { contract ->
+            val helper = requireNotNull(labels[contract.helperLabel]) {
+                "$fileId: missing checked-hook helper label ${contract.helperLabel}."
+            }
+            val helperEnd = requireNotNull(labels[contract.helperEndLabel]) {
+                "$fileId: missing checked-hook boundary ${contract.helperEndLabel}."
+            }
+            val pc = requireNotNull(snesLoRomToPc(helper)) { "$fileId: helper is not LoROM-addressable." }
+            val range = requireNotNull(verifiedFreeRanges.singleOrNull { verified ->
+                verified.bank == helper ushr 16 && pc >= verified.pcStart &&
+                    pc + helperEnd - helper <= verified.pcEndExclusive
+            }) { "$fileId: checked-hook helper is outside verified free space." }
+            val owner = if (fileId.startsWith(ASM_PROJECT_MODULE_PREFIX)) {
+                "asm-module:${fileId.removePrefix(ASM_PROJECT_MODULE_PREFIX).removeSuffix(".asm")}"
+            } else {
+                "asm-source:project"
+            }
+            val request = RomSegmentRequest(
+                id = "checked-hook-helper:$fileId:${contract.helperLabel}",
+                owner = owner,
+                kind = RomSegmentKind.HOOK_HELPER,
+                label = "Checked-hook helper · ${contract.helperLabel}",
+                size = helperEnd - helper,
+                alignment = contract.helperAlignment,
+                allowedBanks = contract.managedBanks.ifEmpty { listOf(helper ushr 16 and 0xFF) },
+                constraint = "The native JML detour and exact continuation bind this helper symbolically",
+            )
+            RomSegmentPlacement(
+                request,
+                RomAllocation(
+                    bank = helper ushr 16 and 0xFF,
+                    pcOffset = pc,
+                    snesAddress = helper,
+                    size = request.size,
+                    label = request.label,
+                    fillByte = range.fillByte,
+                    request = request,
+                ),
+            )
+        }
+    }
+
     fun validate(
         fileId: String,
         contracts: List<AsmCheckedHookContract>,
@@ -249,10 +392,12 @@ internal object AsmCheckedHookValidator {
             val hook = symbol(contract.hookLabel)
             val helper = symbol(contract.helperLabel)
             val helperEnd = symbol(contract.helperEndLabel)
-            require(hook == contract.hookAddress && helper == contract.helperAddress) {
-                "$fileId: checked-hook boundary labels moved."
+            require(hook == contract.hookAddress &&
+                (contract.managed && (helper ushr 16 and 0xFF) in contract.managedBanks ||
+                    !contract.managed && helper == contract.helperAddress)) {
+                "$fileId: checked-hook native boundary or managed helper bank is invalid."
             }
-            require(helperEnd > helper && helperEnd <= contract.helperLimitAddress) {
+            require(helperEnd > helper && (contract.managed || helperEnd <= contract.helperLimitAddress)) {
                 "$fileId: checked-hook helper exceeds its verified limit."
             }
             val hookPc = checkNotNull(snesLoRomToPc(hook))
@@ -283,15 +428,40 @@ internal object AsmCheckedHookValidator {
             require(verifiedFreeRanges.any { range ->
                 helperPc >= range.pcStart && helperEndPc <= range.pcEndExclusive
             }) { "$fileId: checked-hook helper is outside verified free space." }
-            contract.ownership(fileId, helperEnd)
+            contract.ownership(fileId, helperEnd, helper)
         }
         require(ownership.indices.all { first -> ownership.indices.drop(first + 1).none { second ->
             val a = ownership[first]; val b = ownership[second]
             a.pcOffset < b.pcOffset + b.length && b.pcOffset < a.pcOffset + a.length
         } }) { "$fileId: checked-hook spans overlap each other." }
-        require(changedClaims.all { changed -> ownership.any { allowed ->
-            changed.pcOffset >= allowed.pcOffset && changed.pcOffset + changed.length <= allowed.pcOffset + allowed.length
-        } }) { "$fileId emits bytes outside its declared checked-hook spans." }
+        val sortedOwnership = ownership.sortedBy(AsmSourceOwnedRange::pcOffset)
+        fun fullyOwned(changed: AsmSourceOwnedRange): Boolean {
+            var cursor = changed.pcOffset
+            val end = changed.pcOffset + changed.length
+            for (allowed in sortedOwnership) {
+                val allowedEnd = allowed.pcOffset + allowed.length
+                if (allowedEnd <= cursor) continue
+                if (allowed.pcOffset > cursor) return false
+                cursor = maxOf(cursor, allowedEnd)
+                if (cursor >= end) return true
+            }
+            return cursor >= end
+        }
+        // changedRanges intentionally coalesces adjacent bytes. Two helpers can
+        // therefore produce one changed claim even though their typed segment
+        // identities must remain separate.
+        val unexpected = changedClaims.firstOrNull { changed -> !fullyOwned(changed) }
+        require(unexpected == null) {
+            val changed = checkNotNull(unexpected)
+            val address = pcToSnesLoRom(changed.pcOffset)?.let(::formatSnesAddress)
+                ?: formatPcOffset(changed.pcOffset)
+            val allowed = ownership.joinToString { range ->
+                val start = pcToSnesLoRom(range.pcOffset)?.let(::formatSnesAddress)
+                    ?: formatPcOffset(range.pcOffset)
+                "$start +${range.length}"
+            }
+            "$fileId emits ${changed.length} byte(s) at $address outside its declared checked-hook spans ($allowed)."
+        }
         return ownership
     }
 }

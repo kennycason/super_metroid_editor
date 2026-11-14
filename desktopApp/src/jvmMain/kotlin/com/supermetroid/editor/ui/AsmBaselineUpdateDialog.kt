@@ -145,6 +145,7 @@ internal fun AsmBaselineUpdateDialog(
 private fun AsmReviewFileRow(file: AsmBaselineFileUpdate, selected: Boolean, busy: Boolean, onClick: () -> Unit) {
     val fs = LocalEditorTheme.current.fontSize.value
     val conflicts = file.merge.conflicts.size
+    val semantic = remember(file) { AsmSemanticChanges.baseline(file) }
     Surface(
         selected = selected,
         onClick = onClick,
@@ -157,6 +158,8 @@ private fun AsmReviewFileRow(file: AsmBaselineFileUpdate, selected: Boolean, bus
             Text(file.fileId, fontFamily = FontFamily.Monospace, fontSize = fs.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 buildList {
+                    add(semantic.kind.label)
+                    add(semantic.origin.label)
                     if (conflicts > 0) add("$conflicts conflict${if (conflicts == 1) "" else "s"}")
                     if (file.projectEdited) add("project source")
                     if (file.baselineChanged) add(if (file.documentationOnly) "comments-only update" else "version change")
@@ -208,6 +211,15 @@ private fun AsmFileDiffReview(
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Text(file.fileId, fontFamily = FontFamily.Monospace, fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+        val semantic = remember(file) { AsmSemanticChanges.baseline(file) }
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)) {
+                Text("${semantic.kind.label} · ${semantic.origin.label}", fontSize = fs.detail,
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                Text(semantic.detail, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(semantic.originDetail, fontSize = fs.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             AsmReviewComparison.entries.forEach { option ->
                 FilterChip(

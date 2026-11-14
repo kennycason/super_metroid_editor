@@ -287,11 +287,11 @@ val SHORT_CHARGE_PATCH = SmPatch(
     configValue = null
 )
 
-/** Config patch: Beam Damage overrides. Stores per-beam damage values in configData. */
+/** Config patch: player projectile damage. Stores exact symbolic field values in configData. */
 val BEAM_DAMAGE_PATCH = SmPatch(
     id = "config_beam_damage",
-    name = "Beam Damage Override",
-    description = "Override uncharged and charged beam damage values for all beam types.",
+    name = "Projectile Damage",
+    description = "Tune normal/charged beams, Hyper Beam, missiles, bombs, Power Bombs, and special beam attacks.",
     enabled = false,
     writes = mutableListOf(),
     configType = "beam_damage"

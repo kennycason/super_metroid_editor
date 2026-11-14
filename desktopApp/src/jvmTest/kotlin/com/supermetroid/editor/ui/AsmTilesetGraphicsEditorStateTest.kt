@@ -5,6 +5,8 @@ import com.supermetroid.editor.asm.AsmProjectWorkspaceRepository
 import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceMetadata
 import com.supermetroid.editor.asm.AsmReferenceWorkspace
+import com.supermetroid.editor.asm.AsmProjectRestoreRequest
+import com.supermetroid.editor.asm.AsmSemanticChangeOrigin
 import com.supermetroid.editor.asm.AsmSourceParser
 import com.supermetroid.editor.asm.AsmTilesetGraphicsAccess
 import com.supermetroid.editor.asm.AsmTilesetGraphicsBridge
@@ -16,9 +18,12 @@ import com.supermetroid.editor.rom.LZ5Compressor
 import java.io.File
 import java.util.Base64
 import kotlin.test.assertContentEquals
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
@@ -127,6 +132,81 @@ class AsmTilesetGraphicsEditorStateTest {
         assertContentEquals(originalTiles, assertIs<AsmTilesetGraphicsAccess.Editable>(
             AsmTilesetGraphicsBridge(repository).access(projectFile.path, AsmTilesetGraphicsKind.AREA_TILES, 0),
         ).rawData)
+
+        val oversized = ByteArray(originalTiles.size) { index -> ((index * 73 + index / 5) and 0xFF).toByte() }
+        assertTrue(LZ5Compressor.compress(oversized).size > assets.first().length)
+        assertFalse(state.saveTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_TILES, oversized, 0))
+        val firstProposal = assertIs<TilesetAssetRelocationProposal.Graphics>(state.pendingTilesetAssetRelocation)
+        assertEquals(assets.first().length, firstProposal.inPlaceCapacity)
+        assertTrue(firstProposal.requiredBytes > firstProposal.inPlaceCapacity)
+        assertEquals(listOf(0, 1), firstProposal.affectedTilesetIds)
+        state.dismissTilesetAssetRelocation()
+        assertTrue(repository.managedAssets(projectFile.path).isEmpty(), "Cancel must leave authored source untouched")
+
+        val declarationBefore = workspaceState.projectSourceText("bank_B9..CE.asm")
+        val declarationDraft = declarationBefore + "\n; unsaved declaration note\n"
+        workspaceState.replaceProjectSource("bank_B9..CE.asm", declarationBefore, declarationDraft)
+        assertFalse(state.saveTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_TILES, oversized, 0))
+        assertFalse(state.confirmTilesetAssetRelocation(), "Relocation must not rewrite beneath an unsaved source draft")
+        workspaceState.replaceProjectSource("bank_B9..CE.asm", declarationDraft, declarationBefore)
+
+        assertFalse(state.saveTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_TILES, oversized, 0))
+        val externalBridge = AsmTilesetGraphicsBridge(repository)
+        val externallyOpened = assertIs<AsmTilesetGraphicsAccess.Editable>(externalBridge.access(
+            projectFile.path, AsmTilesetGraphicsKind.AREA_TILES, 0,
+        ))
+        val externalSave = externalBridge.save(
+            projectFile.path,
+            AsmTilesetGraphicsKind.AREA_TILES,
+            0,
+            editedTiles,
+            externallyOpened.sourceBytes,
+        )
+        assertFalse(state.confirmTilesetAssetRelocation(), "A proposal must not overwrite a newer source save")
+        externalBridge.restore(projectFile.path, AsmTilesetGraphicsKind.AREA_TILES, 0, externalSave.sourceBytes)
+        state.refreshAsmTilesetGraphicsAccesses()
+
+        assertFalse(state.saveTilesetGraphicsOverride(AsmTilesetGraphicsKind.AREA_TILES, oversized, 0))
+        assertTrue(state.confirmTilesetAssetRelocation())
+        assertTrue(workspaceState.projectSourceText("bank_B9..CE.asm").contains("smedit:managed-asset-v1 begin"))
+        val managed = repository.managedAssets(projectFile.path).single()
+        assertEquals("Tiles_Shared", managed.sourceLabel)
+        assertEquals(listOf(0, 1), managed.pointerBindings.mapNotNull { it.consumerLabel }.map {
+            it.substringAfter("Tileset_Table_").substringBefore('_').toInt(16)
+        }.sorted())
+        assertContentEquals(oversized, assertIs<AsmTilesetGraphicsAccess.Editable>(
+            AsmTilesetGraphicsBridge(repository).access(projectFile.path, AsmTilesetGraphicsKind.AREA_TILES, 1),
+        ).rawData)
+        assertTrue(managed.managedAssetPath in workspaceState.projectModifiedAssetPaths)
+        val managedChange = workspaceState.projectAssetChangesSnapshot()
+            .single { it.assetPath == managed.managedAssetPath }
+        assertTrue(managedChange.managed)
+        assertEquals("Tiles_Shared.bin", managedChange.originalAssetPath)
+        assertEquals(assets.first().length, managedChange.originalCapacity)
+        assertEquals(AsmSemanticChangeOrigin.MANAGED_RELOCATION, managedChange.semantic.origin)
+        val managedRestore = assertIs<AsmProjectRestoreRequest.ManagedAsset>(managedChange.restoreRequest)
+        val managedSourceChange = workspaceState.projectSourceChangesSnapshot()
+            .single { it.fileId == managed.sourceFileId }
+        assertNull(managedSourceChange.restoreRequest)
+        assertContains(requireNotNull(managedSourceChange.restoreBlockedReason), "managed asset transaction")
+        assertFailsWith<IllegalArgumentException> {
+            repository.restoreSource(projectFile.path, managed.sourceFileId)
+        }
+        val asmRoot = requireNotNull(repository.rootFor(projectFile.path))
+        val authoredSource = File(asmRoot, "overrides/src/${managed.sourceFileId}")
+        val workingSource = File(requireNotNull(repository.loadForBuild(projectFile.path)).workingDirectory,
+            "src/${managed.sourceFileId}")
+        val reviewedSource = authoredSource.readText()
+        authoredSource.writeText("$reviewedSource\n; newer source edit")
+        workingSource.writeText("$reviewedSource\n; newer source edit")
+        runBlocking {
+            assertFalse(workspaceState.restoreProjectChange(managedRestore), "A stale managed-source review must fail")
+        }
+        authoredSource.writeText(reviewedSource)
+        workingSource.writeText(reviewedSource)
+        assertTrue(state.resetCurrentTilesetOverrides(areaTiles = true, commonTiles = false, palette = false))
+        assertTrue(repository.managedAssets(projectFile.path).isEmpty())
+        assertFalse(workspaceState.projectSourceText("bank_B9..CE.asm").contains("smedit:managed-asset-v1"))
 
         val before = workspaceState.projectSourceText("bank_8F.asm")
         workspaceState.replaceProjectSource(

@@ -7,6 +7,7 @@ internal enum class AsmCompletionKind {
     LOCAL_LABEL,
     LABEL,
     DEFINE,
+    EXPRESSION_FUNCTION,
 }
 
 internal data class AsmCompletionItem(
@@ -150,6 +151,7 @@ internal object AsmCompletionEngine {
             }
         } else {
             symbolCandidates(index, fileId, lineIndex, prefix, excludedFileIds) +
+                expressionFunctionCandidates(prefix) +
                 if (explicit) instructionCandidates(prefix) + directiveCandidates(prefix) else emptyList()
         }
         val distinct = candidates.asSequence()
@@ -202,10 +204,11 @@ internal object AsmCompletionEngine {
         return ASM_COMPLETION_DIRECTIVES.asSequence()
             .filter { it.startsWith(normalized) }
             .map { directive ->
+                val reference = AsmLibrary.directive(directive)
                 AsmCompletionItem(
                     text = directive,
                     kind = AsmCompletionKind.DIRECTIVE,
-                    detail = "Asar directive",
+                    detail = reference?.let { "${it.form} · ${it.summary}" } ?: "Asar directive",
                     sortPriority = 30,
                 )
             }
@@ -266,11 +269,56 @@ internal object AsmCompletionEngine {
                     kind == AsmCompletionKind.DEFINE -> 8
                     else -> 10
                 }
-                AsmCompletionItem(label.name, kind, location, priority)
+                val detail = if (kind == AsmCompletionKind.DEFINE) {
+                    val expression = sourceFile?.lines?.getOrNull(label.lineIndex)
+                        ?.let(::asmExecutableCode)?.substringAfter('=', "")?.trim().orEmpty()
+                    val value = AsmConstantExpression.evaluate(expression)
+                    if (value != null) "$location · constant ${asmCompletionValue(value)}" else "$location · define"
+                } else location
+                AsmCompletionItem(label.name, kind, detail, priority)
             }
             .toList()
     }
+
+    private fun expressionFunctionCandidates(prefix: String): List<AsmCompletionItem> =
+        ASM_EXPRESSION_FUNCTIONS.asSequence()
+            .filter { it.name.startsWith(prefix, ignoreCase = true) }
+            .map { function ->
+                AsmCompletionItem(
+                    text = function.name,
+                    kind = AsmCompletionKind.EXPRESSION_FUNCTION,
+                    detail = "${function.name}(${function.parameter}) · ${function.detail}",
+                    sortPriority = 12,
+                    replacement = "${function.name}()",
+                    caretBacktrack = 1,
+                )
+            }
+            .toList()
 }
+
+private data class AsmExpressionFunctionCompletion(val name: String, val parameter: String, val detail: String)
+
+private val ASM_EXPRESSION_FUNCTIONS = listOf(
+    AsmExpressionFunctionCompletion("bank", "address", "24-bit address bank byte"),
+    AsmExpressionFunctionCompletion("bankbyte", "address", "24-bit address bank byte"),
+    AsmExpressionFunctionCompletion("high", "value", "bits 8–15"),
+    AsmExpressionFunctionCompletion("low", "value", "bits 0–7"),
+    AsmExpressionFunctionCompletion("word", "value", "low 16 bits"),
+    AsmExpressionFunctionCompletion("loword", "value", "low 16 bits"),
+    AsmExpressionFunctionCompletion("snestopc", "address", "LoROM SNES address to file offset"),
+    AsmExpressionFunctionCompletion("pctosnes", "offset", "file offset to LoROM SNES address"),
+    AsmExpressionFunctionCompletion("read1", "offset", "read one byte while assembling"),
+    AsmExpressionFunctionCompletion("read2", "offset", "read two little-endian bytes"),
+    AsmExpressionFunctionCompletion("read3", "offset", "read three little-endian bytes"),
+    AsmExpressionFunctionCompletion("read4", "offset", "read four little-endian bytes"),
+    AsmExpressionFunctionCompletion("defined", "name", "whether an Asar define exists"),
+    AsmExpressionFunctionCompletion("sizeof", "struct", "declared structure size"),
+    AsmExpressionFunctionCompletion("objectsize", "object", "declared object size"),
+    AsmExpressionFunctionCompletion("datasize", "label", "bytes through the next data boundary"),
+)
+
+private fun asmCompletionValue(value: Long): String =
+    if (value < 0) value.toString() else "\$${value.toString(16).uppercase()} ($value)"
 
 private fun asmCompletionCommentStart(line: String): Int {
     var quoted = false

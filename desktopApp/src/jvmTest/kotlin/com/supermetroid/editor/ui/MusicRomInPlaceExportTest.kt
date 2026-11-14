@@ -56,6 +56,27 @@ class MusicRomInPlaceExportTest {
             "Only the selected instruments' final upload bytes may change, not headers, base sounds, sequences or pointers")
     }
 
+    @Test fun `music planner is non mutating and matches the compatibility exporter`() {
+        val parser = TestRomHelper.requireRomParser()
+        val project = SmEditProject(romPath = "planned.sfc").also { edit(parser, it, 3, slot = 28) }
+        val input = parser.copyRomData()
+        val plannedInput = input.copyOf()
+        val plannedParser = RomParser(plannedInput)
+        val plan = MusicRomExporter(project, {}).planMusicEdits(
+            plannedInput,
+            RomFreeSpaceAllocator(plannedInput, plannedParser::snesToPc, plannedParser::pcToSnes, guardBytes = 2),
+        )
+
+        assertContentEquals(input, plannedInput, "Planning must not publish bytes before the ROM write plan accepts them")
+        val plannedOutput = input.copyOf().also { output ->
+            plan.writes.forEach { (offset, bytes) -> bytes.copyInto(output, offset) }
+        }
+        val compatibilityOutput = input.copyOf()
+        assertEquals(plan.patchedCount, MusicRomExporter(project, {}).applyMusicEditsToRom(compatibilityOutput))
+        assertContentEquals(compatibilityOutput, plannedOutput)
+        assertTrue(plan.allocations.all { it.request != null })
+    }
+
     @Test fun `headered ROM mapping preserves the copier header and original bank bytes`() {
         val original = TestRomHelper.requireRomParser().copyRomData()
         val unheadered = if (original.size % 0x8000 == 512) original.copyOfRange(512, original.size) else original
@@ -184,7 +205,8 @@ class MusicRomInPlaceExportTest {
         val failure = assertFailsWith<IllegalStateException> {
             MusicRomExporter(project, {}).applyMusicEditsToRom(rom, external)
         }
-        assertTrue(failure.message.orEmpty().contains("not enough contiguous free ROM space"), failure.message)
+        assertTrue(failure.message.orEmpty().contains("needs"), failure.message)
+        assertTrue(failure.message.orEmpty().contains("Safe next steps"), failure.message)
         assertContentEquals(before, rom)
         assertNull(external.observing {}.reserve(1, listOf(0xB8), "later exporter must respect music sources"))
     }

@@ -207,7 +207,12 @@ fun PhantoonEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        val previewParser = remember(romParser, editorState.spriteVersion, editorState.paletteVersion) {
+        val previewParser = remember(
+            romParser,
+            editorState.spriteVersion,
+            editorState.paletteVersion,
+            editorState.asmVisualSourceRevision,
+        ) {
             romParser?.let { editorState.nativeSprites.previewParser(it) }
         }
         PhantoonHeader(previewParser)

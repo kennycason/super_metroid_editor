@@ -115,6 +115,37 @@ class AsmProjectWorkspaceTest {
         assertEquals(before.getValue(FX_SOURCE_FILE), state.projectSourceText(FX_SOURCE_FILE))
     }
 
+    @Test fun `symbol rename review applies and undoes as one guarded multi-file edit`() = runBlocking {
+        val reference = roomReference()
+        File(reference.root, "src/bank_80.asm").writeText("Routine:\n  .Loop:\n    BNE .Loop\n    RTS\n")
+        File(reference.root, "src/bank_81.asm").writeText("Caller:\n    JSR Routine\n    dw Routine_Loop\n    RTS\n")
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
+        val projectFile = File(tempDirectory, "Rename.smedit").apply { writeText("{}") }
+        repository.initialize(projectFile.path, reference)
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(projectFile.path, true)
+
+        val plan = requireNotNull(state.planSymbolRename("bank_80.asm", 0, "Routine", "UpdatedRoutine"))
+        assertEquals(setOf("bank_80.asm", "bank_81.asm"), plan.replacements.keys)
+        assertTrue(state.applySymbolRename(plan))
+        assertTrue(state.sourceEditText("bank_80.asm").startsWith("UpdatedRoutine:"))
+        assertTrue(state.sourceEditText("bank_81.asm").contains("JSR UpdatedRoutine"))
+        assertTrue(state.sourceEditText("bank_81.asm").contains("dw UpdatedRoutine_Loop"))
+
+        assertTrue(state.undoSourceEdit("bank_81.asm"))
+        assertTrue(state.sourceEditText("bank_80.asm").startsWith("Routine:"))
+        assertTrue(state.sourceEditText("bank_81.asm").contains("JSR Routine"))
+        assertTrue(state.redoSourceEdit("bank_80.asm"))
+        assertTrue(state.sourceEditText("bank_81.asm").contains("JSR UpdatedRoutine"))
+
+        assertTrue(state.undoSourceEdit("bank_80.asm"))
+        val stalePlan = requireNotNull(state.planSymbolRename("bank_80.asm", 0, "Routine", "FreshRoutine"))
+        val bank81 = state.sourceEditText("bank_81.asm")
+        state.replaceProjectSource("bank_81.asm", bank81, "$bank81; newer draft\n")
+        assertFalse(state.applySymbolRename(stalePlan))
+        assertTrue(state.sourceEditText("bank_80.asm").startsWith("Routine:"))
+    }
+
     @Test fun `compound source validation and callback failures leave every document and history unchanged`() = runBlocking {
         val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
         val file = File(tempDirectory, "Guarded.smedit").apply { writeText("{}") }
@@ -685,6 +716,68 @@ class AsmProjectWorkspaceTest {
         assertEquals(4, change.size)
         assertEquals(2, change.changedBytes)
         assertEquals(listOf(1, 3), change.firstChangedOffsets)
+        assertEquals(AsmSemanticChangeKind.PALETTE, change.semantic.kind)
+        assertEquals(AsmSemanticChangeOrigin.AUTHORED_ASSET, change.semantic.origin)
+        assertTrue(change.restoreRequest is AsmProjectRestoreRequest.DirectAsset)
+        assertTrue(state.restoreProjectChange(requireNotNull(change.restoreRequest)))
+        assertTrue(state.projectAssetChangesSnapshot().isEmpty())
+        assertEquals(listOf<Byte>(0, 1, 2, 3), repository.readAsset(projectFile.path, range.path).toList())
+    }
+
+    @Test
+    fun `project changes restore complete source and module transactions and reject stale disk data`() = runBlocking {
+        val reference = fakeReference(emptyList())
+        val repository = AsmProjectWorkspaceRepository(emptyList(), starterModules = emptyList())
+        val projectFile = File(tempDirectory, "Restore Review.smedit").apply { writeText("{}") }
+        val project = repository.initialize(projectFile.path, reference)
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(projectFile.path, enabled = true)
+
+        val baseline = state.projectSourceText("bank_80.asm")
+        val edited = baseline.replace("RTS", "NOP\n    RTS")
+        state.replaceProjectSource("bank_80.asm", baseline, edited)
+        assertTrue(state.saveSource("bank_80.asm"))
+        val sourceChange = state.projectSourceChangesSnapshot().single()
+        assertTrue(sourceChange.restoreRequest is AsmProjectRestoreRequest.SourceFile)
+
+        val authored = File(project.root, "overrides/src/bank_80.asm")
+        authored.writeText("; newer external edit\n$edited")
+        assertFalse(state.restoreProjectChange(requireNotNull(sourceChange.restoreRequest)))
+        assertTrue(authored.readText().startsWith("; newer external edit"))
+        assertEquals(edited, File(project.workingDirectory, "src/bank_80.asm").readText())
+
+        authored.writeText(edited)
+        assertTrue(state.restoreProjectChange(requireNotNull(sourceChange.restoreRequest)))
+        assertEquals(baseline, state.projectSourceText("bank_80.asm"))
+        assertFalse(authored.exists())
+
+        assertTrue(state.createProjectModule("review_restore"))
+        assertTrue(state.createProjectModule("review_other"))
+        val module = state.projectSourceChangesSnapshot().single { it.fileId == "project/review_restore.asm" }
+        assertEquals(AsmSemanticChangeKind.HOOK_OR_MODULE, module.semantic.kind)
+        assertTrue(module.restoreRequest is AsmProjectRestoreRequest.ProjectModule)
+        assertTrue(state.moveProjectModule(module.fileId, 1))
+        assertFalse(state.restoreProjectChange(requireNotNull(module.restoreRequest)), "A stale module-order review must fail")
+        val refreshedModule = state.projectSourceChangesSnapshot().single { it.fileId == module.fileId }
+        assertTrue(state.restoreProjectChange(requireNotNull(refreshedModule.restoreRequest)))
+        assertFalse(File(project.root, "modules/review_restore.asm").exists())
+        assertTrue(state.projectSourceChangesSnapshot().none { it.fileId == module.fileId })
+    }
+
+    @Test
+    fun `project change restore refuses an open draft and review exposes the reason`() = runBlocking {
+        val reference = fakeReference(emptyList())
+        val repository = AsmProjectWorkspaceRepository(emptyList(), starterModules = emptyList())
+        val projectFile = File(tempDirectory, "Draft Review.smedit").apply { writeText("{}") }
+        repository.initialize(projectFile.path, reference)
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(projectFile.path, enabled = true)
+        val baseline = state.projectSourceText("bank_80.asm")
+        state.replaceProjectSource("bank_80.asm", baseline, "$baseline\n; unsaved")
+
+        val change = state.projectSourceChangesSnapshot().single()
+        assertNull(change.restoreRequest)
+        assertTrue(requireNotNull(change.restoreBlockedReason).contains("Save or revert"))
     }
 
     @Test

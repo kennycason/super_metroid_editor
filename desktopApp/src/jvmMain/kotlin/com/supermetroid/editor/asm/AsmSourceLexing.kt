@@ -5,7 +5,11 @@ internal object AsmSourceLexing {
     private fun pattern(indexed: Boolean): Regex {
         val index = if (indexed) "(?:\\[[^]\\r\\n]+])?" else ""
         val part = "[A-Za-z_][A-Za-z0-9_]*$index"
-        return Regex("\"(?:\\\\.|[^\"\\\\])*\"|\\$[0-9A-Fa-f]+|%[01]+|[0-9]+|[!%]?(?:\\.+)?$part(?:\\.$part)*")
+        val localPart = "[A-Za-z0-9_]+$index"
+        return Regex(
+            "\"(?:\\\\.|[^\"\\\\])*\"|\\$[0-9A-Fa-f]+|%[01]+|[0-9]+|" +
+                "[!%]?$part(?:\\.$part)*|\\.+$localPart(?:\\.$part)*",
+        )
     }
     private val references = pattern(indexed = true)
     private val identifiers = pattern(indexed = false)

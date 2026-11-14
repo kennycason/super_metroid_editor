@@ -83,6 +83,12 @@ internal fun visualSpriteTargets(parser: RomParser, workspace: VisualSpriteWorks
     return listOf(NativeSpriteTarget(NativeSpriteAssets.key(asset.graphics), asset.palette, asset.paletteColors / 16, row))
 }
 
+internal fun visualSpriteAsset(workspace: VisualSpriteWorkspace, selected: Int): RomVisualAssets.Asset? {
+    if (workspace.index != -3 || selected in CinematicSprites.SEQUENCES.indices) return null
+    return RomVisualAssets.ASSETS.filter { it.group == workspace.group }
+        .getOrNull(selected - CinematicSprites.SEQUENCES.size)
+}
+
 internal fun renderVisualSprite(parser: RomParser, workspace: VisualSpriteWorkspace, selected: Int, direction: Int, paletteRow: Int): SpriteAnimation? {
     if (workspace.index == -6) {
         val renderer = TourianStatueSprites(parser)
@@ -95,7 +101,9 @@ internal fun renderVisualSprite(parser: RomParser, workspace: VisualSpriteWorksp
     if (workspace.index == -2) return ProjectileSprites.WEAPONS.getOrNull(selected)?.let { ProjectileSprites(parser).render(it, direction) }
     if (workspace.index == -3 && selected in CinematicSprites.SEQUENCES.indices) return CinematicSprites(parser).render(CinematicSprites.SEQUENCES[selected])
     val offset = if (workspace.index == -3) CinematicSprites.SEQUENCES.size else 0
-    val asset = RomVisualAssets.ASSETS.filter { it.group == workspace.group }.getOrNull(selected - offset) ?: return null
+    val asset = visualSpriteAsset(workspace, selected)
+        ?: RomVisualAssets.ASSETS.filter { it.group == workspace.group }.getOrNull(selected - offset)
+        ?: return null
     return RomVisualAssets.render(parser, asset, paletteRow)?.let { SpriteAnimation(asset.name, listOf(it), loop = false) }
 }
 
@@ -130,6 +138,10 @@ internal fun VisualSpriteViewer(workspace: VisualSpriteWorkspace, parser: RomPar
     val target = targets.getOrNull(selectedSource)
     var paletteRow by remember(workspace, selected) { mutableStateOf(targets.firstOrNull()?.defaultRow ?: 0) }
     var editing by remember(parser, System.identityHashCode(editor.project), workspace) { mutableStateOf<NativeSpriteEditorState.Sheet?>(null) }
+    var editingMap by remember(parser, System.identityHashCode(editor.project), workspace) {
+        mutableStateOf<CinematicMapEditorState.Sheet?>(null)
+    }
+    val sceneAsset = remember(workspace, nativeSelected) { visualSpriteAsset(workspace, nativeSelected) }
     val renderPreview: (RomParser) -> SpriteAnimation? = { rom ->
         if (selected < customCount) {
             val visual = customVisuals[selected]
@@ -189,7 +201,13 @@ internal fun VisualSpriteViewer(workspace: VisualSpriteWorkspace, parser: RomPar
         NativeSpritePixelEditing(parser, editor, sheet, renderPreview, { editing = null }, modifier)
         return
     }
-    val effective = remember(parser, editor.editVersion, editor.paletteVersion) { runCatching { editor.nativeSprites.previewParser(parser) } }
+    editingMap?.let { sheet ->
+        CinematicMapEditing(parser, editor, sheet, { editingMap = null }, modifier)
+        return
+    }
+    val effective = remember(parser, editor.editVersion, editor.paletteVersion, editor.asmVisualSourceRevision) {
+        runCatching { editor.nativeSprites.previewParser(parser) }
+    }
     val animation by produceState<SpriteAnimation?>(null, effective, workspace.index, selected, direction, paletteRow, introRevision, customCount) {
         value = null
         value = withContext(Dispatchers.Default) {
@@ -216,6 +234,7 @@ internal fun VisualSpriteViewer(workspace: VisualSpriteWorkspace, parser: RomPar
             }
             if (targets.size > 1) SpriteOptionSelector(targets.map { it.name }, selectedSource, { selectedSource = it }, Modifier.fillMaxWidth())
             if (target != null) NativeSpriteSourceControls(parser, editor, target, { editing = it }, { paletteRow = it })
+            sceneAsset?.let { CinematicMapSourceControls(editor, it) { sheet -> editingMap = sheet } }
             effective.exceptionOrNull()?.message?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
             NativeSpriteAnimationPlayer(animation, Modifier.weight(1f), previewSize = 540)
         }

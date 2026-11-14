@@ -41,11 +41,33 @@ object RoomNamePauseMapPatch {
         alignment: RoomNameAlignment = RoomNameAlignment.CENTER,
         freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     ): RoomNamePauseMapPatchResult {
+        val result = plan(
+            romData, snesToPc, pcToSnes, rooms, overrides, alignment, freeSpaceAllocator,
+        )
+        for (write in result.writes) writeToRom(romData, write)
+        return result
+    }
+
+    /** Reserve and validate the complete patch without mutating the ROM. */
+    fun plan(
+        romData: ByteArray,
+        snesToPc: (Int) -> Int,
+        pcToSnes: (Int) -> Int,
+        rooms: List<RoomInfo>,
+        overrides: Map<String, String> = emptyMap(),
+        alignment: RoomNameAlignment = RoomNameAlignment.CENTER,
+        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
+    ): RoomNamePauseMapPatchResult {
         val entries = buildEntries(rooms, overrides, alignment)
         require(entries.isNotEmpty()) { "room-name pause map patch has no room names to write" }
 
         val dryRunPayload = buildPayload(baseSnesAddress = 0x828000, bank = 0x82, entries = entries)
-        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, snesToPc, pcToSnes)
+        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, snesToPc, pcToSnes).scoped(
+            owner = "patch:room-name-pause-map",
+            kind = RomSegmentKind.GENERATED_PATCH,
+            idPrefix = "patch:room-name-pause-map",
+            constraint = "Pause-map name payload must remain reachable from its checked native hook",
+        )
         val allocation = allocator.reserve(
             size = dryRunPayload.size,
             banks = ALLOCATION_BANKS,
@@ -79,9 +101,6 @@ object RoomNamePauseMapPatch {
         )
 
         for (write in hookWrites) verifyHookIsUnmodified(romData, write.offset.toInt(), pcToSnes(write.offset.toInt()))
-        allocator.write(allocation, payload)
-        for (write in hookWrites) writeToRom(romData, write)
-
         return RoomNamePauseMapPatchResult(
             allocation = allocation,
             writes = listOf(payloadWrite) + hookWrites,

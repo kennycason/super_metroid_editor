@@ -155,6 +155,65 @@ class RomWritePlanTest {
     }
 
     @Test
+    fun `typed allocation is staged directly with request ownership`() {
+        val base = ByteArray(32) { 0xFF.toByte() }
+        val plan = RomWritePlan(base)
+        val request = RomSegmentRequest(
+            id = "graphics:test",
+            owner = "graphics:project",
+            kind = RomSegmentKind.GRAPHICS,
+            label = "Test graphics",
+            size = 4,
+            allowedBanks = listOf(0x80),
+        )
+        val allocation = RomAllocation(0x80, 8, 0x808008, 4, request.label, 0xFF, request)
+
+        plan.addAllocation(allocation, byteArrayOf(1, 2, 3, 0xFF.toByte()), RomWriteKind.GRAPHICS)
+
+        assertEquals("graphics:project", plan.report().writes.single().owner)
+        assertEquals(listOf(1, 2, 3, 0xFF), plan.finalRom().slice(8..11).map { it.toInt() and 0xFF })
+        assertContentEquals(base, ByteArray(32) { 0xFF.toByte() })
+    }
+
+    @Test
+    fun `isolated planned image publishes allocation envelopes and fixed changes atomically`() {
+        val before = ByteArray(64) { 0xFF.toByte() }
+        val plan = RomWritePlan(before)
+        val request = RomSegmentRequest(
+            id = "room:test/level",
+            owner = "room-graph:test",
+            kind = RomSegmentKind.ROOM_DATA,
+            label = "Test room level",
+            size = 4,
+            allowedBanks = listOf(0x80),
+        )
+        val allocation = RomAllocation(0x80, 32, 0x808020, 4, request.label, 0xFF, request)
+        val planned = before.copyOf().also {
+            it[4] = 0x12
+            it[32] = 0x34
+        }
+
+        val writes = plan.addPlannedImage(
+            before,
+            planned,
+            listOf(allocation),
+            "room-graph:test",
+            "Test room graph",
+            RomWriteKind.ROOM,
+        )
+
+        assertEquals(2, writes.size)
+        assertEquals(4, writes.first().bytes.size, "The whole allocation, including FF bytes, is owned")
+        assertEquals(RomWriteKind.ALLOCATION, writes.single { it.offset == 32 }.kind)
+        assertEquals(RomWriteKind.ROOM, writes.single { it.offset == 4 }.kind)
+        assertEquals(0x12, plan.finalRom()[4].toInt() and 0xFF)
+        assertEquals(0x34, plan.finalRom()[32].toInt() and 0xFF)
+        assertFailsWith<RomWriteConflictException> {
+            plan.add("other", "hidden allocation collision", 35, listOf(0), RomWriteKind.RAW)
+        }
+    }
+
+    @Test
     fun `current range claim owns unchanged allocation bytes`() {
         val plan = RomWritePlan(ByteArray(32) { 0xFF.toByte() })
         plan.add("allocator", "payload byte", 10, listOf(0x42))

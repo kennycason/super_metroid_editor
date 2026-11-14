@@ -10,6 +10,12 @@ import com.supermetroid.editor.rom.SpcMusicBankTable
 
 /** Reserve, serialize and validate the complete transaction before changing the caller's ROM. */
 internal class MusicRomExporter(private val project: SmEditProject, private val onLog: (String) -> Unit) {
+    internal data class Plan(
+        val patchedCount: Int,
+        val writes: Map<Int, ByteArray>,
+        val allocations: List<RomAllocation>,
+    )
+
     private data class BankPlan(
         val songSet: Int,
         val pointerEntry: Int,
@@ -20,9 +26,27 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
     )
 
     internal fun applyMusicEditsToRom(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null): Int {
-        if (project.soundEffectEdits.isEmpty() && project.soundEffectPrograms.isEmpty() && project.musicBanks.isEmpty()) return applyMusicOnly(romData, freeSpaceAllocator)
+        val plan = planMusicEdits(romData, freeSpaceAllocator)
+        for ((offset, bytes) in plan.writes) bytes.copyInto(romData, offset)
+        return plan.patchedCount
+    }
+
+    internal fun planMusicEdits(
+        romData: ByteArray,
+        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
+    ): Plan {
+        if (project.soundEffectEdits.isEmpty() && project.soundEffectPrograms.isEmpty() && project.musicBanks.isEmpty()) {
+            return planMusicOnly(romData, freeSpaceAllocator)
+        }
         val original = RomParser(romData)
-        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, original::snesToPc, original::pcToSnes, guardBytes = 2)
+        val allocator = (freeSpaceAllocator ?: RomFreeSpaceAllocator(
+            romData, original::snesToPc, original::pcToSnes, guardBytes = 2,
+        )).scoped(
+            owner = "music:project",
+            kind = com.supermetroid.editor.rom.RomSegmentKind.MUSIC,
+            idPrefix = "music:project",
+            constraint = "SPC upload data and loader pointers must remain LoROM-addressable",
+        )
         val patches = SoundEffects.exportWrites(RomParser(romData), project)
         val staged = romData.copyOf()
         patches.forEach { (at, value) -> staged[at] = value }
@@ -32,17 +56,31 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         setup.writes.forEach { (at, value) -> value.copyInto(staged, at) }
         val boot = SpcData.buildInitialSpcRam(RomParser(staged))
         check(boot.contentEquals(SoundEffects.bootRam(original, project))) { "Effect boot upload differs from the preview" }
-        val count = MusicRomExporter(project.copy(soundEffectEdits = mutableMapOf()), onLog).applyMusicOnly(staged, allocator, setup.allocation, effects.allocations)
-        staged.copyInto(romData)
-        return count + project.soundEffectEdits.size + project.soundEffectPrograms.size
+        val music = MusicRomExporter(project.copy(soundEffectEdits = mutableMapOf()), onLog)
+            .planMusicOnly(staged, allocator, setup.allocation, effects.allocations)
+        val allWrites = mergeWrites(
+            listOf(SpcData.packSpcBytesToWrites(patches.mapValues { it.value.toInt() and 0xFF })) +
+                effects.writes + setup.writes + music.writes,
+        )
+        return Plan(
+            patchedCount = music.patchedCount + project.soundEffectEdits.size + project.soundEffectPrograms.size,
+            writes = allWrites,
+            allocations = (effects.allocations + listOfNotNull(setup.allocation) + music.allocations)
+                .distinctBy { it.pcOffset to it.size },
+        )
     }
 
-    private fun applyMusicOnly(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null, ownedTable: RomAllocation? = null, ownedEffects: List<RomAllocation> = emptyList()): Int {
+    private fun planMusicOnly(
+        romData: ByteArray,
+        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
+        ownedTable: RomAllocation? = null,
+        ownedEffects: List<RomAllocation> = emptyList(),
+    ): Plan {
         val parser = RomParser(romData)
         val songSets = MusicBankTransitions.editedSongSets(project)
         val installed = SpcTransferStream.installedCodePointer(parser)
         val expandedTable = runCatching { SpcMusicBankTable.read(parser).expanded }.getOrDefault(false)
-        if (songSets.isEmpty() && installed == null && !expandedTable) return 0
+        if (songSets.isEmpty() && installed == null && !expandedTable) return Plan(0, emptyMap(), emptyList())
         require(songSets.all { it in 3..255 && it % 3 == 0 }) { "Music edits require a non-setup native song set" }
         // Inventory every native bank, including setup and unused $48, before reserving space.
         val pointers = (SpcData.TRANSFER_SONG_SETS + SpcMusicBankTable.songSets(parser) + songSets).distinct().associateWith {
@@ -59,9 +97,16 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         val tableRanges = if (table?.expanded == true && ownedTable == null) listOf(table.pc - SpcMusicBankTable.HEADER_BYTES until table.pc + SpcMusicBankTable.TABLE_BYTES) else emptyList()
         val metadata = tableRanges + tableCells.values.filter { ownedTable == null || it !in ownedTable.pcOffset until ownedTable.pcOffset + ownedTable.size }.map { it until it + 3 } + listOf(parser.snesToPc(0x808024) until parser.snesToPc(0x808111), parser.snesToPc(0x808F72) until parser.snesToPc(0x808F7E)) +
             listOfNotNull(installed?.let { parser.snesToPc(it) until parser.snesToPc(it) + MusicTransferLoader.code.size })
-        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, parser::snesToPc, parser::pcToSnes, guardBytes = 2)
+        val allocator = (freeSpaceAllocator ?: RomFreeSpaceAllocator(
+            romData, parser::snesToPc, parser::pcToSnes, guardBytes = 2,
+        )).scoped(
+            owner = "music:project",
+            kind = com.supermetroid.editor.rom.RomSegmentKind.MUSIC,
+            idPrefix = "music:project",
+            constraint = "SPC upload data and loader pointers must remain LoROM-addressable",
+        )
         allocator.protectRanges(SoundEffectRomSetup.excludeOwned(sourceRanges + metadata, ownedEffects + listOfNotNull(ownedTable)))
-        if (songSets.isEmpty()) return 0 // Preserve installed source/code ownership for later exporters too.
+        if (songSets.isEmpty()) return Plan(0, emptyMap(), emptyList()) // Preserve installed source/code ownership for later exporters too.
 
         // Restorations are derived uploads, never saved overrides or authored track edits.
         val banks = songSets.associateWith { MusicBankResolver.resolve(parser, project, it) }.toMutableMap()
@@ -186,16 +231,29 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         checked.requireSafe()
         check(checked.instrumentRestorations.isEmpty()) { "Serialized instrument restorations are incomplete" }
         check(checked.sampleDirectoryRestorations.isEmpty()) { "Serialized sample directory restorations are incomplete" }
-        // Commit only after every stream, bank, transition and allocation has passed.
+        // Publish only after every stream, bank, transition and allocation has passed.
         for ((allocation, data) in allocated) allocator.validateWrite(allocation, data)
-        for ((allocation, data) in allocated) allocator.write(allocation, data)
-        staged.copyInto(romData)
         for (plan in plans) onLog("[EXPORT] Bank ${MusicInstrumentBanks.key(plan.songSet)}: " + when {
             plan.prefix.isNotEmpty() -> "resource prefix (${plan.prefix.size} entries) + retained music"
             plan.relocated != null -> "relocated SPC transfer chain (${plan.relocated.size} bytes, ${plan.relocated.segments.size} ROM segment(s))"
             else -> "updated in place (${plan.patches.sumOf { it.second.size }} changed bytes; no bank copy)"
         })
-        return songSets.sumOf { banks.getValue(it).patchedTracks }
+        return Plan(
+            patchedCount = songSets.sumOf { banks.getValue(it).patchedTracks },
+            writes = SpcData.packSpcBytesToWrites(physical.mapValues { it.value.toInt() and 0xFF }),
+            allocations = allocated.map { it.first },
+        )
+    }
+
+    private fun mergeWrites(groups: List<Map<Int, ByteArray>>): Map<Int, ByteArray> {
+        val bytes = sortedMapOf<Int, Int>()
+        for (group in groups) for ((offset, data) in group) data.forEachIndexed { index, value ->
+            val pc = offset + index
+            val byte = value.toInt() and 0xFF
+            require(bytes[pc]?.let { it == byte } != false) { "Music write plan overlaps incompatibly at PC 0x${pc.toString(16)}" }
+            bytes[pc] = byte
+        }
+        return SpcData.packSpcBytesToWrites(bytes)
     }
 
     private fun prefix(entries: Map<Int, ByteArray>, pointer: Int): ByteArray =

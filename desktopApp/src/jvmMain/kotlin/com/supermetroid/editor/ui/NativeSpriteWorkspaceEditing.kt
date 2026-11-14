@@ -38,14 +38,23 @@ internal fun NativeSpriteSourceControls(
     var transferring by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val paletteAddress = target.paletteBase + row * 32
-    val palette = remember(parser, target, row, editor.editVersion, editor.paletteVersion) { editor.nativeSprites.palette(parser, paletteAddress) }
+    val asmRevision = editor.asmVisualSourceRevision
+    val sourceStatus = remember(target.sourceKey, asmRevision, editor.spriteVersion) {
+        editor.nativeSpriteEditingStatus(target.sourceKey)
+    }
+    val paletteStatus = remember(paletteAddress, asmRevision, editor.paletteVersion) {
+        editor.nativeSpritePaletteEditingStatus(paletteAddress)
+    }
+    val palette = remember(parser, target, row, editor.editVersion, editor.paletteVersion, asmRevision) {
+        editor.nativeSprites.palette(parser, paletteAddress)
+    }
     val fs = LocalEditorTheme.current.fontSize.value
     Text("Source: ${target.name}", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SpriteWorkspaceAction("Edit source pixels", {
             error = runCatching { onEdit(editor.nativeSprites.loadSheet(parser, target.sourceKey,
                 if (NativeSpriteAssets.source(target.sourceKey).mode7) target.paletteBase else paletteAddress)) }.exceptionOrNull()?.message
-        })
+        }, enabled = sourceStatus.editable)
         SpriteWorkspaceAction("Export source PNG", {
             val sheet = runCatching { editor.nativeSprites.loadSheet(parser, target.sourceKey,
                 if (NativeSpriteAssets.source(target.sourceKey).mode7) target.paletteBase else paletteAddress) }
@@ -58,7 +67,7 @@ internal fun NativeSpriteSourceControls(
                 status = if (result.isSuccess) "Exported ${file.name}" else ""
                 transferring = false
             }
-        }, enabled = !transferring)
+        }, enabled = sourceStatus.editable && !transferring)
         SpriteWorkspaceAction("Import source PNG", {
             val sheet = runCatching { editor.nativeSprites.loadSheet(parser, target.sourceKey,
                 if (NativeSpriteAssets.source(target.sourceKey).mode7) target.paletteBase else paletteAddress) }
@@ -76,27 +85,39 @@ internal fun NativeSpriteSourceControls(
                 status = if (result.isSuccess) "Imported ${file.name} · colors matched to the selected palette" else ""
                 transferring = false
             }
-        }, enabled = !transferring)
-        if (editor.nativeSprites.hasTiles(target.sourceKey)) SpriteWorkspaceAction("Reset pixels", { editor.nativeSprites.resetTiles(target.sourceKey) })
-        if (editor.nativeSprites.hasPalette(parser, paletteAddress)) SpriteWorkspaceAction("Reset palette", { editor.nativeSprites.resetPalette(parser, paletteAddress) })
+        }, enabled = sourceStatus.editable && !transferring)
+        if (sourceStatus.editable && editor.nativeSprites.hasTiles(target.sourceKey)) {
+            SpriteWorkspaceAction("Restore source pixels", { editor.nativeSprites.resetTiles(target.sourceKey) })
+        }
+        if (paletteStatus.editable && editor.nativeSprites.hasPalette(parser, paletteAddress)) {
+            SpriteWorkspaceAction("Restore palette", { editor.nativeSprites.resetPalette(parser, paletteAddress) })
+        }
     }
     if (target.rows > 1) SpriteOptionSelector((1..target.rows).map { "Palette $it" }, row, { row = it; onPaletteRowChanged(it) }, Modifier.fillMaxWidth())
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         palette.forEachIndexed { index, color ->
             Box(Modifier.size(20.dp).clip(RoundedCornerShape(3.dp))
-                .clickable(enabled = index != 0) { colorIndex = if (colorIndex == index) -1 else index }
+                .clickable(enabled = index != 0 && paletteStatus.editable) { colorIndex = if (colorIndex == index) -1 else index }
                 .background(if (index == 0) MaterialTheme.colorScheme.surface else Color(color))
                 .border(if (colorIndex == index) 2.dp else 1.dp,
                     if (colorIndex == index) Color.White else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(3.dp)))
         }
     }
-    if (colorIndex in 1..15) HsvColorPicker(
+    if (colorIndex in 1..15 && paletteStatus.editable) HsvColorPicker(
         bgr555 = EnemySpriteGraphics.argbToSnesColor(palette[colorIndex]),
         onColorChanged = { bgr ->
             editor.nativeSprites.savePalette(parser, paletteAddress, palette.copyOf().also { it[colorIndex] = EnemySpriteGraphics.snesColorToArgb(bgr) })
         },
     )
-    if (NativeSpriteAssets.source(target.sourceKey).compressed) Text("Compressed source: Apply must fit its original ROM space.", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    sourceStatus.message?.let {
+        Text(it, fontSize = fs.detail, color = if (sourceStatus.editable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+    }
+    paletteStatus.message?.let {
+        Text(it, fontSize = fs.detail, color = if (paletteStatus.editable) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+    }
+    if (NativeSpriteAssets.source(target.sourceKey).compressed && !sourceStatus.sourceManaged) {
+        Text("Compressed source: Apply must fit its original ROM space.", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
     if (status.isNotBlank()) Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = fs.detail)
 }
@@ -113,7 +134,7 @@ internal fun NativeSpritePixelEditing(
     renderPreview: (RomParser) -> SpriteAnimation?, onClose: () -> Unit, modifier: Modifier,
 ) {
     var error by remember(sheet) { mutableStateOf<String?>(null) }
-    val references = remember(sheet, editor.spriteVersion, editor.paletteVersion) {
+    val references = remember(sheet, editor.spriteVersion, editor.paletteVersion, editor.asmVisualSourceRevision) {
         renderPreview(editor.nativeSprites.previewParser(parser))?.bitmaps().orEmpty()
     }
     Column(modifier.fillMaxSize()) {

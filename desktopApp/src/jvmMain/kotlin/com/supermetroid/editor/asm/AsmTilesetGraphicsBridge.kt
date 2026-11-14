@@ -28,9 +28,13 @@ internal sealed interface AsmTilesetGraphicsAccess {
         val baselineRawData: ByteArray,
         /** Exact compressed source bytes used for optimistic save/restore guards. */
         val sourceBytes: ByteArray,
+        val encodedSize: Int,
         val capacity: Int,
         val affectedTilesetIds: List<Int>,
         val modified: Boolean,
+        val managedAssetId: String? = null,
+        val managedSourceFileId: String? = null,
+        val relocation: AsmAssetRelocationCandidate? = null,
     ) : AsmTilesetGraphicsAccess
 
     data class AsmOnly(
@@ -38,6 +42,41 @@ internal sealed interface AsmTilesetGraphicsAccess {
         val reason: String,
     ) : AsmTilesetGraphicsAccess
 }
+
+internal data class AsmAssetRelocationCandidate(
+    val id: String,
+    val kind: String,
+    val sourceFileId: String,
+    val sourceLabel: String,
+    val originalAssetPath: String,
+    val managedAssetPath: String,
+    val originalPcOffset: Int,
+    val originalLength: Int,
+    val originalDeclaration: String,
+    val pointerBindings: List<AsmManagedPointerBinding>,
+) {
+    fun record(): AsmManagedAssetRecord = AsmManagedAssetRecord(
+        id = id,
+        kind = kind,
+        sourceFileId = sourceFileId,
+        sourceLabel = sourceLabel,
+        originalAssetPath = originalAssetPath,
+        managedAssetPath = managedAssetPath,
+        originalPcOffset = originalPcOffset,
+        originalLength = originalLength,
+        originalDeclaration = originalDeclaration,
+        pointerBindings = pointerBindings,
+    )
+}
+
+internal class AsmAssetRelocationRequiredException(
+    val assetPath: String,
+    val requiredBytes: Int,
+    val inPlaceCapacity: Int,
+) : IllegalArgumentException(
+    "$assetPath needs $requiredBytes compressed bytes, but its frozen source envelope has $inPlaceCapacity bytes. " +
+        "Move it to checked project space to keep editing visually.",
+)
 
 /**
  * Reciprocal authority for visual tileset graphics/metatile editors and their
@@ -58,10 +97,11 @@ internal class AsmTilesetGraphicsBridge(
 
     fun accessAll(projectFilePath: String): Map<AsmTilesetGraphicsKey, AsmTilesetGraphicsAccess> {
         val keys = allKeys()
-        val workspace = repository.loadForBuild(projectFilePath)
+        val workspace = repository.loadForRead(projectFilePath)
             ?: return keys.associateWith { AsmTilesetGraphicsAccess.AsmOnly(it, "Project ASM workspace is unavailable.") }
         val sources = readAsmSourceTree(File(workspace.workingDirectory, "src"))
-        val resolutions = resolveAssets(sources, workspace.assets)
+        val managed = AsmManagedAssets.load(workspace.root)
+        val resolutions = resolveAssets(sources, workspace.assets, managed)
         return keys.associateWith { key ->
             val resolution = resolutions[key]
                 ?: return@associateWith AsmTilesetGraphicsAccess.AsmOnly(
@@ -82,9 +122,10 @@ internal class AsmTilesetGraphicsBridge(
         resolution: AssetResolution,
         resolutions: Map<AsmTilesetGraphicsKey, AssetResolution>,
     ): AsmTilesetGraphicsAccess {
-        val source = File(workspace.workingDirectory, "data/${resolution.asset.path}")
+        val sourcePath = resolution.managed?.managedAssetPath ?: resolution.asset.path
+        val source = File(workspace.workingDirectory, "data/$sourcePath")
         val original = File(workspace.originalDirectory, "data/${resolution.asset.path}")
-        if (!source.isFile || source.length() != resolution.asset.length.toLong() ||
+        if (!source.isFile || source.length() <= 0L ||
             !original.isFile || original.length() != resolution.asset.length.toLong()
         ) {
             return AsmTilesetGraphicsAccess.AsmOnly(
@@ -115,13 +156,17 @@ internal class AsmTilesetGraphicsBridge(
         }
         return AsmTilesetGraphicsAccess.Editable(
             key = key,
-            assetPath = resolution.asset.path,
+            assetPath = sourcePath,
             rawData = decoded.data,
             baselineRawData = baseline.data,
             sourceBytes = sourceBytes,
+            encodedSize = decoded.consumed,
             capacity = resolution.asset.length,
             affectedTilesetIds = aliases,
-            modified = !sourceBytes.contentEquals(originalBytes),
+            modified = resolution.managed != null || !sourceBytes.contentEquals(originalBytes),
+            managedAssetId = resolution.managed?.id,
+            managedSourceFileId = resolution.managed?.sourceFileId,
+            relocation = resolution.relocation,
         )
     }
 
@@ -142,7 +187,43 @@ internal class AsmTilesetGraphicsBridge(
         validateRaw(current.key, rawData)
         if (current.rawData.contentEquals(rawData)) return current
         val sourceBytes = encode(current, rawData)
-        repository.saveAsset(projectFilePath, current.assetPath, sourceBytes, expectedSourceBytes)
+        if (current.managedAssetId == null) {
+            repository.saveAsset(projectFilePath, current.assetPath, sourceBytes, expectedSourceBytes)
+        } else {
+            repository.saveManagedAsset(projectFilePath, current.managedAssetId, sourceBytes, expectedSourceBytes)
+        }
+        return access(projectFilePath, kind, tilesetId).editableOrThrow()
+    }
+
+    fun relocate(
+        projectFilePath: String,
+        kind: AsmTilesetGraphicsKind,
+        tilesetId: Int?,
+        rawData: ByteArray,
+        expectedSourceBytes: ByteArray,
+    ): AsmTilesetGraphicsAccess.Editable {
+        val current = access(projectFilePath, kind, tilesetId).editableOrThrow()
+        require(current.managedAssetId == null) { "${current.assetPath} is already in managed project space" }
+        require(current.sourceBytes.contentEquals(expectedSourceBytes)) {
+            "${current.assetPath} changed after the visual resource was opened. Reload it before relocating."
+        }
+        require(rawData.size == current.rawData.size) {
+            "${current.assetPath} must keep its ${current.rawData.size}-byte decompressed shape"
+        }
+        validateRaw(current.key, rawData)
+        val candidate = requireNotNull(current.relocation) {
+            "${current.assetPath} does not have a safe direct source declaration to relocate"
+        }
+        val compressed = encodeUnbounded(current.assetPath, current.key, rawData)
+        repository.installManagedAsset(
+            projectFilePath = projectFilePath,
+            record = candidate.record(),
+            bytes = compressed,
+            expectedSourceText = File(
+                requireNotNull(repository.loadForRead(projectFilePath)).workingDirectory,
+                "src/${candidate.sourceFileId}",
+            ).readText(),
+        )
         return access(projectFilePath, kind, tilesetId).editableOrThrow()
     }
 
@@ -156,21 +237,33 @@ internal class AsmTilesetGraphicsBridge(
         require(current.sourceBytes.contentEquals(expectedSourceBytes)) {
             "${current.assetPath} changed after the visual resource was opened. Reload it before restoring."
         }
-        repository.restoreAsset(projectFilePath, current.assetPath, expectedSourceBytes)
+        if (current.managedAssetId == null) {
+            repository.restoreAsset(projectFilePath, current.assetPath, expectedSourceBytes)
+        } else {
+            repository.restoreManagedAsset(projectFilePath, current.managedAssetId, expectedSourceBytes)
+        }
         return access(projectFilePath, kind, tilesetId).editableOrThrow()
     }
 
     private fun encode(access: AsmTilesetGraphicsAccess.Editable, rawData: ByteArray): ByteArray {
-        val compressed = LZ5Compressor.compress(rawData)
-        require(LZ5Codec.decompress(compressed, maxOutputSize = rawLimit(access.key.kind)).data.contentEquals(rawData)) {
-            "${access.assetPath} failed LZ5 round-trip validation"
-        }
-        require(compressed.size <= access.capacity) {
-            "${access.assetPath} needs ${compressed.size} compressed bytes, but its source asset has a fixed " +
-                "${access.capacity}-byte envelope. Edit its pointer/allocation in ASM."
+        val compressed = encodeUnbounded(access.assetPath, access.key, rawData)
+        if (access.managedAssetId != null) return compressed
+        if (compressed.size > access.capacity) {
+            require(access.relocation != null) {
+                "${access.assetPath} needs ${compressed.size} compressed bytes, but its frozen source envelope has " +
+                    "${access.capacity} bytes and its pointer consumers are not a supported relocatable shape. Edit it in ASM."
+            }
+            throw AsmAssetRelocationRequiredException(access.assetPath, compressed.size, access.capacity)
         }
         return ByteArray(access.capacity) { 0xFF.toByte() }.also(compressed::copyInto)
     }
+
+    private fun encodeUnbounded(assetPath: String, key: AsmTilesetGraphicsKey, rawData: ByteArray): ByteArray =
+        LZ5Compressor.compress(rawData).also { compressed ->
+            require(LZ5Codec.decompress(compressed, maxOutputSize = rawLimit(key.kind)).data.contentEquals(rawData)) {
+                "$assetPath failed LZ5 round-trip validation"
+            }
+        }
 
     private fun decodeFixedEnvelope(
         key: AsmTilesetGraphicsKey,
@@ -206,28 +299,70 @@ internal class AsmTilesetGraphicsBridge(
         is AsmTilesetGraphicsAccess.AsmOnly -> throw IllegalStateException(reason)
     }
 
-    private data class AssetResolution(val asset: AsmAssetRange)
-    private data class SourceLine(val lineIndex: Int, val lines: List<String>)
+    private data class AssetResolution(
+        val asset: AsmAssetRange,
+        val relocation: AsmAssetRelocationCandidate?,
+        val managed: AsmManagedAssetRecord? = null,
+    )
+    private data class SourceLine(val fileId: String, val lineIndex: Int, val lines: List<String>)
 
     private fun resolveAssets(
         sources: Map<String, String>,
         assets: List<AsmAssetRange>,
+        managed: AsmManagedAssetManifest,
     ): Map<AsmTilesetGraphicsKey, AssetResolution> {
         val labels = linkedMapOf<String, MutableList<SourceLine>>()
-        sources.values.forEach { text ->
+        sources.forEach { (fileId, text) ->
             val lines = text.lines()
             lines.forEachIndexed { lineIndex, line ->
                 GLOBAL_LABEL.matchEntire(asmExecutableCode(line).trim())?.groupValues?.get(1)?.let { label ->
-                    labels.getOrPut(label) { mutableListOf() } += SourceLine(lineIndex, lines)
+                    labels.getOrPut(label) { mutableListOf() } += SourceLine(fileId, lineIndex, lines)
                 }
             }
         }
         val assetsByPath = assets.associateBy(AsmAssetRange::path)
+        val directLabels = buildSet {
+            add(CRE_TILES_LABEL)
+            add(CRE_METATILES_LABEL)
+            labels.forEach { (label, definitions) ->
+                val table = TILESET_TABLE_LABEL.matchEntire(label) ?: return@forEach
+                val tilesetId = table.groupValues[1].toInt(16)
+                if (tilesetId !in 0 until TileGraphics.NUM_TILESETS || definitions.size != 1) return@forEach
+                val fields = followingStatements(definitions.single(), limit = 3)
+                if (fields.size == 3) fields.take(2).mapNotNullTo(this) {
+                    DATA_LONG.matchEntire(it)?.groupValues?.get(1)
+                }
+            }
+        }
+        val pointerBindings = repository.pointerBindings(sources, directLabels)
         fun direct(label: String): AssetResolution? {
+            managed.assets.singleOrNull { it.sourceLabel == label }?.let { record ->
+                val asset = assetsByPath[record.originalAssetPath] ?: return null
+                if (asset.pcOffset != record.originalPcOffset || asset.length != record.originalLength) return null
+                return AssetResolution(asset, relocation = null, managed = record)
+            }
             val definition = labels[label]?.singleOrNull() ?: return null
-            val statement = followingStatements(definition, limit = 1).singleOrNull() ?: return null
-            val reference = DIRECT_INCBIN.matchEntire(statement)?.groupValues?.get(1) ?: return null
-            return assetsByPath[normalizeAssetReference(reference)]?.let(::AssetResolution)
+            val statement = followingStatement(definition) ?: return null
+            val reference = DIRECT_INCBIN.matchEntire(statement.second)?.groupValues?.get(1) ?: return null
+            val asset = assetsByPath[normalizeAssetReference(reference)] ?: return null
+            val declaration = definition.lines.subList(definition.lineIndex, statement.first + 1).joinToString("\n")
+            val id = AsmManagedAssets.stableId("tileset-graphics", label, asset.path)
+            val bindings = pointerBindings[label]
+            return AssetResolution(
+                asset = asset,
+                relocation = bindings?.let { AsmAssetRelocationCandidate(
+                    id = id,
+                    kind = "tileset-graphics",
+                    sourceFileId = definition.fileId,
+                    sourceLabel = label,
+                    originalAssetPath = asset.path,
+                    managedAssetPath = "$ASM_MANAGED_ASSET_DATA_DIRECTORY/$id.bin",
+                    originalPcOffset = asset.pcOffset,
+                    originalLength = asset.length,
+                    originalDeclaration = declaration,
+                    pointerBindings = bindings,
+                ) },
+            )
         }
         val result = linkedMapOf<AsmTilesetGraphicsKey, AssetResolution>()
         labels.forEach { (label, definitions) ->
@@ -256,6 +391,16 @@ internal class AsmTilesetGraphicsBridge(
             if (statements.size == limit) break
         }
         return statements
+    }
+
+    private fun followingStatement(definition: SourceLine): Pair<Int, String>? {
+        for (index in definition.lineIndex + 1 until definition.lines.size) {
+            val code = asmExecutableCode(definition.lines[index]).trim()
+            if (code.isBlank()) continue
+            if (GLOBAL_LABEL.matches(code)) return null
+            return index to code
+        }
+        return null
     }
 
     private fun normalizeAssetReference(reference: String): String = reference.replace('\\', '/')

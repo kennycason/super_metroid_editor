@@ -24,6 +24,7 @@ import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanReport as CoreRomWritePlanReport
 import com.supermetroid.editor.rom.RomResourceAccess
 import com.supermetroid.editor.rom.RomResourceClaim
+import com.supermetroid.editor.rom.RomSegmentKind
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
@@ -78,6 +79,7 @@ class SmeditBuildService(
             }
         }
         val applied = applyRequest(request, project, context)
+        context.freeSpaceAllocator?.requireTypedReservations()
         val postflightErrors = RomValidator.validate(
             parser = RomParser(outputRom),
             roomIds = validationRoomIds,
@@ -842,38 +844,43 @@ class SmeditBuildService(
         val roomsPatched = linkedSetOf<String>()
         try {
             val beforeRooms = rom.copyOf()
+            val plannedRooms = beforeRooms.copyOf()
+            val owner = "room-graph:$identifier"
+            val rootAllocator = requireNotNull(context.freeSpaceAllocator) {
+                "ROM free-space allocator is unavailable"
+            }
+            val planningAllocator = rootAllocator.forkForPlanning(plannedRooms)
             val roomExportResult = ProjectRoomExporter(
                     project = project,
-                    romParser = RomParser(rom),
-                    romData = rom,
+                    romParser = RomParser(plannedRooms),
+                    romData = plannedRooms,
                     roomAreaOverrides = project.rooms.mapNotNull { (key, edits) ->
                         val roomId = key.toIntOrNull(16) ?: return@mapNotNull null
                         edits.roomHeaderChange?.area?.let { roomId to it }
                     }.toMap(),
                     extraItemPlmIds = itemPlmIds,
-                    freeSpaceAllocator = context.freeSpaceAllocator,
+                    freeSpaceAllocator = planningAllocator.scoped(
+                        owner = owner,
+                        kind = RomSegmentKind.ROOM_DATA,
+                        idPrefix = owner,
+                        constraint = "Each native room pointer retains its bank-specific width and bank",
+                    ),
                     onLog = { message ->
                         if (message.startsWith("WARN") || message.startsWith("ERROR")) {
                             context.warnings.add(message)
                         }
                     },
             ).exportRooms()
-            val owner = "room-graph:$identifier"
-            context.writePlan.recordExternalMutation(
+            context.writePlan.addPlannedImage(
+                before = beforeRooms,
+                planned = plannedRooms,
+                allocations = roomExportResult.allocations,
                 owner = owner,
                 label = "$name project room graph",
-                before = beforeRooms,
                 kind = RomWriteKind.ROOM,
                 overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
             )
-            for (allocation in roomExportResult.allocations) {
-                context.writePlan.claimCurrentRange(
-                    owner = owner,
-                    label = allocation.label,
-                    offset = allocation.pcOffset - context.romHeaderOffset,
-                    size = allocation.size,
-                )
-            }
+            rootAllocator.adoptPlanning(planningAllocator, roomExportResult.allocations)
             roomsPatched.addAll(roomExportResult.roomsPatched)
         } catch (e: ProjectRoomExportException) {
             throw IllegalStateException("Project room edits could not be written safely: ${e.message}", e)
@@ -914,8 +921,6 @@ class SmeditBuildService(
 
         val beforeRecords = context.patchWrites.size
         val beforeBytes = context.patchWrites.totalByteCount()
-        val beforeRom = rom.copyOf()
-
         for ((areaKey, edits) in project.minimapEdits.toSortedMap()) {
             val area = areaKey.toIntOrNull()
                 ?: throw IllegalArgumentException("Invalid minimap area key '$areaKey'.")
@@ -932,7 +937,17 @@ class SmeditBuildService(
                 }
                 data = data.withTile(edit.x, edit.y, edit.tileWord)
             }
-            for ((offset, byte) in parser.writeMinimapTiles(data)) rom[offset] = byte
+            for ((offset, byte) in parser.writeMinimapTiles(data)) {
+                if (rom[offset] != byte) context.withOwner("minimap:project") {
+                    writeBytes(
+                        context,
+                        context.fileToPcOffset(offset),
+                        listOf(byte.toInt() and 0xFF),
+                        "Minimap area $area",
+                        kind = RomWriteKind.MINIMAP,
+                    )
+                }
+            }
         }
 
         for ((areaKey, edits) in project.mapStationEdits.toSortedMap()) {
@@ -950,21 +965,22 @@ class SmeditBuildService(
                     data = data.withToggle(edit.x, edit.y)
                 }
             }
-            for ((offset, byte) in parser.writeMapStationData(data)) rom[offset] = byte
+            for ((offset, byte) in parser.writeMapStationData(data)) {
+                if (rom[offset] != byte) context.withOwner("minimap:project") {
+                    writeBytes(
+                        context,
+                        context.fileToPcOffset(offset),
+                        listOf(byte.toInt() and 0xFF),
+                        "Map-station area $area",
+                        kind = RomWriteKind.MINIMAP,
+                    )
+                }
+            }
         }
-
-        context.writePlan.recordExternalMutation(
-            owner = "minimap:project",
-            label = "Project minimap and map-station edits",
-            before = beforeRom,
-            kind = RomWriteKind.MINIMAP,
-        )
-        val writes = diffPatchWrites(beforeRom, rom, context.romHeaderOffset)
-        context.patchWrites.addAll(writes)
-        context.appliedWriteCount += writes.size
 
         val recordCount = context.patchWrites.size - beforeRecords
         if (recordCount == 0) return emptyList()
+        context.appliedWriteCount += recordCount
         return listOf(
             SmeditAppliedPatchReport(
                 identifier = "project_minimap_edits",
@@ -1100,7 +1116,12 @@ class SmeditBuildService(
             tableFileOffset = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES),
             allocator = requireNotNull(context.freeSpaceAllocator) {
                 "ROM free-space allocator is unavailable"
-            },
+            }.scoped(
+                owner = "graphics:${context.currentOwner}",
+                kind = RomSegmentKind.GRAPHICS,
+                idPrefix = "graphics:${context.currentOwner}",
+                constraint = "Tileset palette consumers require a complete LoROM pointer",
+            ),
         )
     }
 
@@ -1607,9 +1628,8 @@ class SmeditBuildService(
         }
 
         val patch = entry.patch
-        val beforeRom = rom.copyOf()
         val result = try {
-            RoomNamePauseMapPatch.install(
+            RoomNamePauseMapPatch.plan(
                 romData = rom,
                 snesToPc = parser::snesToPc,
                 pcToSnes = parser::pcToSnes,
@@ -1618,7 +1638,12 @@ class SmeditBuildService(
                 alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
                     patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
                 ),
-                freeSpaceAllocator = context.freeSpaceAllocator,
+                freeSpaceAllocator = context.freeSpaceAllocator?.scoped(
+                    owner = "patch:${patch.id}",
+                    kind = RomSegmentKind.GENERATED_PATCH,
+                    idPrefix = "patch:${patch.id}",
+                    constraint = "Pause-map name payload must remain reachable from its checked native hook",
+                ),
             )
         } catch (e: Exception) {
             throw IllegalArgumentException("Room-name pause-map patch could not be written safely: ${e.message}", e)
@@ -1630,19 +1655,16 @@ class SmeditBuildService(
                 write.expectedBytes,
             )
         }
-        context.writePlan.recordDeclaredMutation(
-            before = beforeRom,
-            declaredWrites = logicalWrites.mapIndexed { index, write ->
-                com.supermetroid.editor.rom.RomWriteIntent(
+        logicalWrites.forEachIndexed { index, write ->
+            context.writePlan.add(
                     owner = "patch:${patch.id}",
                     label = if (index == 0) "${patch.name} payload" else "${patch.name} hook $index",
                     offset = write.offset.toInt(),
                     bytes = write.bytes,
                     kind = if (index == 0) RomWriteKind.ALLOCATION else RomWriteKind.HOOK,
                     expectedBefore = write.expectedBytes,
-                )
-            },
-        )
+            )
+        }
         context.patchWrites.addAll(logicalWrites)
         context.appliedWriteCount += result.writes.size
         return listOf(
@@ -1722,9 +1744,10 @@ class SmeditBuildService(
                     it.patch.id == INFINITE_BLUE_SUIT_PATCH_ID
                 )
         }) {
+            val owner = "patch:${entry.patch.id}"
             context.writePlan.claimResource(
                 RomResourceClaim(
-                    owner = "patch:${entry.patch.id}",
+                    owner = owner,
                     namespace = "rom_hook",
                     start = PER_FRAME_HOOK_PATCH_PC,
                     endInclusive = PER_FRAME_HOOK_PATCH_PC + PER_FRAME_HOOK_JSL.lastIndex,
@@ -1733,6 +1756,33 @@ class SmeditBuildService(
                     sharedGroup = "combined-per-frame-hook",
                 )
             )
+            when {
+                entry.patch.configType == BOSS_DEFEATED_CONFIG_TYPE -> {
+                    val addresses = HEADLESS_BOSS_FLAGS
+                        .filter { it.key in enabledBosses }
+                        .map { it.wramAddr }
+                        .toMutableList()
+                    if (enabledBosses.any { it in setOf("phantoon", "ridley") }) addresses += 0xD820
+                    if (enabledBosses.any { it in setOf("draygon", "kraid") }) addresses += 0xD821
+                    for (address in addresses.distinct()) {
+                        context.writePlan.claimResource(
+                            RomResourceClaim(
+                                owner = owner,
+                                namespace = "wram",
+                                start = address,
+                                endInclusive = address + 1,
+                                label = "Per-frame boss/event flag word at \$7E:${address.toString(16).uppercase()}",
+                            )
+                        )
+                    }
+                }
+                entry.patch.configType == HYPER_BEAM_CONFIG_TYPE -> context.writePlan.claimResource(
+                    RomResourceClaim(owner, "wram", 0x0A76, 0x0A77, "Hyper Beam equipment word")
+                )
+                entry.patch.id == INFINITE_BLUE_SUIT_PATCH_ID -> context.writePlan.claimResource(
+                    RomResourceClaim(owner, "wram", 0x0B3E, 0x0B3F, "Blue-suit dash counter")
+                )
+            }
         }
 
         val beforePatchBytes = context.patchWrites.totalByteCount()

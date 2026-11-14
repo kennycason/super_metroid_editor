@@ -11,6 +11,64 @@ data class EmulatorCapabilities(
     val supportsMultiPlayer: Boolean = false,
     val supportsRecording: Boolean = false,
     val supportsAgentControl: Boolean = false,
+    /** True only for a core exposing SMEDIT's versioned instruction-debug ABI. */
+    val supportsCpuDebugging: Boolean = false,
+    val cpuDebugApiVersion: Int? = null,
+)
+
+@Serializable
+enum class DebugHaltReason {
+    NONE,
+    STEP,
+    BREAKPOINT,
+    INSTRUCTION_LIMIT,
+    FRAME_LIMIT,
+    CPU_STOPPED,
+    INVALID_REQUEST,
+}
+
+@Serializable
+data class CpuDebugState(
+    val pc: Int,
+    val a: Int,
+    val x: Int,
+    val y: Int,
+    val d: Int,
+    val db: Int,
+    val pb: Int,
+    val s: Int,
+    val p: Int,
+    val memoryWidth: Int,
+    val indexWidth: Int,
+    val emulation: Boolean,
+    val waitingForInterrupt: Boolean,
+    val halted: Boolean,
+    val cycles: Int,
+    val verticalCounter: Int,
+    val coreFrame: Long,
+    val instructions: Long,
+) {
+    val carry: Boolean get() = p and 0x01 != 0
+    val zero: Boolean get() = p and 0x02 != 0
+    val irqDisabled: Boolean get() = p and 0x04 != 0
+    val decimal: Boolean get() = p and 0x08 != 0
+    val overflow: Boolean get() = p and 0x40 != 0
+    val negative: Boolean get() = p and 0x80 != 0
+}
+
+@Serializable
+data class DebugRunRequest(
+    val addresses: List<Int> = emptyList(),
+    val instructionLimit: Long = 1_000_000,
+    val frameLimit: Int = 1,
+    val input: EmulatorInput = EmulatorInput(),
+)
+
+@Serializable
+data class DebugExecutionResult(
+    val haltReason: DebugHaltReason,
+    val cpu: CpuDebugState,
+    val snapshot: GameSnapshot = GameSnapshot(),
 )
 
 @Serializable

@@ -101,13 +101,46 @@ val BEAM_COMBOS = listOf(
 
 val ALL_BEAMS = BASE_BEAMS + BEAM_COMBOS
 
+/** Active non-beam damage words in bank $93. Explosion-table damage words are
+ * deliberately absent: the native source documents those values as ignored. */
+data class ProjectileDamageDef(
+    val key: String,
+    val name: String,
+    val defaultDamage: Int,
+    val snesAddress: Int,
+    val sourceLabel: String,
+    val sourceWords: Int,
+)
+
+val OTHER_PROJECTILE_DAMAGE = listOf(
+    ProjectileDamageDef("hyper", "Hyper Beam", 1000, 0x9383BF, "HyperBeamDamageValue", 1),
+    ProjectileDamageDef("missile", "Missile", 100, 0x938641, "ProjectileDataTable_NonBeam_Missile", 11),
+    ProjectileDamageDef("super_missile", "Super Missile", 300, 0x938657, "ProjectileDataTable_NonBeam_SuperMissile", 11),
+    ProjectileDamageDef("super_missile_link", "Super Missile Link", 300, 0x93866D, "ProjectileDataTable_NonBeam_SuperMissileLink", 2),
+    ProjectileDamageDef("power_bomb", "Power Bomb", 200, 0x938671, "ProjectileDataTable_NonBeam_PowerBomb", 2),
+    ProjectileDamageDef("bomb", "Bomb", 30, 0x938675, "ProjectileDataTable_NonBeam_Bomb", 2),
+    ProjectileDamageDef("plasma_sba", "Plasma Special Beam Attack", 300, 0x938685, "ProjectileDataTable_NonBeam_PlasmaSBA", 2),
+    ProjectileDamageDef("wave_sba", "Wave Special Beam Attack", 300, 0x938689, "ProjectileDataTable_NonBeam_WaveSBA", 2),
+    ProjectileDamageDef("spazer_sba", "Spazer Special Beam Attack", 300, 0x93868D, "ProjectileDataTable_NonBeam_SpazerSBA", 2),
+)
+
+internal val BEAM_DAMAGE_KEYS = ALL_BEAMS.flatMap { listOf(it.key, it.chargedKey) }.toSet()
+internal val PROJECTILE_DAMAGE_KEYS = BEAM_DAMAGE_KEYS + OTHER_PROJECTILE_DAMAGE.map { it.key }
+internal fun projectileDamageName(key: String): String = OTHER_PROJECTILE_DAMAGE.firstOrNull { it.key == key }?.name
+    ?: ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }.name
+internal fun projectileDamageKeyFamily(key: String): Set<String> {
+    val base = key.removeSuffix("_charged")
+    return if (base in ALL_BEAMS.map { it.key }) setOf(base, "${base}_charged") else setOf(key)
+}
+internal fun projectileDamageConfigKeys(key: String): Set<String> =
+    if (key.endsWith("_charged")) setOf(key) else projectileDamageKeyFamily(key)
+
 /** Old normal-only configs retain their established 3× behavior; explicit charged words are independent. */
 internal fun beamDamageConfigValues(data: Map<String, Int>): Map<String, Int> {
-    val allowed = ALL_BEAMS.flatMap { listOf(it.key, it.chargedKey) }.toSet()
-    require(data.keys.all { it in allowed }) { "Unknown beam damage config keys: ${data.keys - allowed}." }
+    require(data.keys.all { it in PROJECTILE_DAMAGE_KEYS }) { "Unknown projectile damage config keys: ${data.keys - PROJECTILE_DAMAGE_KEYS}." }
     val result = data.toMutableMap()
     for (beam in ALL_BEAMS) data[beam.key]?.let { normal -> result.putIfAbsent(beam.chargedKey, normal * 3) }
-    require(result.values.all { it in 0..65535 }) { "Beam damage must fit a 16-bit word (0–65535); specify charged damage explicitly if 3× would overflow." }
+    require(result.values.all { it in 0..65535 }) { "Projectile damage must fit a 16-bit word (0–65535); specify charged beam damage explicitly if 3× would overflow." }
     return result
 }
 
@@ -137,6 +170,10 @@ fun BeamDamageEditor(
         if (sourceMode) return bridge?.value(patch, key)?.value ?: beam.defaultDamage * if (charged) 3 else 1
         return config.getOrNull()?.get(key) ?: readDamageFromRom(romParser, beam, charged) ?: beam.defaultDamage * if (charged) 3 else 1
     }
+    fun value(projectile: ProjectileDamageDef): Int {
+        if (sourceMode) return bridge?.value(patch, projectile.key)?.value ?: projectile.defaultDamage
+        return config.getOrNull()?.get(projectile.key) ?: readDamageFromRom(romParser, projectile.snesAddress) ?: projectile.defaultDamage
+    }
     fun applyBeam(beam: BeamDef, charged: Boolean, damage: Int) {
         if (!sourceMode && !charged) {
             // Freeze the currently displayed charged value before changing a normal-only legacy config.
@@ -155,7 +192,7 @@ fun BeamDamageEditor(
             .padding(20.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Beam Damage", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("Projectile Damage", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             if (sourceMode) TextButton(onClick = { openSource() }, modifier = Modifier.testTag("beam-damage-asm")) { Text("ASM") }
         }
         Spacer(Modifier.height(4.dp))
@@ -174,7 +211,7 @@ fun BeamDamageEditor(
                 Divider(Modifier.padding(vertical = 4.dp))
                 for (beam in beams) {
                     val problems = listOf(beam.key, beam.chargedKey).associateWith { key ->
-                        if (sourceMode) bridge?.value(patch, key)?.problem ?: if (bridge == null) "Wait for beam source indexing." else null
+                        if (sourceMode) bridge?.value(patch, key)?.problem ?: if (bridge == null) "Wait for projectile source indexing." else null
                         else config.exceptionOrNull()?.message
                     }
                     BeamRow(beam, value(beam, false), value(beam, true), problems,
@@ -199,15 +236,43 @@ fun BeamDamageEditor(
         }
 
         Spacer(Modifier.height(24.dp))
+        SectionLabel("Missiles, Bombs & Special Attacks")
+        Text("Super Missile Link is the attached auxiliary projectile. Explosion-table values are hidden because the game ignores their damage words.",
+            fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        for (projectile in OTHER_PROJECTILE_DAMAGE) {
+            val problem = if (sourceMode) bridge?.value(patch, projectile.key)?.problem
+                ?: if (bridge == null) "Wait for projectile source indexing." else null
+            else config.exceptionOrNull()?.message
+            ProjectileDamageRow(
+                projectile = projectile,
+                damage = value(projectile),
+                problem = problem,
+                onDamageChange = { editorState.setPatchConfigData(patch.id, projectile.key, it) },
+                onAsm = if (sourceMode) ({ openSource(projectile.key) }) else null,
+            )
+            problem?.let { Text("Last-good / read-only: $it", color = MaterialTheme.colorScheme.error,
+                fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+            if (problem?.contains("patch override") == true) TextButton(onClick = {
+                runCatching { bridge?.useSourceValues(projectile.key) }
+                    .onFailure { editorState.postStatus(it.message ?: "Cannot use source values.") }
+            }) { Text("Use ASM values") }
+        }
+
+        Spacer(Modifier.height(24.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
                 onClick = {
                     if (sourceMode) runCatching { requireNotNull(bridge).resetToOriginal() }
-                        .onFailure { editorState.postStatus(it.message ?: "Cannot reset beam source.") }
-                    else for (beam in ALL_BEAMS) {
-                        editorState.setPatchConfigData(patch.id, beam.key, beam.defaultDamage)
-                        editorState.setPatchConfigData(patch.id, beam.chargedKey, beam.defaultDamage * 3)
+                        .onFailure { editorState.postStatus(it.message ?: "Cannot reset projectile source.") }
+                    else {
+                        for (beam in ALL_BEAMS) {
+                            editorState.setPatchConfigData(patch.id, beam.key, beam.defaultDamage)
+                            editorState.setPatchConfigData(patch.id, beam.chargedKey, beam.defaultDamage * 3)
+                        }
+                        for (projectile in OTHER_PROJECTILE_DAMAGE)
+                            editorState.setPatchConfigData(patch.id, projectile.key, projectile.defaultDamage)
                     }
                 },
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
@@ -302,6 +367,45 @@ private fun BeamRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ProjectileDamageRow(
+    projectile: ProjectileDamageDef,
+    damage: Int,
+    problem: String?,
+    onDamageChange: (Int) -> Unit,
+    onAsm: (() -> Unit)?,
+) {
+    val selected = selectedBeamDamageKey == projectile.key
+    val requester = remember { BringIntoViewRequester() }
+    LaunchedEffect(selectedBeamDamageKey) { if (selected) requester.bringIntoView() }
+    Surface(
+        modifier = Modifier.bringIntoViewRequester(requester).fillMaxWidth().padding(vertical = 2.dp)
+            .testTag("projectile-row-${projectile.key}"),
+        shape = RoundedCornerShape(6.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+            else if (damage != projectile.defaultDamage) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+            else Color.Transparent,
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(30.dp), contentAlignment = Alignment.Center) {
+                Text("◆", color = MaterialTheme.colorScheme.secondary, fontSize = LocalEditorTheme.current.fontSize.value.body)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(projectile.name, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f),
+                fontWeight = if (damage != projectile.defaultDamage) FontWeight.Medium else FontWeight.Normal)
+            if (onAsm != null) TextButton(onClick = onAsm,
+                modifier = Modifier.width(BEAM_ASM_LINK_WIDTH).testTag("projectile-asm-${projectile.key}"),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail, maxLines = 1, softWrap = false)
+            }
+            DamageInput(damage, onDamageChange, Modifier.width(72.dp).testTag("projectile-damage-${projectile.key}")
+                .onFocusChanged { if (it.isFocused) selectBeamDamage(projectile.key) }, problem == null)
+            Spacer(Modifier.width(80.dp))
+        }
+    }
+}
+
 // ─── Beam icons ─────────────────────────────────────────────────────────
 
 @Composable
@@ -390,5 +494,14 @@ private fun readDamageFromRom(romParser: RomParser?, beam: BeamDef, charged: Boo
         if (pc + 1 < rom.size) {
             (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8)
         } else null
+    } catch (_: Exception) { null }
+}
+
+private fun readDamageFromRom(romParser: RomParser?, snesAddress: Int): Int? {
+    if (romParser == null) return null
+    return try {
+        val pc = romParser.snesToPc(snesAddress)
+        val rom = romParser.getRomData()
+        if (pc + 1 < rom.size) (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8) else null
     } catch (_: Exception) { null }
 }

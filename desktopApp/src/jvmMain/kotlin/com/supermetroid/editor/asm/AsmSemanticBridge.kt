@@ -233,6 +233,13 @@ internal object AsmSemanticBridge {
                     ?.takeIf { it in 0x8000..0xFFEA }?.let { add(0x930000 or it, link) }
             }
         }
+        for (projectile in com.supermetroid.editor.ui.OTHER_PROJECTILE_DAMAGE) {
+            add(projectile.snesAddress, AsmEditorLink(
+                "Edit ${projectile.name} damage",
+                "Projectile damage",
+                AsmEditorTarget.BeamDamage(projectile.key),
+            ))
+        }
         for (enemy in com.supermetroid.editor.ui.ENEMY_DEFS) {
             val address = RomConstants.BANK_ENEMY_AI or enemy.speciesId
             val link = AsmEditorLink("Edit ${enemy.name} stats", "HP / contact damage", AsmEditorTarget.EnemyTuning(enemy.speciesId))

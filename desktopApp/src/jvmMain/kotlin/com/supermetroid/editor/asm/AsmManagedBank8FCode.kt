@@ -1,6 +1,11 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
+import com.supermetroid.editor.rom.RomSegmentAllocationRegistry
+import com.supermetroid.editor.rom.RomSegmentKind
+import com.supermetroid.editor.rom.RomSegmentPlacement
+import com.supermetroid.editor.rom.RomSegmentRequest
+import com.supermetroid.editor.rom.RomVerifiedFreeRange
 
 internal interface AsmManagedBank8FRoutine {
     val macroName: String
@@ -70,7 +75,31 @@ internal object AsmManagedBank8FCode {
 
     fun chooseStart(reference: ByteArray, authored: ByteArray, symbols: ByteArray,
                     routines: List<AsmManagedBank8FRoutine>): Int {
+        return choosePlacement(reference, authored, symbols, routines, 1, emptyList()).allocation.snesAddress
+    }
+
+    fun measuredSize(routines: List<AsmManagedBank8FRoutine>, symbols: ByteArray): Int {
+        val labels = AsmWlaSymbolParser.parse(symbols.toString(Charsets.UTF_8)).labels
+        return routines.sumOf { routine ->
+            val start = requireNotNull(labels[routine.label]) { "Missing size-probe label ${routine.label}." }
+            val end = requireNotNull(labels[routine.label + "_End"]) { "Missing size-probe boundary ${routine.label}_End." }
+            require(start in 0x8F8000..0x8FFFFF && end in (start + 1)..0x900000 && end - start <= 1024) {
+                "${routine.macroName}: managed routine has an invalid measured size."
+            }
+            end - start
+        }
+    }
+
+    fun choosePlacement(
+        reference: ByteArray,
+        authored: ByteArray,
+        symbols: ByteArray,
+        routines: List<AsmManagedBank8FRoutine>,
+        requiredSize: Int,
+        verifiedFreeRanges: List<RomVerifiedFreeRange>,
+    ): RomSegmentPlacement {
         require(reference.size == authored.size)
+        require(requiredSize > 0)
         val labels = AsmWlaSymbolParser.parse(symbols.toString(Charsets.UTF_8)).labels
         val managedLabels = routines.map { it.label }.toSet()
         // Reserve complete manually declared code envelopes too, including their unchanged FF bytes.
@@ -84,11 +113,31 @@ internal object AsmManagedBank8FCode {
         val bankEnd = snesLoRomToPc(0x8FFFFF)!! + 1
         require(bankEnd <= available.size) { "ROM has no bank \$8F for managed routines." }
         for (pc in bankStart until bankEnd) if (reference[pc].toInt() and 255 != 255) available[pc] = 0
-        val allocator = RomFreeSpaceAllocator(available, { snesLoRomToPc(it) ?: -1 },
-            { pcToSnesLoRom(it) ?: -1 }, excludedRanges = excluded)
-        return requireNotNull(allocator.reserve(1, listOf(0x8F), "Managed bank-8F code")) {
-            "No verified trailing free space in bank \$8F for managed room routines. No ROM was produced."
-        }.snesAddress
+        val allocator = RomFreeSpaceAllocator(
+            available,
+            { snesLoRomToPc(it) ?: -1 },
+            { pcToSnesLoRom(it) ?: -1 },
+            excludedRanges = excluded,
+            verifiedFreeRanges = verifiedFreeRanges.filter { it.bank == 0x8F },
+        )
+        val request = RomSegmentRequest(
+            id = "asm-managed-code:room-bank8f",
+            owner = "asm-managed-code:room-bank8f",
+            kind = RomSegmentKind.MANAGED_CODE,
+            label = "Managed room predicates and door arrivals",
+            size = requiredSize,
+            allowedBanks = listOf(0x8F),
+            constraint = "Native room-state and door pointers are 16-bit bank-\$8F addresses",
+        )
+        return try {
+            RomSegmentAllocationRegistry(allocator).reserve(request)
+        } catch (problem: Exception) {
+            throw IllegalArgumentException(
+                "No verified space in bank \$8F for managed room routines. " +
+                    (problem.message ?: "The request does not fit") + ". No ROM was produced.",
+                problem,
+            )
+        }
     }
 
     fun claims(routines: List<AsmManagedBank8FRoutine>, start: Int, reference: ByteArray,

@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.supermetroid.editor.emulator.CpuDebugState
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -147,6 +148,12 @@ internal data class AsmProjectSourceChange(
     val workingText: String,
     val projectModule: Boolean,
     val enabled: Boolean,
+    val semantic: AsmSemanticChangeSummary = AsmSemanticChanges.source(
+        fileId, baselineText, workingText, projectModule,
+    ),
+    val restoreRequest: AsmProjectRestoreRequest? = null,
+    val restoreBlockedReason: String? = null,
+    val allocations: List<AsmProjectAllocationSummary> = emptyList(),
 ) {
     val savedBankOverride: Boolean get() = !projectModule && baselineText != savedText
     val unsavedBuffer: Boolean get() = savedText != workingText
@@ -157,6 +164,16 @@ internal data class AsmProjectAssetChange(
     val size: Int,
     val changedBytes: Int,
     val firstChangedOffsets: List<Int>,
+    val managed: Boolean = false,
+    val originalAssetPath: String? = null,
+    val originalCapacity: Int? = null,
+    val sourceLabel: String? = null,
+    val compiledAddress: Int? = null,
+    val inlineSource: Boolean = false,
+    val semantic: AsmSemanticChangeSummary = AsmSemanticChanges.asset(assetPath),
+    val restoreRequest: AsmProjectRestoreRequest? = null,
+    val restoreBlockedReason: String? = null,
+    val allocations: List<AsmProjectAllocationSummary> = emptyList(),
 )
 
 internal class AsmWorkspaceState(
@@ -285,6 +302,11 @@ internal class AsmWorkspaceState(
         private set
     var selectedRomDiffIndex by mutableStateOf(0)
         private set
+    private var currentProjectRevision by mutableStateOf(0L)
+    val compiledOutputFreshnessRevision: Long get() = currentProjectRevision
+    private var romPreviewProjectRevision: Long? = null
+    private var romPreviewBuildGeneratedAt: String? = null
+    private var romPreviewSymbols: AsmCompiledSymbols? = null
     var previewBusy by mutableStateOf(false)
         private set
     var editSessionSerial by mutableStateOf(0L)
@@ -292,6 +314,8 @@ internal class AsmWorkspaceState(
     var sourceBufferRevision by mutableStateOf(0L)
         private set
     var buildReport by mutableStateOf<AsmBuildReport?>(null)
+        private set
+    var projectChangesRequestSerial by mutableStateOf(0L)
         private set
     var roomDataSnapshot by mutableStateOf<AsmGeneratedRoomSource?>(null)
         private set
@@ -377,8 +401,15 @@ internal class AsmWorkspaceState(
     val hasProjectWorkspace: Boolean get() = projectWorkspace != null
     val projectAsmUpdateAvailable: Boolean
         get() = projectWorkspace?.baselineRevision?.let { it != baselineUpdater.targetRevision } == true
-    val projectModifiedFileIds: Set<String> get() = projectWorkspace?.modifiedFileIds.orEmpty()
+    val projectModifiedFileIds: Set<String>
+        get() = if (boundProjectEnabled && boundProjectFilePath.isNotBlank()) {
+            projectRepository.sourceOverrideFileIds(boundProjectFilePath) - projectModuleFileIds.toSet()
+        } else emptySet()
     val projectModuleFileIds: List<String> get() = projectWorkspace?.projectModuleFileIds.orEmpty()
+    private val activeProjectModuleFileIds: Set<String>
+        get() = if (boundProjectEnabled && boundProjectFilePath.isNotBlank()) {
+            projectRepository.sourceOverrideFileIds(boundProjectFilePath).intersect(projectModuleFileIds.toSet())
+        } else emptySet()
     val disabledProjectModuleFileIds: Set<String>
         get() = projectWorkspace?.disabledProjectModuleFileIds.orEmpty()
     val unsavedSourceFileIds: Set<String>
@@ -389,10 +420,12 @@ internal class AsmWorkspaceState(
         }
     val projectModifiedAssetPaths: Set<String>
         get() = if (boundProjectEnabled && boundProjectFilePath.isNotBlank()) {
-            projectRepository.assetOverridePaths(boundProjectFilePath)
+            projectRepository.assetOverridePaths(boundProjectFilePath) +
+                projectRepository.managedAssets(boundProjectFilePath).map(AsmManagedAssetRecord::managedAssetPath)
         } else emptySet()
     val hasProjectSourceChanges: Boolean
-        get() = projectModifiedFileIds.isNotEmpty() || activeUnsavedSourceFileIds.isNotEmpty() ||
+        get() = projectModifiedFileIds.isNotEmpty() || activeProjectModuleFileIds.isNotEmpty() ||
+            activeUnsavedSourceFileIds.isNotEmpty() ||
             projectModifiedAssetPaths.isNotEmpty()
     val isProjectSourceEditable: Boolean
         get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
@@ -439,8 +472,14 @@ internal class AsmWorkspaceState(
                 if (workspaceKind == AsmWorkspaceKind.PROJECT) {
                     add(
                         when {
-                            liveDiagnostics.isNotEmpty() -> "source issue"
-                            buildReport?.validationOnly == true -> "source issue"
+                            liveDiagnostics.any { it.severity == AsmDiagnosticSeverity.ERROR } -> "source error"
+                            liveDiagnostics.any { it.severity == AsmDiagnosticSeverity.WARNING } -> "source warning"
+                            buildReport?.validationOnly == true && buildReport?.diagnostics?.any {
+                                it.severity == AsmDiagnosticSeverity.ERROR
+                            } == true -> "source error"
+                            buildReport?.validationOnly == true && buildReport?.diagnostics?.any {
+                                it.severity == AsmDiagnosticSeverity.WARNING
+                            } == true -> "source warning"
                             buildReport != null && buildReport?.succeeded != true -> "build failed"
                             sourceBuildRequired -> "build needed"
                             buildReport?.succeeded == true -> "build ✓"
@@ -474,6 +513,150 @@ internal class AsmWorkspaceState(
             allocatableContiguousBytes = plannedBank?.largestAfter,
             spaceIsCurrent = plannedBank != null && !sourceBuildRequired,
         )
+    }
+
+    fun compiledOutputInspection(
+        fileId: String,
+        lineIndex: Int,
+        index: AsmReferenceIndex? = workspace?.index,
+    ): AsmCompiledOutputInspection {
+        val resolvedIndex = index ?: return AsmCompiledOutputInspection(
+            fileId, lineIndex, "", AsmCompiledOutputStatus.BUILD_REQUIRED, emptyList(), emptyList(),
+            emptyList(), null, null, emptyList(), emptyList(), emptyList(),
+        )
+        val report = buildReport
+        val capturedSymbols = romPreviewSymbols
+            ?: report?.takeIf { it.succeeded }?.symbols
+            ?: AsmCompiledSymbols.EMPTY
+        val preview = romPreview
+        val stale = preview != null && (
+            sourceBuildRequired ||
+                romPreviewProjectRevision != currentProjectRevision ||
+                romPreviewBuildGeneratedAt == null ||
+                report?.takeIf { it.succeeded }?.generatedAt != romPreviewBuildGeneratedAt
+            )
+        return AsmCompiledOutputResolver.resolve(
+            fileId = fileId,
+            lineIndex = lineIndex,
+            sourceText = sourceEditorText(fileId),
+            index = resolvedIndex,
+            symbols = capturedSymbols,
+            preview = preview,
+            spacePlan = romSpacePlan,
+            stale = stale,
+            diagnostics = displayedDiagnostics,
+        )
+    }
+
+    fun runtimeDebugInspection(
+        cpu: CpuDebugState,
+        stackAddress: Int,
+        stackBytes: ByteArray,
+        sessionBuildIdentity: String?,
+    ): AsmRuntimeInspection {
+        val report = buildReport
+        val mappingFresh = runtimeMappingFresh(sessionBuildIdentity)
+        val symbols = report?.takeIf { it.succeeded && mappingFresh }?.symbols ?: AsmCompiledSymbols.EMPTY
+        return AsmRuntimeDebugResolver.resolve(
+            cpu = cpu,
+            symbols = symbols,
+            stackAddress = stackAddress,
+            stackBytes = stackBytes,
+            mappingStale = !mappingFresh,
+            sourceLine = { fileId, lineIndex -> runtimeSourceLine(fileId, lineIndex) },
+            isGenerated = { fileId -> generatedAsmAuthority(fileId) != null || workspace?.index?.file(fileId) == null },
+        )
+    }
+
+    fun runtimeSourceAt(address: Int, sessionBuildIdentity: String?): AsmRuntimeSourceLocation? {
+        if (!runtimeMappingFresh(sessionBuildIdentity)) return null
+        val report = buildReport?.takeIf { it.succeeded } ?: return null
+        val mapped = report.symbols.locationsAt(address).firstOrNull() ?: return null
+        return AsmRuntimeSourceLocation(
+            fileId = mapped.fileId,
+            lineIndex = mapped.lineIndex,
+            sourceLine = runtimeSourceLine(mapped.fileId, mapped.lineIndex),
+            address = address,
+            symbols = report.symbols.labelsAt(address),
+            generated = generatedAsmAuthority(mapped.fileId) != null || workspace?.index?.file(mapped.fileId) == null,
+        )
+    }
+
+    fun runtimeMappingFresh(sessionBuildIdentity: String?): Boolean {
+        val report = buildReport
+        return isAsmRuntimeMappingFresh(
+            sessionBuildIdentity = sessionBuildIdentity,
+            reportBuildIdentity = report?.generatedAt,
+            reportSucceeded = report?.succeeded == true,
+            sourceBuildRequired = sourceBuildRequired,
+        )
+    }
+
+    suspend fun refreshSuccessfulBuildIdentity(): String? {
+        refreshBuildReport(validateSources = false)
+        return buildReport?.takeIf { it.succeeded }?.generatedAt
+    }
+
+    fun openRuntimeSource(location: AsmRuntimeSourceLocation): Boolean {
+        if (location.generated || workspace?.index?.file(location.fileId) == null) return false
+        openSource(location.fileId, location.lineIndex)
+        return true
+    }
+
+    private fun runtimeSourceLine(fileId: String, lineIndex: Int): String? {
+        if (workspace?.index?.file(fileId) != null) {
+            return sourceEditorText(fileId).lineSequence().drop(lineIndex).firstOrNull()
+        }
+        val generatedId = fileId.substringAfterLast('/')
+        return buildReport?.generatedSources?.get(fileId)?.getOrNull(lineIndex)
+            ?: buildReport?.generatedSources?.get(generatedId)?.getOrNull(lineIndex)
+    }
+
+    fun diagnosticPresentation(diagnostic: AsmBuildDiagnostic): AsmDiagnosticPresentation {
+        val fileId = diagnostic.fileId
+        val lineIndex = diagnostic.lineIndex
+        if (fileId == null || lineIndex == null) {
+            return AsmDiagnosticPresentation(null, null, generated = false, authority = null, navigable = false)
+        }
+        val generatedAuthority = generatedAsmAuthority(fileId)
+        if (generatedAuthority != null) {
+            val generatedId = fileId.substringAfterLast('/')
+            val sourceLine = buildReport?.generatedSources?.get(generatedId)?.getOrNull(lineIndex)
+                ?: if (generatedId == "__smedit_generated_rooms.asm") {
+                    generatedRoomInput?.lines?.getOrNull(lineIndex)
+                } else null
+            return AsmDiagnosticPresentation(
+                location = "$generatedId:${lineIndex + 1}",
+                sourceLine = sourceLine,
+                generated = true,
+                authority = generatedAuthority,
+                navigable = generatedId == "__smedit_generated_rooms.asm" && generatedRoomInput != null,
+            )
+        }
+        val authored = workspace?.index?.file(fileId) != null
+        return AsmDiagnosticPresentation(
+            location = "$fileId:${lineIndex + 1}",
+            sourceLine = if (authored) sourceEditorText(fileId).lineSequence().drop(lineIndex).firstOrNull() else null,
+            generated = false,
+            authority = null,
+            navigable = authored,
+        )
+    }
+
+    fun openDiagnostic(diagnostic: AsmBuildDiagnostic): Boolean {
+        val fileId = diagnostic.fileId ?: return false
+        val lineIndex = diagnostic.lineIndex ?: return false
+        return when {
+            workspace?.index?.file(fileId) != null -> {
+                openSource(fileId, lineIndex)
+                true
+            }
+            fileId.substringAfterLast('/') == "__smedit_generated_rooms.asm" && generatedRoomInput != null -> {
+                openGeneratedRooms(lineIndex, buildWrites = true)
+                true
+            }
+            else -> false
+        }
     }
 
     val hasSourceSplit: Boolean get() = sourcePanes.size > 1
@@ -859,9 +1042,20 @@ internal class AsmWorkspaceState(
         error = null
     }
 
+    fun observeProjectRevision(revision: Long) {
+        currentProjectRevision = revision
+    }
+
+    fun requestProjectChanges() {
+        projectChangesRequestSerial++
+    }
+
     private fun clearRomPreview() {
         romPreview = null
         romSpacePlan = null
+        romPreviewProjectRevision = null
+        romPreviewBuildGeneratedAt = null
+        romPreviewSymbols = null
         requestedRomSpaceBank = null
         selectedRomDiffIndex = 0
         romPreviewView = AsmRomPreviewView.DIFF
@@ -949,9 +1143,21 @@ internal class AsmWorkspaceState(
         navigationSerial++
     }
 
+    fun openRomComparison(pcOffset: Int?) {
+        val ranges = romPreview?.diffRanges.orEmpty()
+        val index = pcOffset?.let { pc -> ranges.indexOfFirst { pc in it.pcOffset..it.endInclusive } } ?: -1
+        if (index >= 0) {
+            selectRomPreviewView(AsmRomPreviewView.DIFF)
+            selectRomDiff(index)
+        } else {
+            selectRomPreviewView(AsmRomPreviewView.DIFF)
+        }
+    }
+
     suspend fun buildRomPreview(builder: () -> AsmRomPreviewBuild) {
         if (previewBusy) return
         val requestedView = romPreviewView
+        val requestedProjectRevision = currentProjectRevision
         previewBusy = true
         error = null
         try {
@@ -960,6 +1166,9 @@ internal class AsmWorkspaceState(
             romSpacePlan = attempt.spacePlan
             if (attempt.preview == null) {
                 romPreview = null
+                romPreviewProjectRevision = null
+                romPreviewBuildGeneratedAt = null
+                romPreviewSymbols = null
                 error = attempt.error ?: "SMEDIT Result could not be built. No ROM was written."
                 if (requestedView == AsmRomPreviewView.SPACE) {
                     browserMode = AsmBrowserMode.ROM
@@ -968,6 +1177,9 @@ internal class AsmWorkspaceState(
                 }
             } else {
                 romPreview = attempt.preview
+                romPreviewProjectRevision = requestedProjectRevision
+                romPreviewBuildGeneratedAt = buildReport?.takeIf { it.succeeded }?.generatedAt
+                romPreviewSymbols = buildReport?.takeIf { it.succeeded }?.symbols
                 selectedRomDiffIndex = 0
                 romPreviewView = if (requestedView == AsmRomPreviewView.SPACE) requestedView else AsmRomPreviewView.DIFF
                 browserMode = AsmBrowserMode.ROM
@@ -976,6 +1188,9 @@ internal class AsmWorkspaceState(
         } catch (problem: Exception) {
             romPreview = null
             romSpacePlan = null
+            romPreviewProjectRevision = null
+            romPreviewBuildGeneratedAt = null
+            romPreviewSymbols = null
             error = problem.message ?: "SMEDIT Result could not be built"
         } finally {
             previewBusy = false
@@ -986,6 +1201,7 @@ internal class AsmWorkspaceState(
      * keeping the user in Source. */
     suspend fun validateProjectBuild(builder: () -> AsmRomPreviewBuild): Boolean {
         if (previewBusy) return false
+        val requestedProjectRevision = currentProjectRevision
         previewBusy = true
         error = null
         return try {
@@ -996,6 +1212,10 @@ internal class AsmWorkspaceState(
                 retainOrCreateBuildFailure(result.error ?: "ROM build did not complete. No ROM was written.")
                 false
             } else {
+                romPreview = result.preview
+                romPreviewProjectRevision = requestedProjectRevision
+                romPreviewBuildGeneratedAt = buildReport?.takeIf { it.succeeded }?.generatedAt
+                romPreviewSymbols = buildReport?.takeIf { it.succeeded }?.symbols
                 true
             }
         } catch (problem: Exception) {
@@ -1029,9 +1249,8 @@ internal class AsmWorkspaceState(
         showProjectWorkspace()
         showSourceBrowser()
         displayedDiagnostics.firstOrNull {
-            it.severity == AsmDiagnosticSeverity.ERROR && it.lineIndex != null &&
-                it.fileId?.let { fileId -> workspace?.index?.file(fileId) != null } == true
-        }?.let { openSource(it.fileId!!, it.lineIndex!!) }
+            it.severity == AsmDiagnosticSeverity.ERROR && diagnosticPresentation(it).navigable
+        }?.let(::openDiagnostic)
     }
 
     fun openSource(
@@ -1112,11 +1331,13 @@ internal class AsmWorkspaceState(
     /** Captures Project ASM changes without adopting files into the live editor.
      * Project modules have no immutable-bank counterpart and therefore compare
      * against an empty baseline as whole-file additions. */
-    fun projectSourceChangesSnapshot(): List<AsmProjectSourceChange> {
+    fun projectSourceChangesSnapshot(semanticIndex: AsmSemanticIndex? = null): List<AsmProjectSourceChange> {
         val project = projectWorkspace ?: return emptyList()
+        val currentPlacements = projectChangePlacements()
         val moduleIds = project.projectModuleFileIds.toSet()
+        val managedBySource = projectRepository.managedAssets(boundProjectFilePath).groupBy(AsmManagedAssetRecord::sourceFileId)
         val fileIds = linkedSetOf<String>().apply {
-            addAll(project.modifiedFileIds)
+            addAll(projectModifiedFileIds)
             addAll(project.projectModuleFileIds)
             addAll(unsavedSourceFileIds)
         }
@@ -1132,20 +1353,117 @@ internal class AsmWorkspaceState(
                 require(baselineFile.isFile) { "Project ASM baseline source is unavailable: $fileId" }
                 baselineFile.readText()
             }
+            val workingText = sourceBuffers[fileId] ?: savedText
+            val links = projectSourceChangeLinks(project, fileId, baselineText, workingText, semanticIndex)
+            val managed = managedBySource[fileId].orEmpty()
+            val unsaved = savedText != workingText
+            val restoreBlockedReason = when {
+                unsaved -> "Save or revert the open draft before restoring this complete file."
+                projectModule && fileId == AsmFastDoorsModule.FILE && AsmFastDoorsModule.hasGate(savedText) ->
+                    "Fast Doors retains custom module code; turn it off through its patch toggle instead."
+                managed.isNotEmpty() -> "Restore ${managed.size} managed asset transaction${if (managed.size == 1) "" else "s"} first; its source marker and manifest must stay synchronized."
+                projectModule -> null
+                baselineText == savedText -> "Only an unsaved draft differs; use the source editor's Revert action."
+                else -> null
+            }
+            val moduleOwner = fileId.takeIf { projectModule }
+                ?.let { "asm-module:${it.removePrefix(ASM_PROJECT_MODULE_PREFIX).removeSuffix(".asm")}" }
+            val allocations = currentPlacements.filter { placement ->
+                placement.segmentId?.startsWith("checked-hook-helper:$fileId:") == true ||
+                    moduleOwner != null && placement.owner == moduleOwner
+            }.map(::projectAllocationSummary)
             AsmProjectSourceChange(
                 fileId = fileId,
                 baselineText = baselineText,
                 savedText = savedText,
-                workingText = sourceBuffers[fileId] ?: savedText,
+                workingText = workingText,
                 projectModule = projectModule,
                 enabled = !projectModule || fileId !in project.disabledProjectModuleFileIds,
+                semantic = AsmSemanticChanges.source(
+                    fileId,
+                    baselineText,
+                    workingText,
+                    projectModule,
+                    links,
+                    origin = when {
+                        managed.isNotEmpty() -> AsmSemanticChangeOrigin.CONTAINS_MANAGED_RELOCATION
+                        projectModule -> AsmSemanticChangeOrigin.PROJECT_MODULE
+                        else -> AsmSemanticChangeOrigin.AUTHORED_SOURCE
+                    },
+                ),
+                restoreRequest = if (restoreBlockedReason != null) null else if (projectModule) {
+                    AsmProjectRestoreRequest.ProjectModule(
+                        fileId = fileId,
+                        expectedText = savedText,
+                        expectedModuleOrder = project.projectModuleFileIds.map { it.removePrefix(ASM_PROJECT_MODULE_PREFIX) },
+                        expectedDisabledModules = project.disabledProjectModuleFileIds
+                            .mapTo(linkedSetOf()) { it.removePrefix(ASM_PROJECT_MODULE_PREFIX) },
+                        projectFilePath = boundProjectFilePath,
+                    )
+                } else {
+                    AsmProjectRestoreRequest.SourceFile(fileId, savedText, baselineText, boundProjectFilePath)
+                },
+                restoreBlockedReason = restoreBlockedReason,
+                allocations = allocations,
             )
         }.sortedWith(compareBy<AsmProjectSourceChange> { it.projectModule }.thenBy { it.fileId })
     }
 
-    fun projectAssetChangesSnapshot(): List<AsmProjectAssetChange> {
+    fun projectAssetChangesSnapshot(semanticIndex: AsmSemanticIndex? = null): List<AsmProjectAssetChange> {
         val project = projectWorkspace ?: return emptyList()
+        val currentPlacements = projectChangePlacements()
+        val managedByPath = projectRepository.managedAssets(boundProjectFilePath)
+            .associateBy(AsmManagedAssetRecord::managedAssetPath)
         return projectModifiedAssetPaths.map { assetPath ->
+            val managed = managedByPath[assetPath]
+            if (managed != null) {
+                val current = AsmManagedAssets.assetFile(project.root, managed)
+                val before = if (managed.inlineSource) managed.inlineOriginalBytes() else {
+                    val baseline = File(project.originalDirectory, "data/${managed.originalAssetPath}")
+                    require(baseline.isFile) { "Managed project ASM baseline asset is unavailable: $assetPath" }
+                    baseline.readBytes()
+                }
+                require(current.isFile) {
+                    "Managed project ASM data asset is unavailable: $assetPath"
+                }
+                val after = current.readBytes()
+                val overlap = minOf(before.size, after.size)
+                val changed = (0 until overlap).filter { before[it] != after[it] }
+                val sourceFile = File(project.workingDirectory, "src/${managed.sourceFileId}")
+                require(sourceFile.isFile) { "Managed project ASM source is unavailable: ${managed.sourceFileId}" }
+                val sourceText = sourceFile.readText()
+                val dirtySource = sourceBuffers[managed.sourceFileId]?.takeIf { it != sourceText }
+                val links = pcToSnesLoRom(managed.originalPcOffset)?.let { semanticIndex?.linksFor(it, managed.originalAssetPath) }.orEmpty()
+                val allocations = currentPlacements
+                    .filter { it.segmentId == "asm-managed-asset:${managed.id}" || it.owner == "asm-managed-asset:${managed.id}" }
+                    .map(::projectAllocationSummary)
+                return@map AsmProjectAssetChange(
+                    assetPath = assetPath,
+                    size = after.size,
+                    changedBytes = changed.size + kotlin.math.abs(after.size - before.size),
+                    firstChangedOffsets = changed.take(32),
+                    managed = true,
+                    originalAssetPath = managed.originalAssetPath,
+                    originalCapacity = managed.originalLength,
+                    sourceLabel = managed.sourceLabel,
+                    compiledAddress = buildReport?.takeIf { currentPlacements.isNotEmpty() }
+                        ?.symbols?.labels?.get(managed.sourceLabel),
+                    inlineSource = managed.inlineSource,
+                    semantic = AsmSemanticChanges.asset(assetPath, links, managed),
+                    restoreRequest = dirtySource?.let { null } ?: AsmProjectRestoreRequest.ManagedAsset(
+                        managedAssetId = managed.id,
+                        sourceFileId = managed.sourceFileId,
+                        expectedBytes = after.copyOf(),
+                        expectedSourceText = sourceText,
+                        sourceLabel = managed.sourceLabel,
+                        projectFilePath = boundProjectFilePath,
+                    ),
+                    restoreBlockedReason = dirtySource?.let {
+                        "Save or revert the open ${managed.sourceFileId} draft before restoring this managed transaction."
+                    },
+                    allocations = allocations,
+                )
+            }
             val baseline = File(project.originalDirectory, "data/$assetPath")
             val current = File(project.workingDirectory, "data/$assetPath")
             require(baseline.isFile && current.isFile && baseline.length() == current.length()) {
@@ -1154,13 +1472,180 @@ internal class AsmWorkspaceState(
             val before = baseline.readBytes()
             val after = current.readBytes()
             val changed = before.indices.filter { before[it] != after[it] }
+            val range = project.referenceWorkspace.index.asset(assetPath)?.range
+            val links = range?.let { semanticIndex?.linksFor(it.snesAddress, assetPath) }.orEmpty()
             AsmProjectAssetChange(
                 assetPath = assetPath,
                 size = after.size,
                 changedBytes = changed.size,
                 firstChangedOffsets = changed.take(32),
+                semantic = AsmSemanticChanges.asset(assetPath, links),
+                restoreRequest = AsmProjectRestoreRequest.DirectAsset(
+                    assetPath, after.copyOf(), before.copyOf(), boundProjectFilePath,
+                ),
             )
         }.sortedBy(AsmProjectAssetChange::assetPath)
+    }
+
+    private fun projectAllocationSummary(placement: AsmRomSpacePlacement) = AsmProjectAllocationSummary(
+        label = placement.label,
+        snesAddress = placement.snesAddress,
+        size = placement.size,
+        kind = placement.segmentKind ?: "managed allocation",
+        constraint = placement.constraint,
+    )
+
+    private fun projectChangePlacements(): List<AsmRomSpacePlacement> {
+        val report = buildReport?.takeIf { it.succeeded } ?: return emptyList()
+        if (sourceBuildRequired || romPreviewProjectRevision != currentProjectRevision ||
+            romPreviewBuildGeneratedAt != report.generatedAt) return emptyList()
+        return romSpacePlan?.placements.orEmpty()
+    }
+
+    private fun projectSourceChangeLinks(
+        project: AsmProjectWorkspace,
+        fileId: String,
+        baselineText: String,
+        workingText: String,
+        semanticIndex: AsmSemanticIndex?,
+    ): List<AsmEditorLink> {
+        val source = project.referenceWorkspace.index.file(fileId) ?: return emptyList()
+        val lines = workingText.lines()
+        val atlas = source.lines.indices.mapNotNull { line ->
+            project.referenceWorkspace.index.addressAtlas.exactAt(fileId, line).firstOrNull()?.let { line to it.snesAddress }
+        }.toMap()
+        val compiled = buildReport?.takeIf { it.succeeded && !sourceBuildRequired }
+            ?.symbols?.addressesFor(fileId).orEmpty()
+        val resolver = AsmVisualEditorResolver(
+            source = source,
+            lines = lines,
+            semanticIndex = semanticIndex,
+            indexedAddresses = atlas + compiled,
+            liveLinks = { line -> sourceEditorLinks?.invoke(fileId, line).orEmpty() },
+        )
+        // Removed room macros still carry a stable semantic identity. Resolve
+        // them without current live/address mappings so deleted source cannot
+        // inherit a shifted current-ROM owner.
+        val baselineLines = baselineText.lines()
+        val baselineResolver = AsmVisualEditorResolver(
+            source = source.copy(lines = baselineLines),
+            lines = baselineLines,
+            semanticIndex = null,
+            indexedAddresses = emptyMap(),
+        )
+        return AsmThreeWayMerge.compare(baselineText, workingText).lines.asSequence()
+            .flatMap { line -> when (line.kind) {
+                AsmDiffLineKind.ADDED -> line.newLine?.minus(1)?.let(resolver::linksAt).orEmpty().asSequence()
+                AsmDiffLineKind.REMOVED -> line.oldLine?.minus(1)?.let(baselineResolver::linksAt).orEmpty().asSequence()
+                else -> emptySequence()
+            } }
+            .distinctBy(AsmEditorLink::target)
+            .toList()
+    }
+
+    /** Restores exactly one ownership transaction captured by Project ASM Changes.
+     * Every repository operation rechecks disk state; open buffers are checked
+     * here so a stale review can never erase a newer editor draft. */
+    suspend fun restoreProjectChange(request: AsmProjectRestoreRequest): Boolean {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || boundProjectFilePath.isBlank() || busy) return false
+        if (request.projectFilePath != null && request.projectFilePath != boundProjectFilePath) {
+            error = "This Project ASM Changes review belongs to another project. Reopen it before restoring."
+            return false
+        }
+        val guardedSource = when (request) {
+            is AsmProjectRestoreRequest.SourceFile -> request.fileId to request.expectedText
+            is AsmProjectRestoreRequest.ProjectModule -> request.fileId to request.expectedText
+            is AsmProjectRestoreRequest.ManagedAsset -> request.sourceFileId to request.expectedSourceText
+            is AsmProjectRestoreRequest.DirectAsset -> null
+        }
+        guardedSource?.let { (fileId, expected) ->
+            val open = sourceBuffers[fileId]
+            if (open != null && open != expected) {
+                error = "$fileId has a newer open draft. Save or revert it, then reopen Project ASM Changes."
+                return false
+            }
+        }
+        cancelSourceIndexing()
+        busy = true
+        error = null
+        return try {
+            progress = "Restoring ${request.label}…"
+            val result = withContext(Dispatchers.IO) {
+                when (request) {
+                    is AsmProjectRestoreRequest.SourceFile ->
+                        projectRepository.restoreSource(
+                            boundProjectFilePath,
+                            request.fileId,
+                            request.expectedText,
+                            request.expectedBaselineText,
+                        )
+                    is AsmProjectRestoreRequest.ProjectModule ->
+                        projectRepository.deleteModule(
+                            boundProjectFilePath,
+                            request.fileId,
+                            request.expectedText,
+                            request.expectedModuleOrder,
+                            request.expectedDisabledModules,
+                        )
+                    is AsmProjectRestoreRequest.DirectAsset -> {
+                        projectRepository.restoreAsset(
+                            boundProjectFilePath,
+                            request.assetPath,
+                            request.expectedBytes,
+                            request.expectedBaselineBytes,
+                        )
+                        requireNotNull(projectRepository.load(boundProjectFilePath)) {
+                            "Project ASM workspace did not validate after restoring ${request.assetPath}"
+                        }
+                    }
+                    is AsmProjectRestoreRequest.ManagedAsset -> {
+                        projectRepository.restoreManagedAsset(
+                            boundProjectFilePath,
+                            request.managedAssetId,
+                            request.expectedBytes,
+                            expectedSourceText = request.expectedSourceText,
+                        )
+                        requireNotNull(projectRepository.load(boundProjectFilePath)) {
+                            "Project ASM workspace did not validate after restoring ${request.sourceLabel}"
+                        }
+                    }
+                }
+            }
+            val affectedSource = when (request) {
+                is AsmProjectRestoreRequest.SourceFile -> request.fileId
+                is AsmProjectRestoreRequest.ProjectModule -> request.fileId
+                is AsmProjectRestoreRequest.ManagedAsset -> request.sourceFileId
+                is AsmProjectRestoreRequest.DirectAsset -> null
+            }
+            if (request is AsmProjectRestoreRequest.ProjectModule) {
+                sourceBuffers.remove(request.fileId)
+                savedSourceTexts.remove(request.fileId)
+                dirtySourceFileIds.remove(request.fileId)
+                sourceUndoStacks.remove(request.fileId)
+                sourceRedoStacks.remove(request.fileId)
+            } else affectedSource?.let { fileId ->
+                val restored = result.referenceWorkspace.index.file(fileId)?.file?.readText()
+                    ?: error("Restored source is unavailable: $fileId")
+                if (fileId in sourceBuffers) sourceBuffers[fileId] = restored
+                savedSourceTexts[fileId] = restored
+                dirtySourceFileIds.remove(fileId)
+                sourceUndoStacks.remove(fileId)
+                sourceRedoStacks.remove(fileId)
+            }
+            adoptProjectWorkspace(result)
+            buildReport = null
+            generatedRoomInput = null
+            roomDataSnapshot = null
+            clearRomPreview()
+            ensureSelection()
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not restore ${request.label}"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
     }
 
     /** Semantic editors share the very same document/undo stack, independent of which browser tab is visible. */
@@ -1233,6 +1718,49 @@ internal class AsmWorkspaceState(
         }
         editSessionSerial++
         notifySourceTransition(afterApply)
+    }
+
+    fun planSymbolRename(
+        fileId: String,
+        lineIndex: Int,
+        token: String,
+        requestedName: String,
+    ): AsmSymbolRenamePlan? {
+        error = null
+        return try {
+            check(workspaceKind == AsmWorkspaceKind.PROJECT && projectWorkspace?.indexComplete == true) {
+                "Rename Symbol is available after the complete Project ASM index finishes loading."
+            }
+            val index = checkNotNull(workspace?.index) { "Project ASM index is unavailable." }
+            val texts = sourceTexts().associate { it.fileId to it.text }
+            AsmSymbolRefactor.planRename(index, texts, fileId, lineIndex, token, requestedName)
+        } catch (problem: Exception) {
+            error = problem.message ?: "This symbol cannot be renamed safely."
+            null
+        }
+    }
+
+    /** Re-plan against the live index immediately before committing. This turns
+     * the preview into a guarded transaction rather than stale UI authority. */
+    fun applySymbolRename(plan: AsmSymbolRenamePlan): Boolean {
+        val current = planSymbolRename(
+            plan.targetFileId,
+            plan.targetLineIndex,
+            plan.oldName,
+            plan.newName,
+        ) ?: return false
+        if (current.replacements != plan.replacements || current.occurrences != plan.occurrences) {
+            error = "ASM references changed after the rename preview. Review the rename again; no source was changed."
+            return false
+        }
+        return try {
+            replaceProjectSources(plan.replacements)
+            openSource(plan.targetFileId, plan.targetLineIndex, addToHistory = false)
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not apply the symbol rename safely."
+            false
+        }
     }
 
     fun updateSourceEditText(fileId: String, text: String, undoChange: AsmSourceTextChange? = null): Boolean {
@@ -1397,6 +1925,17 @@ internal class AsmWorkspaceState(
         AsmSourceText(source.id, source.displayName, sourceEditText(source.id))
     }
 
+    /** Immutable analysis input without synchronously rereading every source
+     * file on each editor keystroke. Indexed lines are the saved fallback;
+     * already-open buffers and the active draft remain authoritative. */
+    fun sourceAnalysisTexts(activeFileId: String, activeText: String): Map<String, String> =
+        workspace?.index?.files.orEmpty().associate { source ->
+            source.id to when (source.id) {
+                activeFileId -> activeText
+                else -> sourceBuffers[source.id] ?: source.lines.joinToString("\n")
+            }
+        }
+
     /** Sidebar Find follows what the editor is currently showing. A room-source
      * overlay is deliberately excluded from Save, Build and Replace until the
      * first edit adopts it, but it must not be invisible to sidebar Find. */
@@ -1486,6 +2025,34 @@ internal class AsmWorkspaceState(
     }
 
     fun hasUnsavedSourceChanges(fileId: String): Boolean = fileId in dirtySourceFileIds
+
+    /** A reciprocal asset transaction may durably replace one declaration
+     * without going through the text editor. Refresh any already-open clean
+     * buffer so the ASM and Visual Editor views cannot diverge. */
+    fun refreshPersistedSourceFiles(fileIds: Set<String>): Boolean {
+        if (fileIds.isEmpty()) return true
+        if (fileIds.any(dirtySourceFileIds::containsKey)) return false
+        var changed = false
+        fileIds.forEach { fileId ->
+            val diskText = workspace?.index?.file(fileId)?.file?.takeIf(File::isFile)?.readText()
+                ?: return@forEach
+            if (sourceBuffers[fileId] != null && sourceBuffers[fileId] != diskText) {
+                sourceBuffers[fileId] = diskText
+                changed = true
+            }
+            if (savedSourceTexts[fileId] != diskText) {
+                savedSourceTexts[fileId] = diskText
+                changed = true
+            }
+            dirtySourceFileIds.remove(fileId)
+        }
+        if (changed) {
+            buildReport = null
+            sourceBufferRevision++
+            editSessionSerial++
+        }
+        return true
+    }
 
     fun discardSourceBuffer(fileId: String? = selectedFileId) {
         val selectedId = fileId ?: return
@@ -1596,10 +2163,23 @@ internal class AsmWorkspaceState(
                 val revision = sourceBufferRevision
                 sourceIndexingStatus = "Checking ASM…"
                 val diagnostics = withContext(Dispatchers.Default) {
+                    val sourceTexts = indexed.referenceWorkspace.index.files.associate { source ->
+                        source.id to source.file.readText()
+                    }
+                    val context = AsmEditorAnalysisContext(
+                        indexed.referenceWorkspace.index,
+                        sourceTexts,
+                        indexed.disabledProjectModuleFileIds,
+                    )
                     files.associateWith { fileId ->
                         val source = indexed.referenceWorkspace.index.file(fileId)
                         if (source == null || fileId in indexed.disabledProjectModuleFileIds) emptyList()
-                        else AsmSourceLinter.lintText(fileId, source.lines.joinToString("\n"), indexed.referenceWorkspace.index.macros)
+                        else AsmSourceLinter.lintText(
+                            fileId,
+                            sourceTexts.getValue(fileId),
+                            indexed.referenceWorkspace.index.macros,
+                            context,
+                        )
                     }
                 }
                 if (generation != sourceIndexingGeneration || projectPath != boundProjectFilePath) return@launch

@@ -5,6 +5,10 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorCapabilities
 import com.supermetroid.editor.emulator.EmulatorInput
+import com.supermetroid.editor.emulator.CpuDebugState
+import com.supermetroid.editor.emulator.DebugExecutionResult
+import com.supermetroid.editor.emulator.DebugHaltReason
+import com.supermetroid.editor.emulator.DebugRunRequest
 import com.supermetroid.editor.emulator.GameSnapshot
 import com.supermetroid.editor.emulator.ModelInfo
 import com.supermetroid.editor.emulator.SessionConfig
@@ -27,6 +31,104 @@ import org.junit.jupiter.api.Test
 class EmulatorWorkspaceStateTest {
 
     @Test
+    fun `cpu breakpoints stop on exact pc and remain session only`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(backendName = "debug-fake", supportsCpuDebugging = true, cpuDebugApiVersion = 1)
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+            it.debugCpuResult = debugCpu(0x808000)
+            it.runUntilResult = DebugExecutionResult(
+                DebugHaltReason.BREAKPOINT,
+                debugCpu(0x81A0AE),
+                GameSnapshot(frameCounter = 2),
+            )
+            it.closeSessionResult = StepResult(session = SessionState(active = false, paused = true))
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+
+        state.toggleExecutionBreakpoint(0x81A0AE)
+        state.updateKey(Key.Z, down = true)
+        state.stepFrame()
+
+        assertFalse(state.isRunning)
+        assertEquals(DebugHaltReason.BREAKPOINT, state.debugHaltReason)
+        assertEquals(0x81A0AE, state.debugCpu?.pc)
+        assertEquals(listOf(0x81A0AE), backend.lastDebugRunRequest?.addresses)
+        assertEquals(1, backend.lastDebugRunRequest?.input?.buttons?.get(0), "debug runs must preserve controller input")
+        assertEquals(32, state.debugStackBytes.size)
+        assertTrue(state.hasExecutionBreakpoint(0x81A0AE))
+
+        state.attachDebugBuildIdentity("build-1")
+        state.closeSession()
+        assertTrue(state.executionBreakpoints.isEmpty())
+        assertEquals(null, state.debugCpu)
+        assertEquals(null, state.debugBuildIdentity)
+    }
+
+    @Test
+    fun `unsafe stack and memory reads fail closed without hiding cpu state`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(
+                backendName = "debug-fake",
+                supportsCpuDebugging = true,
+                cpuDebugApiVersion = 1,
+            )
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+            it.debugCpuResult = debugCpu(0x808000).copy(s = 0x1FFF)
+            it.rejectedBusRanges = listOf(0x002000..0x003FFF)
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+
+        assertEquals(0x808000, state.debugCpu?.pc)
+        assertEquals(0x2000, state.debugStackAddress)
+        assertTrue(state.debugStackBytes.isEmpty())
+        assertNotNull(state.debugStackReadError)
+        assertEquals(32, state.debugMemoryBytes.size)
+        assertEquals(null, state.debugMemoryReadError)
+
+        state.setDebugMemoryAddress(0x002100)
+
+        assertEquals(0x808000, state.debugCpu?.pc)
+        assertTrue(state.debugMemoryBytes.isEmpty())
+        assertNotNull(state.debugMemoryReadError)
+    }
+
+    @Test
+    fun `emulation mode stack inspection wraps within page one`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(
+                backendName = "debug-fake",
+                supportsCpuDebugging = true,
+                cpuDebugApiVersion = 1,
+            )
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+            it.debugCpuResult = debugCpu(0x808000).copy(s = 0x01FE, emulation = true)
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+
+        assertEquals(0x01FF, state.debugStackAddress)
+        assertEquals(listOf(0x01FF to 1, 0x0100 to 31), backend.busReadRequests.take(2))
+        assertEquals(32, state.debugStackBytes.size)
+    }
+
+    @Test
     fun `run requests are observable even when repeated`() {
         val state = EmulatorWorkspaceState()
 
@@ -37,6 +139,19 @@ class EmulatorWorkspaceStateTest {
         state.requestRun()
         assertEquals(2L, state.runRequestSerial)
         assertTrue(state.consumeRunRequest())
+    }
+
+    @Test
+    fun `session breakpoint capacity reserves a run to cursor target`() {
+        val state = EmulatorWorkspaceState()
+        repeat(256) { state.toggleExecutionBreakpoint(0x808000 + it) }
+
+        assertEquals(255, state.executionBreakpoints.size)
+        assertTrue(state.hasExecutionBreakpoint(0x808000))
+        assertFalse(state.hasExecutionBreakpoint(0x8080FF))
+
+        state.clearExecutionBreakpoints()
+        assertTrue(state.executionBreakpoints.isEmpty())
     }
 
     @Test
@@ -431,6 +546,12 @@ class EmulatorWorkspaceStateTest {
         var lastCommand: String? = null
         var lastStateName: String? = null
         var lastSessionConfig: SessionConfig? = null
+        var debugCpuResult = debugCpu(0x808000)
+        var runUntilResult = DebugExecutionResult(DebugHaltReason.FRAME_LIMIT, debugCpuResult)
+        var stepInstructionResult = DebugExecutionResult(DebugHaltReason.STEP, debugCpuResult)
+        var lastDebugRunRequest: DebugRunRequest? = null
+        var rejectedBusRanges = emptyList<IntRange>()
+        val busReadRequests = mutableListOf<Pair<Int, Int>>()
 
         override suspend fun connect(): EmulatorCapabilities {
             isConnected = true
@@ -481,6 +602,43 @@ class EmulatorWorkspaceStateTest {
 
         override suspend fun readMemory(address: Int, size: Int): ByteArray = ByteArray(size)
         override suspend fun writeMemory(address: Int, data: ByteArray) {}
+        override suspend fun debugCpuState(): CpuDebugState = debugCpuResult
+        override suspend fun stepInstruction(): DebugExecutionResult = stepInstructionResult
+        override suspend fun runUntil(request: DebugRunRequest): DebugExecutionResult {
+            lastDebugRunRequest = request
+            return runUntilResult
+        }
+        override suspend fun readBusMemory(address: Int, size: Int): ByteArray {
+            busReadRequests += address to size
+            val requested = address..(address + size - 1)
+            check(rejectedBusRanges.none { rejected ->
+                requested.first <= rejected.last && rejected.first <= requested.last
+            }) { "Core rejected bus read" }
+            return ByteArray(size) { (address + it).toByte() }
+        }
         override fun close() { isConnected = false }
+    }
+
+    companion object {
+        private fun debugCpu(pc: Int) = CpuDebugState(
+            pc = pc,
+            a = 0,
+            x = 0,
+            y = 0,
+            d = 0,
+            db = 0,
+            pb = pc ushr 16,
+            s = 0x1EF,
+            p = 0x34,
+            memoryWidth = 8,
+            indexWidth = 8,
+            emulation = false,
+            waitingForInterrupt = false,
+            halted = false,
+            cycles = 0,
+            verticalCounter = 0,
+            coreFrame = 0,
+            instructions = 0,
+        )
     }
 }

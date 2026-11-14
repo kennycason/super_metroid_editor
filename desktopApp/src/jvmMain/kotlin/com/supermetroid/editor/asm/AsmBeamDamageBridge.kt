@@ -3,7 +3,11 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.ui.BEAM_DAMAGE_KEYS
 import com.supermetroid.editor.ui.beamDamageConfigValues
+import com.supermetroid.editor.ui.projectileDamageConfigKeys
+import com.supermetroid.editor.ui.projectileDamageKeyFamily
+import com.supermetroid.editor.ui.projectileDamageName
 
 internal data class AsmBeamDamageView(val value: Int?, val problem: String? = null)
 
@@ -14,9 +18,10 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
     val revision get() = workspace.sourceBufferRevision
     var publisher: AsmPatchSourcePublisher = { _, _, sources, changes -> workspace.publishSourceModelChanges(sources, changes) }
     private fun text() = workspace.projectSourceText(BEAM_DAMAGE_SOURCE_FILE)
-    private fun effectiveKeys(patch: SmPatch): Set<String> = patch.configData.orEmpty().keys.flatMap {
-        if (it.endsWith("_charged")) listOf(it) else listOf(it, "${it}_charged")
-    }.toSet()
+    private fun effectiveKeys(patch: SmPatch): Set<String> = patch.configData.orEmpty().keys
+        .flatMap(::projectileDamageConfigKeys).toSet()
+    private fun patchTouches(patch: SmPatch, keys: Set<String>): Boolean =
+        effectiveKeys(patch).any { effective -> keys.any { effective in projectileDamageKeyFamily(it) } }
     private fun authored(field: AsmBeamDamageField): Boolean {
         val baseline = runCatching { catalog.original(field.key) }.getOrNull()
         return field.key in project().asmWorkspace.beamDamageSourceKeys || baseline == null ||
@@ -32,7 +37,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
         }
         AsmBeamDamageView(field.value, if (conflict) "$key has both ASM and a patch override. Use ASM values or remove the override." else null)
     } catch (error: Exception) {
-        AsmBeamDamageView(lastGood[key] ?: runCatching { catalog.original(key).value }.getOrNull(), error.message ?: "Beam source unavailable.")
+        AsmBeamDamageView(lastGood[key] ?: runCatching { catalog.original(key).value }.getOrNull(), error.message ?: "Projectile source unavailable.")
     }
     fun value(patch: SmPatch, key: String): AsmBeamDamageView {
         val source = view(key)
@@ -45,9 +50,9 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
         if (file != BEAM_DAMAGE_SOURCE_FILE) return emptyList()
         val text = workspace.projectSourceTextsForNavigation(listOf(file))?.getValue(file) ?: return emptyList()
         return catalog.navigationKeysAt(text, line).map { key ->
-            val name = com.supermetroid.editor.ui.ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }.name
+            val name = projectileDamageName(key)
             AsmEditorLink("Edit $name ${if (key.endsWith("_charged")) "charged " else ""}damage",
-                "Reciprocal beam damage", AsmEditorTarget.BeamDamage(key))
+                "Reciprocal projectile damage", AsmEditorTarget.BeamDamage(key))
         }
     }
     fun edit(key: String, value: Int) = editValues(mapOf(key to value))
@@ -55,13 +60,13 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
         if (values.isEmpty()) return
         val before = text()
         val edits = values.map { (key, value) ->
-            require(value in 0..65535) { "Beam damage must fit a 16-bit word (0–65535)." }
-            require(view(key).problem == null) { view(key).problem ?: "Repair this beam field first." }
+            require(value in 0..65535) { "Projectile damage must fit a 16-bit word (0–65535)." }
+            require(view(key).problem == null) { view(key).problem ?: "Repair this projectile field first." }
             catalog.field(key, before) to value
         }.groupBy { it.first.span }
-        require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared beam records have competing values. No changes were made." }
+        require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared projectile records have competing values. No changes were made." }
         if (edits.values.all { group -> group.first().let { it.first.value == it.second } } &&
-            project().patches.none { patch -> patch.configType == "beam_damage" && patch.configData.orEmpty().keys.any { it.removeSuffix("_charged") in values.keys.map { key -> key.removeSuffix("_charged") } } } &&
+            project().patches.none { patch -> patch.configType == "beam_damage" && patchTouches(patch, values.keys) } &&
             project().asmWorkspace.disabledPatchValues["beam_damage"].orEmpty().keys.none { it in values }) return
         var after = before
         for ((field, value) in edits.values.map { it.first() }.sortedByDescending { it.first.span.first }) {
@@ -71,8 +76,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
     }
     fun resetToOriginal() = editValues(catalog.keys.associateWith { catalog.original(it).value })
     fun useSourceValues(key: String) {
-        val beam = key.removeSuffix("_charged")
-        val keys = setOf(beam, "${beam}_charged")
+        val keys = projectileDamageKeyFamily(key)
         keys.forEach { catalog.field(it, text()) } // Repair requires real values, not fallbacks.
         publish(keys, text(), text(), useOverrides = false)
     }
@@ -83,7 +87,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
         keys.forEach { key -> runCatching { catalog.field(key, before).value }.getOrNull()?.let { lastGood[key] = it } }
         if (keys.isEmpty()) return null
         if (project().asmWorkspace.beamDamageSourceKeys.containsAll(keys) && project().patches.none {
-                it.configType == "beam_damage" && it.configData.orEmpty().keys.any { k -> k.removeSuffix("_charged") in keys.map { key -> key.removeSuffix("_charged") } }
+                it.configType == "beam_damage" && patchTouches(it, keys)
             } && project().patches.none { it.configType == "beam_damage" && !it.enabled } &&
             "beam_damage" !in project().asmWorkspace.disabledPatchValues) return null
         publish(keys, before, after)
@@ -93,7 +97,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
 
     private fun publish(touched: Set<String>, beforeText: String, proposed: String, useOverrides: Boolean = true) {
         val owner = project()
-        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Beam source editing requires ASM source mode." }
+        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Projectile source editing requires ASM source mode." }
         var afterText = proposed
         val keys = touched.toMutableSet()
         val retired = mutableSetOf<String>()
@@ -104,16 +108,16 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
             val count = keys.size
             val spans = keys.mapNotNull { runCatching { catalog.field(it, afterText).span }.getOrNull() }.toSet()
             keys.addAll(catalog.keys.filter { runCatching { catalog.field(it, afterText).span in spans }.getOrDefault(false) })
-            val beams = keys.map { it.removeSuffix("_charged") }.toSet()
+            val beams = keys.filter { it in BEAM_DAMAGE_KEYS }.map { it.removeSuffix("_charged") }.toSet()
             val participants = owner.patches.filter { it.configType == "beam_damage" }
             val legacy = participants.flatMap { patch -> patch.configData.orEmpty().keys.filter { it in beams && "${it}_charged" !in patch.configData.orEmpty() } }.toSet()
             val migrate = legacy.flatMap { listOf(it, "${it}_charged") }.toSet() - keys
             if (useOverrides) {
                 val values = participants.filter { it.enabled }.flatMap { beamDamageConfigValues(it.configData.orEmpty()).entries }
                     .filter { it.key in migrate }.groupBy { it.key }
-                require(values.values.all { group -> group.map { it.value }.distinct().size == 1 }) { "Competing beam patch values; resolve them before adopting source." }
+                require(values.values.all { group -> group.map { it.value }.distinct().size == 1 }) { "Competing projectile patch values; resolve them before adopting source." }
                 val edits = values.map { (key, group) -> catalog.field(key, afterText) to group.first().value }.groupBy { it.first.span }
-                require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared beam records have competing patch values; no changes were made." }
+                require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared projectile records have competing patch values; no changes were made." }
                 require(edits.keys.none { span -> keys.any { runCatching { catalog.field(it, afterText).span == span }.getOrDefault(false) } }) {
                     "A legacy patch shares the edited damage record. Use ASM values to resolve ownership first."
                 }
@@ -127,9 +131,9 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
         val participants = owner.patches.filter { it.configType == "beam_damage" && retired.any { k -> k in it.configData.orEmpty() } }
         val old = participants.map { patch -> patch to patch.configData.orEmpty().filterKeys { it in retired } }
         fun check(undo: Boolean) {
-            require(project() === owner && owner.asmWorkspace.beamDamageSourceKeys.intersect(keys) == if (undo) keys else ownershipBefore) { "Beam ownership changed; undo newer edits first." }
-            for ((patch, data) in old) require(owner.patches.any { it === patch } && patch.configData.orEmpty().filterKeys { it in retired } == if (undo) emptyMap() else data) { "Beam patch values changed; undo newer edits first." }
-            require(owner.patches.none { patch -> patch.configType == "beam_damage" && participants.none { it === patch } && retired.any { it in effectiveKeys(patch) } }) { "A newer patch uses these beam fields; undo it first." }
+            require(project() === owner && owner.asmWorkspace.beamDamageSourceKeys.intersect(keys) == if (undo) keys else ownershipBefore) { "Projectile ownership changed; undo newer edits first." }
+            for ((patch, data) in old) require(owner.patches.any { it === patch } && patch.configData.orEmpty().filterKeys { it in retired } == if (undo) emptyMap() else data) { "Projectile patch values changed; undo newer edits first." }
+            require(owner.patches.none { patch -> patch.configType == "beam_damage" && participants.none { it === patch } && retired.any { it in effectiveKeys(patch) } }) { "A newer patch uses these projectile fields; undo it first." }
         }
         fun set(undo: Boolean) {
             owner.asmWorkspace.beamDamageSourceKeys.removeAll(keys)

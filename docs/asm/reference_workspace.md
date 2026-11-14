@@ -13,7 +13,7 @@ never be silently omitted from an export.
 
 Editor-to-source **ASM** shortcuts appear only when **Project ASM** is enabled
 and **ASM source** is the active build mode. This rule covers Room Info, selected
-objects/doors/saves, scrolls, FX, tilesets, sprites, enemy stats, beam damage, minimap, text and
+objects/doors/saves, scrolls, FX, tilesets, sprites, enemy stats, projectile damage, minimap, text and
 sound. Downloading the reference alone does not enable these links; returning a
 clean workspace to **Loaded ROM** hides them again. ROM edits can relocate data
 without updating reference source, so those shortcuts must not imply a mapping in
@@ -1555,8 +1555,8 @@ remain native text-selection commands. History handling sits above individual
 text fields so adding a focused control cannot silently disable navigation.
 
 The Library is bundled and remains available before the external disassembly is
-downloaded. Its ten SMEDIT-authored lessons are intentionally a field guide,
-not a general computer-science course. Their selectable, syntax-highlighted
+downloaded. Its ten foundational lessons and focused workflow guides are
+intentionally a field guide, not a general computer-science course. Their selectable, syntax-highlighted
 examples progress from literal formats, strings, tables, and bit masks through
 width state, pointers, comparisons, calls, and SNES runtime patterns; mnemonics
 inside the examples open their instruction pages. A selectable Quick-reference
@@ -1570,6 +1570,12 @@ is validated against undisbeliever's **65816 Opcodes** reference (CC BY-SA 4.0),
 the official Asar manual, and Western Design Center processor documentation.
 Attribution and source links are visible both at the bottom of Library pages and
 under **Settings → Credits**.
+
+The checked [ASM / Visual Editor capability matrix](capability_matrix.md) is the
+current inventory of reciprocal integrations and intentional ASM-only boundaries.
+Every reciprocal row uses one shared ten-scenario completion gate, with a fast
+normal-development task and a focused cold-build task whose suite lists are
+checked against the registry.
 
 **Sync assets** re-extracts data from the currently loaded ROM without a network
 request. **Redownload** transactionally refreshes the pinned source and derives
@@ -1780,6 +1786,116 @@ exporter so it can prove identical semantic ROM output before individual
 resources become typed label-driven tables. Asar's four derived internal
 checksum/complement bytes are the only exclusion from that parity hash; all
 semantic bytes remain exact.
+
+### Reciprocal tileset assets and project-space relocation
+
+Area graphics, area metatiles, CRE graphics, CRE metatiles and tileset palettes
+are reciprocal when their table/source declarations retain the supported direct
+symbolic shape. The Visual Editor reads the saved project `incbin` asset, not a
+second JSON value. A visual save recompresses and round-trips the complete decoded
+resource. Shared source labels remain one shared owner: every tileset alias changes
+together and is named in the UI.
+
+An edit stays at its native address while its encoded stream fits the frozen asset
+envelope. The ownership line shows encoded bytes and native capacity. If it grows,
+SMEDIT offers **Move to project space** with the required/capacity values. Cancel
+does not write anything. Confirm creates these durable authored inputs:
+
+```text
+asm/managed-assets.json
+asm/managed-assets/smedit-managed/<stable-id>.bin
+```
+
+The source declaration receives a small ownership marker, but no address is stored
+as project intent. Each clean build first compiles with managed payloads muted,
+excludes authored source, complete checked-module envelopes and other generated
+owners, then allocates the payload in verified space. Expansion banks are preferred
+when the project has 4 MiB capacity. Generated source restores the original public
+label at that checked address, so supported symbolic consumers follow it naturally.
+The compiler additionally verifies the exact payload, start/end symbols and every
+declared consumer byte: 24-bit tileset table fields and CRE's low-word/bank-word
+immediates. A changed or unknown consumer shape fails closed as **ASM only**.
+
+The current address is visible after a build in **Project ASM Changes** and the
+**ROM Space Planner**. Project ASM Changes also shows current size, original path,
+native capacity and source label. Unsaved ASM buffers block declaration-moving or
+restore transactions. Already-open clean source buffers refresh immediately after
+the Visual Editor changes a declaration; reopening the project is unnecessary.
+
+**Restore ASM Data** removes the manifest record and managed binary, restores the
+frozen direct declaration and releases the allocation as one guarded transaction.
+It refuses stale source/data. A cold reopen/build derives the same bytes and a safe
+placement from the authored manifest rather than depending on generated cache files.
+Arbitrary expressions, numeric pointers, unknown macros and arbitrary native code
+are not relocated.
+
+### Shared managed segments and checked-hook helpers
+
+Relocatable assets and generated code use one typed allocation contract. A request
+records a stable logical ID, owner, resource kind, exact size, alignment, permitted
+LoROM banks and a human-readable pointer/runtime constraint. It deliberately does
+not store a compiled address. The checked build resolves that intent against the
+verified free-space catalog and all other planned owners; its placements are then
+adopted by the final export allocator so a later room, patch or asset cannot reuse
+the same bytes. Generated room and patch allocations, managed source assets,
+managed bank-`$8F` room code, checked-hook helpers and editor-planned music,
+graphics/custom-ASM allocations now retain this typed identity. The ROM Space
+Planner reads the same requests and placements instead of estimating from a
+separate scanner.
+
+Capacity remains an explicit project choice. A 3 MiB build allocates only within
+its verified banks; a 4 MiB build can use verified expansion banks. Allocation
+never silently expands a project or moves fixed native code. Failure reports the
+requested size/alignment/banks, largest compatible block, total compatible bytes,
+fragmentation, known blocking owners and the request's constraint. It also gives
+safe next steps: inspect/move another planned owner when space is fragmented,
+reduce or release a segment when total compatible capacity is insufficient, and
+enable the supported 4 MiB project capacity only when the request permits an
+expansion bank. Generated addresses must not be hand-edited around a failed
+constraint.
+
+The final desktop and headless exporters enforce the same contract for every
+production writer. Music transfers, intro payloads, graphics relocations, custom
+ASM, room-name patches and new/relocated room data cannot reserve anonymous ROM
+space. The final transaction asserts that every reservation still has its typed
+request. ROM Space Planner no longer guesses an allocation owner by matching a
+write at the same address; it reads the request retained by the allocator.
+
+Writers publish explicit planned writes rather than mutating the final ROM behind
+the transaction. Fixed/configured patches, per-frame hooks, minimap/text data,
+graphics and music stage their known bytes directly. The mature room-graph encoder
+runs against a private ROM image and an isolated fork containing the exact current
+reservations/protected ranges. Only after the complete room image validates does
+the transaction atomically stage full allocation envelopes plus remaining byte
+changes and adopt those placements into the root allocator. A failed plan leaves
+no output file and cannot expose a half-written room graph to a later writer.
+
+Runtime resources participate in the same ownership report even when they are not
+ROM allocations. The combined per-frame feature records its shared native hook
+and the exact WRAM words used by enabled boss flags, Hyper Beam and Infinite Blue
+Suit; the room-name pause-map patch records both hooks and its VRAM row. Conflicting
+exclusive WRAM/VRAM/hook claims fail before output.
+
+**Create Checked Hook…** emits `@smedit-checked-hook-v2`. The native `JML` detour,
+complete overwritten instruction envelope and exact continuation stay fixed and
+are verified against the immutable source on every build. Only the helper is a
+managed code segment. The `seed`, `probe_limit`, `org` and `warnpc` visible in the
+authored module make the newly created source understandable, but they are not a
+persisted placement decision. A clean build gives each helper an independent
+single-bank size-probe location, measures its `_Helper` through `_Helper_End`
+symbols, allocates the exact byte count, and substitutes the selected `org` and
+exact `warnpc` in temporary build source. The saved module is not rewritten.
+
+Growing a helper therefore repacks it and any following managed helpers when
+needed. The final Asar symbols must match every selected segment, each detour must
+encode a long jump to its current helper, the displaced prefix and terminal long
+jump must still match the reviewed native flow, and the module may emit no other
+bytes. Multiple adjacent helpers retain separate IDs even when ROM comparison
+coalesces their changed bytes. Size probing supports the single-bank envelope;
+the practical limit is the largest compatible verified block reported by Space
+Planner. Arbitrary native routines are never inferred to be safe or relocated.
+Cold builds reproduce placement from authored helper bodies and current ownership,
+not from an old generated address or memory cache.
 
 The first typed resource is now a PLM list and its room-state references.
 Reachable, edited lists in an existing selector graph emit readable `dw`/`db`
@@ -3419,14 +3535,20 @@ with an undoable action. A fixture-backed Asar regression checks every listed na
 species, reciprocal edits, real drop/vulnerability relocation, cold rebuild parity, moved
 header rejection and unchanged-byte patch conflicts. No project-format bump is needed.
 
-## Reciprocal normal and charged beam damage
+## Reciprocal player-projectile damage
 
-The **Beam Damage** patch editor exposes independent normal/charged words for all
-five base beams and seven combinations. In active ASM source mode its section and
-per-beam **ASM** links open `bank_93.asm` without adopting or dirtying anything.
-Live damage words and their native pointer bindings offer **Edit … damage** return
-links; the returned row is highlighted and revealed. Focus a charged input before
-using its row link to open that charged word.
+The **Projectile Damage** editor exposes independent normal/charged words for all
+five base beams and seven combinations, plus Hyper Beam, missile, super missile,
+the super-missile link, bomb, Power Bomb, and the Plasma/Wave/Spazer special-beam
+attacks. In active ASM source mode its section and per-field **ASM** links open
+`bank_93.asm` without adopting or dirtying anything. Live damage words and native
+beam pointer bindings offer **Edit … damage** return links; the returned row is
+highlighted and revealed. Focus a charged input before using its row link to open
+that charged word.
+
+The nearby beam, missile, bomb and super-missile *explosion* records are excluded:
+the native source explicitly marks those damage words as ignored. SMEDIT does not
+present inert data as a working gameplay control.
 
 First GUI/text edits adopt literal words automatically. Values live only in source;
 `asmWorkspace.beamDamageSourceKeys` stores identities. Existing normal-only config
@@ -3439,14 +3561,15 @@ customized values asks for confirmation. Exact custom values are saved while the
 original words are restored in source; re-enabling restores the customization.
 Source Undo/Redo includes the checkbox and saved values. Opening links stays read-only.
 
-The lens follows each live symbolic pointer, including shared/aliased records.
+The beam lens follows each live symbolic pointer, including shared/aliased records;
+the other projectile fields follow their exact symbolic table labels.
 Shared GUI changes adopt all matching words together; bulk reset rejects incompatible
 defaults atomically. Unsupported drafts show marked last-good values, lock only the
 affected field and retain a repair link. Conflicting external source/config edits
 offer **Use ASM values**. Owned unsupported literals must be repaired before build.
 
-Build checks verify actual compiler symbols, bank-93 bounds, 12-word pointer lists,
-11-word projectile records and the emitted pointer/damage values. Full two-byte
+Build checks verify actual compiler symbols, bank-93 bounds, 12-word beam pointer
+lists, each field's complete native record envelope and the emitted pointer/damage values. Full two-byte
 damage words and their pointer bindings are protected, including unchanged bytes.
 Existing pending ROM configs resolve checked compiler locations, so relocating a
 record cannot make a legacy override write to the old address. Real-Asar tests cover
@@ -4358,18 +4481,409 @@ JSR relocation, growth, complete fill ownership, unchanged source on builds,
 oversize rejection, reciprocal PLM edits, repair/unlock transitions and cache/undo
 ROM parity.
 
+## Reciprocal native sprite pixels and palettes
+
+In ASM source mode the supported native-sprite Visual Editor no longer creates a
+second ROM/project override. Pixel sheets resolve to the exact pinned manifest
+asset consumed by one direct `Label:` + `incbin` declaration. The visual decoder
+reads that authored asset, and Apply writes it back with an optimistic byte guard.
+Shared visual recipes use the same source key, so editing the title sprite sheet,
+for example, updates every title composition that consumes it rather than
+forking another copy.
+
+Compressed LZ5 sheets stay in place while they fit their frozen source envelope.
+When a larger stream has a complete supported set of symbolic pointer consumers,
+SMEDIT offers **Move to project space**. Accepting creates one managed source
+asset and allocation intent; its address is chosen during the checked build.
+The build validates the complete emitted payload, every supported pointer and
+exclusive allocation ownership. Restore reverses the declaration, asset and
+managed ownership together. Raw/uncompressed sheets retain their exact size.
+
+Native 16-colour rows are inline source rather than extracted files. A row is
+visual-editable only when SMEDIT finds exactly 16 contiguous literal
+`dw $hhhh` words with matching six-digit ROM-address comments. Labels, blank
+lines and comments may divide those words. Expressions, macro-generated values,
+extra emitting statements, missing/stale shape evidence, duplicate candidates and resized rows fail closed
+as **ASM only**. Palette rows are fixed native data; SMEDIT never relocates them.
+Only the 16 literal values change, with palette entry 0 treated as transparent by
+the visual picker.
+
+Both directions refresh live after a saved source change. An unsaved source
+draft blocks Visual Apply, relocation, Restore and Undo/Redo; a newer durable
+edit also fails the optimistic guard. Visual Undo/Redo stores exact source
+snapshots and can cross direct/managed pixel ownership without retaining a stale
+address. Project ASM Changes shows data-asset changes, managed relocation details
+and inline palette-bank changes. Save/reopen and cache-free headless builds read
+the durable authored source/assets, and ASM builds ignore retired legacy native
+sprite JSON rows so source cannot be overwritten late in export.
+
+The reciprocal boundary is pixels and independently proven palette rows. OAM
+composition, animation instruction lists, DMA/runtime transfer programs,
+runtime palette effects and other custom expressions remain read-only unless a
+separate semantic bridge proves their ownership and exact round trip.
+
+## Reciprocal scene map assets
+
+The Visual Sprite viewer's **Scenes** group has reciprocal layout editing for six
+compressed maps whose source shape and visual meaning are both exact:
+
+| Scene map | SNES source | Decoded format |
+|---|---:|---|
+| Title Mode 7 | `$96:FC04` | 128×32 tile-number bytes |
+| Ceres / gunship Mode 7 | `$96:FE69` | 128×6, 128×6, 128×12 and 128×8 byte frames |
+| Intro Mother Brain room | `$96:FF14` | Four independent 32×32 SNES BG-word frames |
+| Intro Samus portrait | `$97:88CC` | 32×32 SNES BG words |
+| Ending Samus waiting | `$97:96F4` | 32×32 SNES BG words |
+| Post-credits Super Metroid icon | `$99:ECC4` | 32×32 SNES BG words |
+
+Each map resolves to one direct global label followed by one pinned
+manifest-backed `incbin`. In ASM source mode that data asset is authoritative;
+the project does not retain another visual override. **Title screen** and
+**Title background** are two visual recipes over the same `$96:FC04` identity,
+so an edit made through either selection refreshes both. Saved source edits also
+refresh the Scenes and Intro Sequence previews without reopening the project.
+
+The cell editor changes semantic map fields, not rendered pixels. Mode 7 cells
+are one tile-number byte. The Ceres/gunship source is four runtime frames—two
+six-row gunship frames, one twelve-row Ceres/flight frame and an eight-row clear
+map—so the editor selects those slices explicitly instead of presenting a false
+128×32 canvas. The intro BG1 source likewise exposes its four independent
+32×32 story frames rather than a false 64×64 composite. BG cells are
+little-endian words stored in the SNES's consecutive 32×32 screen-block order;
+their tile number, palette row, priority, horizontal-flip and vertical-flip
+fields are edited independently while all other bits survive. The image preview
+is never flattened back into guessed map or tile data.
+
+LZ5 output remains at the native address while it fits the frozen asset
+envelope. On growth, **Move to project space** is available only when every
+consumer is a supported symbolic 24-bit pointer or split bank/low-word load. A
+checked build chooses the allocation and validates decompression, emitted bytes,
+allocation ownership, and every consumer. Project ASM Changes shows direct and
+managed data changes; ROM Space Planner shows the final managed placement.
+Restore and source-aware Undo/Redo cross direct/managed ownership atomically.
+Unsaved declaration drafts and newer asset bytes block every visual mutation.
+
+The boundary is intentionally narrower than “all cinematic data.” OAM
+composition, frame/instruction programs, graphics tiles, menu layouts, credits,
+and runtime effects remain read-only until they have an exact semantic model.
+PAL options branches, English/Japanese controller and special-settings maps,
+the Japanese intro font/text path, and regional credits data are inventoried but
+not routed through the NTSC scene editor. Their active branches and encodings
+must be modeled before reciprocal editing is safe.
+
+## Reciprocal fixed tilemap text
+
+In ASM source mode, the Text Editor uses project source as the sole authority for
+three fixed-layout families: the seven pause-map area labels, nine in-game
+message rows, and nineteen item pickup names. A saved compatible source edit
+refreshes the visual value without reopening. A visual edit updates the exact
+literal words in the owning bank file, Project ASM Changes reports that bank,
+and save/reopen and cache-free builds consume those same durable words.
+
+The reciprocal lens is intentionally strict. Every owned word must be a literal
+`dw $hhhh` token covered by an exact six-digit ROM-address comment. A field may
+begin or end inside a larger directive: SMEDIT resolves each contiguous address
+and replaces only the selected tokens, preserving adjacent words, labels,
+comments, whitespace and line structure. Area-name property bytes and message
+tilemap layout survive encoding. These fields have fixed sizes and fixed native
+addresses, so no allocation or pointer relocation is involved.
+
+The first source-backed visual edit retires an older `textEdits` JSON value for
+the same field. The ASM exporter independently ignores stale fixed-tilemap text
+overrides, including values from an older project version, so source cannot be
+overwritten after assembly. Source-aware Undo/Redo and Restore use optimistic
+snapshots: an unsaved draft or a newer durable source edit blocks the operation
+instead of being merged or replaced. Restore changes only the selected field
+back to the frozen project ASM baseline.
+
+Expressions, macros, missing or stale address evidence, duplicate matches,
+resized fields, and fields moved into an unproven source shape fail closed as
+**ASM only**. Their ASM remains editable, but the visual control is read-only and
+shows the reason. Ceres/Zebes typewriter streams and English NTSC intro-story
+scripts use separate reciprocal contracts because they mix text with control
+words, implicit-bank pointers, timing/position records and cinematic commands;
+they are never routed through this literal-word lens.
+
+## Reciprocal Ceres and Zebes typewriter streams
+
+The two English escape messages in bank `$A6` now have a typed reciprocal
+contract. They are control streams, not zero-terminated strings:
+
+```asm
+TypewriterText_ZebesEscapeTimer:
+    dw $0001,$0002       ; timer command and reset value
+    dw $000D,$4905       ; line 1 VRAM tilemap destination
+    db "TIME BOMB SET!"
+    dw $000D,$4945       ; line 2 VRAM tilemap destination
+    db "ESCAPE IMMEDIATELY!"
+    dw $0000             ; terminal command
+```
+
+The visual field owns only the quoted line characters. Timer reset, per-line
+VRAM addresses, control order, terminal word, and line count remain typed source
+controls and round-trip byte-for-byte. The native handler supports uppercase
+letters, spaces and `!`; the latter maps to the warning glyph. Compatible saved
+ASM updates appear in the Text Editor immediately. Expressions, custom commands,
+unsupported characters, moved declarations and other unproven shapes fail closed
+as **ASM only**.
+
+When edited text fits each native line slot, SMEDIT pads the remainder with
+spaces and changes only the existing quoted bytes. A longer line must not shift
+all subsequent bank `$A6` code/data. **Move to project space** instead retains
+the original bytes without the public label, records the typed stream as a
+managed binary input, and asks the shared allocator for verified free space.
+
+This relocation has a stricter constraint than ordinary 24-bit assets. Both
+setup routines use `LDA.W #TypewriterText_…`, storing only the low 16 bits; the
+handler implicitly reads bank `$A6`. The managed request therefore allows bank
+`$A6` only. The compiler validates the emitted data, label, low-word consumers,
+exclusive allocation, and final bank. If no contiguous verified `$A6` range can
+hold the message, planning fails rather than placing it in an expanded bank that
+would assemble but fail at runtime. Project ASM Changes reports the inline-to-
+managed transaction and ROM Space Planner reports the checked placement.
+
+Unsaved drafts and newer durable edits block visual saving, relocation, Restore,
+and Undo/Redo. Restore atomically removes managed ownership and returns the exact
+frozen declaration. Save/reopen and cache-free compiler tests cover both streams,
+fixed-slot edits, relocation, low-word output, cold placement and restoration.
+PAL subtitle tilemaps, Japanese Ceres glyph/tilemap data and other regional text
+remain separate assets; this English NTSC editor does not claim them.
+
+## Reciprocal English intro-story pages
+
+The six English NTSC story pages in bank `$8C` are cinematic programs rather
+than strings. Each visible character is one fixed six-byte record:
+
+```asm
+dw $0005*!FPS
+db $01,$04
+dw IndirectInstructions_IntroText_I ;8CC38F; "I"
+```
+
+The Text Editor owns only the symbolic `IndirectInstructions_IntroText_*` glyph
+operand in each proven record. The timing expression, X/Y position, page setup,
+record order and count, blinking-marker wait, movie flow, caret, finish and
+delete instructions stay source-owned and byte-identical. Y coordinates define
+the visual line layout. A visual edit must preserve the number of positioned
+lines and fit inside every row's existing X-position slots; a shorter row is
+padded with the symbolic Space glyph so no following address moves.
+
+For source readability, a visual save updates the adjacent quoted character
+comments and the page-summary comments above the instruction list. Compatible
+saved ASM glyph edits refresh the visual field without reopening. The first
+source-backed visual edit retires an older `textEdits` JSON value, and ASM export
+independently ignores stale intro overrides. Project ASM Changes therefore shows
+the ordinary `bank_8C.asm` change that a cold build consumes.
+
+Undo/Redo and Restore use guarded source snapshots. An unsaved ASM buffer or a
+newer durable source edit blocks visual saving, history and restoration instead
+of being overwritten. Restore replaces only the selected native page from the
+frozen project ASM baseline. No relocation is offered: the fixed layout is the
+safety contract, and keeping it fixed preserves all low-word page consumers and
+the surrounding cinematic program.
+
+Changed timing or coordinates, added/removed records, custom glyph expressions
+or macros, moved pages, stale address evidence, changed setup/wait/movie/finish
+controls and unsupported glyphs fail closed as **ASM only**. The visual field
+shows the reason and does not fall back to stale ROM or project text. The
+Japanese font/text path and other regional branches have separate encodings and
+remain explicitly outside this English NTSC contract.
+
+## Compiled Output Inspector
+
+Editable project source has a compact **Compiled Output** row below its existing
+Visual Editor and reference links. It follows the caret and resolves the exact
+statement through Asar's retained WLA address-to-line map. Expanding it shows:
+
+- every emitted SNES and canonical PC range for the statement;
+- immutable project-ASM baseline bytes, loaded-ROM bytes, and the validated
+  current SMEDIT result side by side;
+- compiled symbols within the range, exact export/write owners, a managed
+  allocation when present, and the allocator's post-build bank headroom;
+- resolved incoming label/macro uses and outgoing source references; and
+- diagnostics attached to that exact authored line.
+
+Labels, comments and directives may legitimately emit no bytes. They remain
+useful for symbols, references and diagnostics; SMEDIT does not inherit nearby
+bytes and call them output. Fixed native code reports that it has no allocator
+placement instead of inventing an owner. Unchanged statements remain visible as
+**Current · unchanged**.
+
+The three byte sources have deliberately different meanings. **Baseline** is
+the immutable ASM snapshot frozen with the project, **Loaded ROM** is the file
+the project opened, and **SMEDIT** is the result of the same validated in-memory
+transaction used by Export ROM. A project/source edit after that transaction
+marks the inspector **Stale · last successful output**; the old evidence remains
+inspectable but is never presented as current.
+
+Navigation reuses existing authorities. **ROM Comparison** selects the
+containing changed range when one exists, **Space Planner** focuses the bank,
+**Project ASM Changes** opens the source/asset review, and **Visual Editor** is
+offered only when the semantic bridge proves an editor owner. Reference rows
+open their exact authored source locations.
+
+Build reports also retain the exact disposable statement for generated room,
+patch, managed-bank-`$8F`, and managed-asset compiler inputs. The Problems panel
+labels these as generated build input and explains the durable editing authority;
+it never adds generated files to editable project source. Generated room errors
+can open the read-only Room Data projection, while repair still happens in the
+owning room, patch, source declaration, or Visual Editor resource.
+
+## Semantic Project ASM Changes
+
+**Project ASM Changes** keeps the exact three source layers—immutable project
+baseline, saved authored source and an open unsaved buffer—but now leads with
+the recognized gameplay meaning and editing authority. Proven changed lines and
+assets are classified as room resources, palettes, graphics/metatiles, map data,
+text, hooks/modules or allocations. **Baseline → saved**, **Saved → unsaved**
+and **Baseline → current** remain selectable raw, syntax-highlighted diffs; a
+semantic label never replaces the exact evidence.
+
+Origins are deliberately conservative. A project module and managed relocation
+have durable identities. A direct `incbin` is labeled as reciprocal only when
+the semantic resolver proves its Visual Editor owner; otherwise it remains an
+authored source asset. A normal changed bank retains its exact authored text,
+but the project does not record whether each line was last produced by typing in
+ASM or by a reciprocal Visual Editor, so the UI says **Authored project source**
+and explains that boundary. Visual Editor links appear only when the existing
+semantic resolver proves an owner. Unknown source remains **ASM source** rather
+than receiving a filename-based guess.
+
+**Restore selected** always restores one complete ownership transaction:
+
+- a bank restores the complete file to its immutable project baseline;
+- a project module deletes the complete module and updates module order;
+- a direct asset restores all of its frozen bytes; and
+- a managed resource removes its allocation manifest and authored asset,
+  restores the exact source declaration, and restores the native asset override
+  when applicable.
+
+There is intentionally no hunk restore. A source file containing a managed
+ownership marker cannot be restored while that managed record exists, because
+doing so would leave the manifest, asset and source declaration split between
+two authorities. Restore the managed resource transaction first, then restore
+any remaining unrelated source change. An unsaved draft, newer disk source,
+newer asset bytes, a changed immutable baseline or a review from another project
+causes Restore to fail without overwriting anything. Successful restore reloads
+the project workspace and invalidates retained build/ROM evidence.
+
+**Update ASM Version** reuses the same semantic kind/origin cards for project,
+candidate-version and combined changes. Conflict choices still operate on
+complete merge regions. The full candidate still passes the existing stale-plan
+inventory check, compile and validation before the update is installed as one
+transaction; semantic summaries do not loosen that boundary.
+
+## ASM editor assistance
+
+Project source diagnostics and completion share the same scope-aware source index
+used by Go to Definition and Find Usages. Live diagnostics debounce while typing;
+saved-source validation and a cold build use the same analyzer. Inactive project
+modules are excluded from active macros, symbols and diagnostics.
+
+The expression evaluator is deliberately exact and bounded. It understands
+hex/binary/decimal literals, parentheses, arithmetic and bit operators, exact
+project defines, `low`/`high`/`bank`/`word`, and LoROM address conversion. An
+unknown label, custom function, macro expansion or conditional shape produces an
+unknown result and stops dependent inference. It is never guessed as zero.
+
+That exact evidence drives the following inspections:
+
+- `db`/`dw`/`dl`/`dd` expressions that Asar would silently truncate are errors;
+- an exact `org` cursor plus exactly sized output reports a bank crossing;
+- `warnpc` reports a proven overflow or a suspicious different-bank boundary;
+- unresolved-symbol errors are limited to direct branch/call/jump targets that
+  the current index proves are absent;
+- JSR/JSL versus RTS/RTL warnings require a unique direct target and a simple
+  routine with one proven terminal return kind; and
+- immediate-width warnings require a straight-line `REP`/`SEP` state. Labels,
+  branches, calls and unknown control flow clear that state.
+
+Errors stop a build before Asar can silently truncate or wrap known data.
+Review warnings remain in the Problems strip and compiled output but do not block
+the build. Macro/conditional/custom shapes intentionally fall through to Asar
+when SMEDIT cannot prove a stronger fact.
+
+Operand completion now includes expression functions alongside scoped labels,
+defines and macros. Exact defines show their value, directives show their form,
+and accepting a function inserts `()` with the caret inside. Comments, strings
+and disabled modules remain excluded.
+
+### Safe symbol rename
+
+Right-click an ordinary global label or a proven use and choose **Rename
+Symbol…**. Enter the new global name, then review the complete file/line list
+before applying. Apply re-plans against the live index and publishes every file
+as one guarded Undo/Redo transaction; a newer source edit cancels the operation
+without modifying any document.
+
+Rename refuses local labels, defines, macros and their parameters, function
+parameters, namespaces, collisions, ambiguous references, stale/unsaved indexes
+and any occurrence it cannot classify. Comments and quoted strings are not
+rewritten. A flattened descendant such as `Routine_Loop` changes with `Routine`
+only when the index proves that it is generated by a local declaration under
+that parent.
+
+There is intentionally no whole-file formatter. Automatic indentation and
+Tab/Shift-Tab remain local editing aids; diagnostics, completion and rename do
+not normalize authored expressions, literal forms, `.B`/`.W`/`.L` suffixes,
+spacing or comments.
+
+## Source-level runtime debugger
+
+Editable project source also has a compact **Runtime Debugger** row. It is an
+optional capability of SMEDIT's bundled Snes9x core, not a promise made by
+libretro: stock cores and the external RetroArch backend continue to run frames,
+but debugger controls fail closed and explain that the bundled core is required.
+The editor probes a versioned native ABI before exposing any CPU state.
+
+Start the current project in the bundled emulator, pause it, then expand Runtime
+Debugger. **Step Instruction** executes exactly one 65c816 opcode. **Run to
+Cursor** and **Add Breakpoint** use the selected statement's exact retained WLA
+address; a label-only line is supported when it owns an exact compiled symbol.
+Stale/unbuilt source disables those address controls. **Resume** advances in
+bounded frame chunks and stops before executing a target PC. Continuing from a
+breakpoint steps over that one stopped instruction before re-arming it, so it
+does not immediately stop on the same PC forever. Debugger-driven frame chunks
+still publish the current controller input, so arming a breakpoint does not
+freeze or reuse stale gameplay controls. Breakpoints belong only to the active
+emulator session, may be cleared together, and are cleared on close/restart.
+
+When the core stops, SMEDIT opens and highlights the exact authored source
+statement when the current build maps that PC. Generated checked-hook helpers
+and relocated managed segments keep their generated line and symbol as
+first-class execution evidence, but their disposable compiler files never
+become an editing authority. The emulator session retains the exact successful
+build-artifact identity of its loaded ROM. If source is rebuilt without
+restarting that ROM, or source changes after the mapped build, the panel marks
+the mapping stale, removes address-based controls and does not auto-navigate
+using the newer symbols.
+
+The register view includes A/X/Y, D/DB/PB, S, packed P flags, M/X widths,
+emulation mode, interrupt-wait state, scanline, cycle and core frame. Nearby
+stack bytes remain raw; native-mode reads wrap within bank `$00`, while
+emulation-mode reads correctly wrap within page `$01xx`. An RTS/RTL return candidate is labeled only when
+return-address-plus-one matches an exact retained source or symbol address; the
+UI deliberately says *candidate* rather than claiming a perfect reconstructed
+call stack. A stopped CPU, execution in WRAM and a PC absent from a non-empty
+source map are called out as investigation evidence.
+
+Selected memory and the nearby stack use a side-effect-free paused-bus peek for
+directly mapped ROM, WRAM and SRAM. CPU/PPU/coprocessor registers are refused
+because reading them can acknowledge or advance hardware state. A refused stack
+or selected-memory range is shown inline as **unavailable** without discarding
+the CPU/register state. Every run also has instruction and frame limits. A
+missing target, WAI loop, stopped CPU or mismatched ROM therefore returns control
+with a distinct halt reason instead of locking the editor.
+
 ## Next layers
 
 The separation between editable source and executable output is intentional.
 Follow-up work can now be incremental:
 
-1. Continue conservative editing assistance beyond the shipped scope-aware
-   instruction/directive/label/macro completion and debounced diagnostics: add
-   richer expression-aware hints, additional Asar-aware checks, and explicit
-   statement formatting that preserves expressions, comments, literal forms,
-   and `.B`/`.W`/`.L` suffixes. Literal project-wide
-   find/replace already has a reviewed, buffer-only preview, and Tab/Shift-Tab
-   provide selection-scoped indentation without a whole-file formatter.
+1. Keep the shipped expression-aware diagnostics, completion and guarded symbol
+   rename conservative as new Asar source shapes appear. Add a new inspection
+   only with a pinned positive and negative corpus; do not grow this into a
+   whole-file formatter.
 2. Continue the artifact sinks for semantic editors. Existing-room graphs now
    have an atomic byte-faithful generated-ASM backend, including variable-sized
    allocations and pointer changes. Replace that bridge incrementally with
@@ -4406,20 +4920,17 @@ Follow-up work can now be incremental:
    state lifecycle and compound operations now share those identities. Independent
    shared-native connections and coordinated area/geometry transactions are supported.
    Enemy HP/contact damage, drop weights, all raw vulnerability bytes and normal/charged
-   beam damage and boss HP/contact damage now have reciprocal native-source lenses; other weapon and specialized
+   beam/projectile damage and boss HP/contact damage now have reciprocal native-source lenses; specialized
    boss tuning tables are subsequent candidates.
    Asset-owned tileset/palette/separate-background
    authoring follows those room workflows.
    Graphics, map, text, and sound encoders should follow the same
    project-owned `data/`/source boundary before Asar.
 3. Extend the reverse semantic bridge to remaining specialized title/menu,
-   cinematic, and generated-runtime assets as those editors gain stable semantic
+   remaining cinematic programs, and generated-runtime assets as those editors gain stable semantic
    selection entry points. The inventory must explicitly include regional
    Japanese content: the Japanese font/tile encoding, Japanese strings and intro
    text/control streams, regional intro/cinematic images and frame tables, plus
    item-drop, weapon, beam, and projectile graphics/animations.
-4. Use retained project symbols for emulator run-to-address, breakpoints,
-   registers/stack inspection, and source-mapped crash diagnostics.
-
 Arbitrary-hack disassembly and automatic source merge/conflict resolution are not
 implied by the current editable workspace.

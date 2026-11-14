@@ -32,6 +32,19 @@ val platformAppResourcesDirectory = layout.buildDirectory.dir("appResources/$app
 val packagedAsarDirectory = platformAppResourcesDirectory.map { it.dir("tools/asar/$asarVersion") }
 val generatedAsmTemplatesDirectory = layout.buildDirectory.dir("generated/asm-module-templates")
 
+val macAsarClang = if (hostOs.contains("mac")) providers.exec {
+    commandLine("/usr/bin/xcrun", "--sdk", "macosx", "--find", "clang")
+}.standardOutput.asText.map { it.trim() } else null
+val macAsarClangxx = if (hostOs.contains("mac")) providers.exec {
+    commandLine("/usr/bin/xcrun", "--sdk", "macosx", "--find", "clang++")
+}.standardOutput.asText.map { it.trim() } else null
+val macAsarSdk = if (hostOs.contains("mac")) providers.exec {
+    commandLine("/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path")
+}.standardOutput.asText.map { it.trim() } else null
+val macAsarToolchainIdentity = if (hostOs.contains("mac")) providers.exec {
+    commandLine("/usr/bin/xcrun", "--sdk", "macosx", "clang", "--version")
+}.standardOutput.asText.map { it.trim() } else null
+
 val prepareAsmModuleTemplates by tasks.registering(Sync::class) {
     group = "build"
     description = "Bundle the readable ASM examples used by new project workspaces"
@@ -106,6 +119,81 @@ kotlin {
 }
 
 val regularJvmTest = tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest")
+
+val asmFastProofSuites = listOf(
+    "com.supermetroid.editor.asm.AsmIntegrationContractTest",
+    "com.supermetroid.editor.asm.AsmRoomPropertiesSourceTest",
+    "com.supermetroid.editor.asm.AsmRoomSelectorsSourceTest",
+    "com.supermetroid.editor.asm.AsmRoomGenerationSourceTest",
+    "com.supermetroid.editor.asm.AsmRoomLayoutSourceTest",
+    "com.supermetroid.editor.asm.AsmRoomThemeSourceTest",
+    "com.supermetroid.editor.asm.AsmPlmSourceBridgeTest",
+    "com.supermetroid.editor.asm.AsmRoomObjectSourceTest",
+    "com.supermetroid.editor.asm.AsmDoorSourceTest",
+    "com.supermetroid.editor.asm.AsmDoorArrivalsSourceTest",
+    "com.supermetroid.editor.asm.AsmSaveStationSourceTest",
+    "com.supermetroid.editor.asm.AsmFxSourceTest",
+    "com.supermetroid.editor.asm.AsmEnemySourceTest",
+    "com.supermetroid.editor.asm.AsmInitialScrollSourceTest",
+    "com.supermetroid.editor.asm.AsmScrollCommandSourceTest",
+    "com.supermetroid.editor.asm.AsmMinimapSourceBridgeTest",
+    "com.supermetroid.editor.ui.MinimapEditorStateTest",
+    "com.supermetroid.editor.asm.AsmTilesetGraphicsBridgeTest",
+    "com.supermetroid.editor.ui.AsmTilesetGraphicsEditorStateTest",
+    "com.supermetroid.editor.asm.AsmTilesetPaletteBridgeTest",
+    "com.supermetroid.editor.ui.AsmTilesetPaletteEditorStateTest",
+    "com.supermetroid.editor.asm.AsmNativeSpriteAssetBridgeTest",
+    "com.supermetroid.editor.asm.AsmNativeSpritePaletteBridgeTest",
+    "com.supermetroid.editor.ui.AsmNativeSpriteEditorStateTest",
+    "com.supermetroid.editor.asm.AsmCinematicMapAssetBridgeTest",
+    "com.supermetroid.editor.ui.AsmCinematicMapEditorStateTest",
+    "com.supermetroid.editor.asm.AsmTextSourceBridgeTest",
+    "com.supermetroid.editor.ui.AsmTextEditorStateTest",
+    "com.supermetroid.editor.asm.AsmTypewriterTextBridgeTest",
+    "com.supermetroid.editor.asm.AsmIntroStoryTextBridgeTest",
+    "com.supermetroid.editor.asm.AsmEnemyTuningSourceTest",
+    "com.supermetroid.editor.asm.AsmBeamDamageSourceTest",
+    "com.supermetroid.editor.asm.AsmBossStatsSourceTest",
+    "com.supermetroid.editor.asm.AsmEnvironmentalDamageSourceTest",
+    "com.supermetroid.editor.asm.AsmDataPatchSourceTest",
+    "com.supermetroid.editor.ui.MusicBankTransitionsTest",
+    "com.supermetroid.editor.asm.AsmProjectWorkspaceTest",
+    "com.supermetroid.editor.asm.AsmCheckedHookTest",
+    "com.supermetroid.editor.asm.AsmLibraryTest",
+)
+
+val asmColdBuildProofSuites = listOf(
+    "com.supermetroid.editor.asm.AsmProjectCompilerTest",
+    "com.supermetroid.editor.asm.AsmManagedAssetCompilerTest",
+    "com.supermetroid.editor.asm.AsmManagedAssetPointerTest",
+    "com.supermetroid.editor.asm.AsmNativeSpriteCompilerTest",
+    "com.supermetroid.editor.asm.AsmCinematicMapCompilerTest",
+    "com.supermetroid.editor.asm.AsmTextCompilerTest",
+    "com.supermetroid.editor.asm.AsmTypewriterTextCompilerTest",
+    "com.supermetroid.editor.asm.AsmIntroStoryTextCompilerTest",
+)
+
+tasks.register<org.gradle.api.tasks.testing.Test>("asmFastTest") {
+    group = "verification"
+    description = "Run the checked fast ASM/Visual reciprocity contract and bridge suites"
+    dependsOn(tasks.named("jvmTestClasses"))
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform()
+    filter { asmFastProofSuites.forEach(::includeTestsMatching) }
+}
+
+tasks.register<org.gradle.api.tasks.testing.Test>("asmReciprocityTest") {
+    group = "verification"
+    description = "Run fast ASM reciprocity checks plus focused cache-free compiler proofs"
+    dependsOn(tasks.named("jvmTestClasses"), "copyAsarToAppResources")
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    maxHeapSize = "2g"
+    useJUnitPlatform()
+    filter { (asmFastProofSuites + asmColdBuildProofSuites).forEach(::includeTestsMatching) }
+    systemProperty("compose.application.resources.dir", platformAppResourcesDirectory.get().asFile.absolutePath)
+}
 
 tasks.named("jvmProcessResources") {
     dependsOn(prepareAsmModuleTemplates)
@@ -284,6 +372,20 @@ val configureAsarStandalone by tasks.registering(Exec::class) {
         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${asarRuntimeOutputDirectory.get().asFile.absolutePath}",
     )
     if (hostOs.contains("mac")) {
+        // CMake otherwise retains whichever Command Line Tools/Xcode SDK was
+        // present on its first build. Include the active toolchain in Gradle's
+        // input identity so an Xcode/SDK switch reconfigures Asar reliably.
+        inputs.property("macAsarClang", macAsarClang!!)
+        inputs.property("macAsarClangxx", macAsarClangxx!!)
+        inputs.property("macAsarSdk", macAsarSdk!!)
+        inputs.property("macAsarToolchainIdentity", macAsarToolchainIdentity!!)
+        argumentProviders.add(org.gradle.process.CommandLineArgumentProvider {
+            listOf(
+                "-DCMAKE_C_COMPILER=${macAsarClang.get()}",
+                "-DCMAKE_CXX_COMPILER=${macAsarClangxx.get()}",
+                "-DCMAKE_OSX_SYSROOT=${macAsarSdk.get()}",
+            )
+        })
         args(
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
             "-DCMAKE_CXX_FLAGS=-Wno-deprecated-declarations -Wno-unknown-warning-option",
@@ -296,6 +398,11 @@ val buildAsarStandalone by tasks.registering(Exec::class) {
     description = "Build pinned Asar $asarVersion for the current platform"
     dependsOn(configureAsarStandalone)
     inputs.dir(asarSourceDirectory.map { it.dir("src") })
+    inputs.file(asarBuildDirectory.map { it.file("CMakeCache.txt") })
+    if (hostOs.contains("mac")) {
+        inputs.property("macAsarToolchainIdentity", macAsarToolchainIdentity!!)
+        inputs.property("macAsarSdk", macAsarSdk!!)
+    }
     outputs.file(asarBuiltExecutable)
     commandLine(
         "cmake", "--build", asarBuildDirectory.get().asFile.absolutePath,

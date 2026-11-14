@@ -35,6 +35,8 @@ import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmEditProjectFormat
 import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomSegmentPlacement
+import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.words
 import java.io.File
@@ -221,7 +223,7 @@ internal object ProjectFileService {
     ): AsmCompiledBuildBase? {
         if (project.asmWorkspace.buildMode == ProjectRomBuildMode.PATCHED_ROM) {
             require(project.asmWorkspace.enemyTuningSourceKeys.isEmpty()) { "Authored enemy tuning requires ASM source mode." }
-            require(project.asmWorkspace.beamDamageSourceKeys.isEmpty()) { "Authored beam damage requires ASM source mode." }
+            require(project.asmWorkspace.beamDamageSourceKeys.isEmpty()) { "Authored projectile damage requires ASM source mode." }
             require(project.asmWorkspace.bossStatsSourceKeys.isEmpty()) { "Authored boss stats require ASM source mode." }
             require(project.asmWorkspace.patchSourceKeys.isEmpty()) { "Authored patch data requires ASM source mode." }
             require(project.asmWorkspace.disabledPatchValues.isEmpty()) { "Saved disabled ASM customizations require ASM source mode." }
@@ -564,6 +566,30 @@ internal object ProjectFileService {
             sourceOwners = AsmPatchBackendRegistry.sourceOwners(project.patches),
             compiledRomSize = asmOutputRomSize,
         )
+        val generatedClaims = roomMaterialization.claims.map { Triple(it.owner, it.pcOffset, it.endExclusive) } +
+            patchMaterialization.claims.map { Triple(it.owner, it.pcOffset, it.endExclusive) }
+        fun covered(owner: String, start: Int, endExclusive: Int): Boolean =
+            (start until endExclusive).all { pc -> generatedClaims.any { (claimOwner, claimStart, claimEnd) ->
+                claimOwner == owner && pc in claimStart until claimEnd
+            } }
+        val preplannedSegments = planned.romSpaceAfter.allocations.mapNotNull { allocation ->
+            val request = allocation.request ?: return@mapNotNull null
+            val pcOffset = allocation.pcOffset - planned.headerSize
+            if (!covered(request.owner, pcOffset, pcOffset + allocation.size)) return@mapNotNull null
+            val normalized = allocation.copy(pcOffset = pcOffset)
+            RomSegmentPlacement(request, normalized)
+        }
+        val generatedAllocationWrites = planned.writeReport.writes.filter { write ->
+            write.kind == RomWriteKind.ALLOCATION && generatedClaims.any { (owner, start, end) ->
+                owner == write.owner && write.offset >= start && write.endInclusive < end
+            }
+        }
+        require(generatedAllocationWrites.all { write -> preplannedSegments.any { placement ->
+            placement.request.owner == write.owner && placement.allocation.pcOffset == write.offset &&
+                placement.allocation.size == write.bytes.size
+        } }) {
+            "A generated ASM allocation has no typed shared-registry placement; no ROM was produced."
+        }
         val compiled = if (materialization.isEmpty && roomMaterialization.isEmpty && patchMaterialization.isEmpty) {
             onLog(
                 "[ASM-BUILD] No fixed source assets or source-capable patches required generation " +
@@ -608,6 +634,7 @@ internal object ProjectFileService {
                 materialization = materialization,
                 patchMaterialization = patchMaterialization,
                 roomMaterialization = roomMaterialization,
+                preplannedSegments = preplannedSegments,
                 referenceRomBody = initial.referenceRomBody,
                 managedBank8FStart = initial.managedBank8FStart,
                 outputRomSize = asmOutputRomSize,

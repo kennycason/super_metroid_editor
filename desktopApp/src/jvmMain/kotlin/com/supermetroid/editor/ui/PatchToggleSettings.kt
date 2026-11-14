@@ -68,10 +68,12 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
         field.writeSpeciesIds.any { species -> (word((0xA00000 or species) + field.offset) ?: field.defaultValue) != value }
     }
     val defaults: Map<String, Int> = when (patch.configType) {
-        "beam_damage" -> ALL_BEAMS.flatMap { beam -> listOf(
+        "beam_damage" -> (ALL_BEAMS.flatMap { beam -> listOf(
             beam.key to (word(beam.snesAddress) ?: beam.defaultDamage),
             beam.chargedKey to (word(beam.chargedSnesAddress) ?: beam.defaultDamage * 3),
-        ) }.toMap()
+        ) } + OTHER_PROJECTILE_DAMAGE.map { projectile ->
+            projectile.key to (word(projectile.snesAddress) ?: projectile.defaultDamage)
+        }).toMap()
         EnvironmentalDamagePatch.CONFIG_TYPE -> readEnvironmentalDamageRomRates(parser)
         "samus_physics" -> ALL_PHYSICS_FIELDS.associate { it.key to (readPhysicsValue(parser, it) ?: it.defaultValue) }
         "phantoon" -> ALL_PHANTOON_FIELDS.associate { it.key to (readPhantoonFromRom(parser, it) ?: it.defaultValue) }

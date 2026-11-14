@@ -1089,24 +1089,30 @@ class AsmBuildPipelineIntegrationTest {
             assertEquals(parser.readUInt16At(parser.snesToPc(beam.snesAddress)), bridge.catalog.original(beam.key).value, beam.key)
             assertEquals(parser.readUInt16At(parser.snesToPc(beam.chargedSnesAddress)), bridge.catalog.original(beam.chargedKey).value, beam.chargedKey)
         }
+        for (projectile in OTHER_PROJECTILE_DAMAGE)
+            assertEquals(parser.readUInt16At(parser.snesToPc(projectile.snesAddress)), bridge.catalog.original(projectile.key).value, projectile.key)
         val romProject = SmEditProject(fixture.romFile.path).apply {
             patches.add(SmPatch("beams", "Beams", enabled = true, configType = "beam_damage",
-                configData = mutableMapOf("power" to 65535, "power_charged" to 97, "ice_charged" to 0)))
+                configData = mutableMapOf("power" to 65535, "power_charged" to 97, "ice_charged" to 0, "missile" to 444)))
         }
         val romOnly = RomParser(assertNotNull(RomExporter(romProject, parser).build()).resultRom)
         assertEquals(65535, romOnly.readUInt16At(parser.snesToPc(BASE_BEAMS.first().snesAddress)))
         assertEquals(97, romOnly.readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
         assertEquals(0, romOnly.readUInt16At(parser.snesToPc(BASE_BEAMS[1].chargedSnesAddress)))
+        assertEquals(444, romOnly.readUInt16At(parser.snesToPc(OTHER_PROJECTILE_DAMAGE.single { it.key == "missile" }.snesAddress)))
         val logs = mutableListOf<String>()
         suspend fun build(owner: SmEditProject = project): RomBuildResult? {
             assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
             return ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path)
         }
         assertContentEquals(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
-        val patch = editor.findOrCreateConfigPatch("beam_damage").apply { enabled = true; configData = mutableMapOf("power" to 40) }
+        val patch = editor.findOrCreateConfigPatch("beam_damage").apply {
+            enabled = true; configData = mutableMapOf("power" to 40, "missile" to 444)
+        }
         val legacy = RomParser(assertNotNull(build(), logs.joinToString("\n")).resultRom)
         assertEquals(40, legacy.readUInt16At(parser.snesToPc(BASE_BEAMS.first().snesAddress)))
         assertEquals(120, legacy.readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
+        assertEquals(444, legacy.readUInt16At(parser.snesToPc(OTHER_PROJECTILE_DAMAGE.single { it.key == "missile" }.snesAddress)))
 
         // Move a whole native projectile record, not its instruction lists. The
         // existing legacy config must follow the pointer, not patch the old word.
@@ -1124,9 +1130,11 @@ class AsmBuildPipelineIntegrationTest {
         editor.setPatchConfigData(patch.id, "power", 41)
         assertEquals(120, bridge.view("power_charged").value)
         editor.setPatchConfigData(patch.id, "power_charged", 97)
+        editor.setPatchConfigData(patch.id, "missile", 445)
         val compiled = assertNotNull(build(), logs.joinToString("\n"))
         assertEquals(41, RomParser(compiled.resultRom).readUInt16At(movedPc))
         assertEquals(97, RomParser(compiled.resultRom).readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
+        assertEquals(445, RomParser(compiled.resultRom).readUInt16At(parser.snesToPc(OTHER_PROJECTILE_DAMAGE.single { it.key == "missile" }.snesAddress)))
         assertTrue(com.supermetroid.editor.asm.AsmSemanticBridge.linksFor(0x93FF00, romParser = RomParser(compiled.resultRom))
             .any { it.target == com.supermetroid.editor.asm.AsmEditorTarget.BeamDamage("power") })
         assertTrue(compiled.writeReport.writes.any { it.offset == movedPc && it.bytes.size == 2 && "bank_93.asm" in it.label }, "Protect the unchanged upper damage byte too")
@@ -1134,6 +1142,7 @@ class AsmBuildPipelineIntegrationTest {
         assertFalse(patch.enabled, editor.statusMessage)
         val disabled = RomParser(assertNotNull(build(), logs.joinToString("\n")).resultRom)
         assertEquals(20, disabled.readUInt16At(movedPc)); assertEquals(60, disabled.readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
+        assertEquals(100, disabled.readUInt16At(parser.snesToPc(OTHER_PROJECTILE_DAMAGE.single { it.key == "missile" }.snesAddress)))
         assertEquals(0xFF00, disabled.readUInt16At(parser.snesToPc(0x9383C1)))
         assertEquals(65535, disabled.readUInt16At(parser.snesToPc(0x938431)))
         editor.requestTogglePatch(patch.id)

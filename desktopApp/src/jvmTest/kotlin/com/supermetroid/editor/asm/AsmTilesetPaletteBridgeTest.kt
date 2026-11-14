@@ -52,7 +52,7 @@ class AsmTilesetPaletteBridgeTest {
         val tooLarge = assertFailsWith<IllegalArgumentException> {
             fixture.bridge.save(fixture.project.path, 0, incompressible, opened.sourceBytes)
         }
-        assertTrue(tooLarge.message.orEmpty().contains("fixed"))
+        assertTrue(tooLarge.message.orEmpty().contains("project space"))
         assertTrue(fixture.repository.assetOverridePaths(fixture.project.path).isEmpty())
 
         val externalRaw = ByteArray(256) { 3 }
@@ -79,6 +79,29 @@ class AsmTilesetPaletteBridgeTest {
         val custom = fixture.bridge.access(fixture.project.path, 0)
         assertIs<AsmTilesetPaletteAccess.AsmOnly>(custom)
         assertTrue(custom.reason.contains("ASM"))
+    }
+
+    @Test
+    fun `oversized palette relocates and restoring removes source ownership`() {
+        val original = ByteArray(256)
+        val fixture = fixture(LZ5Compressor.compress(original).size + 2, original)
+        val opened = assertIs<AsmTilesetPaletteAccess.Editable>(fixture.bridge.access(fixture.project.path, 0))
+        val edited = ByteArray(256) { index -> ((index * 73 + index / 7) and 0xFF).toByte() }
+
+        assertFailsWith<AsmAssetRelocationRequiredException> {
+            fixture.bridge.save(fixture.project.path, 0, edited, opened.sourceBytes)
+        }
+        val relocated = fixture.bridge.relocate(fixture.project.path, 0, edited, opened.sourceBytes)
+        assertTrue(relocated.managedAssetId != null)
+        assertTrue(relocated.sourceBytes.size > relocated.capacity)
+        assertContentEquals(edited, relocated.rawPalette)
+        assertEquals(listOf(0, 1), relocated.affectedTilesetIds)
+
+        val restored = fixture.bridge.restore(fixture.project.path, 1, relocated.sourceBytes)
+        assertTrue(restored.managedAssetId == null)
+        assertFalse(restored.modified)
+        assertContentEquals(original, restored.rawPalette)
+        assertTrue(fixture.repository.managedAssets(fixture.project.path).isEmpty())
     }
 
     private data class Fixture(

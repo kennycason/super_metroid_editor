@@ -2,6 +2,8 @@ package com.supermetroid.editor.emulator
 
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.emulator.DebugExecutionResult
+import com.supermetroid.editor.emulator.DebugRunRequest
 import com.supermetroid.editor.libretro.LibretroCore
 import com.supermetroid.editor.libretro.LibretroCoreDiscovery
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -50,6 +52,7 @@ class LibretroBackend(
 
     private var sessionActive = false
     private var frameCounter = 0
+    private var lastDebugCoreFrame: Long? = null
     private var currentRomPath: String? = null
     private var frameImage: BufferedImage? = null
     private var lastSaveRamHash: Int? = null
@@ -101,6 +104,8 @@ class LibretroBackend(
                 supportsFrames = true,
                 supportsMemoryAccess = true,
                 supportsSaveStates = true,
+                supportsCpuDebugging = c.supportsCpuDebugging(),
+                cpuDebugApiVersion = c.cpuDebugApiVersion(),
             )
         } catch (e: Exception) {
             runCatching { startedAudio?.close() }
@@ -113,6 +118,7 @@ class LibretroBackend(
         persistSaveRamIfChanged()
         sessionActive = false
         currentRomPath = null
+        lastDebugCoreFrame = null
         runCatching { onEmuThread { core?.close() } }
         core = null
         audio?.close()
@@ -158,6 +164,7 @@ class LibretroBackend(
         frameCounter = 1
         lastSaveRamPersistFrame = frameCounter
         sessionActive = true
+        lastDebugCoreFrame = onEmuThread { c.takeIf(LibretroCore::supportsCpuDebugging)?.readCpuDebugState()?.coreFrame }
         pushFrame(capture.snapshot.frame)
         audio?.writeSamples(capture.audioSamples)
         if (saveRamToLoad == null) {
@@ -171,6 +178,7 @@ class LibretroBackend(
     override suspend fun closeSession(): StepResult {
         persistSaveRamIfChanged()
         sessionActive = false
+        lastDebugCoreFrame = null
         onEmuThread { core?.unloadGame() }
         lastSaveRamHash = null
         frameHolder.clear()
@@ -194,6 +202,9 @@ class LibretroBackend(
             captureStep(c, includeFrame = input.includeFrame)
         }
         frameCounter += repeat
+        if (c.supportsCpuDebugging()) {
+            lastDebugCoreFrame = onEmuThread { c.readCpuDebugState().coreFrame }
+        }
         maybePersistSaveRam()
 
         pushFrame(capture.snapshot.frame)
@@ -243,6 +254,7 @@ class LibretroBackend(
         frameCounter++
         lastSaveRamPersistFrame = frameCounter
         sessionActive = true
+        lastDebugCoreFrame = onEmuThread { c.takeIf(LibretroCore::supportsCpuDebugging)?.readCpuDebugState()?.coreFrame }
         pushFrame(capture.snapshot.frame)
         audio?.writeSamples(capture.audioSamples)
         if (saveRamToLoad == null) {
@@ -271,10 +283,57 @@ class LibretroBackend(
         onEmuThread { c.writeWram(address, data) }
     }
 
+    override suspend fun debugCpuState() = onEmuThread {
+        val c = core ?: throw IllegalStateException("Not connected")
+        check(sessionActive) { "No active session" }
+        c.readCpuDebugState()
+    }
+
+    override suspend fun stepInstruction(): DebugExecutionResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        check(sessionActive) { "No active session" }
+        val (execution, capture) = onEmuThread {
+            c.stepInstruction() to captureStep(c, includeFrame = true)
+        }
+        syncDebugFrame(execution.cpu.coreFrame)
+        pushFrame(capture.snapshot.frame)
+        audio?.writeSamples(capture.audioSamples)
+        return DebugExecutionResult(
+            haltReason = execution.haltReason,
+            cpu = execution.cpu,
+            snapshot = buildSnapshot(capture.snapshot),
+        )
+    }
+
+    override suspend fun runUntil(request: DebugRunRequest): DebugExecutionResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        check(sessionActive) { "No active session" }
+        val (execution, capture) = onEmuThread {
+            c.setInput(0, request.input.buttons)
+            c.runUntil(request.addresses, request.instructionLimit, request.frameLimit) to
+                captureStep(c, includeFrame = request.input.includeFrame)
+        }
+        syncDebugFrame(execution.cpu.coreFrame)
+        pushFrame(capture.snapshot.frame)
+        audio?.writeSamples(capture.audioSamples)
+        return DebugExecutionResult(
+            haltReason = execution.haltReason,
+            cpu = execution.cpu,
+            snapshot = buildSnapshot(capture.snapshot),
+        )
+    }
+
+    override suspend fun readBusMemory(address: Int, size: Int): ByteArray {
+        val c = core ?: throw IllegalStateException("Not connected")
+        check(sessionActive) { "No active session" }
+        return onEmuThread { c.readBus(address, size) }
+    }
+
     override fun close() {
         persistSaveRamIfChangedSync()
         sessionActive = false
         currentRomPath = null
+        lastDebugCoreFrame = null
         core?.let { c ->
             try { emuThread.submit { c.close() }.get() } catch (_: Exception) {}
         }
@@ -293,6 +352,14 @@ class LibretroBackend(
         val snapshot: LibretroCore.RuntimeSnapshot,
         val audioSamples: ShortArray,
     )
+
+    private fun syncDebugFrame(coreFrame: Long) {
+        val previous = lastDebugCoreFrame
+        if (previous != null && coreFrame >= previous) {
+            frameCounter += (coreFrame - previous).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        }
+        lastDebugCoreFrame = coreFrame
+    }
 
     private fun captureStep(c: LibretroCore, includeFrame: Boolean): StepCapture {
         return StepCapture(

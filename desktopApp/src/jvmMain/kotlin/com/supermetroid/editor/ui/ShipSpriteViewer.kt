@@ -19,7 +19,7 @@ internal fun ShipSpriteViewer(parser: RomParser?, editor: EditorState, modifier:
         NativeSpritePixelEditing(parser, editor, sheet, { rom -> ShipSpritemap(rom).animations().getOrNull(selected) }, { editing = null }, modifier)
         return
     }
-    val animations = remember(parser, editor.editVersion) {
+    val animations = remember(parser, editor.editVersion, editor.asmVisualSourceRevision) {
         editor.nativeSprites.previewParser(parser).let {
             ShipSpritemap(it).animations(
                 editor.loadEnemyTileData(it, ShipSpritemap.TOP_SPECIES),

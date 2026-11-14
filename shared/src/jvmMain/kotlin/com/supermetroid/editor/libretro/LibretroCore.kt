@@ -4,6 +4,8 @@ import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import com.supermetroid.editor.emulator.CpuDebugState
+import com.supermetroid.editor.emulator.DebugHaltReason
 import java.io.File
 
 // dlopen flags for loading libretro cores with isolated symbol scope
@@ -15,6 +17,11 @@ private const val RTLD_LOCAL = 0x00000  // default on Linux, but explicit for cl
  * All public methods must be called from a single thread (not thread-safe).
  */
 class LibretroCore(private val corePath: String) {
+
+    data class CpuDebugExecution(
+        val haltReason: DebugHaltReason,
+        val cpu: CpuDebugState,
+    )
 
     data class FrameSnapshot(
         val pixels: IntArray,
@@ -31,6 +38,7 @@ class LibretroCore(private val corePath: String) {
 
     private lateinit var lib: LibretroLib
     private var gameLoaded = false
+    private var cpuDebugApiVersion: Int? = null
 
     // Frame buffer (ARGB8888) — double-buffered to avoid per-frame allocation
     private var frameBuffer: IntArray = IntArray(0)
@@ -69,6 +77,9 @@ class LibretroCore(private val corePath: String) {
             Library.OPTION_OPEN_FLAGS to (RTLD_LAZY or RTLD_LOCAL)
         )
         lib = Native.load(corePath, LibretroLib::class.java, options)
+        cpuDebugApiVersion = runCatching { lib.smedit_debug_api_version() }
+            .getOrNull()
+            ?.takeIf { it == SUPPORTED_CPU_DEBUG_API_VERSION }
 
         File(systemDir).mkdirs()
         File(saveDir).mkdirs()
@@ -123,9 +134,65 @@ class LibretroCore(private val corePath: String) {
 
     fun isGameLoaded(): Boolean = gameLoaded
 
+    fun cpuDebugApiVersion(): Int? = cpuDebugApiVersion
+
+    fun supportsCpuDebugging(): Boolean = cpuDebugApiVersion != null
+
     fun run() {
         check(gameLoaded) { "No game loaded" }
         lib.retro_run()
+    }
+
+    fun readCpuDebugState(): CpuDebugState {
+        requireCpuDebugging()
+        check(gameLoaded) { "No game loaded" }
+        val state = SmeditDebugCpuState()
+        state.struct_size = state.size()
+        state.write()
+        check(lib.smedit_debug_get_cpu_state(state) != 0) { "Core rejected CPU-state request" }
+        state.read()
+        return state.toModel()
+    }
+
+    fun stepInstruction(): CpuDebugExecution {
+        requireCpuDebugging()
+        check(gameLoaded) { "No game loaded" }
+        val reason = debugHaltReason(lib.smedit_debug_step_instruction())
+        return CpuDebugExecution(reason, readCpuDebugState())
+    }
+
+    fun runUntil(
+        addresses: List<Int>,
+        instructionLimit: Long,
+        frameLimit: Int,
+    ): CpuDebugExecution {
+        requireCpuDebugging()
+        check(gameLoaded) { "No game loaded" }
+        require(addresses.size <= MAX_CPU_BREAKPOINTS) { "At most $MAX_CPU_BREAKPOINTS execution addresses are supported" }
+        require(addresses.all { it in 0..0xFFFFFF }) { "Execution addresses must be 24-bit SNES addresses" }
+        require(instructionLimit > 0) { "Instruction limit must be positive" }
+        require(frameLimit > 0) { "Frame limit must be positive" }
+        val addressMemory = addresses.takeIf(List<Int>::isNotEmpty)?.let { values ->
+            Memory((values.size * Int.SIZE_BYTES).toLong()).also { memory ->
+                values.forEachIndexed { index, value -> memory.setInt((index * Int.SIZE_BYTES).toLong(), value) }
+            }
+        }
+        val reason = debugHaltReason(
+            lib.smedit_debug_run_until(addressMemory, addresses.size, instructionLimit, frameLimit),
+        )
+        return CpuDebugExecution(reason, readCpuDebugState())
+    }
+
+    /** Reads the SNES CPU bus while execution is synchronously paused. */
+    fun readBus(address: Int, size: Int): ByteArray {
+        requireCpuDebugging()
+        check(gameLoaded) { "No game loaded" }
+        require(address in 0..0xFFFFFF) { "Address must be a 24-bit SNES address" }
+        require(size >= 0 && address.toLong() + size <= 0x1000000L) { "Bus range is out of bounds" }
+        if (size == 0) return EMPTY_BYTE_ARRAY
+        val memory = Memory(size.toLong())
+        check(lib.smedit_debug_read_bus(address, memory, size) != 0) { "Core rejected bus read" }
+        return memory.getByteArray(0, size)
     }
 
     fun getAvInfo(): RetroSystemAvInfo {
@@ -262,6 +329,45 @@ class LibretroCore(private val corePath: String) {
     fun close() {
         unloadGame()
         lib.retro_deinit()
+        cpuDebugApiVersion = null
+    }
+
+    private fun requireCpuDebugging() {
+        check(supportsCpuDebugging()) {
+            "This core does not expose SMEDIT CPU debugging API v$SUPPORTED_CPU_DEBUG_API_VERSION"
+        }
+    }
+
+    private fun SmeditDebugCpuState.toModel(): CpuDebugState = CpuDebugState(
+        pc = pc and 0xFFFFFF,
+        a = a.toInt() and 0xFFFF,
+        x = x.toInt() and 0xFFFF,
+        y = y.toInt() and 0xFFFF,
+        d = d.toInt() and 0xFFFF,
+        db = db.toInt() and 0xFF,
+        pb = pb.toInt() and 0xFF,
+        s = s.toInt() and 0xFFFF,
+        p = p.toInt() and 0xFFFF,
+        memoryWidth = memory_width.toInt() and 0xFF,
+        indexWidth = index_width.toInt() and 0xFF,
+        emulation = emulation.toInt() != 0,
+        waitingForInterrupt = waiting_for_interrupt.toInt() != 0,
+        halted = halted.toInt() != 0,
+        cycles = cycles,
+        verticalCounter = v_counter,
+        coreFrame = core_frame.toLong() and 0xFFFF_FFFFL,
+        instructions = instructions,
+    )
+
+    private fun debugHaltReason(value: Int): DebugHaltReason = when (value) {
+        0 -> DebugHaltReason.NONE
+        1 -> DebugHaltReason.STEP
+        2 -> DebugHaltReason.BREAKPOINT
+        3 -> DebugHaltReason.INSTRUCTION_LIMIT
+        4 -> DebugHaltReason.FRAME_LIMIT
+        5 -> DebugHaltReason.CPU_STOPPED
+        6 -> DebugHaltReason.INVALID_REQUEST
+        else -> DebugHaltReason.INVALID_REQUEST
     }
 
     // ── Callback handlers ──────────────────────────────────────────────────
@@ -428,6 +534,8 @@ class LibretroCore(private val corePath: String) {
     private var saveDirMem: Memory? = null
 
     companion object {
+        private const val SUPPORTED_CPU_DEBUG_API_VERSION = 1
+        private const val MAX_CPU_BREAKPOINTS = 256
         // ~1 second of stereo audio at 32040 Hz
         private const val AUDIO_BUFFER_SIZE = 32040 * 2 * 2
         private val EMPTY_SHORT_ARRAY = ShortArray(0)

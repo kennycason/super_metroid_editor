@@ -21,7 +21,7 @@ class AsmLibraryTest {
 
     @Test
     fun `guide and instruction page ids round trip`() {
-        assertEquals(13, AsmLibrary.guides.size)
+        assertEquals(24, AsmLibrary.guides.size)
         assertEquals(AsmLibrary.guides.size, AsmLibrary.guides.map { it.id }.toSet().size)
         AsmLibrary.guides.forEach { guide ->
             assertNotNull(AsmLibrary.guide(guide.id))
@@ -61,6 +61,85 @@ class AsmLibraryTest {
         assertTrue("displaced work" in hooksText)
         assertTrue("Objectives_MainPauseRoutine" in hooksText)
         assertTrue("warnpc \$918000" in hooksText)
+        assertTrue("@smedit-checked-hook-v2" in hooksText)
+        assertTrue("no persisted authoritative address" in hooksText)
+        assertTrue("requested bytes, chosen range, owner and constraint" in hooksText)
+        val spaceGuide = AsmLibrary.guide("rom-space-planner")!!
+        val spaceText = spaceGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n")
+        }
+        assertTrue("same typed requests" in spaceText)
+        assertTrue("Largest block" in spaceText)
+        assertTrue("total compatible space" in spaceText)
+        assertTrue("hand-editing a generated org" in spaceText)
+        assertTrue("WRAM" in spaceText)
+        val outputGuide = AsmLibrary.guide("compiled-output-inspector")!!
+        val outputText = outputGuide.sections.joinToString("\n") { it.paragraphs.joinToString("\n") }
+        assertTrue("Baseline is the immutable project ASM snapshot" in outputText)
+        assertTrue("Stale explicitly means" in outputText)
+        assertTrue("Generated build input" in outputText)
+        val changesGuide = AsmLibrary.guide("semantic-project-changes")!!
+        val changesText = changesGuide.sections.joinToString("\n") { it.paragraphs.joinToString("\n") }
+        assertTrue("do not record whether typing in ASM" in changesText)
+        assertTrue("never applies a partial diff hunk" in changesText)
+        assertTrue("containing a managed marker cannot be restored independently" in changesText)
+        val capabilityGuide = AsmLibrary.guide("asm-visual-capability-matrix")!!
+        val capabilityText = capabilityGuide.sections.joinToString("\n") { it.paragraphs.joinToString("\n") }
+        assertTrue("one durable source authority plus two views" in capabilityText)
+        assertTrue("docs/asm/capability_matrix.md" in capabilityText)
+        assertTrue("cache-free build of the emitted bytes and pointers" in capabilityText)
+        assertTrue(":desktopApp:asmFastTest" in capabilityText)
+        assertTrue(":desktopApp:asmReciprocityTest" in capabilityText)
+        val assistanceGuide = AsmLibrary.guide("asm-editor-assistance")!!
+        val assistanceText = assistanceGuide.sections.joinToString("\n") { it.paragraphs.joinToString("\n") }
+        assertTrue("unknown label, custom function, macro expansion" in assistanceText)
+        assertTrue("direct branch/call/jump target" in assistanceText)
+        assertTrue("one guarded multi-file Undo/Redo transaction" in assistanceText)
+        assertTrue("no whole-file formatter" in assistanceText)
+        val debuggerGuide = AsmLibrary.guide("source-runtime-debugger")!!
+        val debuggerText = debuggerGuide.sections.joinToString("\n") { it.paragraphs.joinToString("\n") }
+        assertTrue("versioned debug capability" in debuggerText)
+        assertTrue("side-effect-free paused bus peek" in debuggerText)
+        assertTrue("Breakpoints exist only for the active emulator session" in debuggerText)
+        val nativeSpriteGuide = AsmLibrary.guide("native-sprite-source-assets")!!
+        val nativeSpriteText = nativeSpriteGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("Move to project space" in nativeSpriteText)
+        assertTrue("literal dw \$hhhh" in nativeSpriteText)
+        assertTrue("OAM placement" in nativeSpriteText)
+        val cinematicGuide = AsmLibrary.guide("cinematic-map-source-assets")!!
+        val cinematicText = cinematicGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" +
+                section.table?.rows.orEmpty().joinToString("\n") { it.joinToString(" ") }
+        }
+        assertTrue("Title_Mode7_Tilemap" in cinematicText)
+        assertTrue("Move to project space" in cinematicText)
+        assertTrue("PAL options branches" in cinematicText)
+        assertTrue("flattened pixels" in cinematicText)
+        val textGuide = AsmLibrary.guide("fixed-text-source-fields")!!
+        val textGuideText = textGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("stale fixed-text JSON overrides" in textGuideText)
+        assertTrue("literal dw \$hhhh" in textGuideText)
+        assertTrue("typewriter messages" in textGuideText)
+        assertTrue(";82966F;" in textGuideText)
+        val typewriterGuide = AsmLibrary.guide("typewriter-text-streams")!!
+        val typewriterText = typewriterGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("LDA.W #label" in typewriterText)
+        assertTrue("bank \$A6 only" in typewriterText)
+        assertTrue("\$000D" in typewriterText)
+        assertTrue("Japanese glyph data" in typewriterText)
+        val introStoryGuide = AsmLibrary.guide("intro-story-text-pages")!!
+        val introStoryText = introStoryGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("\$0005*!FPS" in introStoryText)
+        assertTrue("Timing expressions" in introStoryText)
+        assertTrue("Japanese font/text path" in introStoryText)
         val demoGuide = AsmLibrary.guide("checked-hook-demo")!!
         val demoText = demoGuide.sections.joinToString("\n") { section ->
             section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()

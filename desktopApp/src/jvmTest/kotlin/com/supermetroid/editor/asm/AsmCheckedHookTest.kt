@@ -3,6 +3,7 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomVerifiedFreeRange
+import com.supermetroid.editor.rom.RomSegmentKind
 import com.supermetroid.editor.ui.asmCheckedHookContextMenuItems
 import java.io.File
 import kotlin.test.Test
@@ -10,6 +11,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.io.TempDir
 
@@ -63,9 +65,11 @@ class AsmCheckedHookTest {
         val source = candidate.renderModule("energy_guard")
         assertContains(source, "JML.L SMEDIT_EnergyGuard_808000_Helper")
         assertEquals(2, source.lineSequence().count { it.trim() == "NOP" })
-        assertEquals(1, AsmCheckedHookContract.parseAll(source).size)
+        val contract = AsmCheckedHookContract.parseAll(source).single()
+        assertTrue(contract.managed)
+        assertEquals((0x80..0xFF).toList(), contract.managedBanks)
         assertFailsWith<IllegalArgumentException> {
-            AsmCheckedHookContract.parseAll(source.lineSequence().filterNot { "@smedit-checked-hook-v1" in it }.joinToString("\n"))
+            AsmCheckedHookContract.parseAll(source.lineSequence().filterNot { "@smedit-checked-hook-v2" in it }.joinToString("\n"))
         }
     }
 
@@ -170,9 +174,123 @@ class AsmCheckedHookTest {
             outputRomSize = RomConstants.EXPANDED_ROM_SIZE,
         )
         val claims = compiled.sourceOwnedRanges.filter { it.sourceFileId == fileId }
-        assertEquals(2, claims.size)
+        assertEquals(1, claims.size)
         assertEquals(native.size, claims.single { it.pcOffset == checkNotNull(snesLoRomToPc(hook)) }.length)
-        assertTrue(claims.any { it.pcOffset == checkNotNull(snesLoRomToPc(0xE08002)) })
+        val helper = compiled.segmentPlacements.single { it.request.kind == RomSegmentKind.HOOK_HELPER }
+        assertEquals("asm-module:generated_checked_hook", helper.request.owner)
+        assertTrue(helper.allocation.snesAddress in 0xE08000..0xE0FFFF)
+        assertTrue(compiled.sourceOwnedRanges.none {
+            helper.allocation.pcOffset < it.pcOffset + it.length &&
+                it.pcOffset < helper.allocation.pcOffset + helper.allocation.size
+        })
+        AsmProjectCompiler.clearBuildCacheForTests()
+    }
+
+    @Test
+    fun `managed helpers grow repack and rebuild from intent instead of persisted seeds`() {
+        AsmProjectCompiler.clearBuildCacheForTests()
+        val rom = ByteArray(RomConstants.ROM_SIZE) { 0xFF.toByte() }
+        val firstHook = 0x808000
+        val secondHook = 0x808010
+        val firstNative = byteArrayOf(0xAD.toByte(), 0x34, 0x12, 0xEA.toByte())
+        val secondNative = byteArrayOf(0x8D.toByte(), 0x34, 0x12, 0xEA.toByte())
+        firstNative.copyInto(rom, checkNotNull(snesLoRomToPc(firstHook)))
+        secondNative.copyInto(rom, checkNotNull(snesLoRomToPc(secondHook)))
+        val fixture = AsmProjectTestFixture.synthetic(temporary, rom)
+        val repository = AsmProjectWorkspaceRepository(
+            starterModules = emptyList(),
+            augmentation = AsmSourceAugmentation.NONE,
+        )
+        val bank8F = File(fixture.workspace.workingDirectory, "src/$PLM_SOURCE_FILE").readText()
+        repository.saveSource(
+            fixture.projectFile.path,
+            PLM_SOURCE_FILE,
+            bank8F + """
+
+macro SmeditSelectors_91F8_Condition_74657374()
+    ; smedit:managed-predicate-v1
+    clc
+    rts
+endmacro
+""",
+            bank8F,
+        )
+        val first = AsmCheckedHookCandidate(
+            "bank_80.asm", 0, firstHook, firstHook + firstNative.size, 0xE08002, 0xE08402,
+            firstNative, listOf("LDA.W ${'$'}1234", "NOP"),
+        ).renderModule("first_helper")
+        val second = AsmCheckedHookCandidate(
+            "bank_80.asm", 0, secondHook, secondHook + secondNative.size, 0xE08002, 0xE08402,
+            secondNative, listOf("STA.W ${'$'}1234", "NOP"),
+        ).renderModule("second_helper")
+        val initialSource = first + "\n\n" + second
+        val (_, fileId) = repository.createModule(
+            fixture.projectFile.path,
+            "managed_helpers",
+            initialSource = initialSource,
+        )
+        val compiler = AsmProjectCompiler(repository)
+
+        val initial = compiler.compile(
+            fixture.projectFile.path,
+            fixture.rom,
+            outputRomSize = RomConstants.EXPANDED_ROM_SIZE,
+        )
+        val initialHelpers = initial.segmentPlacements
+            .filter { it.request.kind == RomSegmentKind.HOOK_HELPER }
+            .associateBy { it.request.label }
+        assertEquals(2, initialHelpers.size)
+        assertEquals(1, initial.segmentPlacements.count { it.request.kind == RomSegmentKind.MANAGED_CODE })
+        val firstLabel = "Checked-hook helper · SMEDIT_FirstHelper_808000_Helper"
+        val secondLabel = "Checked-hook helper · SMEDIT_SecondHelper_808010_Helper"
+        val initialFirst = initialHelpers.getValue(firstLabel)
+        val initialSecond = initialHelpers.getValue(secondLabel)
+        assertTrue(initialFirst.allocation.pcOffset + initialFirst.allocation.size <= initialSecond.allocation.pcOffset)
+
+        val addedCode = List(32) { "    NOP" }.joinToString("\n")
+        val grownSource = initialSource
+            .replaceFirst(
+                "    ; Add custom code here. Keep the final JML and boundary labels intact.",
+                "    ; Add custom code here. Keep the final JML and boundary labels intact.\n$addedCode",
+            )
+            // These are only creation-time probe hints. A clean build must not
+            // treat either persisted address as the helper's placement.
+            .replaceFirst("seed=${'$'}E08002 probe_limit=${'$'}E08402", "seed=${'$'}FF9000 probe_limit=${'$'}FF9400")
+            .replaceFirst("org ${'$'}E08002", "org ${'$'}FF9000")
+            .replaceFirst("warnpc ${'$'}E08402", "warnpc ${'$'}FF9400")
+        repository.saveSource(fixture.projectFile.path, fileId, grownSource, initialSource)
+        AsmProjectCompiler.clearBuildCacheForTests()
+
+        val grown = compiler.compile(
+            fixture.projectFile.path,
+            fixture.rom,
+            outputRomSize = RomConstants.EXPANDED_ROM_SIZE,
+        )
+        val grownHelpers = grown.segmentPlacements
+            .filter { it.request.kind == RomSegmentKind.HOOK_HELPER }
+            .associateBy { it.request.label }
+        val grownFirst = grownHelpers.getValue(firstLabel)
+        val grownSecond = grownHelpers.getValue(secondLabel)
+        assertEquals(initialFirst.request.size + 32, grownFirst.request.size)
+        assertEquals(initialFirst.allocation.snesAddress, grownFirst.allocation.snesAddress)
+        assertNotEquals(0xFF9000, grownFirst.allocation.snesAddress)
+        assertNotEquals(initialSecond.allocation.snesAddress, grownSecond.allocation.snesAddress)
+        assertTrue(grownFirst.allocation.pcOffset + grownFirst.allocation.size <= grownSecond.allocation.pcOffset)
+
+        AsmProjectCompiler.clearBuildCacheForTests()
+        val cold = compiler.compile(
+            fixture.projectFile.path,
+            fixture.rom,
+            outputRomSize = RomConstants.EXPANDED_ROM_SIZE,
+        )
+        val coldHelpers = cold.segmentPlacements
+            .filter { it.request.kind == RomSegmentKind.HOOK_HELPER }
+            .associateBy { it.request.label }
+        assertEquals(
+            grownHelpers.mapValues { (_, placement) -> placement.request.size to placement.allocation.snesAddress },
+            coldHelpers.mapValues { (_, placement) -> placement.request.size to placement.allocation.snesAddress },
+        )
+        assertContentEquals(grown.romBytes, cold.romBytes)
         AsmProjectCompiler.clearBuildCacheForTests()
     }
 }

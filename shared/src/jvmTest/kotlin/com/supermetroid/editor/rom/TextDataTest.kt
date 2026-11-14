@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 
 class TextDataTest {
 
@@ -119,6 +120,32 @@ class TextDataTest {
             "TIME BOMB SET!\nESCAPE IMMEDIATELY!",
             escapes[1].text,
         )
+    }
+
+    @Test
+    fun `typewriter codec preserves controls and distinguishes fixed slots from growth`() {
+        val original = TextData.encodeTypewriterStream(
+            TypewriterTextStream(
+                timerReset = 2,
+                lines = listOf(
+                    TypewriterTextLine(0x5105, "HELLO"),
+                    TypewriterTextLine(0x5145, "ZEBES!"),
+                ),
+            ),
+        )
+
+        val fixed = TextData.encodeTypewriterText("HI\nRUN!", original, preserveLineSlots = true)
+        val fixedStream = assertNotNull(TextData.decodeTypewriterStream(fixed))
+        assertEquals(2, fixedStream.timerReset)
+        assertEquals(listOf(0x5105, 0x5145), fixedStream.lines.map { it.vramAddress })
+        assertEquals(listOf("HI   ", "RUN!  "), fixedStream.lines.map { it.text })
+        assertEquals(original.size, fixed.size)
+
+        val grown = TextData.encodeTypewriterText("HELLO THERE\nESCAPE ZEBES!", original, preserveLineSlots = false)
+        val grownStream = assertNotNull(TextData.decodeTypewriterStream(grown))
+        assertEquals(2, grownStream.timerReset)
+        assertEquals(listOf(0x5105, 0x5145), grownStream.lines.map { it.vramAddress })
+        assertTrue(grown.size > original.size)
     }
 
     @Test

@@ -740,6 +740,11 @@ fun main() = application {
                 }
             }
 
+            com.supermetroid.editor.ui.TilesetAssetRelocationDialog(
+                editorState = editorState,
+                onRelocated = ::reloadPaletteBackedViews,
+            )
+
             LaunchedEffect(Unit) {
                 asmWorkspaceState.loadInstalled()
             }
@@ -805,7 +810,13 @@ fun main() = application {
                 asmWorkspaceState.observeRom(romParser?.copyRomData())
             }
             // Install project-owned sprite bytes before room composition reads the cache.
-            remember(romParser, editorState.spriteVersion, editorState.paletteVersion, System.identityHashCode(editorState.project)) {
+            remember(
+                romParser,
+                editorState.spriteVersion,
+                editorState.paletteVersion,
+                editorState.asmVisualSourceRevision,
+                System.identityHashCode(editorState.project),
+            ) {
                 EnemySpriteCache.setRomParser(romParser?.let { parser ->
                     runCatching { editorState.nativeSprites.previewParser(parser) }.getOrDefault(parser)
                 })
@@ -1525,6 +1536,7 @@ fun main() = application {
                                         buildRomPreview = romParser?.let { parser ->
                                             { editorState.buildRomPreview(parser) }
                                         },
+                                        onOpenInEditor = ::openAsmEditorTarget,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -1656,6 +1668,7 @@ fun main() = application {
                                         onNavigateToAsm = editorState.projectAsmNavigation { navigate { leftTab = TAB_ASM } })
                                     TAB_ASM -> AsmWorkspaceCanvas(
                                         state = asmWorkspaceState,
+                                        emulatorState = emulatorWorkspaceState,
                                         romParser = romParser,
                                         onOpenInEditor = ::openAsmEditorTarget,
                                         onOpenRoomSource = editorState.projectAsmNavigation<(AsmRoomSourceLink) -> Unit> {
@@ -1856,6 +1869,7 @@ fun main() = application {
                             workspaceState = emulatorWorkspaceState,
                             editorState = editorState,
                             romParser = romParser,
+                            debugBuildIdentity = asmWorkspaceState::refreshSuccessfulBuildIdentity,
                             containerSizePx = emulatorContainerSize,
                             density = windowDensity.density,
                             rooms = rooms,

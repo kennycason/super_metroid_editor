@@ -235,6 +235,129 @@ class RomWritePlan(
     )
 
     /**
+     * Stages a complete allocator-owned payload. The typed request is the only
+     * source of owner/label identity, preventing planner and allocator reports
+     * from assigning the same bytes to different logical features.
+     */
+    fun addAllocation(
+        allocation: RomAllocation,
+        bytes: ByteArray,
+        kind: RomWriteKind = RomWriteKind.ALLOCATION,
+    ) {
+        val request = requireNotNull(allocation.request) {
+            "Planned ROM allocations require typed segment intent"
+        }.validate()
+        require(bytes.size == allocation.size && bytes.size == request.size) {
+            "${request.id} expected ${request.size} allocation bytes, got ${bytes.size}"
+        }
+        val offset = allocation.pcOffset - headerSize
+        val fileOffset = offset + headerSize
+        if (offset < 0 || fileOffset + bytes.size > romData.size) {
+            throw RomWriteBoundsException(
+                "${request.owner}/${request.label} allocation is outside ROM bounds"
+            )
+        }
+        add(
+            owner = request.owner,
+            label = request.label,
+            offset = offset,
+            bytes = bytes.map { it.toInt() and 0xFF },
+            kind = kind,
+            expectedBefore = (fileOffset until fileOffset + bytes.size).map { romData[it].toInt() and 0xFF },
+        )
+    }
+
+    /**
+     * Atomically publishes a fully validated private ROM image as explicit
+     * writes. Allocations claim their complete envelopes, including unchanged
+     * fill bytes; all other changes are emitted as direct expected-before
+     * intents. The caller must plan against an isolated copy of the current
+     * image, never mutate [romData] first.
+     */
+    fun addPlannedImage(
+        before: ByteArray,
+        planned: ByteArray,
+        allocations: List<RomAllocation>,
+        owner: String,
+        label: String,
+        kind: RomWriteKind,
+        overlapPolicy: RomOverlapPolicy = RomOverlapPolicy.DENY,
+    ): List<RomWriteIntent> {
+        require(before.size == romData.size && planned.size == romData.size) {
+            "Planned ROM image has the wrong size"
+        }
+        require(before.contentEquals(romData)) {
+            "Planned ROM image is stale; the export transaction changed after planning"
+        }
+        val allocationRanges = allocations.map { allocation ->
+            requireNotNull(allocation.request) { "Planned ROM allocations require typed segment intent" }
+            val start = allocation.pcOffset - headerSize
+            require(start >= 0) { "${allocation.label} starts inside the copier header" }
+            start until start + allocation.size
+        }
+        require(allocationRanges.sortedBy { it.first }.zipWithNext().all { (a, b) -> a.last < b.first }) {
+            "Planned ROM allocations overlap"
+        }
+
+        val intents = mutableListOf<RomWriteIntent>()
+        allocations.forEach { allocation ->
+            val request = requireNotNull(allocation.request)
+            val offset = allocation.pcOffset - headerSize
+            intents += RomWriteIntent(
+                owner = request.owner,
+                label = request.label,
+                offset = offset,
+                bytes = planned.copyOfRange(allocation.pcOffset, allocation.pcOffset + allocation.size)
+                    .map { it.toInt() and 0xFF },
+                // Keep allocation envelopes distinguishable from the fixed
+                // writes captured from the same planned image. Downstream
+                // materializers use this boundary to recover the checked
+                // placement for authored assets without guessing from every
+                // room-graph write owned by the exporter.
+                kind = RomWriteKind.ALLOCATION,
+                expectedBefore = before.copyOfRange(allocation.pcOffset, allocation.pcOffset + allocation.size)
+                    .map { it.toInt() and 0xFF },
+            )
+        }
+
+        var fileOffset = headerSize
+        while (fileOffset < planned.size) {
+            val pc = fileOffset - headerSize
+            if (allocationRanges.any { pc in it } || before[fileOffset] == planned[fileOffset]) {
+                fileOffset++
+                continue
+            }
+            val start = fileOffset
+            while (
+                fileOffset < planned.size &&
+                fileOffset - start < MAX_CAPTURE_SIZE &&
+                allocationRanges.none { fileOffset - headerSize in it } &&
+                before[fileOffset] != planned[fileOffset]
+            ) fileOffset++
+            intents += RomWriteIntent(
+                owner = owner,
+                label = label,
+                offset = start - headerSize,
+                bytes = planned.copyOfRange(start, fileOffset).map { it.toInt() and 0xFF },
+                kind = kind,
+                expectedBefore = before.copyOfRange(start, fileOffset).map { it.toInt() and 0xFF },
+                overlapPolicy = overlapPolicy,
+            )
+        }
+
+        val checkpoint = writes.size
+        val resourceCheckpoint = resources.size
+        val transactionBefore = romData.copyOf()
+        try {
+            intents.forEach(::add)
+        } catch (failure: Throwable) {
+            restoreTransaction(transactionBefore, checkpoint, resourceCheckpoint)
+            throw failure
+        }
+        return intents
+    }
+
+    /**
      * Records a legacy mutation block without weakening safety. The block runs
      * against the working copy, its diff is captured, the working copy is
      * restored, and the diff is replayed through normal validation as [owner].

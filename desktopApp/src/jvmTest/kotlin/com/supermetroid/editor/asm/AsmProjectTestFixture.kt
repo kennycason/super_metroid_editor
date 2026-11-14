@@ -36,8 +36,27 @@ internal data class AsmProjectTestFixture(
                 appendLine("incsrc \"macros.asm\"\nincsrc \"bank_8F.asm\"\nincsrc \"bank_83.asm\"")
             })
             File(src, "macros.asm").writeText("macro PLMPopEntry(ID,X,Y,Param)\n dw <ID>\n db <X>,<Y>\n dw <Param>\nendmacro\n")
-            File(src, PLM_SOURCE_FILE).writeText("; Native data comes from the inert test ROM.\n")
-            File(src, DOOR_SOURCE_FILE).writeText("; Shared and ordinary authored doors.\n")
+            File(src, PLM_SOURCE_FILE).writeText(
+                "org \$8FF000\n" +
+                    "Freespace_Bank8F_F000:\n" +
+                    "    ; \$1000 bytes\n" +
+                    "; Native data comes from the inert test ROM.\n",
+            )
+            File(src, DOOR_SOURCE_FILE).writeText(
+                "; Shared and ordinary authored doors.\n" +
+                    // Full-pipeline tests allocate private DoorDef/FX rows and
+                    // room layouts from these erased tails. Production source
+                    // has corresponding declarations; the synthetic reference
+                    // must make the same verified-space contract explicit
+                    // instead of relying on fill-byte scanning once any
+                    // catalog exists.
+                    "org \$83F000\n" +
+                    "Freespace_Bank83_F000:\n" +
+                    "    ; \$1000 bytes\n" +
+                    "org \$C0F000\n" +
+                    "Freespace_BankC0_F000:\n" +
+                    "    ; \$1000 bytes\n",
+            )
             val reference = AsmReferenceWorkspace(root, AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL,
                 AsmReferenceContract.COMMIT, "synthetic", "fixture.sfc", AsmVerifiedCache.hash(rom), rom.size, assets.size),
                 AsmSourceParser().parse(src, data, assets))

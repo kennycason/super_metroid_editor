@@ -40,6 +40,12 @@ class AsmBeamDamageSourceTest {
             appendLine("    dw ${if (key == beam.key) beam.defaultDamage else beam.defaultDamage * 3} ; keep damage note")
             appendLine("    dw " + List(10) { "InstList_Test" }.joinToString(", "))
         }
+        for (projectile in OTHER_PROJECTILE_DAMAGE) {
+            appendLine("${projectile.sourceLabel}:")
+            appendLine("    dw ${projectile.defaultDamage} ; keep projectile damage note")
+            if (projectile.sourceWords > 1)
+                appendLine("    dw " + List(projectile.sourceWords - 1) { "InstList_Test" }.joinToString(", "))
+        }
         appendLine("End_Test:")
     }.replace("\n", "\r\n")
     private data class Fixture(val editor: EditorState, val workspace: AsmWorkspaceState) {
@@ -99,6 +105,40 @@ class AsmBeamDamageSourceTest {
         assertFails { catalog.field("power", source.replaceRange(field.span, "65536")) }
         assertFails { catalog.field("power", source + "${table("power")}:\n dw 0\n") }
         assertFails { catalog.field("power", source.replace("    dw 20 ;", "    db 20 ;")) }
+        for (projectile in OTHER_PROJECTILE_DAMAGE)
+            assertEquals(projectile.defaultDamage, catalog.original(projectile.key).value, projectile.key)
+        val missile = catalog.field("missile", source)
+        val editedMissile = source.replaceRange(missile.span, "\$01F4")
+        assertEquals(500, catalog.field("missile", editedMissile).value)
+        assertFails { catalog.field("missile", source.replaceRange(missile.span, "100+1")) }
+        assertNull(catalog.field("missile", source).bindingSpan)
+    }
+    @Test fun `missile bomb and special attack fields edit live with independent ownership invalid drafts and undo`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        val before = f.text()
+        f.editor.setPatchConfigData(patch.id, "missile", 432)
+        assertEquals(432, f.bridge.view("missile").value)
+        assertEquals(300, f.bridge.view("super_missile").value)
+        assertEquals(setOf("missile"), f.project.asmWorkspace.beamDamageSourceKeys)
+        assertNull(patch.configData)
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertEquals(before, f.text()); assertTrue(f.project.asmWorkspace.beamDamageSourceKeys.isEmpty())
+        assertTrue(f.workspace.redoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertEquals(432, f.bridge.view("missile").value)
+
+        val bomb = f.bridge.catalog.field("bomb", f.text())
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(bomb.span, "77")))
+        assertEquals(77, f.bridge.view("bomb").value)
+        assertEquals(setOf("missile", "bomb"), f.project.asmWorkspace.beamDamageSourceKeys)
+        assertTrue(patch.enabled)
+        val missile = f.bridge.catalog.field("missile", f.text())
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(missile.span, "432+1")))
+        assertNotNull(f.bridge.view("missile").problem)
+        assertNull(f.bridge.view("bomb").problem)
+        f.bridge.edit("plasma_sba", 640)
+        assertEquals(640, f.bridge.view("plasma_sba").value)
+        assertTrue(f.bridge.editorLinks(BEAM_DAMAGE_SOURCE_FILE, f.bridge.line("plasma_sba"))
+            .any { it.target == AsmEditorTarget.BeamDamage("plasma_sba") })
     }
     @Test fun `navigation and unchanged edits are nonmutating and first GUI edit is undoable source ownership`() = runBlocking {
         val f = fixture(); val bridge = f.bridge
@@ -189,7 +229,7 @@ class AsmBeamDamageSourceTest {
         f.editor.requestTogglePatch(patch.id)
         assertFalse(patch.enabled); assertNull(f.editor.pendingPatchDisable)
         assertEquals(initial, f.text()); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
-        f.bridge.editValues(mapOf("power" to 83, "power_charged" to 177, "wave" to 129))
+        f.bridge.editValues(mapOf("power" to 83, "power_charged" to 177, "wave" to 129, "missile" to 444))
         assertTrue(patch.enabled)
         val custom = f.text()
         f.editor.requestTogglePatch(patch.id)
@@ -198,12 +238,14 @@ class AsmBeamDamageSourceTest {
         assertTrue(patch.enabled); assertEquals(custom, f.text())
         f.editor.requestTogglePatch(patch.id); f.editor.confirmPatchDisable()
         assertFalse(patch.enabled); assertEquals(20, f.bridge.view("power").value); assertEquals(60, f.bridge.view("power_charged").value)
+        assertEquals(100, f.bridge.view("missile").value)
         assertTrue(f.project.asmWorkspace.beamDamageSourceKeys.isEmpty())
-        val snapshot = mapOf("power" to listOf(83), "power_charged" to listOf(177), "wave" to listOf(129))
+        val snapshot = mapOf("power" to listOf(83), "power_charged" to listOf(177), "wave" to listOf(129), "missile" to listOf(444))
         assertEquals(snapshot, f.project.asmWorkspace.disabledPatchValues["beam_damage"])
         val disabled = f.text()
         assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
-        assertTrue(patch.enabled); assertEquals(custom, f.text()); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+        assertTrue(patch.enabled); assertEquals(custom, f.text()); assertEquals(444, f.bridge.view("missile").value)
+        assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
         assertTrue(f.workspace.redoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
         assertFalse(patch.enabled); assertEquals(disabled, f.text())
         f.editor.requestTogglePatch(patch.id)
@@ -238,18 +280,19 @@ class AsmBeamDamageSourceTest {
 
     @Test fun `disabled snapshots survive cold reload and later external ASM edits auto enable without discarding other saved values`() = runBlocking {
         val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
-        f.bridge.editValues(mapOf("power" to 82, "ice" to 93)); f.editor.togglePatch(patch.id)
+        f.bridge.editValues(mapOf("power" to 82, "ice" to 93, "missile" to 444)); f.editor.togglePatch(patch.id)
         assertTrue(f.workspace.saveAllSources(), f.workspace.error)
         val serialized = Json.encodeToString(SmEditProject.serializer(), f.project)
         val g = fixture(saved = Json.decodeFromString<SmEditProject>(serialized))
         val restored = g.project.patches.single { it.configType == "beam_damage" }
-        assertFalse(restored.enabled); assertEquals(20, g.bridge.view("power").value)
+        assertFalse(restored.enabled); assertEquals(20, g.bridge.view("power").value); assertEquals(100, g.bridge.view("missile").value)
         assertEquals(serialized, Json.encodeToString(SmEditProject.serializer(), g.project))
         val field = g.bridge.catalog.field("power", g.text())
         g.workspace.replaceProjectSource(BEAM_DAMAGE_SOURCE_FILE, g.text(), g.text().replaceRange(field.span, "101"))
         assertFails { validatePatchToggleSources(g.project, patchToggleFamilies(g.bridge.catalog, null, null), mapOf(BEAM_DAMAGE_SOURCE_FILE to g.text())) }
         assertNotNull(g.editor.patchToggleController).reconcileSourceFlags()
         assertTrue(restored.enabled); assertEquals(101, g.bridge.view("power").value); assertEquals(93, g.bridge.view("ice").value)
+        assertEquals(444, g.bridge.view("missile").value)
         assertTrue(g.project.asmWorkspace.disabledPatchValues.isEmpty())
         validatePatchToggleSources(g.project, patchToggleFamilies(g.bridge.catalog, null, null), mapOf(BEAM_DAMAGE_SOURCE_FILE to g.text()))
     }
@@ -258,7 +301,7 @@ class AsmBeamDamageSourceTest {
         val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
         f.bridge.edit("power", 99)
         val field = f.bridge.catalog.field("ice", f.text())
-        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(field.bindingSpan, table("power"))))
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(assertNotNull(field.bindingSpan), table("power"))))
         val before = f.text(); val model = Json.encodeToString(SmEditProject.serializer(), f.project)
         f.editor.togglePatch(patch.id)
         assertTrue(patch.enabled); assertEquals(before, f.text()); assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
@@ -285,7 +328,7 @@ class AsmBeamDamageSourceTest {
         f.bridge.editValues(mapOf("power" to 82, "ice" to 93)); f.editor.togglePatch(patch.id)
         val before = f.text(); val saved = f.project.asmWorkspace.disabledPatchValues.toMap()
         val ice = f.bridge.catalog.field("ice", before)
-        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, before.replaceRange(ice.bindingSpan, table("power"))))
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, before.replaceRange(assertNotNull(ice.bindingSpan), table("power"))))
         assertTrue(patch.enabled); assertEquals(82, f.bridge.view("power").value); assertEquals(82, f.bridge.view("ice").value)
         assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
         assertFalse(patch.enabled); assertEquals(before, f.text()); assertEquals(saved, f.project.asmWorkspace.disabledPatchValues)
@@ -317,7 +360,7 @@ class AsmBeamDamageSourceTest {
     }
     @Test fun `shared records adopt together and conflicting bulk reset is atomic`() = runBlocking {
         val f = fixture()
-        val binding = f.bridge.catalog.field("ice", f.text()).bindingSpan
+        val binding = assertNotNull(f.bridge.catalog.field("ice", f.text()).bindingSpan)
         assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(binding, table("power"))))
         f.bridge.edit("power", 99)
         assertEquals(99, f.bridge.view("ice").value)
@@ -369,6 +412,10 @@ class AsmBeamDamageSourceTest {
             word(rom, parser.snesToPc(address), catalog.original(key).value)
             word(rom, parser.snesToPc(addresses.getValue(beamPointerLabel(charged))) + BEAM_POINTER_KEYS.indexOf(beam.key) * 2, address and 65535)
         }
+        for (projectile in OTHER_PROJECTILE_DAMAGE) {
+            addresses[projectile.sourceLabel] = projectile.snesAddress
+            word(rom, parser.snesToPc(projectile.snesAddress), projectile.defaultDamage)
+        }
         val reference = rom.copyOf()
         fun compiled(bytes: ByteArray = rom, symbols: Map<String, Int> = addresses, ranges: List<AsmSourceOwnedRange> = emptyList()) = AsmCompiledBuildBase(
             bytes.copyOf(), reference.copyOf(), "test", ranges, assemblerVersion = "test", compilerOutput = emptyList(),
@@ -402,6 +449,20 @@ class AsmBeamDamageSourceTest {
         assertEquals(movedPc, relocated.beamDamageLocations["power"])
         assertTrue(relocated.sourceOwnedRanges.none { movedPc in it.pcOffset until it.pcOffset + it.length })
         assertTrue(relocated.sourceOwnedRanges.any { it.pcOffset == movedPc + 2 && it.length == 20 })
+
+        project.patches.clear(); project.asmWorkspace.beamDamageSourceKeys.add("missile")
+        val missile = OTHER_PROJECTILE_DAMAGE.single { it.key == "missile" }
+        val missilePc = parser.snesToPc(missile.snesAddress)
+        val projectileChecked = protectBeamDamageSource(catalog, source, project,
+            compiled(ranges = listOf(AsmSourceOwnedRange(missilePc, missile.sourceWords * 2))))
+        assertEquals(missilePc, projectileChecked.beamDamageLocations["missile"])
+        assertTrue(projectileChecked.sourceOwnedRanges.any {
+            it.pcOffset == missilePc && it.length == 2 && it.sourceFileId == BEAM_DAMAGE_SOURCE_FILE
+        })
+        assertFails { protectBeamDamageSource(catalog, source, project,
+            compiled(rom.copyOf().also { word(it, missilePc, missile.defaultDamage + 1) })) }
+        assertFails { protectBeamDamageSource(catalog, source, project,
+            compiled(symbols = addresses - missile.sourceLabel)) }
     }
 
     private suspend fun withSourceCanvas(f: Fixture, width: Int = 1400,
@@ -494,7 +555,7 @@ class AsmBeamDamageSourceTest {
             // Desktop text selection may select the right-clicked word; it must not navigate or edit source.
             assertEquals(before, f.text()); assertEquals(revision, f.workspace.sourceBufferRevision); assertEquals(navigation, f.workspace.navigationSerial)
             // A live rebinding creates two consumers. Neither the menu nor the link bar may choose one silently.
-            val binding = f.bridge.catalog.field("power", f.text()).bindingSpan
+            val binding = assertNotNull(f.bridge.catalog.field("power", f.text()).bindingSpan)
             assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(binding, table("wave"))))
             render()
             rightClickField(scene, pane, "wave"); render()
@@ -623,6 +684,7 @@ class AsmBeamDamageSourceTest {
             }
             fun tagged(tag: String) = nodes().single { it.config.getOrNull(SemanticsProperties.TestTag) == tag }
             fun input(key: String) = tagged("beam-damage-$key")
+            fun projectileInput(key: String) = tagged("projectile-damage-$key")
             fun displayed(key: String) = input(key).config[SemanticsProperties.EditableText].text
             fun set(key: String, value: String) { assertTrue(input(key).config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value))) }
             render()
@@ -646,6 +708,14 @@ class AsmBeamDamageSourceTest {
             assertTrue(input("power").config.contains(SemanticsProperties.Disabled))
             assertFalse(input("power_charged").config.contains(SemanticsProperties.Disabled))
             assertEquals("41", displayed("power"))
+            assertTrue(tagged("projectile-asm-missile").config[SemanticsActions.OnClick].action!!.invoke())
+            assertTrue(projectileInput("missile").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("444")))
+            render()
+            assertEquals(444, f.bridge.view("missile").value)
+            val missile = f.bridge.catalog.field("missile", f.text())
+            assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(missile.span, "555")))
+            render()
+            assertEquals("555", projectileInput("missile").config[SemanticsProperties.EditableText].text)
             selectBeamDamage("power_charged"); render()
             assertTrue(tagged("beam-asm-power").config[SemanticsActions.OnClick].action!!.invoke())
             assertEquals(f.bridge.line("power"), f.workspace.selectedLineIndex, "Broken field repair wins over the previously focused charged input")

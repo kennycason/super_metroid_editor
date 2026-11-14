@@ -19,6 +19,12 @@ internal data class AsmRomSpacePlacement(
     val size: Int,
     val label: String,
     val owner: String?,
+    val segmentId: String? = null,
+    val segmentKind: String? = null,
+    val requestedSize: Int = size,
+    val alignment: Int = 1,
+    val allowedBanks: List<Int> = listOf(bank),
+    val constraint: String? = null,
 )
 
 internal data class AsmRomSpaceOwner(
@@ -75,22 +81,44 @@ internal data class AsmRomSpacePlan(
         ): AsmRomSpacePlan? {
             if (before == null || after == null || before.banks.isEmpty() || after.banks.isEmpty()) return null
             val beforeByBank = before.banks.associateBy { it.bank }
-            val placementsByBank = after.allocations.map { allocation ->
+            val allocatorPlacements = after.allocations.map { allocation ->
                 val pcOffset = allocation.pcOffset - headerSize
-                val owner = report.writes.firstOrNull {
-                    it.offset == pcOffset && it.bytes.size == allocation.size && it.label == allocation.label
-                }?.owner ?: report.writes.firstOrNull {
-                    it.offset == pcOffset && it.bytes.size == allocation.size
-                }?.owner
+                val request = requireNotNull(allocation.request) {
+                    "ROM Space Planner received an untyped allocation '${allocation.label}'"
+                }
                 AsmRomSpacePlacement(
                     bank = allocation.bank,
                     pcOffset = pcOffset,
                     snesAddress = allocation.snesAddress,
                     size = allocation.size,
-                    label = allocation.label,
-                    owner = owner,
+                    label = request.label,
+                    owner = request.owner,
+                    segmentId = request.id,
+                    segmentKind = request.kind.name.lowercase().replace('_', ' '),
+                    requestedSize = request.size,
+                    alignment = request.alignment,
+                    allowedBanks = request.allowedBanks,
+                    constraint = request.constraint,
                 )
-            }.groupBy(AsmRomSpacePlacement::bank)
+            }
+            val allocatorKeys = allocatorPlacements.mapTo(hashSetOf()) { it.pcOffset to it.size }
+            val managedAssetPlacements = report.writes.asSequence()
+                .filter { it.owner.startsWith("asm-managed-asset:") }
+                .filterNot { (it.offset to it.bytes.size) in allocatorKeys }
+                .mapNotNull { write ->
+                    val address = pcToSnesLoRom(write.offset) ?: return@mapNotNull null
+                    AsmRomSpacePlacement(
+                        bank = address ushr 16 and 0xFF,
+                        pcOffset = write.offset,
+                        snesAddress = address,
+                        size = write.bytes.size,
+                        label = write.label,
+                        owner = write.owner,
+                    )
+                }
+                .toList()
+            val placementsByBank = (allocatorPlacements + managedAssetPlacements)
+                .groupBy(AsmRomSpacePlacement::bank)
             val banks = after.banks.mapNotNull { finalBank ->
                 val initialBank = beforeByBank[finalBank.bank] ?: return@mapNotNull null
                 val pcStart = finalBank.pcStart - headerSize
@@ -150,6 +178,7 @@ internal data class AsmRomDiffRange(
 
 /** A non-writing snapshot produced by the real transactional exporter. */
 internal class AsmRomPreview private constructor(
+    baselineRom: ByteArray,
     loadedRom: ByteArray,
     resultRom: ByteArray,
     val headerSize: Int,
@@ -158,6 +187,7 @@ internal class AsmRomPreview private constructor(
     val changedByteCount: Int,
     val spacePlan: AsmRomSpacePlan?,
 ) {
+    val baselineRom: ByteArray = baselineRom.copyOf()
     val loadedRom: ByteArray = loadedRom.copyOf()
     val resultRom: ByteArray = resultRom.copyOf()
     val loadedBodySize: Int get() = (loadedRom.size - headerSize).coerceAtLeast(0)
@@ -172,6 +202,8 @@ internal class AsmRomPreview private constructor(
 
     fun loadedByte(pcOffset: Int): Int? = byteAt(loadedRom, pcOffset)
 
+    fun baselineByte(pcOffset: Int): Int? = byteAt(baselineRom, pcOffset)
+
     fun resultByte(pcOffset: Int): Int? = byteAt(resultRom, pcOffset)
 
     private fun byteAt(bytes: ByteArray, pcOffset: Int): Int? {
@@ -185,11 +217,12 @@ internal class AsmRomPreview private constructor(
             resultRom: ByteArray,
             headerSize: Int,
             writeReport: RomWritePlanReport,
+            baselineRom: ByteArray = loadedRom,
             maxRangeBytes: Int = Int.MAX_VALUE,
             romSpaceBefore: RomFreeSpaceSnapshot? = null,
             romSpaceAfter: RomFreeSpaceSnapshot? = null,
         ): AsmRomPreview {
-            require(headerSize >= 0 && headerSize <= loadedRom.size && headerSize <= resultRom.size)
+            require(headerSize >= 0 && headerSize <= baselineRom.size && headerSize <= loadedRom.size && headerSize <= resultRom.size)
             require(maxRangeBytes > 0)
 
             val loadedBodySize = loadedRom.size - headerSize
@@ -252,6 +285,7 @@ internal class AsmRomPreview private constructor(
             }
 
             return AsmRomPreview(
+                baselineRom = baselineRom,
                 loadedRom = loadedRom,
                 resultRom = resultRom,
                 headerSize = headerSize,

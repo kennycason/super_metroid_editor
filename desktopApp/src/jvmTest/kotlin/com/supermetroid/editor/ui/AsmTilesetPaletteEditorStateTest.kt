@@ -16,6 +16,7 @@ import java.util.Base64
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
@@ -103,6 +104,16 @@ class AsmTilesetPaletteEditorStateTest {
         assertTrue(state.resetPaletteOverride(1))
         assertTrue(repository.assetOverridePaths(projectFile.path).isEmpty())
         assertContentEquals(bytesToColors(originalRaw), state.readTilesetPalette(0, parser))
+
+        val oversized = ByteArray(256) { index -> ((index * 61 + index / 7) and 0xFF).toByte() }
+        assertTrue(LZ5Compressor.compress(oversized).size > capacity)
+        assertFalse(state.saveTilesetPaletteFromColors(0, bytesToColors(oversized)))
+        val proposal = assertIs<TilesetAssetRelocationProposal.Palette>(state.pendingTilesetAssetRelocation)
+        assertEquals(listOf(0, 1), proposal.affectedTilesetIds)
+        assertTrue(state.confirmTilesetAssetRelocation())
+        assertContentEquals(bytesToColors(oversized), state.readTilesetPalette(1, parser))
+        assertTrue(state.resetPaletteOverride(0))
+        assertTrue(repository.managedAssets(projectFile.path).isEmpty())
 
         val before = workspaceState.projectSourceText("bank_8F.asm")
         workspaceState.replaceProjectSource(

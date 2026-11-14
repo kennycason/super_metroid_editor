@@ -61,8 +61,13 @@ object RomVisualAssets {
         }
     }
 
-    fun render(parser: RomParser, asset: Asset, paletteRow: Int = 0): SpriteAnimationFrame? = runCatching {
-        if (asset.format == Format.TITLE_SCENE) return renderTitleScene(parser, asset)
+    fun render(
+        parser: RomParser,
+        asset: Asset,
+        paletteRow: Int = 0,
+        mapOverride: ByteArray? = null,
+    ): SpriteAnimationFrame? = runCatching {
+        if (asset.format == Format.TITLE_SCENE) return renderTitleScene(parser, asset, mapOverride)
         val tiles = if (asset.compressed) parser.decompressLZ2(asset.graphics) else raw(parser, asset.graphics, asset.bytes)
         val colors = palette(parser, asset.palette, asset.paletteColors, transparentRows = asset.format == Format.TILES_4BPP || asset.format == Format.OAM)
         require(paletteRow in 0 until asset.paletteColors / 16)
@@ -82,7 +87,7 @@ object RomVisualAssets {
             if (mode7) IntArray(64) { tiles[index * 64 + it].toInt() and 255 }
             else decoder.decode4bppTileIndices(tiles, index * 32)
         }
-        val map = if (asset.map != 0) parser.decompressLZ2(asset.map) else null
+        val map = mapOverride ?: if (asset.map != 0) parser.decompressLZ2(asset.map) else null
         val count = if (map == null) decoded.size else map.size / if (mode7) 1 else 2
         val columns = asset.columns
         val rows = (count + columns - 1) / columns
@@ -112,8 +117,8 @@ object RomVisualAssets {
         SpriteAnimationFrame(pixels, width, height, label = asset.name)
     }.getOrNull()
 
-    private fun renderTitleScene(parser: RomParser, asset: Asset): SpriteAnimationFrame? {
-        val background = render(parser, asset.copy(format = Format.MODE7_MAP)) ?: return null
+    private fun renderTitleScene(parser: RomParser, asset: Asset, mapOverride: ByteArray?): SpriteAnimationFrame? {
+        val background = render(parser, asset.copy(format = Format.MODE7_MAP), mapOverride = mapOverride) ?: return null
         val width = 256
         val height = 224
         val pixels = IntArray(width * height) { i -> background.pixels[(i / width) * background.width + i % width] }

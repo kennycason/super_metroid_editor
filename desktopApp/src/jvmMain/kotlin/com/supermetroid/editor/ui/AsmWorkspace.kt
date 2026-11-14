@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -158,6 +159,9 @@ import com.supermetroid.editor.asm.AsmCompletionItem
 import com.supermetroid.editor.asm.AsmCompletionKind
 import com.supermetroid.editor.asm.AsmDirectiveInfo
 import com.supermetroid.editor.asm.AsmCompletionResult
+import com.supermetroid.editor.asm.AsmCompiledOutputInspection
+import com.supermetroid.editor.asm.AsmCompiledOutputReference
+import com.supermetroid.editor.asm.AsmCompiledOutputStatus
 import com.supermetroid.editor.asm.AsmDiagnosticSeverity
 import com.supermetroid.editor.asm.AsmEditorLink
 import com.supermetroid.editor.asm.AsmEditorTarget
@@ -180,11 +184,13 @@ import com.supermetroid.editor.asm.AsmRomDiffRange
 import com.supermetroid.editor.asm.AsmRomPreview
 import com.supermetroid.editor.asm.AsmRomPreviewBuild
 import com.supermetroid.editor.asm.AsmRomPreviewView
+import com.supermetroid.editor.asm.AsmRuntimeInspection
 import com.supermetroid.editor.asm.AsmSemanticBridge
 import com.supermetroid.editor.asm.AsmSemanticIndex
 import com.supermetroid.editor.asm.AsmRoomSourceLink
 import com.supermetroid.editor.asm.asmRoomSourceLinksAt
 import com.supermetroid.editor.asm.AsmSourceFile
+import com.supermetroid.editor.emulator.DebugHaltReason
 import com.supermetroid.editor.asm.AsmSourceBankBudget
 import com.supermetroid.editor.asm.AsmSourcePaneState
 import com.supermetroid.editor.asm.AsmSourceReplacementPreview
@@ -192,6 +198,7 @@ import com.supermetroid.editor.asm.AsmSourceText
 import com.supermetroid.editor.asm.AsmSourceTextChange
 import com.supermetroid.editor.asm.AsmSourceLinter
 import com.supermetroid.editor.asm.AsmSourceUsage
+import com.supermetroid.editor.asm.AsmSymbolRenamePlan
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.AsmWorkspaceKind
 import com.supermetroid.editor.asm.AsmVisualEditorResolver
@@ -371,6 +378,7 @@ internal fun AsmWorkspaceSidebar(
     projectRomExpansionForced: Boolean = false,
     onProjectRomExpandedChanged: (Boolean) -> Unit = {},
     buildRomPreview: (() -> AsmRomPreviewBuild)? = null,
+    onOpenInEditor: (AsmEditorTarget) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -382,6 +390,23 @@ internal fun AsmWorkspaceSidebar(
     var showCreateModuleDialog by remember { mutableStateOf(false) }
     var projectSourceChanges by remember { mutableStateOf<List<AsmProjectSourceChange>?>(null) }
     var projectAssetChanges by remember { mutableStateOf<List<com.supermetroid.editor.asm.AsmProjectAssetChange>>(emptyList()) }
+    val projectChangesSemanticIndex = remember(romParser) { romParser?.let(AsmSemanticBridge::buildIndex) }
+
+    fun loadProjectChanges(clearPreviousError: Boolean = false) {
+        if (clearPreviousError) state.dismissError()
+        runCatching {
+            state.projectSourceChangesSnapshot(projectChangesSemanticIndex) to
+                state.projectAssetChangesSnapshot(projectChangesSemanticIndex)
+        }.onSuccess { (source, assets) ->
+            projectAssetChanges = assets
+            projectSourceChanges = source
+        }.onFailure { state.reportSourceEditError(it.message ?: "Could not read Project ASM source") }
+    }
+
+    LaunchedEffect(state.projectChangesRequestSerial) {
+        if (state.projectChangesRequestSerial == 0L) return@LaunchedEffect
+        loadProjectChanges(clearPreviousError = true)
+    }
 
     state.baselineUpdatePlan?.let { plan ->
         AsmBaselineUpdateDialog(plan, state.busy, state.progress, state.error,
@@ -449,6 +474,18 @@ internal fun AsmWorkspaceSidebar(
                 projectAssetChanges = emptyList()
                 state.showProjectWorkspace()
                 state.openSource(fileId)
+            },
+            restoring = state.busy,
+            error = state.error,
+            onOpenVisualEditor = { target ->
+                projectSourceChanges = null
+                projectAssetChanges = emptyList()
+                onOpenInEditor(target)
+            },
+            onRestore = { request ->
+                scope.launch {
+                    if (state.restoreProjectChange(request)) loadProjectChanges()
+                }
             },
         )
     }
@@ -620,12 +657,7 @@ internal fun AsmWorkspaceSidebar(
             onSyncAssets = ::syncAssets,
             onEnableProjectAsm = ::enableProjectAsm,
             onReviewSourceChanges = {
-                runCatching { state.projectSourceChangesSnapshot() to state.projectAssetChangesSnapshot() }
-                    .onSuccess { (source, assets) ->
-                        projectAssetChanges = assets
-                        projectSourceChanges = source
-                    }
-                    .onFailure { state.reportSourceEditError(it.message ?: "Could not read Project ASM source") }
+                loadProjectChanges(clearPreviousError = true)
             },
             onOpenSpacePlanner = ::openSpacePlanner,
             onUpdateBaseline = { scope.launch { if (state.saveAllSources()) state.previewBaselineUpdate() } },
@@ -1987,6 +2019,7 @@ private fun AsmAssetTree(state: AsmWorkspaceState, assets: List<AsmAsset>, modif
 internal fun AsmWorkspaceCanvas(
     state: AsmWorkspaceState,
     romParser: RomParser? = null,
+    emulatorState: EmulatorWorkspaceState? = null,
     onOpenInEditor: (AsmEditorTarget) -> Unit = {},
     onOpenRoomSource: ((AsmRoomSourceLink) -> Unit)? = null,
     onSaveProject: suspend () -> Boolean = { true },
@@ -1999,7 +2032,7 @@ internal fun AsmWorkspaceCanvas(
 ) {
     Box(modifier.asmHistoryShortcuts(state)) {
         AsmWorkspaceCanvasContent(
-            state, romParser, onOpenInEditor, onOpenRoomSource, onSaveProject, onBuildProject, onRunInEmulator,
+            state, emulatorState, romParser, onOpenInEditor, onOpenRoomSource, onSaveProject, onBuildProject, onRunInEmulator,
             onOpenRomSpaceBank, problemsPaneHeightDp, onProblemsPaneHeightChange, Modifier.fillMaxSize(),
         )
     }
@@ -2008,6 +2041,7 @@ internal fun AsmWorkspaceCanvas(
 @Composable
 private fun AsmWorkspaceCanvasContent(
     state: AsmWorkspaceState,
+    emulatorState: EmulatorWorkspaceState?,
     romParser: RomParser?,
     onOpenInEditor: (AsmEditorTarget) -> Unit,
     onOpenRoomSource: ((AsmRoomSourceLink) -> Unit)?,
@@ -2020,6 +2054,18 @@ private fun AsmWorkspaceCanvasContent(
     modifier: Modifier,
 ) {
     val workspace = state.workspace
+    val runtimeCpu = emulatorState?.debugCpu
+    val runtimeLocation = runtimeCpu?.let { state.runtimeSourceAt(it.pc, emulatorState.debugBuildIdentity) }
+    LaunchedEffect(runtimeCpu?.pc, emulatorState?.debugHaltReason, runtimeLocation) {
+        val stopped = emulatorState?.debugHaltReason in setOf(
+            com.supermetroid.editor.emulator.DebugHaltReason.STEP,
+            com.supermetroid.editor.emulator.DebugHaltReason.BREAKPOINT,
+            com.supermetroid.editor.emulator.DebugHaltReason.CPU_STOPPED,
+        )
+        if (stopped && runtimeLocation != null && !state.sourceBuildRequired) {
+            state.openRuntimeSource(runtimeLocation)
+        }
+    }
     val semanticIndex = remember(romParser) { romParser?.let(AsmSemanticBridge::buildIndex) }
     state.roomSourceInspection?.takeIf { it.automaticEdit == null }?.let { preview ->
         val darkCodeTheme = isDarkCodeTheme()
@@ -2106,6 +2152,7 @@ private fun AsmWorkspaceCanvasContent(
                                 }
                                 AsmSourceCanvas(
                                     state = state,
+                                    emulatorState = emulatorState,
                                     pane = pane,
                                     isActivePane = pane.id == state.activeSourcePaneId,
                                     index = workspace.index,
@@ -2931,6 +2978,7 @@ internal fun asmRoomDataTextBlock(
 @OptIn(ExperimentalComposeUiApi::class)
 private fun AsmSourceCanvas(
     state: AsmWorkspaceState,
+    emulatorState: EmulatorWorkspaceState?,
     pane: AsmSourcePaneState,
     isActivePane: Boolean,
     index: AsmReferenceIndex,
@@ -3002,6 +3050,28 @@ private fun AsmSourceCanvas(
             if (state.workspaceKind == AsmWorkspaceKind.PROJECT) ({ line -> state.sourceEditorLinks?.invoke(source.id, line).orEmpty() }) else null)
     }
     val editorLinks = visualEditors.linksAt(visualEditorLine)
+    val compiledOutput = remember(
+        source.id,
+        visualEditorLine,
+        state.sourceBufferRevision,
+        state.buildReport,
+        state.romPreview,
+        state.romSpacePlan,
+        state.compiledOutputFreshnessRevision,
+    ) {
+        state.compiledOutputInspection(source.id, visualEditorLine, index)
+    }
+    val runtimeInspection = emulatorState?.debugCpu?.let { cpu ->
+        state.runtimeDebugInspection(
+            cpu,
+            emulatorState.debugStackAddress,
+            emulatorState.debugStackBytes,
+            emulatorState.debugBuildIdentity,
+        )
+    }
+    val runtimeLineIndex = runtimeInspection?.currentSource
+        ?.takeIf { it.fileId == source.id }
+        ?.lineIndex
     var visualEditorChoices by remember(pane.id, source.id, pane.navigationSerial) { mutableStateOf(emptyList<AsmEditorLink>()) }
     fun openVisualEditors(links: List<AsmEditorLink>) {
         if (links.size == 1) onOpenInEditor(links.single().target) else visualEditorChoices = links
@@ -3194,6 +3264,27 @@ private fun AsmSourceCanvas(
                 referenceLabel != null -> AsmReferencesBar(state, index, referenceLabel, labelUsages)
                 referenceMacro != null -> AsmMacroReferencesBar(state, index, referenceMacro, macroUsages)
             }
+            AsmCompiledOutputPanel(
+                inspection = compiledOutput,
+                visualEditorLinks = editorLinks,
+                onOpenVisualEditors = ::openVisualEditors,
+                onOpenSource = { fileId, line -> state.openSource(fileId, line) },
+                onOpenRomComparison = { state.openRomComparison(compiledOutput.ranges.firstOrNull()?.pcStart) },
+                onOpenSpacePlanner = {
+                    val bank = compiledOutput.allocation?.bank
+                        ?: compiledOutput.ranges.firstOrNull()?.snesStart?.ushr(16)?.and(0xFF)
+                    if (bank != null) onOpenRomSpaceBank(bank) else state.selectRomPreviewView(AsmRomPreviewView.SPACE)
+                },
+                onOpenProjectChanges = state::requestProjectChanges,
+            )
+            AsmRuntimeDebuggerPanel(
+                state = state,
+                emulatorState = emulatorState,
+                inspection = runtimeInspection,
+                cursorAddress = compiledOutput.ranges.firstOrNull()?.snesStart
+                    ?: compiledOutput.symbols.firstOrNull()?.second,
+                onStartEmulator = onRunInEmulator,
+            )
             AsmEditableSourcePane(
                 state = state,
                 pane = pane,
@@ -3206,6 +3297,7 @@ private fun AsmSourceCanvas(
                 onContextLineChanged = { visualEditorLine = it },
                 visualEditorLinksAt = visualEditors::linksAt,
                 onOpenVisualEditors = ::openVisualEditors,
+                runtimeLineIndex = runtimeLineIndex,
                 modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
             )
         } else {
@@ -3328,17 +3420,16 @@ private fun AsmBuildProblemsStrip(
     val errors = diagnostics.count { it.severity == AsmDiagnosticSeverity.ERROR }
     val warnings = diagnostics.count { it.severity == AsmDiagnosticSeverity.WARNING }
     val firstError = diagnostics.firstOrNull {
-        it.severity == AsmDiagnosticSeverity.ERROR && it.lineIndex != null &&
-            it.fileId?.let { fileId -> state.workspace?.index?.file(fileId) != null } == true
+        it.severity == AsmDiagnosticSeverity.ERROR && state.diagnosticPresentation(it).navigable
     }
     var expanded by remember(report?.generatedAt, diagnostics) {
-        mutableStateOf(errors > 0 || report?.succeeded == false)
+        mutableStateOf(errors > 0 || warnings > 0 || report?.succeeded == false && report.validationOnly.not())
     }
     val panelHeightDp = requestedHeightDp.takeIf(Float::isFinite)
         ?.coerceIn(MIN_ASM_PROBLEMS_HEIGHT_DP, MAX_ASM_PROBLEMS_HEIGHT_DP)
         ?: DEFAULT_ASM_PROBLEMS_HEIGHT_DP
     val bodyScroll = rememberScrollState()
-    val failed = errors > 0 || report?.succeeded == false
+    val failed = errors > 0 || report?.succeeded == false && (report.validationOnly.not() || errors > 0)
     val accent = when {
         failed -> MaterialTheme.colorScheme.error
         warnings > 0 -> Color(0xFFE0A12B)
@@ -3401,7 +3492,7 @@ private fun AsmBuildProblemsStrip(
                         textDecoration = if (firstError != null) TextDecoration.Underline else null,
                         modifier = if (firstError != null) Modifier
                             .pointerHoverIcon(PointerIcon.Hand)
-                            .clickable { state.openSource(firstError.fileId!!, firstError.lineIndex!!) }
+                            .clickable { state.openDiagnostic(firstError) }
                             else Modifier,
                     )
                 }
@@ -3421,17 +3512,13 @@ private fun AsmBuildProblemsStrip(
                             }
                         } else {
                             diagnostics.forEach { problem ->
-                                val navigableFileId = problem.fileId
-                                    ?.takeIf { state.workspace?.index?.file(it) != null }
-                                val location = problem.fileId?.let { fileId ->
-                                    "$fileId${problem.lineIndex?.let { ":${it + 1}" }.orEmpty()}"
-                                }
+                                val presentation = state.diagnosticPresentation(problem)
                                 Row(
                                     Modifier.fillMaxWidth()
                                         .then(
-                                            if (navigableFileId != null && problem.lineIndex != null) {
+                                            if (presentation.navigable) {
                                                 Modifier.pointerHoverIcon(PointerIcon.Hand).clickable {
-                                                    state.openSource(navigableFileId, problem.lineIndex)
+                                                    state.openDiagnostic(problem)
                                                 }
                                             } else Modifier
                                         )
@@ -3447,19 +3534,35 @@ private fun AsmBuildProblemsStrip(
                                             MaterialTheme.colorScheme.error
                                         } else Color(0xFFE0A12B)
                                     )
-                                    Text(
-                                        buildString {
-                                            if (location != null) append(location).append(" · ")
-                                            append(problem.message)
-                                        },
-                                        fontSize = fs.detail,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.weight(1f),
-                                        textDecoration = if (navigableFileId != null && problem.lineIndex != null) {
-                                            TextDecoration.Underline
-                                        } else null,
-                                    )
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            buildString {
+                                                if (presentation.location != null) append(presentation.location).append(" · ")
+                                                append(problem.message)
+                                            },
+                                            fontSize = fs.detail,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textDecoration = if (presentation.navigable) TextDecoration.Underline else null,
+                                        )
+                                        presentation.sourceLine?.let { sourceLine ->
+                                            Text(
+                                                sourceLine.trim(),
+                                                fontSize = fs.detail,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        presentation.authority?.let { authority ->
+                                            Text(
+                                                authority,
+                                                fontSize = fs.statusBar,
+                                                color = Color(0xFFE0A12B),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3539,6 +3642,506 @@ private fun AsmSourceBankChip(budget: AsmSourceBankBudget, onClick: () -> Unit) 
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun AsmCompiledOutputPanel(
+    inspection: AsmCompiledOutputInspection,
+    visualEditorLinks: List<AsmEditorLink>,
+    onOpenVisualEditors: (List<AsmEditorLink>) -> Unit,
+    onOpenSource: (String, Int) -> Unit,
+    onOpenRomComparison: () -> Unit,
+    onOpenSpacePlanner: () -> Unit,
+    onOpenProjectChanges: () -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var expanded by remember(inspection.fileId) { mutableStateOf(false) }
+    val statusColor = when (inspection.status) {
+        AsmCompiledOutputStatus.CURRENT -> MaterialTheme.colorScheme.primary
+        AsmCompiledOutputStatus.STALE -> Color(0xFFE0A12B)
+        AsmCompiledOutputStatus.BUILD_REQUIRED -> MaterialTheme.colorScheme.outline
+    }
+    val statusLabel = when (inspection.status) {
+        AsmCompiledOutputStatus.CURRENT -> when {
+            inspection.ranges.isEmpty() -> "Current · no emitted bytes"
+            inspection.changedFromBaseline -> "Current · changed from baseline"
+            else -> "Current · unchanged"
+        }
+        AsmCompiledOutputStatus.STALE -> "Stale · last successful output"
+        AsmCompiledOutputStatus.BUILD_REQUIRED -> "Build to inspect output"
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().testTag("asm-compiled-output"),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = statusColor)
+                Text("Compiled Output", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
+                Text(statusLabel, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
+                inspection.ranges.firstOrNull()?.let { range ->
+                    Text(
+                        "${formatSnesAddress(range.snesStart)} · ${inspection.emittedByteCount} B",
+                        fontSize = fs.detail,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (expanded) {
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState())
+                        .padding(start = 28.dp, end = 10.dp, bottom = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    if (inspection.status == AsmCompiledOutputStatus.STALE) {
+                        Text(
+                            "These addresses and bytes belong to the last successful build. Rebuild before relying on them.",
+                            fontSize = fs.detail,
+                            color = statusColor,
+                        )
+                    } else if (inspection.status == AsmCompiledOutputStatus.BUILD_REQUIRED) {
+                        Text(
+                            "Build or open ROM Comparison to capture emitted bytes and exact ownership for this statement.",
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    inspection.ranges.forEach { range ->
+                        Text(
+                            "${formatSnesAddress(range.snesStart)}–${formatSnesAddress(range.snesEndInclusive)} · " +
+                                "${formatPcOffset(range.pcStart)}–${formatPcOffset(range.pcEndInclusive)}",
+                            fontSize = fs.detail,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        AsmCompiledBytesRow("Baseline", range.baselineBytes, false)
+                        AsmCompiledBytesRow("Loaded ROM", range.loadedBytes, range.loadedBytes != range.baselineBytes)
+                        AsmCompiledBytesRow("SMEDIT", range.resultBytes, range.changedFromLoaded || range.changedFromBaseline)
+                    }
+                    if (inspection.symbols.isNotEmpty()) {
+                        AsmCompiledOutputFact(
+                            "Symbols",
+                            inspection.symbols.take(8).joinToString { (name, address) ->
+                                "$name ${formatSnesAddress(address)}"
+                            } + if (inspection.symbols.size > 8) " · +${inspection.symbols.size - 8} more" else "",
+                        )
+                    }
+                    val ownership = buildList {
+                        inspection.allocation?.let { placement ->
+                            add("${placement.owner ?: placement.label} · ${placement.segmentKind ?: "allocation"} · ${placement.size} B")
+                        }
+                        inspection.owners.forEach { add("${it.owner} · ${it.label} · ${it.kind.name.lowercase().replace('_', ' ')}") }
+                    }.distinct()
+                    AsmCompiledOutputFact(
+                        "Ownership",
+                        ownership.takeIf { it.isNotEmpty() }?.joinToString("\n")
+                            ?: "Fixed/native source; this statement has no allocator-owned placement.",
+                    )
+                    inspection.bank?.let { bank ->
+                        AsmCompiledOutputFact(
+                            "Bank headroom",
+                            "\$${bank.bank.toString(16).uppercase().padStart(2, '0')} · " +
+                                "${formatAsmBackupSize(bank.remainingAfter.toLong())} total free · " +
+                                "${formatAsmBackupSize(bank.largestAfter.toLong())} largest block",
+                        )
+                    }
+                    AsmCompiledReferenceGroup("Incoming", inspection.incomingReferences, onOpenSource)
+                    AsmCompiledReferenceGroup("Outgoing", inspection.outgoingReferences, onOpenSource)
+                    inspection.diagnostics.forEach { diagnostic ->
+                        AsmCompiledOutputFact(
+                            if (diagnostic.severity == AsmDiagnosticSeverity.ERROR) "Error" else "Warning",
+                            diagnostic.message,
+                            if (diagnostic.severity == AsmDiagnosticSeverity.ERROR) MaterialTheme.colorScheme.error else Color(0xFFE0A12B),
+                        )
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = onOpenRomComparison) { Text("ROM Comparison", fontSize = fs.detail) }
+                        TextButton(onClick = onOpenSpacePlanner) { Text("Space Planner", fontSize = fs.detail) }
+                        TextButton(onClick = onOpenProjectChanges) { Text("Project ASM Changes", fontSize = fs.detail) }
+                        if (visualEditorLinks.isNotEmpty()) {
+                            TextButton(onClick = { onOpenVisualEditors(visualEditorLinks) }) {
+                                Text("Visual Editor", fontSize = fs.detail)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun AsmRuntimeDebuggerPanel(
+    state: AsmWorkspaceState,
+    emulatorState: EmulatorWorkspaceState?,
+    inspection: AsmRuntimeInspection?,
+    cursorAddress: Int?,
+    onStartEmulator: (() -> Unit)?,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val scope = rememberCoroutineScope()
+    var expanded by remember { mutableStateOf(false) }
+    val available = emulatorState?.cpuDebugAvailable == true
+    val cpu = inspection?.cpu
+    val statusColor = when {
+        emulatorState?.capabilities?.supportsCpuDebugging == false -> MaterialTheme.colorScheme.outline
+        cpu?.halted == true || inspection?.executionConcern != null -> MaterialTheme.colorScheme.error
+        available -> Color(0xFF24B39B)
+        else -> MaterialTheme.colorScheme.outline
+    }
+    val status = when {
+        emulatorState == null -> "Emulator unavailable"
+        emulatorState.capabilities?.supportsCpuDebugging == false -> "Bundled core required"
+        !emulatorState.session.active -> "Start an emulator session"
+        cpu == null -> "Refresh CPU state"
+        emulatorState.isRunning -> "Running"
+        emulatorState.debugHaltReason == DebugHaltReason.BREAKPOINT -> "Paused · breakpoint"
+        emulatorState.debugHaltReason == DebugHaltReason.STEP -> "Paused · stepped"
+        else -> "Paused"
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().testTag("asm-runtime-debugger"),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = statusColor)
+                Text("Runtime Debugger", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
+                Text(status, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
+                cpu?.let {
+                    Text(
+                        formatSnesAddress(it.pc),
+                        fontSize = fs.detail,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (expanded) {
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState())
+                        .padding(start = 28.dp, end = 10.dp, bottom = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    when {
+                        emulatorState == null -> Text(
+                            "The emulator workspace is not connected to this ASM view.",
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        emulatorState.capabilities?.supportsCpuDebugging == false -> Text(
+                            "This core supports frames but not instruction debugging. Select SMEDIT's bundled Snes9x core; stock libretro and RetroArch backends fail closed here.",
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        !emulatorState.session.active -> {
+                            Text(
+                                "Start the current project in the bundled emulator to inspect live 65c816 execution.",
+                                fontSize = fs.detail,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (onStartEmulator != null) {
+                                Button(onClick = onStartEmulator, shape = ASM_CONTROL_SHAPE) {
+                                    Text("Start Emulator", fontSize = fs.detail)
+                                }
+                            }
+                        }
+                    }
+                    if (emulatorState != null && available) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { scope.launch { emulatorState.stepCpuInstruction() } },
+                                enabled = !emulatorState.isBusy,
+                                shape = ASM_CONTROL_SHAPE,
+                            ) { Text("Step Instruction", fontSize = fs.detail) }
+                            OutlinedButton(
+                                onClick = {
+                                    val resume = !emulatorState.isRunning
+                                    emulatorState.setLoopRunning(resume)
+                                    if (!resume) scope.launch { emulatorState.refreshCpuDebugContext() }
+                                },
+                                enabled = !emulatorState.isBusy,
+                                shape = ASM_CONTROL_SHAPE,
+                            ) { Text(if (emulatorState.isRunning) "Pause" else "Resume", fontSize = fs.detail) }
+                            OutlinedButton(
+                                onClick = { cursorAddress?.let(emulatorState::runToAddress) },
+                                enabled = cursorAddress != null && inspection?.mappingStale == false && !emulatorState.isBusy,
+                                shape = ASM_CONTROL_SHAPE,
+                            ) { Text("Run to Cursor", fontSize = fs.detail) }
+                            OutlinedButton(
+                                onClick = { cursorAddress?.let(emulatorState::toggleExecutionBreakpoint) },
+                                enabled = cursorAddress != null && inspection?.mappingStale == false && !emulatorState.isBusy,
+                                shape = ASM_CONTROL_SHAPE,
+                            ) {
+                                Text(
+                                    if (cursorAddress != null && emulatorState.hasExecutionBreakpoint(cursorAddress)) {
+                                        "Remove Breakpoint"
+                                    } else "Add Breakpoint",
+                                    fontSize = fs.detail,
+                                )
+                            }
+                            if (emulatorState.executionBreakpoints.isNotEmpty()) {
+                                TextButton(
+                                    onClick = emulatorState::clearExecutionBreakpoints,
+                                    enabled = !emulatorState.isBusy,
+                                ) {
+                                    Text(
+                                        "Clear Breakpoints (${emulatorState.executionBreakpoints.size})",
+                                        fontSize = fs.detail,
+                                    )
+                                }
+                            }
+                            TextButton(
+                                onClick = { scope.launch { emulatorState.refreshCpuDebugContext() } },
+                                enabled = !emulatorState.isBusy,
+                            ) { Text("Refresh", fontSize = fs.detail) }
+                        }
+                        if (cursorAddress == null || inspection?.mappingStale != false) {
+                            Text(
+                                "Build and restart the emulator before using cursor addresses or breakpoints.",
+                                fontSize = fs.statusBar,
+                                color = Color(0xFFE0A12B),
+                            )
+                        }
+                        cpu?.let { current ->
+                            AsmCompiledOutputFact(
+                                "Registers",
+                                "A=${hex16(current.a)}  X=${hex16(current.x)}  Y=${hex16(current.y)}  " +
+                                    "D=${hex16(current.d)}  DB=${hex8(current.db)}  PB=${hex8(current.pb)}  S=${hex16(current.s)}",
+                            )
+                            AsmCompiledOutputFact(
+                                "Status",
+                                "P=${hex16(current.p)}  ${cpuFlags(current.p)}  M=${current.memoryWidth}  X=${current.indexWidth}" +
+                                    if (current.emulation) "  emulation" else "  native",
+                            )
+                            AsmCompiledOutputFact(
+                                "Timing",
+                                "frame ${current.coreFrame} · V=${current.verticalCounter} · cycle=${current.cycles}" +
+                                    if (current.waitingForInterrupt) " · waiting for interrupt" else "",
+                            )
+                        }
+                        inspection?.currentSource?.let { source ->
+                            val title = buildString {
+                                append(source.fileId).append(':').append(source.lineIndex + 1)
+                                if (source.generated) append(" · generated build input")
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    title,
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (source.generated) Color(0xFFE0A12B) else MaterialTheme.colorScheme.primary,
+                                    textDecoration = if (source.generated) null else TextDecoration.Underline,
+                                    modifier = Modifier.then(
+                                        if (!source.generated) Modifier.clickable { state.openRuntimeSource(source) } else Modifier,
+                                    ),
+                                )
+                                source.sourceLine?.let {
+                                    Text(
+                                        it.trim(),
+                                        fontSize = fs.detail,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        } ?: cpu?.let {
+                            Text(
+                                "No exact source statement is mapped at ${formatSnesAddress(it.pc)}.",
+                                fontSize = fs.detail,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        inspection?.currentSymbol?.let { (name, address) ->
+                            AsmCompiledOutputFact(
+                                "Context",
+                                "$name + ${inspection.cpu.pc - address} (${formatSnesAddress(address)})",
+                            )
+                        }
+                        inspection?.executionConcern?.let {
+                            Text(it, fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
+                        }
+                        if (inspection?.mappingStale == true) {
+                            Text(
+                                "Source mapping is stale. Rebuild and restart the emulator before trusting source navigation.",
+                                fontSize = fs.detail,
+                                color = Color(0xFFE0A12B),
+                            )
+                        }
+                        if (inspection != null) {
+                            AsmCompiledOutputFact(
+                                "Stack",
+                                "${hex16(inspection.stackAddress)}  " +
+                                    if (emulatorState.debugStackReadError == null) {
+                                        debugBytes(inspection.stackBytes)
+                                    } else "unavailable",
+                            )
+                            emulatorState.debugStackReadError?.let {
+                                Text(it, fontSize = fs.statusBar, color = Color(0xFFE0A12B))
+                            }
+                            inspection.stackCandidates.forEach { candidate ->
+                                val label = candidate.symbol ?: candidate.source?.symbols?.firstOrNull() ?: "mapped return"
+                                Text(
+                                    "+${candidate.stackOffset.toString().padStart(2)}  ${if (candidate.longReturn) "RTL" else "RTS"} candidate  " +
+                                        "${formatSnesAddress(candidate.returnAddress)}  $label",
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    textDecoration = if (candidate.source?.generated == false) TextDecoration.Underline else null,
+                                    modifier = Modifier.then(
+                                        candidate.source?.takeIf { !it.generated }?.let { source ->
+                                            Modifier.clickable { state.openRuntimeSource(source) }
+                                        } ?: Modifier,
+                                    ),
+                                )
+                            }
+                            if (inspection.stackCandidates.isEmpty()) {
+                                Text(
+                                    "No symbol-backed return candidate was proven in the nearby stack bytes.",
+                                    fontSize = fs.statusBar,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        var memoryText by remember(emulatorState.debugMemoryAddress) {
+                            mutableStateOf(formatSnesAddress(emulatorState.debugMemoryAddress))
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = memoryText,
+                                onValueChange = { memoryText = it },
+                                singleLine = true,
+                                label = { Text("Memory address", fontSize = fs.statusBar) },
+                                textStyle = TextStyle(fontSize = fs.detail, fontFamily = FontFamily.Monospace),
+                                modifier = Modifier.width(150.dp),
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    parseDebugAddress(memoryText)?.let { address ->
+                                        scope.launch { emulatorState.setDebugMemoryAddress(address) }
+                                    }
+                                },
+                                enabled = parseDebugAddress(memoryText) != null && !emulatorState.isBusy,
+                                shape = ASM_CONTROL_SHAPE,
+                            ) { Text("Read", fontSize = fs.detail) }
+                        }
+                        AsmCompiledOutputFact(
+                            "Memory",
+                            "${formatSnesAddress(emulatorState.debugMemoryAddress)}  " +
+                                if (emulatorState.debugMemoryReadError == null) {
+                                    debugBytes(emulatorState.debugMemoryBytes)
+                                } else "unavailable",
+                        )
+                        emulatorState.debugMemoryReadError?.let {
+                            Text(it, fontSize = fs.statusBar, color = Color(0xFFE0A12B))
+                        }
+                        Text(
+                            "Breakpoints are session-only. Stack entries are labeled candidates, never guessed call frames. Bus reads occur only while the core call is synchronously paused.",
+                            fontSize = fs.statusBar,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal fun parseDebugAddress(text: String): Int? {
+    val compact = text.trim().removePrefix("$").replace(":", "").replace("_", "")
+    return compact.toIntOrNull(16)?.takeIf { it in 0..0xFFFFFF }
+}
+
+private fun debugBytes(bytes: ByteArray): String = bytes.joinToString(" ") {
+    it.toInt().and(0xFF).toString(16).uppercase().padStart(2, '0')
+}.ifEmpty { "—" }
+
+private fun cpuFlags(p: Int): String = buildString {
+    "NVMXDIZC".forEachIndexed { index, flag ->
+        append(if (p and (0x80 ushr index) != 0) flag else '·')
+    }
+}
+
+@Composable
+private fun AsmCompiledBytesRow(label: String, bytes: List<Int>, emphasized: Boolean) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(82.dp))
+        SelectionContainer {
+            Text(
+                asmCompiledByteText(bytes),
+                fontSize = fs.detail,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = if (emphasized) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (emphasized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+internal fun asmCompiledByteText(bytes: List<Int>, limit: Int = 48): String {
+    val visible = bytes.take(limit).joinToString(" ") { it.and(0xFF).toString(16).uppercase().padStart(2, '0') }
+    return if (bytes.size > limit) "$visible … (+${bytes.size - limit} B)" else visible.ifEmpty { "—" }
+}
+
+@Composable
+private fun AsmCompiledOutputFact(label: String, value: String, valueColor: Color = MaterialTheme.colorScheme.onSurface) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(82.dp))
+        Text(value, fontSize = fs.detail, fontFamily = FontFamily.Monospace, color = valueColor, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun AsmCompiledReferenceGroup(
+    label: String,
+    references: List<AsmCompiledOutputReference>,
+    onOpenSource: (String, Int) -> Unit,
+) {
+    if (references.isEmpty()) return
+    val fs = LocalEditorTheme.current.fontSize.value
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(82.dp))
+        Column(Modifier.weight(1f)) {
+            references.take(6).forEach { reference ->
+                Text(
+                    "${reference.name} · ${reference.fileId}:${reference.lineIndex + 1}",
+                    fontSize = fs.detail,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary,
+                    textDecoration = TextDecoration.Underline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().clickable { onOpenSource(reference.fileId, reference.lineIndex) },
+                )
+            }
+            if (references.size > 6) {
+                Text("+${references.size - 6} more", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
 private fun AsmSourceToolbarActions(
     state: AsmWorkspaceState,
     source: AsmSourceFile,
@@ -3596,6 +4199,7 @@ private fun AsmEditableSourcePane(
     onContextLineChanged: (Int) -> Unit,
     visualEditorLinksAt: (Int) -> List<AsmEditorLink>,
     onOpenVisualEditors: (List<AsmEditorLink>) -> Unit,
+    runtimeLineIndex: Int?,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -3652,6 +4256,10 @@ private fun AsmEditableSourcePane(
     var checkedHookCandidate by remember(source.id) { mutableStateOf<AsmCheckedHookCandidate?>(null) }
     var checkedHookName by remember(source.id) { mutableStateOf("") }
     var checkedHookError by remember(source.id) { mutableStateOf<String?>(null) }
+    var renameTarget by remember(source.id) { mutableStateOf<AsmEditableSymbolReference?>(null) }
+    var renameName by remember(source.id) { mutableStateOf("") }
+    var renamePlan by remember(source.id) { mutableStateOf<AsmSymbolRenamePlan?>(null) }
+    var renameError by remember(source.id) { mutableStateOf<String?>(null) }
     checkedHookError?.let { message ->
         AlertDialog(
             onDismissRequest = { checkedHookError = null },
@@ -3705,6 +4313,102 @@ private fun AsmEditableSourcePane(
             },
         )
     }
+    renameTarget?.let { target ->
+        val reviewed = renamePlan
+        AlertDialog(
+            onDismissRequest = {
+                renameTarget = null
+                renamePlan = null
+                renameError = null
+            },
+            title = { Text(if (reviewed == null) "Rename Symbol" else "Review Symbol Rename", fontSize = fs.heading) },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.widthIn(min = 440.dp, max = 640.dp),
+                ) {
+                    if (reviewed == null) {
+                        Text(
+                            "Rename ${target.token} across every proven Project ASM reference. Comments, strings, local labels, defines, and macro tokens are never rewritten.",
+                            fontSize = fs.body,
+                        )
+                        OutlinedTextField(
+                            value = renameName,
+                            onValueChange = {
+                                renameName = it
+                                renameError = null
+                            },
+                            label = { Text("New global label", fontSize = fs.detail) },
+                            singleLine = true,
+                            textStyle = TextStyle(fontSize = fs.body, fontFamily = FontFamily.Monospace),
+                            modifier = Modifier.fillMaxWidth().testTag("asm-rename-name"),
+                        )
+                    } else {
+                        Text(
+                            "${reviewed.oldName}  →  ${reviewed.newName}",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = fs.body,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            "${reviewed.occurrences.size} proven occurrence${if (reviewed.occurrences.size == 1) "" else "s"} in ${reviewed.replacements.size} file${if (reviewed.replacements.size == 1) "" else "s"}. This applies as one Undo/Redo transaction.",
+                            fontSize = fs.body,
+                        )
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()),
+                        ) {
+                            reviewed.occurrences.groupBy { it.fileId }.forEach { (renameFile, occurrences) ->
+                                Text(
+                                    "$renameFile  ·  ${occurrences.joinToString { (it.lineIndex + 1).toString() }}",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = fs.detail,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    renameError?.let { message ->
+                        Text(message, color = MaterialTheme.colorScheme.error, fontSize = fs.detail)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (reviewed == null) {
+                            val plan = state.planSymbolRename(
+                                source.id,
+                                target.lineIndex,
+                                target.token,
+                                renameName,
+                            )
+                            if (plan == null) renameError = state.error ?: "This rename cannot be proven safe."
+                            else renamePlan = plan
+                        } else if (state.applySymbolRename(reviewed)) {
+                            renameTarget = null
+                            renamePlan = null
+                            renameError = null
+                        } else renameError = state.error ?: "The source changed after review; no rename was applied."
+                    },
+                    enabled = reviewed != null || renameName.isNotBlank(),
+                    shape = ASM_CONTROL_SHAPE,
+                    modifier = Modifier.testTag(if (reviewed == null) "asm-rename-review" else "asm-rename-apply"),
+                ) { Text(if (reviewed == null) "Review" else "Apply rename", fontSize = fs.body) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    if (reviewed != null) {
+                        renamePlan = null
+                        renameError = null
+                    } else {
+                        renameTarget = null
+                        renameError = null
+                    }
+                }) { Text(if (reviewed != null) "Back" else "Cancel", fontSize = fs.body) }
+            },
+        )
+    }
     LaunchedEffect(fieldValue.selection, fieldValue.text, pageKey) {
         onContextLineChanged(page.startLine + asmLineIndexAtOffset(fieldValue.text, fieldValue.selection.end.coerceIn(0, fieldValue.text.length)))
     }
@@ -3728,9 +4432,20 @@ private fun AsmEditableSourcePane(
     LaunchedEffect(source.id, liveDiagnosticRevision, indexedMacros, inactiveModuleFileIds, state.roomSourceInspection) {
         delay(ASM_LIVE_DIAGNOSTIC_DELAY_MS)
         val text = state.sourceEditorText(source.id)
+        val analysisIndex = state.workspace?.index
+        val analysisTexts = state.sourceAnalysisTexts(source.id, text)
         val macros = indexedMacros.filterNot { it.fileId == source.id } + parseAsmMacros(source.id, text)
         val diagnostics = withContext(Dispatchers.Default) {
-            AsmSourceLinter.lintText(source.id, text, macros)
+            AsmSourceLinter.lintText(
+                source.id,
+                text,
+                macros,
+                com.supermetroid.editor.asm.AsmEditorAnalysisContext(
+                    analysisIndex,
+                    analysisTexts,
+                    inactiveModuleFileIds,
+                ),
+            )
         }
         state.publishLiveDiagnostics(source.id, liveDiagnosticRevision, diagnostics)
     }
@@ -3858,6 +4573,9 @@ private fun AsmEditableSourcePane(
         fieldValue.text,
         fieldValue.selection.end.coerceIn(0, fieldValue.text.length),
     ).takeIf { it in 0 until lineCount }
+    val runtimePageLine = runtimeLineIndex
+        ?.minus(page.startLine)
+        ?.takeIf { it in 0 until lineCount }
     val diagnosticPageLines = remember(
         state.buildReport?.generatedAt,
         state.liveDiagnostics,
@@ -3880,6 +4598,8 @@ private fun AsmEditableSourcePane(
         }
     }
     val selectedLineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+    val runtimeLineColor = Color(0xFF55D6BE).copy(alpha = 0.20f)
+    val runtimeEdgeColor = Color(0xFF24B39B)
     val errorLineColor = MaterialTheme.colorScheme.error.copy(alpha = 0.16f)
     val selectedErrorLineColor = MaterialTheme.colorScheme.error.copy(alpha = 0.25f)
     val errorEdgeColor = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
@@ -4006,6 +4726,20 @@ private fun AsmEditableSourcePane(
                     .width(contentWidth)
                     .drawBehind {
                         val layout = fieldLayout ?: return@drawBehind
+                        runtimePageLine?.takeIf { it < layout.lineCount }?.let { lineIndex ->
+                            val lineTop = sourceTopPaddingPx + layout.getLineTop(lineIndex)
+                            val lineBottom = sourceTopPaddingPx + layout.getLineBottom(lineIndex)
+                            drawRect(
+                                color = runtimeLineColor,
+                                topLeft = Offset(0f, lineTop),
+                                size = Size(size.width, lineBottom - lineTop),
+                            )
+                            drawRect(
+                                color = runtimeEdgeColor,
+                                topLeft = Offset(0f, lineTop),
+                                size = Size(diagnosticEdgeWidthPx, lineBottom - lineTop),
+                            )
+                        }
                         diagnosticPageLines.forEach { (lineIndex, severity) ->
                             if (lineIndex >= layout.lineCount) return@forEach
                             val lineTop = sourceTopPaddingPx + layout.getLineTop(lineIndex)
@@ -4031,7 +4765,7 @@ private fun AsmEditableSourcePane(
                             )
                         }
                         selectedPageLine
-                            ?.takeIf { it !in diagnosticPageLines && it < layout.lineCount }
+                            ?.takeIf { it !in diagnosticPageLines && it != runtimePageLine && it < layout.lineCount }
                             ?.let { lineIndex ->
                                 val lineTop = layout.getLineTop(lineIndex)
                                 val lineBottom = layout.getLineBottom(lineIndex)
@@ -4124,6 +4858,19 @@ private fun AsmEditableSourcePane(
                                     )
                                 },
                                 )
+                                val renameReference = asmEditableSymbolAt(
+                                    fieldValue.text,
+                                    contextMenuOffset ?: fieldValue.selection.end,
+                                    page.startLine,
+                                )
+                                renameReference?.let { renameCandidate ->
+                                    addAll(asmSymbolRenameContextMenuItems(state.workspaceKind, renameCandidate) {
+                                        renameTarget = renameCandidate
+                                        renameName = renameCandidate.token
+                                        renamePlan = null
+                                        renameError = null
+                                    })
+                                }
                                 add(
                                 ContextMenuItem("Show Completions\t$ASM_MODIFIER_LABEL+Tab") {
                                     val offset = (contextMenuOffset ?: fieldValue.selection.end)
@@ -4667,6 +5414,7 @@ private fun asmCompletionKindLabel(kind: AsmCompletionKind): String = when (kind
     AsmCompletionKind.LOCAL_LABEL -> "local"
     AsmCompletionKind.LABEL -> "label"
     AsmCompletionKind.DEFINE -> "define"
+    AsmCompletionKind.EXPRESSION_FUNCTION -> "function"
 }
 
 @Composable
@@ -4823,6 +5571,15 @@ private fun asmLeadingIndentLength(text: String, lineStart: Int): Int {
 }
 
 internal data class AsmEditableSymbolReference(val lineIndex: Int, val token: String)
+
+internal fun asmSymbolRenameContextMenuItems(
+    workspaceKind: AsmWorkspaceKind,
+    reference: AsmEditableSymbolReference?,
+    onRename: () -> Unit,
+): List<ContextMenuItem> = if (
+    workspaceKind == AsmWorkspaceKind.PROJECT &&
+    reference?.token?.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) == true
+) listOf(ContextMenuItem("Rename Symbol…", onRename)) else emptyList()
 
 private data class AsmEditableTokenReference(val lineIndex: Int, val token: String)
 

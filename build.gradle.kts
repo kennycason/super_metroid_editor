@@ -512,15 +512,27 @@ val buildLibretroCore by tasks.registering(Exec::class) {
     }
     val outputFile = file("$coreDir/snes9x_libretro$ext")
 
-    inputs.dir("tools/snes9x/libretro")
-    inputs.dir("tools/snes9x/apu")
-    inputs.dir("tools/snes9x/filter")
+    inputs.files(fileTree("tools/snes9x") {
+        include("**/*.c", "**/*.cpp", "**/*.h", "**/Makefile*", "**/*.T")
+        exclude("**/*.o", "**/*.a", "**/*.so", "**/*.dylib", "**/*.dll")
+    })
     outputs.file(outputFile)
 
     val cpuCount = Runtime.getRuntime().availableProcessors()
     commandLine("make", "-j$cpuCount")
 
-    onlyIf { !outputFile.exists() }
+    if (os.contains("mac")) {
+        val commandLineTools = file("/Library/Developer/CommandLineTools")
+        val clang = commandLineTools.resolve("usr/bin/clang")
+        val clangxx = commandLineTools.resolve("usr/bin/clang++")
+        val sdk = commandLineTools.resolve("SDKs/MacOSX.sdk")
+        if (clang.isFile && clangxx.isFile && sdk.isDirectory) {
+            environment("CC", clang.absolutePath)
+            environment("CXX", clangxx.absolutePath)
+            environment("SDKROOT", sdk.absolutePath)
+        }
+    }
+
 }
 
 tasks.register("cleanLibretroCore", Exec::class) {

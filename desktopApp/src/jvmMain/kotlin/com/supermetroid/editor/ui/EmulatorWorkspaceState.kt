@@ -13,6 +13,10 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorCapabilities
 import com.supermetroid.editor.emulator.EmulatorInput
+import com.supermetroid.editor.emulator.CpuDebugState
+import com.supermetroid.editor.emulator.DebugExecutionResult
+import com.supermetroid.editor.emulator.DebugHaltReason
+import com.supermetroid.editor.emulator.DebugRunRequest
 import com.supermetroid.editor.emulator.EmulatorRegistry
 import com.supermetroid.editor.emulator.FrameHolder
 import com.supermetroid.editor.emulator.GameSnapshot
@@ -29,6 +33,7 @@ import com.supermetroid.editor.integration.EditorNavNode
 import com.supermetroid.editor.integration.EditorRoomExport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.serialization.Serializable
 import java.io.ByteArrayInputStream
 import kotlinx.serialization.json.Json
@@ -41,6 +46,11 @@ import javax.imageio.ImageIO
 import kotlin.math.max
 
 private const val SCREEN_PIXELS = 256f
+private const val DEBUG_STACK_BYTES = 32
+private const val DEBUG_MEMORY_BYTES = 32
+private const val MAX_SESSION_BREAKPOINTS = 255 // Native ABI supports 256 targets; reserve one for Run to Cursor.
+private const val DEBUG_BUS_READ_BLOCKED =
+    "Unavailable: this range includes I/O or unsupported hardware, so SMEDIT did not read it while paused."
 private val ACTION_LABELS = listOf("B", "Y", "Select", "Start", "Up", "Down", "Left", "Right", "A", "X", "L", "R")
 private val DEFAULT_SAVE_SLOTS = listOf(
     EmulatorSaveSlot("Checkpoint 1", "EditorCheckpoint01"),
@@ -225,10 +235,42 @@ class EmulatorWorkspaceState(
     private var handledRunRequestSerial = 0L
     var saveSlotIndex by mutableStateOf(0)
 
+    /** CPU debug state is intentionally session-only; no project file owns it. */
+    val executionBreakpoints = mutableStateListOf<Int>()
+    var debugCpu by mutableStateOf<CpuDebugState?>(null)
+        private set
+    var debugHaltReason by mutableStateOf(DebugHaltReason.NONE)
+        private set
+    var debugRunToAddress by mutableStateOf<Int?>(null)
+        private set
+    var debugStackAddress by mutableStateOf(0)
+        private set
+    var debugStackBytes by mutableStateOf(ByteArray(0))
+        private set
+    var debugStackReadError by mutableStateOf<String?>(null)
+        private set
+    var debugMemoryAddress by mutableStateOf(0x7E0000)
+        private set
+    var debugMemoryBytes by mutableStateOf(ByteArray(0))
+        private set
+    var debugMemoryReadError by mutableStateOf<String?>(null)
+        private set
+    /** Build-artifact identity for the ROM currently loaded by the debugger. */
+    var debugBuildIdentity by mutableStateOf<String?>(null)
+        private set
+    private var skipBreakpointOnceAt: Int? = null
+
+    val cpuDebugAvailable: Boolean
+        get() = session.active && capabilities?.supportsCpuDebugging == true
+
     /** Requests that the floating emulator become visible and actively run.
      * The window owns the build/connect lifecycle and observes this serial. */
     fun requestRun() {
         runRequestSerial++
+    }
+
+    fun attachDebugBuildIdentity(identity: String?) {
+        debugBuildIdentity = identity
     }
 
     internal fun consumeRunRequest(): Boolean {
@@ -312,6 +354,8 @@ class EmulatorWorkspaceState(
         lastStepRepeat = 0
         sessionBootStateName = null
         lastCheckpointSlotName = null
+        clearCpuDebugSession()
+        debugBuildIdentity = null
         setStatus("Disconnected")
     }
 
@@ -364,6 +408,8 @@ class EmulatorWorkspaceState(
             viewportFps = 0f
             lastStepRepeat = 0
             lastStepWallClockNanos = 0L
+            clearCpuDebugSession()
+            if (capsSupportCpuDebugging()) refreshCpuDebugContext()
             setStatus(result.message ?: "Session started: $stateName")
         } catch (e: Exception) {
             setStatus("Failed to start session: ${e.message}")
@@ -392,6 +438,8 @@ class EmulatorWorkspaceState(
                 emulatedFps = 0f
                 viewportFps = 0f
                 lastStepRepeat = 0
+                clearCpuDebugSession()
+                debugBuildIdentity = null
             }
             setStatus(result.message ?: "Session closed")
         } catch (e: Exception) {
@@ -427,18 +475,56 @@ class EmulatorWorkspaceState(
         val previousFrameCounter = session.frameCounter
         val startedAt = System.nanoTime()
         try {
-            val result = b.step(
-                EmulatorInput(
-                    buttons = currentAction(),
-                    repeat = repeat,
-                    includeFrame = includeFrame,
-                    includeTrace = includeTrace,
+            val debugTargets = (executionBreakpoints + listOfNotNull(debugRunToAddress)).distinct()
+            if (capsSupportCpuDebugging() && debugTargets.isNotEmpty()) {
+                val skip = skipBreakpointOnceAt
+                if (skip != null && debugCpu?.pc == skip) {
+                    applyDebugExecution(b.stepInstruction())
+                    skipBreakpointOnceAt = null
+                }
+                val debugResult = b.runUntil(
+                    DebugRunRequest(
+                        addresses = debugTargets,
+                        instructionLimit = 2_000_000L * repeat.coerceAtLeast(1),
+                        frameLimit = repeat.coerceAtLeast(1),
+                        input = EmulatorInput(
+                            buttons = currentAction(),
+                            repeat = repeat,
+                            includeFrame = includeFrame,
+                            includeTrace = includeTrace,
+                        ),
+                    ),
                 )
-            )
-            applyStepResult(result)
+                applyDebugExecution(debugResult)
+                when (debugResult.haltReason) {
+                    DebugHaltReason.FRAME_LIMIT -> Unit
+                    DebugHaltReason.BREAKPOINT -> {
+                        isRunning = false
+                        debugRunToAddress = null
+                        setStatus("Paused at $${debugResult.cpu.pc.toString(16).uppercase().padStart(6, '0')}")
+                        refreshCpuDebugContext(debugResult.cpu)
+                    }
+                    else -> {
+                        isRunning = false
+                        debugRunToAddress = null
+                        setStatus(debugHaltMessage(debugResult.haltReason))
+                        refreshCpuDebugContext(debugResult.cpu)
+                    }
+                }
+            } else {
+                val result = b.step(
+                    EmulatorInput(
+                        buttons = currentAction(),
+                        repeat = repeat,
+                        includeFrame = includeFrame,
+                        includeTrace = includeTrace,
+                    )
+                )
+                applyStepResult(result)
+            }
             updateLoopMetrics(
                 previousFrameCounter = previousFrameCounter,
-                currentFrameCounter = result.session.frameCounter,
+                currentFrameCounter = session.frameCounter,
                 elapsedNanos = System.nanoTime() - startedAt,
                 repeat = repeat,
                 frameIncluded = includeFrame,
@@ -722,6 +808,10 @@ class EmulatorWorkspaceState(
         try {
             val result = b.loadState(stateName)
             applyStepResult(result)
+            if (capsSupportCpuDebugging()) {
+                debugHaltReason = DebugHaltReason.NONE
+                refreshCpuDebugContext()
+            }
             setStatus(result.message ?: "Loaded $stateName")
         } catch (e: Exception) {
             setStatus("Load failed: ${e.message}")
@@ -735,7 +825,148 @@ class EmulatorWorkspaceState(
     }
 
     fun setLoopRunning(running: Boolean) {
+        if (running && debugHaltReason == DebugHaltReason.BREAKPOINT) {
+            skipBreakpointOnceAt = debugCpu?.pc
+        }
         isRunning = running
+    }
+
+    fun hasExecutionBreakpoint(address: Int): Boolean = address in executionBreakpoints
+
+    fun clearExecutionBreakpoints() {
+        executionBreakpoints.clear()
+        if (debugHaltReason == DebugHaltReason.BREAKPOINT) skipBreakpointOnceAt = null
+    }
+
+    fun toggleExecutionBreakpoint(address: Int) {
+        require(address in 0..0xFFFFFF) { "Breakpoint must be a 24-bit SNES address" }
+        if (address in executionBreakpoints) {
+            executionBreakpoints.remove(address)
+        } else if (executionBreakpoints.size >= MAX_SESSION_BREAKPOINTS) {
+            setStatus("At most $MAX_SESSION_BREAKPOINTS session breakpoints can be armed")
+        } else {
+            executionBreakpoints.add(address)
+        }
+    }
+
+    fun runToAddress(address: Int) {
+        if (!cpuDebugAvailable) {
+            setStatus("CPU debugging requires an active session using SMEDIT's bundled core")
+            return
+        }
+        require(address in 0..0xFFFFFF) { "Run-to address must be a 24-bit SNES address" }
+        debugRunToAddress = address
+        if (debugHaltReason == DebugHaltReason.BREAKPOINT && debugCpu?.pc != address) {
+            skipBreakpointOnceAt = debugCpu?.pc
+        }
+        isRunning = true
+        setStatus("Running to $${address.toString(16).uppercase().padStart(6, '0')}")
+    }
+
+    suspend fun stepCpuInstruction() {
+        val b = backend ?: return
+        if (!cpuDebugAvailable || isBusy) return
+        isRunning = false
+        // A click while a frame call is finishing still means "pause, then
+        // step". Wait for that single owning-thread call instead of silently
+        // dropping the user's step request.
+        while (stepInFlight) yield()
+        if (!cpuDebugAvailable || isBusy) return
+        stepInFlight = true
+        try {
+            val result = b.stepInstruction()
+            applyDebugExecution(result)
+            refreshCpuDebugContext(result.cpu)
+            setStatus(
+                if (result.haltReason == DebugHaltReason.STEP) {
+                    "Stepped to $${result.cpu.pc.toString(16).uppercase().padStart(6, '0')}"
+                } else debugHaltMessage(result.haltReason),
+            )
+        } catch (e: Exception) {
+            setStatus("CPU step failed: ${e.message}")
+        } finally {
+            stepInFlight = false
+        }
+    }
+
+    suspend fun refreshCpuDebugContext(cpu: CpuDebugState? = null) {
+        val b = backend ?: return
+        if (!cpuDebugAvailable) return
+        val current = try {
+            cpu ?: b.debugCpuState()
+        } catch (e: Exception) {
+            setStatus("CPU state refresh failed: ${e.message}")
+            return
+        }
+        debugCpu = current
+        val stackBase = if (current.emulation) 0x0100 else 0x0000
+        val stackLimit = if (current.emulation) 0x0200 else 0x10000
+        val start = if (current.emulation) {
+            stackBase or ((current.s + 1) and 0xFF)
+        } else {
+            (current.s + 1) and 0xFFFF
+        }
+        debugStackAddress = start
+        debugStackReadError = null
+        debugStackBytes = try {
+            val firstSize = minOf(DEBUG_STACK_BYTES, stackLimit - start)
+            val first = b.readBusMemory(start, firstSize)
+            val second = if (firstSize < DEBUG_STACK_BYTES) {
+                b.readBusMemory(stackBase, DEBUG_STACK_BYTES - firstSize)
+            } else ByteArray(0)
+            first + second
+        } catch (e: Exception) {
+            debugStackReadError = DEBUG_BUS_READ_BLOCKED
+            ByteArray(0)
+        }
+        debugMemoryReadError = null
+        debugMemoryBytes = try {
+            b.readBusMemory(debugMemoryAddress, DEBUG_MEMORY_BYTES)
+        } catch (e: Exception) {
+            debugMemoryReadError = DEBUG_BUS_READ_BLOCKED
+            ByteArray(0)
+        }
+    }
+
+    suspend fun setDebugMemoryAddress(address: Int) {
+        if (address !in 0..(0x1000000 - DEBUG_MEMORY_BYTES)) {
+            setStatus("Memory address must leave room for $DEBUG_MEMORY_BYTES bytes in the 24-bit bus")
+            return
+        }
+        debugMemoryAddress = address
+        refreshCpuDebugContext()
+    }
+
+    private suspend fun applyDebugExecution(result: DebugExecutionResult) {
+        debugCpu = result.cpu
+        debugHaltReason = result.haltReason
+        session = session.copy(frameCounter = result.snapshot.frameCounter)
+        applySnapshot(result.snapshot)
+    }
+
+    private fun clearCpuDebugSession() {
+        executionBreakpoints.clear()
+        debugCpu = null
+        debugHaltReason = DebugHaltReason.NONE
+        debugRunToAddress = null
+        debugStackAddress = 0
+        debugStackBytes = ByteArray(0)
+        debugStackReadError = null
+        debugMemoryBytes = ByteArray(0)
+        debugMemoryReadError = null
+        skipBreakpointOnceAt = null
+    }
+
+    private fun capsSupportCpuDebugging(): Boolean = capabilities?.supportsCpuDebugging == true
+
+    private fun debugHaltMessage(reason: DebugHaltReason): String = when (reason) {
+        DebugHaltReason.NONE -> "CPU paused"
+        DebugHaltReason.STEP -> "CPU instruction completed"
+        DebugHaltReason.BREAKPOINT -> "Execution breakpoint reached"
+        DebugHaltReason.INSTRUCTION_LIMIT -> "CPU paused at the instruction safety limit"
+        DebugHaltReason.FRAME_LIMIT -> "CPU paused at the frame safety limit"
+        DebugHaltReason.CPU_STOPPED -> "CPU stopped or entered invalid execution"
+        DebugHaltReason.INVALID_REQUEST -> "The core rejected the debug request"
     }
 
     fun toggleAudioMute() {

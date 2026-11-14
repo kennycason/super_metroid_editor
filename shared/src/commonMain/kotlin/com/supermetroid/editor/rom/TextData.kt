@@ -27,6 +27,15 @@ data class TextEntry(
     override fun hashCode(): Int = id.hashCode()
 }
 
+data class TypewriterTextLine(val vramAddress: Int, val text: String)
+
+data class TypewriterTextStream(
+    val timerReset: Int,
+    val lines: List<TypewriterTextLine>,
+) {
+    val displayText: String get() = lines.joinToString("\n") { it.text.trimEnd() }
+}
+
 enum class TextCategory(val displayName: String) {
     INTRO_STORY("Intro Story"),
     AREA_NAME("Area Names"),
@@ -36,6 +45,17 @@ enum class TextCategory(val displayName: String) {
 }
 
 object TextData {
+    /** Fixed word-aligned fields whose full byte range has one visual/source owner. */
+    fun isFixedTilemapEntry(entry: TextEntry): Boolean =
+        entry.writable && entry.category in setOf(
+            TextCategory.AREA_NAME,
+            TextCategory.UI_MESSAGE,
+            TextCategory.ITEM_NAME,
+        )
+
+    fun isTypewriterEntry(entry: TextEntry): Boolean =
+        entry.writable && entry.category == TextCategory.ESCAPE_TEXT
+
     // ─── Intro story (green text) ─────────────────────────────────
     // 6-byte records: [2-byte delay][1-byte X][1-byte Y][2-byte char pointer]
     // Character pointers map to tile graphics in bank $8C.
@@ -60,6 +80,12 @@ object TextData {
         0xD75D to '.', 0xD763 to ',', 0xD76F to '\'', 0xD77B to '!',
     )
     private val CHAR_TO_POINTER = CHAR_POINTER_MAP.entries.associate { (ptr, ch) -> ch to ptr }
+
+    /** Exact English NTSC intro glyph pointer used by the reciprocal ASM lens. */
+    fun introStoryPointer(character: Char): Int? = CHAR_TO_POINTER[character.uppercaseChar()]
+
+    /** Exact English NTSC intro character used by the reciprocal ASM lens. */
+    fun introStoryCharacter(pointer: Int): Char? = CHAR_POINTER_MAP[pointer]
 
     // Special marker pointers that separate story sections
     private const val MARKER_NEW = 0xD683
@@ -103,7 +129,7 @@ object TextData {
 
     const val TOURIAN_ESCAPE_PC = 0x13449C
     const val TOURIAN_ESCAPE_SNES = 0xA6C49C
-    const val TOURIAN_ESCAPE_SIZE = 58
+    const val TOURIAN_ESCAPE_SIZE = 0x2F
 
     // ─── In-game UI messages ───────────────────────────────────
     // Stored as 32-tile tilemap rows (64 bytes each) in bank $85.
@@ -246,8 +272,44 @@ object TextData {
         return result
     }
 
+    /** Decode one fixed area-name field without depending on its ROM address. */
+    fun decodeAreaNameBytes(bytes: ByteArray): String {
+        require(bytes.size == AREA_NAME_ENTRY_SIZE) {
+            "An area-name field requires exactly $AREA_NAME_ENTRY_SIZE bytes"
+        }
+        val sb = StringBuilder()
+        for (i in 0 until AREA_NAME_CHAR_COUNT) {
+            sb.append(tileToChar(bytes[i * 2].toInt() and 0xFF))
+        }
+        return sb.toString().trim()
+    }
+
+    /** Shared fixed-layout codec used by ROM export and reciprocal ASM lenses. */
+    fun encodeEntry(entry: TextEntry, text: String, originalBytes: ByteArray = entry.rawBytes): ByteArray =
+        when (entry.category) {
+            TextCategory.AREA_NAME -> encodeAreaName(text, originalBytes)
+            TextCategory.ESCAPE_TEXT -> encodeEscapeText(text, originalBytes)
+            TextCategory.UI_MESSAGE, TextCategory.ITEM_NAME -> encodeUiMessage(text, originalBytes)
+            TextCategory.INTRO_STORY -> encodeGreenText(text, originalBytes)
+        }
+
+    /** Decode categories whose visual fields own one fixed byte range. */
+    fun decodeFixedEntry(entry: TextEntry, rawBytes: ByteArray): String = when (entry.category) {
+        TextCategory.AREA_NAME -> decodeAreaNameBytes(rawBytes)
+        TextCategory.UI_MESSAGE, TextCategory.ITEM_NAME -> decodeUiMessage(
+            rawBytes,
+            0,
+            rawBytes.size / 2,
+        )
+        TextCategory.ESCAPE_TEXT -> decodeEscapeText(rawBytes, 0, rawBytes.size)
+        TextCategory.INTRO_STORY -> error("Intro story pages require their control-stream decoder")
+    }
+
     /** Decode escape text from ROM bytes. Control bytes are stripped. */
     fun decodeEscapeText(rom: ByteArray, pc: Int, size: Int): String {
+        if (pc >= 0 && size >= 0 && pc + size <= rom.size) {
+            decodeTypewriterStream(rom.copyOfRange(pc, pc + size))?.let { return it.displayText }
+        }
         val sb = StringBuilder()
         var i = 0
         var atLineStart = true
@@ -296,57 +358,95 @@ object TextData {
     }
 
     /** Encode escape text back to ROM bytes, preserving control byte positions. */
-    fun encodeEscapeText(text: String, originalBytes: ByteArray): ByteArray {
-        val result = originalBytes.copyOf()
-        val upper = text.uppercase()
-        var textIdx = 0
-        var i = 0
-        var atLineStart = true
-        var lineControlSkipped = false
-        var sawVisible = false
-        while (i < result.size) {
-            val orig = result[i].toInt() and 0xFF
-            val controlLength = if (atLineStart && !lineControlSkipped) {
-                escapeLineControlLength(result, 0, result.size, i)
-            } else {
-                0
-            }
-            when {
-                orig == 0x00 -> {
-                    if (sawVisible && i + 1 < result.size && (result[i + 1].toInt() and 0xFF) == 0x00) {
-                        break
+    fun encodeEscapeText(text: String, originalBytes: ByteArray): ByteArray =
+        encodeTypewriterText(text, originalBytes, preserveLineSlots = true)
+
+    /** Exact Ceres/Zebes stream: timer command, one VRAM command per text line,
+     * then a zero word. Unknown commands and non-runtime characters fail closed. */
+    fun decodeTypewriterStream(bytes: ByteArray): TypewriterTextStream? {
+        if (bytes.size < 10) return null
+        fun word(offset: Int): Int = (bytes[offset].toInt() and 0xFF) or
+            ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+        if (word(0) != 0x0001) return null
+        val timer = word(2)
+        var offset = 4
+        val lines = mutableListOf<TypewriterTextLine>()
+        while (offset + 1 < bytes.size) {
+            when (word(offset)) {
+                0x0000 -> return TypewriterTextStream(timer, lines).takeIf {
+                    lines.isNotEmpty() && offset + 2 == bytes.size
+                }
+                0x000D -> {
+                    if (offset + 3 >= bytes.size) return null
+                    val vram = word(offset + 2)
+                    offset += 4
+                    val start = offset
+                    while (offset < bytes.size) {
+                        if (offset + 1 < bytes.size && word(offset) in setOf(0x0000, 0x0001, 0x000D)) break
+                        val value = bytes[offset].toInt() and 0xFF
+                        if (value !in 0x20..0x7E || value.toChar() !in TYPEWRITER_CHARACTERS) return null
+                        offset++
                     }
-                    i++
+                    if (offset == start) return null
+                    lines += TypewriterTextLine(
+                        vram,
+                        bytes.copyOfRange(start, offset).map { (it.toInt() and 0xFF).toChar() }.joinToString(""),
+                    )
                 }
-                orig == 0x0D -> {
-                    // Keep newline control byte
-                    if (textIdx < upper.length && upper[textIdx] == '\n') textIdx++
-                    atLineStart = true
-                    lineControlSkipped = false
-                    i++
-                }
-                controlLength > 0 -> {
-                    i += controlLength
-                    lineControlSkipped = true
-                }
-                orig in 0x20..0x7E -> {
-                    while (textIdx < upper.length && upper[textIdx] == '\n') textIdx++
-                    // Replace with new character or space if text is shorter
-                    result[i] = if (textIdx < upper.length) {
-                        val ch = upper[textIdx++]
-                        if (ch in ' '..'~') ch.code.toByte() else 0x20.toByte()
-                    } else {
-                        0x20.toByte() // pad with spaces
-                    }
-                    atLineStart = false
-                    sawVisible = true
-                    i++
-                }
-                // Preserve control bytes as-is
-                else -> i++
+                else -> return null
             }
         }
-        return result
+        return null
+    }
+
+    fun encodeTypewriterStream(stream: TypewriterTextStream): ByteArray {
+        require(stream.timerReset in 0..0xFFFF && stream.lines.isNotEmpty()) { "Invalid typewriter controls" }
+        val bytes = mutableListOf<Byte>()
+        fun word(value: Int) {
+            require(value in 0..0xFFFF)
+            bytes += value.toByte()
+            bytes += (value ushr 8).toByte()
+        }
+        word(0x0001)
+        word(stream.timerReset)
+        stream.lines.forEach { line ->
+            require(line.vramAddress in 0..0xFFFF) { "Invalid typewriter VRAM address" }
+            require(line.text.isNotEmpty() && line.text.all(TYPEWRITER_CHARACTERS::contains)) {
+                "Typewriter text supports A-Z, spaces, and ! only"
+            }
+            word(0x000D)
+            word(line.vramAddress)
+            line.text.forEach { bytes += it.code.toByte() }
+        }
+        word(0x0000)
+        return bytes.toByteArray()
+    }
+
+    fun encodeTypewriterText(
+        text: String,
+        originalBytes: ByteArray,
+        preserveLineSlots: Boolean,
+    ): ByteArray {
+        val original = requireNotNull(decodeTypewriterStream(originalBytes)) {
+            "The typewriter source has unsupported controls"
+        }
+        val requested = text.uppercase().split('\n')
+        require(requested.size == original.lines.size) {
+            "Typewriter text requires exactly ${original.lines.size} line${if (original.lines.size == 1) "" else "s"}"
+        }
+        val lines = original.lines.zip(requested).mapIndexed { index, (line, value) ->
+            require(value.isNotEmpty() && value.all(TYPEWRITER_CHARACTERS::contains)) {
+                "Typewriter line ${index + 1} supports A-Z, spaces, and ! only"
+            }
+            val encoded = if (preserveLineSlots) {
+                require(value.length <= line.text.length) {
+                    "Typewriter line ${index + 1} has ${value.length} characters; its native slot has ${line.text.length}"
+                }
+                value.padEnd(line.text.length)
+            } else value
+            line.copy(text = encoded)
+        }
+        return encodeTypewriterStream(original.copy(lines = lines))
     }
 
     private fun escapeLineControlLength(bytes: ByteArray, pc: Int, size: Int, localIndex: Int): Int {
@@ -628,7 +728,7 @@ object TextData {
         // Escape text
         for ((id, label, pc, snes, size) in listOf(
             EscapeDef("ceres_escape", "Ceres Escape", CERES_ESCAPE_PC, CERES_ESCAPE_SNES, CERES_ESCAPE_SIZE),
-            EscapeDef("tourian_escape", "Tourian Escape", TOURIAN_ESCAPE_PC, TOURIAN_ESCAPE_SNES, TOURIAN_ESCAPE_SIZE),
+            EscapeDef("tourian_escape", "Zebes Escape", TOURIAN_ESCAPE_PC, TOURIAN_ESCAPE_SNES, TOURIAN_ESCAPE_SIZE),
         )) {
             val raw = rom.copyOfRange(pc, pc + size)
             entries.add(TextEntry(
@@ -678,6 +778,8 @@ object TextData {
     }
 
     private data class EscapeDef(val id: String, val label: String, val pc: Int, val snes: Int, val size: Int)
+
+    private val TYPEWRITER_CHARACTERS: Set<Char> = ('A'..'Z').toSet() + setOf(' ', '!')
 
     private data class AreaNameEntry(
         val pcOffset: Int,

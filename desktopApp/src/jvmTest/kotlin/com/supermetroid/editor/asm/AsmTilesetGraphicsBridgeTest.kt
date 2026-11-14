@@ -81,7 +81,9 @@ class AsmTilesetGraphicsBridgeTest {
                 opened.sourceBytes,
             )
         }
-        assertTrue(tooLarge.message.orEmpty().contains("fixed"))
+        assertTrue(tooLarge.message.orEmpty().contains("project space"))
+        val relocation = assertIs<AsmAssetRelocationRequiredException>(tooLarge)
+        assertTrue(relocation.requiredBytes > relocation.inPlaceCapacity)
         assertFailsWith<IllegalArgumentException> {
             fixture.bridge.save(
                 fixture.project.path,
@@ -123,6 +125,68 @@ class AsmTilesetGraphicsBridgeTest {
             AsmTilesetGraphicsKind.AREA_TILES,
             0,
         ))
+    }
+
+    @Test
+    fun `oversized graphics relocate to durable managed source and restore atomically`() {
+        val fixture = fixture(tightAreaEnvelope = true)
+        val opened = assertIs<AsmTilesetGraphicsAccess.Editable>(fixture.bridge.access(
+            fixture.project.path,
+            AsmTilesetGraphicsKind.AREA_TILES,
+            0,
+        ))
+        val incompressible = ByteArray(opened.rawData.size) { index -> ((index * 73 + index / 5) and 0xFF).toByte() }
+        assertFailsWith<AsmAssetRelocationRequiredException> {
+            fixture.bridge.save(
+                fixture.project.path,
+                AsmTilesetGraphicsKind.AREA_TILES,
+                0,
+                incompressible,
+                opened.sourceBytes,
+            )
+        }
+
+        val relocated = fixture.bridge.relocate(
+            fixture.project.path,
+            AsmTilesetGraphicsKind.AREA_TILES,
+            0,
+            incompressible,
+            opened.sourceBytes,
+        )
+        assertTrue(relocated.modified)
+        assertTrue(relocated.managedAssetId != null)
+        assertTrue(relocated.sourceBytes.size > relocated.capacity)
+        assertContentEquals(incompressible, relocated.rawData)
+        assertEquals(1, fixture.repository.managedAssets(fixture.project.path).size)
+        assertTrue(File(fixture.workspace.workingDirectory, "src/bank_B9..CE.asm").readText()
+            .contains("smedit:managed-asset-v1 begin"))
+        assertContentEquals(
+            File(fixture.workspace.originalDirectory, "data/Tiles_Shared.bin").readBytes(),
+            File(fixture.workspace.workingDirectory, "data/Tiles_Shared.bin").readBytes(),
+        )
+
+        val nextRaw = incompressible.copyOf().also { it[0] = 0x55 }
+        val resaved = fixture.bridge.save(
+            fixture.project.path,
+            AsmTilesetGraphicsKind.AREA_TILES,
+            1,
+            nextRaw,
+            relocated.sourceBytes,
+        )
+        assertContentEquals(nextRaw, resaved.rawData)
+
+        val restored = fixture.bridge.restore(
+            fixture.project.path,
+            AsmTilesetGraphicsKind.AREA_TILES,
+            0,
+            resaved.sourceBytes,
+        )
+        assertTrue(restored.managedAssetId == null)
+        assertFalse(restored.modified)
+        assertContentEquals(fixture.areaTiles, restored.rawData)
+        assertTrue(fixture.repository.managedAssets(fixture.project.path).isEmpty())
+        assertFalse(File(fixture.workspace.workingDirectory, "src/bank_B9..CE.asm").readText()
+            .contains("smedit:managed-asset-v1"))
     }
 
     private data class Fixture(

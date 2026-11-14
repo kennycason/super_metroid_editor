@@ -15,6 +15,7 @@ import com.supermetroid.editor.rom.IntroRomImageResolver
 import com.supermetroid.editor.rom.IntroSceneCodec
 import com.supermetroid.editor.rom.RomAllocation
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
+import com.supermetroid.editor.rom.RomSegmentKind
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanException
@@ -69,6 +70,12 @@ internal object IntroSequenceRomPatch {
         sourceParser: RomParser? = null,
     ): Result {
         if (scenes.size !in 1..6) throw RomWritePlanException("Intro Sequence Manager requires 1–6 story frames.")
+        val allocator = freeSpaceAllocator.scoped(
+            owner = OWNER,
+            kind = RomSegmentKind.GENERATED_PATCH,
+            idPrefix = OWNER,
+            constraint = "Managed intro payloads and runtime must remain within one expanded LoROM bank",
+        )
         val stages = scenes.flatMapIndexed { index, scene -> compileStages(index, scene, sourceParser) }
         require(stages.size in 1..12) { "The intro runtime supports 1–12 narration/image phases." }
         val allFrames = mutableListOf<FrameAsset>()
@@ -77,8 +84,8 @@ internal object IntroSequenceRomPatch {
             val firstFrame = allFrames.size
             val frames = stage.frames.mapIndexed { frameIndex, compiled ->
                 require(compiled.tileCount <= 1024) { "${stage.name} frame ${frameIndex + 1} exceeds the 1024-tile limit." }
-                val allocation = reusedAllocations[compiled] ?: freeSpaceAllocator.allocate(
-                        bytes = compiled.payload,
+                val allocation = reusedAllocations[compiled] ?: allocator.reserve(
+                        size = compiled.payload.size,
                         banks = EXPANDED_BANKS,
                         label = "Intro phase ${stageIndex + 1} frame ${frameIndex + 1}: ${stage.name}",
                         alignment = 2,
@@ -93,7 +100,7 @@ internal object IntroSequenceRomPatch {
         }
 
         val provisional = RuntimeBuilder(allocatedStages, allFrames, 0xE08000).build()
-        val runtimeAllocation = freeSpaceAllocator.reserve(
+        val runtimeAllocation = allocator.reserve(
             size = provisional.size,
             banks = EXPANDED_BANKS,
             label = "Managed intro runtime",
@@ -101,25 +108,12 @@ internal object IntroSequenceRomPatch {
         ) ?: throw RomWritePlanException("No expanded LoROM bank has ${provisional.size} bytes for the intro runtime.")
         val runtime = RuntimeBuilder(allocatedStages, allFrames, runtimeAllocation.snesAddress).build()
         check(runtime.size == runtimeAllocation.size)
-        freeSpaceAllocator.write(runtimeAllocation, runtime)
 
         val allocatedPayloads = allFrames.distinctBy { it.allocation.pcOffset }
-        allocatedPayloads.forEachIndexed { index, asset ->
-            writePlan.claimCurrentRange(
-                owner = OWNER,
-                label = "Intro animation frame ${index + 1}: ${asset.stage.name}",
-                offset = asset.allocation.pcOffset - writePlan.headerSize,
-                size = asset.allocation.size,
-                kind = RomWriteKind.ALLOCATION,
-            )
+        allocatedPayloads.forEach { asset ->
+            writePlan.addAllocation(asset.allocation, asset.compiled.payload)
         }
-        writePlan.claimCurrentRange(
-            owner = OWNER,
-            label = "Managed intro runtime",
-            offset = runtimeAllocation.pcOffset - writePlan.headerSize,
-            size = runtimeAllocation.size,
-            kind = RomWriteKind.ALLOCATION,
-        )
+        writePlan.addAllocation(runtimeAllocation, runtime)
 
         val hookPc = snesToPc(HOOK_SNES) - writePlan.headerSize
         val address = runtimeAllocation.snesAddress

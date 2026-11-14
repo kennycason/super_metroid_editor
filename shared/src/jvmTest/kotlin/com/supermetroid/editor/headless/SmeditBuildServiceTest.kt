@@ -757,6 +757,10 @@ class SmeditBuildServiceTest {
         assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xA9, 0x00, 0x80, 0x8F, 0x76, 0x0A, 0x7E)))
         assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xA9, 0x00, 0x04, 0x8F, 0x3E, 0x0B, 0x7E)))
         assertTrue(result.report.applied.any { it.identifier == "combined_per_frame_hook" })
+        assertTrue(
+            (result.report.writePlan?.resourceClaims ?: 0) >= 11,
+            "The combined hook must declare its shared ROM hook plus every WRAM word it mutates",
+        )
     }
 
     @Test

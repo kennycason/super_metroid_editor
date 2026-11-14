@@ -84,7 +84,8 @@ internal fun IntroSceneEditor(
     val selectedIndex = scenes.indexOfFirst { it.id == selectedId }
     val spriteEditRevision = editor.editVersion
     val spritePaletteRevision = editor.paletteVersion
-    val effectiveParser = remember(romParser, spriteEditRevision, spritePaletteRevision) {
+    val asmVisualRevision = editor.asmVisualSourceRevision
+    val effectiveParser = remember(romParser, spriteEditRevision, spritePaletteRevision, asmVisualRevision) {
         romParser?.let { runCatching { editor.nativeSprites.previewParser(it) }.getOrDefault(it) }
     }
     var phase by remember { mutableStateOf(IntroPreviewPhase.NARRATION) }

@@ -1148,6 +1148,495 @@ internal object AsmLibrary {
             ),
         ),
         AsmLibraryGuide(
+            id = "native-sprite-source-assets",
+            title = "Native sprite source assets",
+            summary = "How sprite pixels and palette rows stay reciprocal between authored ASM and the Visual Editor.",
+            keywords = setOf(
+                "native sprite", "sprite graphics", "palette", "incbin", "visual editor",
+                "reciprocal", "restore", "managed asset", "source authority",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "One source, two views",
+                    listOf(
+                        "In ASM source mode, supported native sprite pixels and palettes are authored ASM—not a second project override. Saving pixels updates the exact incbin asset; saving a colour updates the exact literal dw row. The ASM and Visual Editor views reload the same durable source immediately.",
+                        "Project ASM Changes reports the changed data asset or bank source. Undo/Redo, Restore, project reopen, and a cold build all use those authored inputs. Old visual JSON entries do not overwrite source-owned rows during an ASM build.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Supported pixel assets",
+                    listOf(
+                        "A pixel sheet is reciprocal when its native address resolves to one pinned manifest asset with one direct global label followed by incbin. Compressed LZ5 and exact raw tile sheets are supported; shared visual recipes that use the same source key see the same edit.",
+                        "If compressed data outgrows its native envelope and every source pointer has a supported symbolic shape, SMEDIT offers Move to project space. The allocator chooses the build address, rewrites supported consumers, validates emitted bytes and pointers, and shows the placement in ROM Space Planner. Cancel changes nothing.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Supported palette rows",
+                    listOf(
+                        "A palette row is reciprocal when 16 contiguous colours are literal dw \$hhhh values with exact ROM-address comments. Labels and comments may divide the row. Expressions, macros, extra emitting statements, missing address evidence, resized rows, or ambiguous duplicates remain ASM only.",
+                        "Palette rows are fixed native data and never auto-relocate. SMEDIT preserves surrounding source formatting and changes only the 16 literal words. Palette entry 0 remains transparent in the visual picker.",
+                    ),
+                    AsmCodeExample(
+                        "A reciprocal row",
+                        code(
+                            "Palette_Title:",
+                            "    dw \$0000,\$02DF,\$01D7,\$00AC,\$5EBB,\$3DB3,\$292E,\$1486 ;8CE1E9;",
+                            "    dw \$48FB,\$48FB,\$7FFF,\$0000,\$7FFF,\$44E5,\$7FFF,\$0000 ;8CE1F9;",
+                        ),
+                        "The comments prove the two contiguous eight-word chunks own one 32-byte row at \$8C:E1E9.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Safety boundary",
+                    listOf(
+                        "Unsaved source drafts block visual saves, relocation, Restore, and Undo/Redo. A newer disk/source edit also blocks the transaction instead of being overwritten. Custom declarations remain readable in ASM but the visual controls become read-only with a concrete explanation.",
+                        "Sprite composition, OAM placement, animation instructions, DMA programs, and runtime palette effects remain read-only unless another editor owns an independently proven source contract. Pixel/palette reciprocity does not imply arbitrary sprite-engine decompilation.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "cinematic-map-source-assets",
+            title = "Scene map source assets",
+            summary = "Edit proven title, intro, ending, and Ceres layouts without creating a second source of truth.",
+            keywords = setOf(
+                "scene", "cinematic", "title", "intro", "ending", "ceres", "tilemap",
+                "mode 7", "background", "incbin", "visual editor", "reciprocal", "regional",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "One map, one authority",
+                    listOf(
+                        "In ASM source mode, the supported Scenes layouts read and write the exact compressed incbin asset assembled by the project. Apply updates that authored asset, every visual alias refreshes immediately, and a cold build consumes the same bytes. Title screen and Title background deliberately share the Title_Mode7_Tilemap source; editing one changes both views.",
+                        "Project ASM Changes reports the data asset and any managed declaration. Undo/Redo and Restore protect newer disk edits and unsaved ASM declaration drafts rather than overwriting them.",
+                    ),
+                    table = AsmLibraryTable(
+                        headers = listOf("Source", "Address", "Map cells"),
+                        rows = listOf(
+                            listOf("Title", "\$96:FC04", "128×32 Mode 7 bytes"),
+                            listOf("Ceres / gunship", "\$96:FE69", "6/6/12/8-row Mode 7 frames"),
+                            listOf("Intro Mother Brain room", "\$96:FF14", "Four 32×32 BG frames"),
+                            listOf("Intro Samus portrait", "\$97:88CC", "32×32 BG words"),
+                            listOf("Ending Samus waiting", "\$97:96F4", "32×32 BG words"),
+                            listOf("Post-credits icon", "\$99:ECC4", "32×32 BG words"),
+                        ),
+                        monospaceColumns = setOf(1),
+                        columnWeights = listOf(1.5f, 0.8f, 1.4f),
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Cell editing is format-aware",
+                    listOf(
+                        "Mode 7 maps store one tile number byte per cell. The shared Ceres/gunship asset is presented as its two 6-row gunship frames, one 12-row Ceres/flight frame, and 8-row clear map instead of one misleading atlas. The intro BG1 asset likewise exposes four independent 32×32 story frames.",
+                        "SNES BG maps store little-endian words in 32×32 screen blocks; each word contains a 10-bit tile number, three palette bits, priority, horizontal flip, and vertical flip. The editor changes those fields directly and preserves every other bit.",
+                        "The rendered preview is only a view. SMEDIT never tries to reconstruct tiles or map words from flattened pixels, so Apply remains byte-faithful and reversible.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Growth and checked placement",
+                    listOf(
+                        "A recompressed map stays in place while it fits the frozen native envelope. If it grows and every source consumer is one supported symbolic 24-bit or split bank/low-word reference, Move to project space records allocation intent and lets the checked build choose the address.",
+                        "The build validates LZ5 round trip, emitted bytes, the complete allocation, and every pointer consumer. ROM Space Planner shows the chosen managed placement. Restore atomically returns the direct declaration, original asset, and ownership.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Intentional read-only boundary",
+                    listOf(
+                        "Only the six maps above have both an exact codec and a semantic visual selection. OAM composition, cinematic instruction/frame programs, menu layouts, credits, graphics tiles, and runtime effects remain inspectable but read-only unless their own source contract is proven.",
+                        "PAL options branches, English/Japanese controller and special-settings maps, the Japanese intro font/text path, and regional credits data are inventoried separately. SMEDIT never presents NTSC coverage as regional support or edits Japanese data with an English encoding assumption.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "fixed-text-source-fields",
+            title = "Fixed text source fields",
+            summary = "How area labels, message rows, and item names share one exact source owner with the Text Editor.",
+            keywords = setOf(
+                "text", "area name", "message", "item name", "tilemap", "dw",
+                "visual editor", "reciprocal", "restore", "source authority",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "One field, one authority",
+                    listOf(
+                        "In ASM source mode, supported area labels, in-game message rows, and item pickup names are read directly from the literal words assembled by the project. Typing in the Text Editor saves those words to the bank source; saving compatible ASM refreshes the visual field without reopening.",
+                        "The first source-backed visual edit removes any older project JSON value for that field. ASM builds also ignore stale fixed-text JSON overrides, so they cannot overwrite authored source late in export. Project ASM Changes reports the bank edit.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Exact fixed-word lens",
+                    listOf(
+                        "A field is reciprocal only when every owned tilemap word is a literal dw \$hhhh token with an exact six-digit ROM-address comment. The field may occupy part of a larger directive; SMEDIT selects only the contiguous addresses belonging to that visual value and preserves every surrounding word, label, comment, and line.",
+                        "These fields retain their exact byte length and location. Area names preserve their property byte; message and item rows preserve non-owned tiles while encoding the editable character span. They never need relocation.",
+                    ),
+                    AsmCodeExample(
+                        "A reciprocal area label",
+                        code(
+                            "AreaName_Crateria:",
+                            "    dw $2832,$2841,$2830,$2843,$2834,$2841,$2838,$2830,$2801,$2801,$2801,$2801 ;82966F;",
+                        ),
+                        "The address comment proves the exact 24-byte field. The Text Editor changes only these twelve literal words.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Conflicts, history, and Restore",
+                    listOf(
+                        "An unsaved draft in the owning bank blocks Text Editor changes, Restore, and source Undo/Redo. A newer durable bank edit also blocks an older snapshot. Save or discard the newer source, then retry; SMEDIT never resolves this with last-writer-wins.",
+                        "Visual Undo/Redo stores guarded source snapshots. Restore returns only that field to the frozen project ASM baseline. Reopen and cache-free builds consume the same durable source words.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Intentional boundary",
+                    listOf(
+                        "Expressions, macros, missing address comments, duplicate candidates, resized fields, or fields moved to a custom source file remain ASM only. The visual value stays inspectable from the loaded ROM, but its control is read-only with the reason shown.",
+                        "Ceres/Zebes typewriter messages and intro story pages are not fixed tilemap rows. They use their own reciprocal typed-stream and fixed-slot page contracts so their controls are preserved rather than interpreted as ordinary words.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "typewriter-text-streams",
+            title = "Ceres and Zebes typewriter text",
+            summary = "Edit escape messages while preserving timer, VRAM, terminator, pointer-bank, and placement contracts.",
+            keywords = setOf(
+                "typewriter", "ceres", "zebes", "escape", "text", "control", "vram",
+                "bank a6", "low word", "relocation", "visual editor", "reciprocal",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Text inside a typed control stream",
+                    listOf(
+                        "The Ceres and Zebes escape messages are not ordinary strings. Each stream begins with command \$0001 and its timer-reset word, uses command \$000D plus a VRAM tilemap destination before every quoted line, and ends with \$0000. The Text Editor exposes only the line text and preserves those controls exactly.",
+                        "The runtime meaningfully supports uppercase A-Z, spaces, and !; ! is converted to the game's bracket-like warning glyph. The visual editor keeps the native line count and rejects characters or source shapes the handler cannot prove.",
+                    ),
+                    AsmCodeExample(
+                        "A typed stream",
+                        code(
+                            "TypewriterText_ZebesEscapeTimer:",
+                            "    dw \$0001,\$0002       ; timer command and reset",
+                            "    dw \$000D,\$4905       ; line 1 VRAM destination",
+                            "    db \"TIME BOMB SET!\"",
+                            "    dw \$000D,\$4945       ; line 2 VRAM destination",
+                            "    db \"ESCAPE IMMEDIATELY!\"",
+                            "    dw \$0000              ; end",
+                        ),
+                        "Only the two quoted strings are visual fields. Timer, destinations, order, and terminator remain source controls.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Native slots and longer messages",
+                    listOf(
+                        "Text that fits each native line slot is padded with spaces and replaces only the quoted characters, so every following bank address and comment remains stable. Shorter messages therefore need no allocator or pointer rewrite.",
+                        "A longer line cannot safely push the rest of bank \$A6. SMEDIT offers Move to project space, keeps the original bytes emitted without their public label, stores the typed stream as a managed binary input, and lets the shared allocator choose verified free space.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Why relocation must stay in bank A6",
+                    listOf(
+                        "The native setup routines load only the label's low 16 bits with LDA.W #label. No bank byte is stored; the typewriter handler implicitly reads from bank \$A6. A placement in an arbitrary expanded bank would assemble but read the wrong bytes at runtime.",
+                        "The managed record therefore permits bank \$A6 only. The compiler validates the chosen allocation, generated bytes, exported label, and every low-word consumer. If no verified contiguous \$A6 range fits, the build fails with a space-planner error instead of silently selecting another bank.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Ownership and safety boundary",
+                    listOf(
+                        "Saved compatible ASM refreshes the Text Editor immediately. Visual Apply, relocation, Restore, and Undo/Redo are guarded against unsaved drafts and newer source/data edits. Project ASM Changes and ROM Space Planner show managed growth, and cold builds use the durable stream.",
+                        "Custom commands, symbolic control expressions, changed line counts, unsupported characters, moved declarations, and unmanaged size changes remain ASM only. PAL subtitle tilemaps and Japanese glyph data are separate regional assets and are not claimed by this English NTSC stream editor.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "intro-story-text-pages",
+            title = "Intro story text pages",
+            summary = "Edit the six English NTSC story pages while preserving every timing, position, page, movie, wait, and finish control.",
+            keywords = setOf(
+                "intro", "story", "text", "glyph", "timing", "position", "cinematic",
+                "page", "wait", "movie", "visual editor", "reciprocal", "bank 8c",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Glyphs inside cinematic programs",
+                    listOf(
+                        "Each English intro page in bank \$8C is a cinematic instruction list. A visible character occupies one six-byte record: a \$0005*!FPS delay, an X/Y tile position, and a symbolic IndirectInstructions_IntroText_* glyph routine. Setup, blinking-marker waits, movie flow, delete, caret, and finish instructions surround those records.",
+                        "The Text Editor owns only the glyph symbol in each proven record. Timing expressions, coordinates, instruction order, controls, record count, and native address remain source-owned and byte-identical.",
+                    ),
+                    AsmCodeExample(
+                        "One fixed glyph slot",
+                        code(
+                            "dw \$0005*!FPS",
+                            "db \$01,\$04",
+                            "dw IndirectInstructions_IntroText_I ;8CC38F; \"I\"",
+                        ),
+                        "Changing I in the Text Editor replaces the symbolic routine and its quoted source comment; the delay and tile position do not move.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Fixed rows, readable source",
+                    listOf(
+                        "Y coordinates define the visual rows, and the existing X positions define each row's fixed capacity. An edit must retain the same line count and fit every row. Shorter rows are padded with the Space glyph so following code never shifts.",
+                        "SMEDIT updates both each adjacent quoted glyph comment and the readable page-summary comments above the records. Saved compatible ASM changes refresh the Text Editor without reopening, and visual edits immediately become ordinary bank_8C.asm source changes.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "History, builds, and Restore",
+                    listOf(
+                        "The first reciprocal edit retires any older textEdits JSON value. ASM export also ignores stale intro overrides, so they cannot overwrite assembled glyphs. Source-aware Undo/Redo and Restore refuse unsaved drafts or newer durable source edits.",
+                        "Save/reopen and cold builds assemble the authored glyph symbols directly. Restore replaces only the selected page with its frozen project ASM baseline; no allocation is involved because the complete native slot layout remains fixed.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Intentional safety boundary",
+                    listOf(
+                        "A moved page, changed address evidence, altered timing or coordinates, extra or missing records, custom glyph expressions/macros, changed setup/wait/movie/finish controls, or unsupported characters make that page ASM only. The visual field explains the reason and never guesses at a custom program.",
+                        "This contract covers the six English NTSC pages only. The Japanese font/text path and other regional branches have different data and encoding contracts and remain explicitly outside this editor.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "rom-space-planner",
+            title = "ROM Space Planner and allocation ownership",
+            summary = "Read exact build placements, understand bank limits, and resolve checked allocation failures without guessing addresses.",
+            keywords = setOf(
+                "rom space", "space planner", "allocation", "bank", "fragmentation", "owner",
+                "alignment", "3 mib", "4 mib", "wram", "vram", "conflict",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "One plan drives Build and Export",
+                    listOf(
+                        "ROM Space Planner is a read-only view of the same typed requests, verified free ranges and exact placements used by Export ROM. It is not a second estimate. Refresh SMEDIT Result after source or visual edits to rebuild the transaction.",
+                        "Each placement has a stable segment ID, owner, kind, exact requested size, alignment, permitted banks and any pointer/runtime constraint. The address is a build result, not durable project intent. A clean build may safely repack a managed segment when another owner grows.",
+                        "Every production allocation must retain this identity. Room graphs are planned in a private image and published atomically; music, graphics, text, generated patches and custom ASM publish their known writes directly. A build fails rather than displaying an owner inferred from a coincidental address match.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Read capacity correctly",
+                    listOf(
+                        "A LoROM bank contributes at most 32 KiB, and only source-verified free blocks are eligible. Total remaining is the sum of usable fragments; Largest block is the biggest single segment that can fit. Two 2 KiB holes cannot hold one 3 KiB request.",
+                        "A 3 MiB project does not silently become 4 MiB. Expansion banks appear only when the project's supported capacity enables them. Fixed native code is never moved merely to make room.",
+                        "Select a bank to inspect its verified blocks, complete allocator placements and every planned write owner. Requested size, alignment, allowed banks and the human-readable constraint explain why an apparently empty bank may still be incompatible.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Resolve a blocked allocation",
+                    listOf(
+                        "The failure names the request, required contiguous bytes and alignment, allowed banks, largest compatible block, total compatible bytes, fragmentation and known blocking owners. Use those facts before changing code or assets.",
+                        "If total compatible space is large enough but the largest block is too small, inspect the listed owners and move, restore or remove one planned segment so a legal contiguous block remains. If total compatible space is too small, reduce the payload, release another allocation, or use supported 4 MiB capacity when the request allows expansion banks.",
+                        "Do not work around a failure by hand-editing a generated org, pointer or bank byte. Low-word pointers, bank-local code and engine buffers are real runtime constraints; bypassing them can assemble successfully and still produce a broken ROM.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "ROM and runtime ownership",
+                    listOf(
+                        "The write plan checks complete ROM ranges, including unchanged fill bytes inside an allocation. It also checks non-ROM claims such as WRAM, VRAM, native hook sites and IDs. Two exclusive owners cannot silently use the same runtime state.",
+                        "Shared claims are allowed only through an explicit shared group. The combined per-frame patches share one native hook but separately declare the boss/event flag words, Hyper Beam equipment word and blue-suit dash counter they mutate. The pause-map room-name patch declares both native hooks and its VRAM row.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "compiled-output-inspector",
+            title = "Compiled Output Inspector",
+            summary = "Trace one authored source statement to its emitted bytes, ownership, references, ROM comparisons, and exact build errors.",
+            keywords = setOf(
+                "compiled output", "emitted bytes", "source map", "baseline", "loaded rom",
+                "symbols", "references", "diagnostics", "stale", "ownership", "headroom",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Source statement to ROM bytes",
+                    listOf(
+                        "Expand Compiled Output below editable project source. The selected caret line resolves through Asar's retained WLA line map; SMEDIT does not guess an address from the bank filename or nearby org. A label/comment may legitimately emit no bytes while still exposing symbols and references.",
+                        "Each resolved statement shows its SNES and canonical PC range plus the bytes from three distinct inputs: Baseline is the immutable project ASM snapshot, Loaded ROM is the file opened by the project, and SMEDIT is the validated current export result.",
+                        "Current · unchanged is useful evidence, not an empty result. Current · changed from baseline identifies authored or generated output. Stale explicitly means the displayed addresses and bytes belong to the last successful build; rebuild before relying on them.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Ownership and bank headroom",
+                    listOf(
+                        "Output ownership comes from the exact export write plan. Managed placements also show their stable allocation owner, segment kind and complete envelope. Fixed/native source correctly reports that it has no allocator-owned placement.",
+                        "Bank headroom is the allocator's post-build total free space and largest compatible contiguous block. It is evidence from the same transaction as Export ROM, not a source-text size estimate.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Navigate the result",
+                    listOf(
+                        "Incoming references are indexed uses of labels or macros declared on the selected line. Outgoing references are resolved tokens used by that statement. Select either to open the exact authored location.",
+                        "ROM Comparison opens the corresponding changed range when one exists. Space Planner focuses the statement's bank. Project ASM Changes opens the source/asset review, and Visual Editor appears only when the existing semantic bridge proves an owner for that line.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Diagnostics and generated inputs",
+                    listOf(
+                        "Assembler and build diagnostics show the exact authored line beside the message. Compiler-generated room, patch, managed-code and managed-asset inputs retain their failing statement as disposable build evidence.",
+                        "Generated diagnostics are labeled Generated build input and name the real editing authority. A generated room error can open Room Data, but generated files never appear as durable editable source; repair the owning room, patch, source declaration or Visual Editor resource instead.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "semantic-project-changes",
+            title = "Project ASM Changes and safe restore",
+            summary = "Review authored changes by gameplay resource and ownership, then restore only complete guarded transactions.",
+            keywords = setOf(
+                "project asm changes", "semantic diff", "origin", "restore selected", "transaction",
+                "managed relocation", "baseline update", "conflict", "raw diff",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Meaning first, exact diff retained",
+                    listOf(
+                        "Project ASM Changes classifies proven room resources, palettes, graphics/metatiles, map data, text, hooks/modules and managed allocations. The semantic card is a navigation and ownership summary; the selectable Baseline → saved, Saved → unsaved and Baseline → current raw source diffs remain the exact evidence.",
+                        "Visual Editor links appear only when the existing semantic resolver proves an owner for a changed line or data asset. Unknown source remains ASM source rather than being assigned to a resource from a filename guess.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Origin is evidence, not a guess",
+                    listOf(
+                        "Project modules and managed relocations have durable origins. A direct incbin is labeled Reciprocal Visual Editor only when the semantic resolver proves that owner; otherwise it remains Authored source asset. Ordinary bank overrides retain exact authored text but do not record whether typing in ASM or a reciprocal Visual Editor produced every line, so the review says Authored project source and explains that boundary.",
+                        "ASM-version review reuses the same classifier and distinguishes project source, candidate-version changes and files affected by both. Generated compiler inputs are disposable evidence and never become authored project changes.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Restore complete ownership transactions",
+                    listOf(
+                        "Restore selected is whole-file or whole-resource only; Project ASM Changes never applies a partial diff hunk. A fixed source asset restores its complete baseline bytes. A project module deletes the module and updates build order. A managed asset atomically removes its allocation manifest/asset, restores its source declaration and restores the native asset override when applicable.",
+                        "A source file containing a managed marker cannot be restored independently because that would split source from manifest ownership. Restore each managed resource first. Open unsaved drafts, newer disk source and newer asset bytes disable or reject Restore instead of being overwritten.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "ASM version conflicts",
+                    listOf(
+                        "Update ASM Version shows the same semantic kind and origin above the exact project/version/result diff. Conflict choices still resolve complete merge regions, and the complete candidate is compiled and validated before one atomic installation. Semantic labels do not weaken the existing stale-plan inventory check or merge boundary.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "asm-visual-capability-matrix",
+            title = "ASM / Visual Editor capability matrix",
+            summary = "Know which data is reciprocal, which source shape is supported, and what must be proven before another bridge is called complete.",
+            keywords = setOf(
+                "capability matrix", "reciprocal", "visual editor", "asm only", "ownership",
+                "conformance", "fast tests", "cold build", "live refresh", "restore",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "One authority, two editing views",
+                    listOf(
+                        "A reciprocal integration does not keep an ASM value and a separate Visual Editor value. It has one durable source authority plus two views: supported saved ASM is decoded into the visual model, and a supported visual edit rewrites that same authored source. Live refresh means neither direction requires reopening the project.",
+                        "Inspecting never adopts or dirties a resource. Invalid or custom source shapes stay ASM only with a concrete reason, while the last valid visual preview is protected from becoming a second authority.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Read every capability literally",
+                    listOf(
+                        "The checked matrix records Inspect, ASM edit, Visual edit, Live refresh, Aliases, Restore, Relocation and Cold build for every integration. Y means the capability is supported by the named source contract; N is an intentional boundary; a dash means the shape has no such concept, not that testing was skipped.",
+                        "The complete inventory and each supported/unsupported source boundary live in docs/asm/capability_matrix.md. Sound/music and arbitrary custom source deliberately support authored ASM without claiming that SMEDIT can decompile them into reciprocal visual models.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "The same completion gate for every bridge",
+                    listOf(
+                        "A reciprocal row is complete only after focused evidence covers native parity, ASM to Visual refresh, Visual to ASM publication, shared aliases or a single-owner invariant, growth or safe fixed-envelope refusal, invalid drafts, stale-edit conflicts, Restore and Undo/Redo, Save/reopen, and a cache-free build of the emitted bytes and pointers.",
+                        "This prevents a bridge that previews correctly in one session from being described as reciprocal while restore, cold builds, aliases, or unsupported drafts still split ownership.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Use the two verification loops",
+                    listOf(
+                        "During normal bridge work, run ./gradlew :desktopApp:asmFastTest. It executes the checked registry plus focused source and UI conformance suites without the heavyweight full-source milestone tests.",
+                        "Before declaring a bridge complete, run ./gradlew :desktopApp:asmReciprocityTest. It adds focused cache-free compiler proofs. The registry and Gradle suite lists are checked against each other, so a capability row cannot silently lose its declared evidence.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "asm-editor-assistance",
+            title = "ASM diagnostics, completion, and safe rename",
+            summary = "Use expression-aware source help without letting the editor guess at custom Asar code or normalize authored style.",
+            keywords = setOf(
+                "diagnostics", "completion", "expression", "warnpc", "bank crossing",
+                "unresolved symbol", "rename", "refactor", "immediate width", "rts", "rtl",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Exact facts, conservative warnings",
+                    listOf(
+                        "SMEDIT evaluates literal arithmetic, parentheses, bit operators, project defines that reduce to exact constants, and the common low/high/bank/word/LoROM conversion functions. An unknown label, custom function, macro expansion or conditional source shape stays unknown and stops dependent inspection; it is never replaced by zero or an estimated address.",
+                        "Data expressions are checked against db/dw/dl/dd width. Fixed org cursors track only exactly sized emissions, so bank-crossing and warnpc diagnostics appear only when the complete byte count and boundary are known. Errors block a build; conservative review warnings remain visible but do not block Asar.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Control flow and processor widths",
+                    listOf(
+                        "An unresolved-symbol error is limited to a direct branch/call/jump target that the current scope-aware index proves is missing. General operands may contain custom defines, functions and structure expressions, so SMEDIT leaves those to Asar instead of reporting speculative errors.",
+                        "JSR/JSL return warnings require a unique direct target and a simple routine whose terminal returns are all proven RTS or all proven RTL. Macro or conditional expansion cancels that inference. Immediate-width warnings require a straight-line REP/SEP state; labels, branches, calls and unknown control flow reset it.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Expression-aware completion",
+                    listOf(
+                        "Operand completion includes scope-correct local/global labels, exact defines and common Asar expression functions. Known defines show their evaluated constant, directives show their documented form, and accepting a function inserts parentheses with the caret inside.",
+                        "Inactive modules remain excluded. Completion never opens inside strings or comments, and an unknown custom function remains authored text rather than being reformatted or replaced.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Rename only after complete review",
+                    listOf(
+                        "Right-click an ordinary global label or proven use and choose Rename Symbol. Review shows every affected file and line before Apply rename. The result is one guarded multi-file Undo/Redo transaction; applying re-resolves the complete plan so a newer edit cancels it without changing any file.",
+                        "Rename refuses unsaved or stale indexes, local labels, defines, macro names/parameters, function parameters, namespaces, collisions, ambiguous uses and any unclassified occurrence. Comments and strings are intentionally untouched. References to flattened descendants such as Routine_Loop are changed only when the parent/local relationship is proven.",
+                        "SMEDIT has no whole-file formatter. Tab/Shift-Tab and automatic indentation remain selection/typing aids; authored expressions, literal forms, suffixes, spacing and comments are not normalized as a side effect of diagnostics or refactoring.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
+            id = "source-runtime-debugger",
+            title = "Source-level runtime debugger",
+            summary = "Pause the bundled emulator on exact compiled statements, inspect the 65c816, and follow proven source and stack evidence.",
+            keywords = setOf(
+                "debugger", "breakpoint", "run to cursor", "step instruction", "registers",
+                "stack", "memory", "pc", "source map", "crash", "libretro",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "A capability, not a libretro assumption",
+                    listOf(
+                        "Stock libretro advances frames but does not promise instruction stepping or CPU registers. SMEDIT's bundled Snes9x core exposes a separate versioned debug capability; external cores and RetroArch fail closed instead of displaying invented state.",
+                        "The core and editor remain single-threaded. Pause means no core call is executing. Step executes one 65c816 opcode, and Run to Cursor advances in bounded frame chunks until the CPU reaches one exact compiled 24-bit address.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Breakpoints and source identity",
+                    listOf(
+                        "Expand Runtime Debugger below editable project source. Add Breakpoint and Run to Cursor use the caret statement's retained WLA address; label-only lines work when the build proves a symbol there. A stale or missing build disables those controls.",
+                        "When execution stops, the exact current-PC statement is highlighted and opened when it is authored source. Generated checked-hook helpers and relocated managed segments retain their generated source line and compiled symbol as first-class evidence, but disposable generated files never become an editing authority.",
+                        "The session records the exact build-artifact identity of its loaded ROM. Rebuilding source without restarting makes the source map stale and disables address controls instead of applying newer symbols to older bytes.",
+                        "Breakpoints exist only for the active emulator session. They can be cleared together, and closing or restarting the session clears them; they are not silently written into the project. Controller input remains live while breakpoint-aware frame chunks run.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Registers, stack, and memory",
+                    listOf(
+                        "The panel shows A/X/Y, D/DB/PB, S, packed P flags, accumulator/index widths, emulation mode, scanline/cycle position and interrupt-wait state. The current symbol is reported as a symbol plus byte offset.",
+                        "Nearby stack bytes are raw evidence. Native mode wraps through bank \$00 and emulation mode wraps inside page \$01xx. SMEDIT labels an RTS or RTL candidate only when return-address-plus-one matches an exact retained source/symbol address; it calls these candidates rather than pretending it reconstructed a perfect call stack.",
+                        "Selected memory uses a side-effect-free paused bus peek for directly mapped ROM, WRAM and SRAM. Hardware/coprocessor registers are refused because merely reading them could acknowledge or advance emulated state; an unsafe range is shown as unavailable without hiding the registers.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Safety limits and invalid execution",
+                    listOf(
+                        "Every run has both instruction and frame limits so a missing target, WAI loop or mismatched ROM returns control to the editor. The panel distinguishes an ordinary frame chunk, exact breakpoint, safety limit, stopped CPU and rejected request.",
+                        "A stopped CPU, execution in WRAM or a PC absent from a non-empty retained source map is called out as evidence to investigate. Source navigation is marked stale after source/project edits; rebuild and restart the emulator before trusting relocated addresses.",
+                    ),
+                ),
+            ),
+        ),
+        AsmLibraryGuide(
             id = "hooks-and-overrides",
             title = "Hooks, overrides, and free space",
             summary = "How project modules safely replace native bytes, redirect execution, and place new code without accidental collisions.",
@@ -1235,7 +1724,8 @@ internal object AsmLibrary {
                     "Free space is a checked range, not a magic label",
                     listOf(
                         "A Freespace_* label documents where unused bytes began in the pinned vanilla source. It does not stop another module from choosing the same bytes, and it does not move automatically when custom code grows. Module order can make a later org silently overwrite an earlier allocation unless SMEDIT has an explicit checked contract.",
-                        "Keep same-bank helpers below the bank boundary and place warnpc immediately after the owned payload. warnpc makes Asar fail when growth reaches the limit. SMEDIT's checked modules additionally compare a build with the module disabled, proving the proposed helper bytes were still free after earlier modules assembled.",
+                        "For manually placed code, keep same-bank helpers below the bank boundary and place warnpc immediately after the owned payload. warnpc makes Asar fail when growth reaches the limit. SMEDIT's module audit additionally compares a build with the module disabled, proving the proposed helper bytes were still free after earlier modules assembled.",
+                        "Helpers created with Create Checked Hook use a stronger managed-segment contract. Their authored org and warnpc are readable creation-time hints, not durable addresses. A clean build measures the exact helper body, allocates one compatible contiguous block, and substitutes the chosen org and exact end boundary only in temporary build source.",
                     ),
                     AsmCodeExample(
                         "Bound one bank-local allocation",
@@ -1262,26 +1752,28 @@ internal object AsmLibrary {
                     "Create a checked hook from native source",
                     listOf(
                         "Build the project and Space Planner, then right-click the first native instruction and choose Create Checked Hook. SMEDIT collects complete contiguous instructions until a four-byte JML fits, rejects unsafe control flow and interior labels, and prefers a verified expanded-bank block for the helper.",
-                        "The generated Project Module contains the detour, displaced instructions, an obvious custom-code area, the exact continuation jump, boundary labels, warnpc, and a compact safety metadata comment. Keep that metadata and the structural lines intact; edit only the custom area unless you intend to recreate the hook.",
-                        "The Space Planner lists total verified bytes and the largest contiguous block separately. A hook or allocation must fit one listed block; fragmented totals are never treated as one address range.",
+                        "The generated Project Module contains the fixed native detour, displaced instructions, an obvious custom-code area, the exact continuation jump, boundary labels, and @smedit-checked-hook-v2 placement intent. Keep the metadata and structural lines intact; edit only the custom area unless you intend to recreate the hook.",
+                        "The native hook address never moves. The helper has no persisted authoritative address: every build measures its actual emitted size and allocates it through the shared segment registry. Growing one helper can repack later helpers; all JML operands and symbols are then re-resolved and validated. Multiple helpers keep separate stable identities even when their emitted ranges touch.",
+                        "A helper must fit one verified LoROM bank block; its practical limit is the largest compatible block shown by Space Planner, not the preview warnpc printed when the module was created. The implementation size-probes up to the single-bank limit. Fragmented totals are never combined, and SMEDIT does not expand a 3 MiB project silently.",
+                        "After Build, Space Planner shows the helper's requested bytes, chosen range, owner and constraint. A clean reopen/build derives the same deterministic placement from the saved body and current owners. Changing the metadata seed or preview org does not pin placement; editing safety metadata is unsupported and can make the module fail closed.",
                     ),
                     AsmCodeExample(
                         "Generated shape",
                         code(
-                            "; @smedit-checked-hook-v1 ...",
+                            "; @smedit-checked-hook-v2 hook=... seed=... helper_banks=80-FF ...",
                             "org NativeInstruction",
                             "Generated_Hook:",
                             "    JML.L Generated_Helper",
                             "",
-                            "org VerifiedExpandedSpace",
+                            "org CreationTimePreviewAddress ; build substitutes managed placement",
                             "Generated_Helper:",
                             "    ; displaced instructions",
                             "    ; custom code",
                             "    JML.L ExactContinuation",
                             "Generated_Helper_End:",
-                            "warnpc VerifiedLimit",
+                            "warnpc CreationTimePreviewLimit ; build substitutes exact end",
                         ),
-                        "Every build proves this source still encodes the reviewed shape and claims both complete spans.",
+                        "Every build proves the reviewed fixed detour and continuation, then claims the complete measured helper at its current managed placement.",
                     ),
                 ),
                 AsmLibrarySection(

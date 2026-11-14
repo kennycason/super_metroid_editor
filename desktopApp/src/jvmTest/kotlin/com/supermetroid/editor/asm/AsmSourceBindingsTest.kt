@@ -82,6 +82,11 @@ class AsmSourceBindingsTest {
         assertEquals(listOf("LDA.W", "Enemy[1].properties", "Native"), tokens.map { it.value })
         tokens.forEach { assertEquals(it.value, code.substring(it.range)) }
         assertEquals(listOf("db", "Native"), AsmSourceLexing.references("db \"escaped \\\" Native; literal\", Native").map { it.value }.toList())
+        assertEquals(
+            listOf("BEQ", ".2x1", "BMI", ".8damage"),
+            AsmSourceLexing.references("BEQ .2x1 : BMI .8damage").map { it.value }.toList(),
+            "Asar local labels may begin with a digit after their scope dot",
+        )
     }
 
     @Test fun `code canonicalization leaves comments strings and hexadecimal data untouched`() {

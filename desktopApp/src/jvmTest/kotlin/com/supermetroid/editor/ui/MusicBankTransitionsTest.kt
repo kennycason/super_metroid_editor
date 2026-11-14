@@ -162,7 +162,8 @@ class MusicBankTransitionsTest {
         val noSpace = RomFreeSpaceAllocator(rom, parser::snesToPc, parser::pcToSnes,
             excludedRanges = listOf(rom.indices))
         val error = assertFailsWith<IllegalStateException> { MusicRomExporter(project, {}).applyMusicEditsToRom(rom, noSpace) }
-        assertTrue(error.message!!.contains("not enough contiguous free ROM space"))
+        assertTrue(error.message!!.contains("needs"))
+        assertTrue(error.message!!.contains("Safe next steps"))
         assertContentEquals(before, rom)
     }
 

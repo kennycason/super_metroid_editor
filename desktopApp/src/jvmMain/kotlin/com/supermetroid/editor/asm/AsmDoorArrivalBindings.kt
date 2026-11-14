@@ -23,7 +23,13 @@ private fun checkedDoorArrivals(labels: Collection<String>, compiled: AsmCompile
             val end = requireNotNull(symbols[label + "_End"]) { "Missing managed arrival boundary." }
             require(end > address && end - address <= 1024 && end <= 0x900000) { "Managed arrival escaped its bank/size bounds." }
             val pc = requireNotNull(snesLoRomToPc(address))
-            require((pc until pc + end - address).all { offset -> compiled.sourceOwnedRanges.any { offset >= it.pcOffset && offset < it.pcOffset + it.length } }) {
+            val managedSegments = compiled.segmentPlacements.filter {
+                it.request.kind == RomSegmentKind.MANAGED_CODE || it.request.kind == RomSegmentKind.HOOK_HELPER
+            }.map { it.allocation.pcOffset until it.allocation.pcOffset + it.allocation.size }
+            require((pc until pc + end - address).all { offset ->
+                compiled.sourceOwnedRanges.any { offset >= it.pcOffset && offset < it.pcOffset + it.length } ||
+                    managedSegments.any { offset in it }
+            }) {
                 "$label: the complete managed arrival envelope must have source ownership."
             }
         } else require(label.startsWith("DoorASM_")) { "Unsupported project arrival symbol $label." }

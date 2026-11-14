@@ -298,6 +298,33 @@ class AsmRoomThemeSourceTest {
         assertEquals(count, f.editor.undoStack.size)
     }
 
+    @Test fun `theme undo redo preserves a variable sized managed palette asset`() = runBlocking {
+        val f = fixture(adoptFx = true)
+        val parser = f.bridge.catalog.parser
+        val direct = f.palette()
+        val managedBefore = f.paletteBridge.relocate(
+            f.file.path,
+            1,
+            direct.rawPalette,
+            direct.sourceBytes,
+        )
+        assertNotNull(managedBefore.managedAssetId)
+        assertEquals(managedBefore.encodedSize, managedBefore.sourceBytes.size)
+
+        assertTrue(f.editor.applyBiomeTheme(theme, parser), f.editor.statusMessage)
+        val managedAfter = f.palette()
+        assertNotNull(managedAfter.managedAssetId)
+        assertFalse(managedBefore.sourceBytes.contentEquals(managedAfter.sourceBytes))
+        assertEquals(managedAfter.encodedSize, managedAfter.sourceBytes.size)
+
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        val undone = f.palette()
+        assertNotNull(undone.managedAssetId)
+        assertContentEquals(managedBefore.sourceBytes, undone.sourceBytes)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertContentEquals(managedAfter.sourceBytes, f.palette().sourceBytes)
+    }
+
     @Test fun `native tileset theme overrides a room wide tileset without erasing sibling or other state fields`() = runBlocking {
         val f = fixture()
         val parser = f.bridge.catalog.parser

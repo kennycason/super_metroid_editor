@@ -2,14 +2,21 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PlmChange
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.IntroImageSource
 import com.supermetroid.editor.data.IntroSceneLayout
+import com.supermetroid.editor.asm.AsmCompiledBuildBase
 import com.supermetroid.editor.asm.AsmPatchBackendRegistry
+import com.supermetroid.editor.asm.AsmSourceOwnedRange
 import com.supermetroid.editor.asm.AsmSourcePatchMaterializer
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.NativeSpriteAssets
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.rom.TextCategory
+import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.readU24
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -49,6 +56,11 @@ class RomExporterSafetyTest {
         val build = requireNotNull(RomExporter(project, parser).build())
 
         assertEquals(com.supermetroid.editor.rom.RomConstants.EXPANDED_ROM_SIZE, build.resultRom.size)
+        assertTrue(build.romSpaceAfter.allocations.isNotEmpty())
+        assertTrue(
+            build.romSpaceAfter.allocations.all { it.request != null },
+            "Every production allocation must retain typed owner/request evidence",
+        )
         val hook = parser.snesToPc(0x8BA66F)
         assertEquals(0x22, build.resultRom[hook].toInt() and 255)
         assertEquals(0x60, build.resultRom[hook + 4].toInt() and 255)
@@ -410,6 +422,124 @@ class RomExporterSafetyTest {
         assertTrue(statuses.lastOrNull().orEmpty().contains("BG2 tilemap at \$B9:FA38"))
         assertArrayEquals(original, input.readBytes())
         assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
+    }
+
+    @Test
+    fun `ASM native palette row wins over a stale legacy multi-row override`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val parser = RomParser(original!!)
+        val nativeRows = NativeSpriteAssets.paletteRows(parser).mapTo(hashSetOf(), parser::snesToPc)
+        val region = SpritePalettes.REGIONS.firstOrNull { candidate ->
+            candidate.rowCount > 1 &&
+                (0 until candidate.rowCount).any { candidate.offset + it * 32 in nativeRows } &&
+                (0 until candidate.rowCount).any { candidate.offset + it * 32 !in nativeRows }
+        }
+        assertNotNull(region, "Fixture must expose a mixed native/legacy sprite-palette region")
+        region!!
+        val sourceRow = (0 until region.rowCount).first { region.offset + it * 32 in nativeRows }
+        val legacyRow = (0 until region.rowCount).first { region.offset + it * 32 !in nativeRows }
+        val sourceBytes = ByteArray(32) { 0x11 }
+        val legacyBytes = ByteArray(region.byteSize) { 0x22 }
+        val compiledRom = original.copyOf().also {
+            sourceBytes.copyInto(it, region.offset + sourceRow * 32)
+        }
+        val input = File(tempDir, "asm-native-palette-ownership.smc").apply { writeBytes(original) }
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.asmWorkspace.enabled = true
+            it.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
+            it.customGfx.spritePalettes[region.id] = Base64.getEncoder().encodeToString(legacyBytes)
+        }
+        val compiled = AsmCompiledBuildBase(
+            romBytes = compiledRom,
+            referenceRomBody = original,
+            referenceRomSha256 = bytesSha256(original),
+            sourceOwnedRanges = listOf(
+                AsmSourceOwnedRange(region.offset + sourceRow * 32, 32, "bank_native_palette.asm"),
+            ),
+            assemblerVersion = "fixture",
+            compilerOutput = emptyList(),
+        )
+
+        val result = requireNotNull(RomExporter(project, parser, compiledAsmBase = compiled).build())
+
+        assertArrayEquals(
+            sourceBytes,
+            result.resultRom.copyOfRange(
+                region.offset + sourceRow * 32,
+                region.offset + (sourceRow + 1) * 32,
+            ),
+            "The stale broad override must not overwrite an ASM-owned row",
+        )
+        assertArrayEquals(
+            ByteArray(32) { 0x22 },
+            result.resultRom.copyOfRange(
+                region.offset + legacyRow * 32,
+                region.offset + (legacyRow + 1) * 32,
+            ),
+            "Rows outside native ASM ownership remain eligible for the legacy override",
+        )
+    }
+
+    @Test
+    fun `ASM fixed text wins over a stale project text override`() {
+        val original = TestRomHelper.requireRomBytes()
+        val parser = RomParser(original)
+        val allText = TextData.readAllText(original)
+        val entry = allText.first { it.category == TextCategory.AREA_NAME }
+        val typewriter = allText.first { it.id == "tourian_escape" }
+        val intro = allText.first { it.id == "intro_0" }
+        val sourceBytes = TextData.encodeEntry(entry, "ZEBES")
+        val typewriterBytes = TextData.encodeTypewriterText(
+            "ALERT!\nRUN!",
+            typewriter.rawBytes,
+            preserveLineSlots = true,
+        )
+        val introBytes = TextData.encodeGreenText(intro.text.replaceFirst("I", "A"), intro.rawBytes)
+        val compiledRom = original.copyOf().also {
+            sourceBytes.copyInto(it, entry.pcOffset)
+            typewriterBytes.copyInto(it, typewriter.pcOffset)
+            introBytes.copyInto(it, intro.pcOffset)
+        }
+        val input = File(tempDir, "asm-text-ownership.smc").apply { writeBytes(original) }
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.asmWorkspace.enabled = true
+            it.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
+            it.textEdits[entry.id] = "STALE"
+            it.textEdits[typewriter.id] = "STALE\nSTALE"
+            it.textEdits[intro.id] = "STALE"
+        }
+        val compiled = AsmCompiledBuildBase(
+            romBytes = compiledRom,
+            referenceRomBody = original,
+            referenceRomSha256 = bytesSha256(original),
+            sourceOwnedRanges = listOf(
+                AsmSourceOwnedRange(entry.pcOffset, entry.rawBytes.size, "bank_82.asm"),
+                AsmSourceOwnedRange(typewriter.pcOffset, typewriter.rawBytes.size, "bank_A6.asm"),
+                AsmSourceOwnedRange(intro.pcOffset, intro.rawBytes.size, "bank_8C.asm"),
+            ),
+            assemblerVersion = "fixture",
+            compilerOutput = emptyList(),
+        )
+        val log = mutableListOf<String>()
+
+        val result = requireNotNull(
+            RomExporter(project, parser, onLog = log::add, compiledAsmBase = compiled).build(),
+        )
+
+        assertArrayEquals(
+            sourceBytes,
+            result.resultRom.copyOfRange(entry.pcOffset, entry.pcOffset + sourceBytes.size),
+        )
+        assertArrayEquals(
+            typewriterBytes,
+            result.resultRom.copyOfRange(typewriter.pcOffset, typewriter.pcOffset + typewriterBytes.size),
+        )
+        assertArrayEquals(
+            introBytes,
+            result.resultRom.copyOfRange(intro.pcOffset, intro.pcOffset + introBytes.size),
+        )
+        assertEquals(3, log.count { "Ignored stale project text override" in it })
     }
 
     private fun writeU24(data: ByteArray, offset: Int, value: Int) {
