@@ -381,7 +381,11 @@ internal class RomExporter(
             }
             onLog("[ROM-SPACE] Expanded build to 4 MiB for $source; banks \$E0–\$FF are allocator-managed")
         }
-        val writePlan = RomWritePlan(exportBase, headerSize)
+        val writePlan = RomWritePlan(
+            exportBase,
+            headerSize,
+            preassembledWrites = compiledAsmBase?.preassembledAssetWrites.orEmpty(),
+        )
         compiledAsmBase?.sourceOwnedRanges?.forEachIndexed { index, range ->
             writePlan.claimCurrentRange(
                 owner = range.owner,
@@ -430,12 +434,23 @@ internal class RomExporter(
         compiledAsmBase?.segmentPlacements.orEmpty().forEach { placement ->
             val allocation = placement.allocation
             val range = allocation.pcOffset until allocation.pcOffset + allocation.size
-            if (compiledClaimedRanges.none { claimed -> range.first <= claimed.last && claimed.first <= range.last }) {
+            var uncovered = listOf(range)
+            compiledClaimedRanges.forEach { claimed ->
+                uncovered = uncovered.flatMap { piece ->
+                    val start = maxOf(piece.first, claimed.first)
+                    val endExclusive = minOf(piece.last + 1, claimed.last + 1)
+                    if (start >= endExclusive) listOf(piece) else listOfNotNull(
+                        (piece.first until start).takeIf { !it.isEmpty() },
+                        (endExclusive until piece.last + 1).takeIf { !it.isEmpty() },
+                    )
+                }
+            }
+            uncovered.forEachIndexed { index, piece ->
                 writePlan.claimCurrentRange(
                     owner = placement.request.owner,
-                    label = placement.request.label,
-                    offset = allocation.pcOffset,
-                    size = allocation.size,
+                    label = placement.request.label + if (uncovered.size == 1) "" else " · ${index + 1}/${uncovered.size}",
+                    offset = piece.first,
+                    size = piece.count(),
                     kind = RomWriteKind.ASM_SOURCE,
                 )
             }
@@ -681,6 +696,7 @@ internal class RomExporter(
                 ),
             )
             freeSpaceAllocator.requireTypedReservations()
+            writePlan.requirePreassembledWritesConsumed()
         } catch (e: RomWritePlanException) {
             val message = "Export failed safely: ${e.message}"
             onLog("ERROR: $message")

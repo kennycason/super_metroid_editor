@@ -35,13 +35,17 @@ internal data class AsmGeneratedAssetClaim(
 internal data class AsmAssetMaterialization(
     val assetOverrides: Map<String, ByteArray>,
     val claims: List<AsmGeneratedAssetClaim>,
+    /** Original GUI/export intents now represented by [assetOverrides]. The
+     * final exporter must reproduce and consume each intent without writing it
+     * over the generated source owner a second time. */
+    val preassembledWrites: List<com.supermetroid.editor.rom.RomWriteIntent>,
     val eligibleWrites: Int,
     val skippedWrites: Int,
 ) {
     val isEmpty: Boolean get() = claims.isEmpty()
 
     companion object {
-        val EMPTY = AsmAssetMaterialization(emptyMap(), emptyList(), 0, 0)
+        val EMPTY = AsmAssetMaterialization(emptyMap(), emptyList(), emptyList(), 0, 0)
     }
 }
 
@@ -72,6 +76,7 @@ internal class AsmSourceAssetMaterializer(
     ): AsmAssetMaterialization {
         val overrides = linkedMapOf<String, ByteArray>()
         val baselines = linkedMapOf<String, ByteArray>()
+        val writesByPath = linkedMapOf<String, MutableList<com.supermetroid.editor.rom.RomWriteIntent>>()
         var eligible = 0
         var skipped = 0
         val allocatedRanges = report.writes
@@ -104,6 +109,7 @@ internal class AsmSourceAssetMaterializer(
             }
             val baseline = baselines.getOrPut(asset.path) { baselineFile.readBytes() }
             val bytes = overrides.getOrPut(asset.path) { baseline.copyOf() }
+            writesByPath.getOrPut(asset.path, ::mutableListOf) += write
             val relativeStart = write.offset - asset.pcOffset
             write.bytes.forEachIndexed { index, value ->
                 val target = relativeStart + index
@@ -131,6 +137,7 @@ internal class AsmSourceAssetMaterializer(
         return AsmAssetMaterialization(
             assetOverrides = overrides.filterKeys { it in usedPaths },
             claims = claims,
+            preassembledWrites = usedPaths.flatMap { writesByPath.getValue(it) },
             eligibleWrites = eligible,
             skippedWrites = skipped,
         )

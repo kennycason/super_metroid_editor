@@ -38,6 +38,7 @@ class AsmSourceAssetMaterializerTest {
                 result.assetOverrides.getValue("gfx/example.bin"),
             )
             assertEquals(1, result.claims.size)
+            assertEquals(report.writes, result.preassembledWrites)
             assertEquals("asm-asset:gfx/example.bin", result.claims.single().owner)
             assertEquals(0x102, result.claims.single().pcOffset)
             assertContentEquals(byteArrayOf(0xAA.toByte(), 0xBB.toByte()), result.claims.single().bytes)
@@ -83,6 +84,7 @@ class AsmSourceAssetMaterializerTest {
             assertEquals(2, result.skippedWrites)
             assertTrue(result.isEmpty)
             assertTrue(result.assetOverrides.isEmpty())
+            assertTrue(result.preassembledWrites.isEmpty())
         } finally {
             root.toFile().deleteRecursively()
         }

@@ -232,6 +232,64 @@ class RomWritePlanTest {
     }
 
     @Test
+    fun `preassembled source write is consumed without acquiring a second owner`() {
+        val intent = RomWriteIntent(
+            owner = "graphics:enemy-DCFF",
+            label = "Enemy DCFF sprite tiles",
+            offset = 4,
+            bytes = listOf(0x12, 0x34),
+            kind = RomWriteKind.GRAPHICS,
+            expectedBefore = listOf(0, 0),
+        )
+        val plan = RomWritePlan(
+            ByteArray(16).also { it[4] = 0x12; it[5] = 0x34 },
+            preassembledWrites = listOf(intent),
+        )
+        plan.claimCurrentRange("asm-asset:tiles.bin", "Generated source asset", 4, 2, RomWriteKind.ASM_ASSET)
+
+        plan.add(intent.copy(expectedBefore = listOf(0x12, 0x34)))
+
+        assertEquals(listOf("asm-asset:tiles.bin"), plan.report().writes.map { it.owner })
+        assertFailsWith<RomWriteConflictException> {
+            plan.add(intent.copy(bytes = listOf(0x12, 0x35)))
+        }
+    }
+
+    @Test
+    fun `unreproduced preassembled source write blocks completion`() {
+        val intent = RomWriteIntent("text:story", "Story text", 2, listOf(1), RomWriteKind.TEXT)
+        val plan = RomWritePlan(ByteArray(8).also { it[2] = 1 }, preassembledWrites = listOf(intent))
+
+        assertEquals(0, plan.report().totalWrites)
+        assertFailsWith<IllegalArgumentException> { plan.requirePreassembledWritesConsumed() }
+    }
+
+    @Test
+    fun `preassembled recompression envelope is consumed by shorter equivalent intent`() {
+        val preassembled = RomWriteIntent(
+            owner = "graphics:tileset-13",
+            label = "Tileset 13 palette",
+            offset = 4,
+            bytes = listOf(0x12, 0x34, 0x56, 0x78),
+            kind = RomWriteKind.GRAPHICS,
+        )
+        val plan = RomWritePlan(
+            ByteArray(16).also {
+                it[4] = 0x12
+                it[5] = 0x34
+                it[6] = 0x56
+                it[7] = 0x78
+            },
+            preassembledWrites = listOf(preassembled),
+        )
+
+        plan.add(preassembled.copy(bytes = listOf(0x12, 0x34)))
+
+        plan.requirePreassembledWritesConsumed()
+        assertEquals(0, plan.report().totalWrites)
+    }
+
+    @Test
     fun `maps unheadered offsets without modifying copier header`() {
         val headerSize = 4
         val base = ByteArray(20)

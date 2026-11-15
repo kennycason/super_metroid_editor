@@ -59,6 +59,8 @@ internal data class AsmCompiledBuildBase(
     val generatedNewRoomIds: Map<String, Int> = emptyMap(),
     val generatedRoomSource: String = "",
     val generatedPatchClaims: List<AsmGeneratedPatchClaim> = emptyList(),
+    /** Exact visual/export writes already compiled through generated source. */
+    val preassembledAssetWrites: List<com.supermetroid.editor.rom.RomWriteIntent> = emptyList(),
     /** Exact typed placements used by generated source and managed assets.
      * Addresses are build output, never durable project intent. */
     val segmentPlacements: List<RomSegmentPlacement> = emptyList(),
@@ -99,6 +101,9 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     generatedRoomIds = generatedRoomIds.toSet(),
     generatedNewRoomIds = generatedNewRoomIds.toMap(),
     generatedPatchClaims = generatedPatchClaims.map { it.copy(bytes = it.bytes.copyOf()) },
+    preassembledAssetWrites = preassembledAssetWrites.map { intent ->
+        intent.copy(bytes = intent.bytes.toList(), expectedBefore = intent.expectedBefore?.toList())
+    },
     segmentPlacements = segmentPlacements.map { placement ->
         val allocationRequest = placement.allocation.request
         placement.copy(
@@ -623,7 +628,15 @@ internal class AsmProjectCompiler(
                     predicateClaims.map { (it.pcOffset until it.pcOffset + it.length) to "managed bank-8F code" }
                 AsmProjectModuleAuditor.requireNoGeneratedCollisions(auditedModuleClaims, generated)
                 AsmProjectModuleAuditor.requireNoProjectSourceCollisions(
-                    auditedModuleClaims, reference.rom, moduleFree.rom,
+                    auditedModuleClaims.filterNot { claim ->
+                        claim.sourceFileId == AsmFastDoorsModule.FILE &&
+                            File(workspace.workingDirectory, "src/${AsmFastDoorsModule.FILE}").let { file ->
+                                file.isFile && AsmFastDoorsModule.hasGate(file.readText()) &&
+                                    AsmFastDoorsModule.enabled(file.readText())
+                            }
+                    },
+                    reference.rom,
+                    moduleFree.rom,
                 )
                 AsmProjectModuleAuditor.requireDeterministicComposition(moduleFree.rom, project.rom, auditedModules)
             }
@@ -770,6 +783,7 @@ internal class AsmProjectCompiler(
             generatedNewRoomIds = roomMaterialization.newRoomIds,
             generatedRoomSource = roomMaterialization.source,
             generatedPatchClaims = patchMaterialization.claims,
+            preassembledAssetWrites = materialization.preassembledWrites,
             segmentPlacements = (preplannedSegments + managedAssetPlacements.map {
                 RomSegmentPlacement(requireNotNull(it.allocation.request), it.allocation)
             } + listOfNotNull(predicatePlacement) + managedHookPlacements + auditedModuleSegments.filter { audited ->

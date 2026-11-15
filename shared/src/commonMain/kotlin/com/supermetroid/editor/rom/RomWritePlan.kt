@@ -135,6 +135,12 @@ class RomWritePlan(
     baseRom: ByteArray,
     val headerSize: Int = 0,
     private val verifyPreconditions: Boolean = true,
+    /** Writes already assembled into [baseRom] by a source materializer. Their
+     * original exporter must replay the same logical intent once, proving the
+     * source build and GUI plan still describe the same edit without assigning
+     * the bytes a second owner. The serialized envelope may differ when an
+     * exporter recompresses data from the already-updated ROM. */
+    preassembledWrites: List<RomWriteIntent> = emptyList(),
 ) {
     val romData: ByteArray = baseRom.copyOf()
 
@@ -142,6 +148,9 @@ class RomWritePlan(
     private val writes = mutableListOf<RomWriteIntent>()
     private val resources = mutableListOf<RomResourceClaim>()
     private val claimedByWriteIndex = IntArray(bodySize.coerceAtLeast(0)) { UNCLAIMED }
+    private val pendingPreassembledWrites = preassembledWrites.map { intent ->
+        intent.copy(bytes = intent.bytes.toList(), expectedBefore = intent.expectedBefore?.toList())
+    }.toMutableList()
 
     init {
         require(headerSize >= 0 && headerSize <= baseRom.size) {
@@ -152,6 +161,14 @@ class RomWritePlan(
     /** Validate and stage one write atomically. */
     fun add(intent: RomWriteIntent) {
         validateIntentShape(intent)
+        val preassembledIndex = pendingPreassembledWrites.indexOfFirst { prior ->
+            prior.owner == intent.owner && prior.label == intent.label && prior.offset == intent.offset &&
+                prior.kind == intent.kind && isAlreadyApplied(prior) && isAlreadyApplied(intent)
+        }
+        if (preassembledIndex >= 0) {
+            pendingPreassembledWrites.removeAt(preassembledIndex)
+            return
+        }
         val fileOffset = intent.offset + headerSize
 
         for (i in intent.bytes.indices) {
@@ -537,6 +554,13 @@ class RomWritePlan(
 
     fun finalRom(): ByteArray = romData.copyOf()
 
+    fun requirePreassembledWritesConsumed() {
+        require(pendingPreassembledWrites.isEmpty()) {
+            "${pendingPreassembledWrites.size} preassembled source write(s) were not reproduced by the final export: " +
+                pendingPreassembledWrites.take(3).joinToString { "${it.owner}/${it.label}" }
+        }
+    }
+
     fun report(): RomWritePlanReport {
         val ownerSummaries = writes.groupBy { it.owner }.map { (owner, ownerWrites) ->
             RomWriteOwnerSummary(
@@ -553,6 +577,16 @@ class RomWritePlan(
             owners = ownerSummaries,
             unverifiedFixedWrites = writes.filter { it.preconditionRecommended && it.expectedBefore == null },
         )
+    }
+
+    private fun isAlreadyApplied(intent: RomWriteIntent): Boolean {
+        val fileOffset = intent.offset + headerSize
+        if (intent.offset < 0 || fileOffset < headerSize || fileOffset.toLong() + intent.bytes.size > romData.size) {
+            return false
+        }
+        return intent.bytes.indices.all { index ->
+            romData[fileOffset + index].toInt() and 0xFF == intent.bytes[index]
+        }
     }
 
     private fun validateIntentShape(intent: RomWriteIntent) {

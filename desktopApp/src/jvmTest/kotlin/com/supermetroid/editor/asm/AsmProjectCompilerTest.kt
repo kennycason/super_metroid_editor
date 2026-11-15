@@ -252,6 +252,7 @@ class AsmProjectCompilerTest {
             AsmAssetMaterialization(
                 assetOverrides = mapOf(asset.path to override),
                 claims = listOf(claim),
+                preassembledWrites = emptyList(),
                 eligibleWrites = 1,
                 skippedWrites = 0,
             ),
