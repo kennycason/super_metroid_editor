@@ -77,6 +77,29 @@ class SmPatchSerializationTest {
         )
 
         assertNull(decoded.exclusiveGroup)
+        assertTrue(decoded.incompatiblePatchIds.isEmpty())
+    }
+
+    @Test
+    fun `declared patch incompatibilities survive project round trip`() {
+        val project = SmEditProject(romPath = "/tmp/sm.smc")
+        project.patches.add(
+            SmPatch(
+                id = "respin",
+                name = "Respin",
+                incompatiblePatchIds = mutableListOf("spider_ball", "spider_ball_hold_aim_down"),
+            ),
+        )
+
+        val decoded = json.decodeFromString(
+            SmEditProject.serializer(),
+            json.encodeToString(SmEditProject.serializer(), project),
+        )
+
+        assertEquals(
+            listOf("spider_ball", "spider_ball_hold_aim_down"),
+            decoded.patches.single().incompatiblePatchIds,
+        )
     }
 
     @Test

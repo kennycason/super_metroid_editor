@@ -25,6 +25,12 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         val prefix: Map<Int, ByteArray>,
     )
 
+    private data class WriteGroup(
+        val label: String,
+        val writes: Map<Int, ByteArray>,
+        val overridableRanges: List<IntRange> = emptyList(),
+    )
+
     internal fun applyMusicEditsToRom(romData: ByteArray, freeSpaceAllocator: RomFreeSpaceAllocator? = null): Int {
         val plan = planMusicEdits(romData, freeSpaceAllocator)
         for ((offset, bytes) in plan.writes) bytes.copyInto(romData, offset)
@@ -58,9 +64,19 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         check(boot.contentEquals(SoundEffects.bootRam(original, project))) { "Effect boot upload differs from the preview" }
         val music = MusicRomExporter(project.copy(soundEffectEdits = mutableMapOf()), onLog)
             .planMusicOnly(staged, allocator, setup.allocation, effects.allocations)
+        val stagedParser = RomParser(staged)
+        val managedMusicPointerCells = MusicBankTransitions.editedSongSets(project).mapNotNull { songSet ->
+            SpcData.findSongSetPointerEntryPc(stagedParser, songSet).takeIf { it >= 0 }?.let { it until it + 3 }
+        }
         val allWrites = mergeWrites(
-            listOf(SpcData.packSpcBytesToWrites(patches.mapValues { it.value.toInt() and 0xFF })) +
-                effects.writes + setup.writes + music.writes,
+            listOf(
+                WriteGroup("sound-effect edits", SpcData.packSpcBytesToWrites(patches.mapValues { it.value.toInt() and 0xFF })),
+                WriteGroup("sound-effect setup", effects.writes),
+                WriteGroup("music-bank table setup", setup.writes),
+                // Table setup first clones each new bank's source pointer. A relocated upload then
+                // replaces precisely that managed three-byte cell in the same atomic transaction.
+                WriteGroup("music uploads", music.writes, managedMusicPointerCells),
+            ),
         )
         return Plan(
             patchedCount = music.patchedCount + project.soundEffectEdits.size + project.soundEffectPrograms.size,
@@ -245,13 +261,20 @@ internal class MusicRomExporter(private val project: SmEditProject, private val 
         )
     }
 
-    private fun mergeWrites(groups: List<Map<Int, ByteArray>>): Map<Int, ByteArray> {
+    private fun mergeWrites(groups: List<WriteGroup>): Map<Int, ByteArray> {
         val bytes = sortedMapOf<Int, Int>()
-        for (group in groups) for ((offset, data) in group) data.forEachIndexed { index, value ->
+        val sources = mutableMapOf<Int, String>()
+        for (group in groups) for ((offset, data) in group.writes) data.forEachIndexed { index, value ->
             val pc = offset + index
             val byte = value.toInt() and 0xFF
-            require(bytes[pc]?.let { it == byte } != false) { "Music write plan overlaps incompatibly at PC 0x${pc.toString(16)}" }
+            val previous = bytes[pc]
+            require(previous == null || previous == byte || group.overridableRanges.any { pc in it }) {
+                "Music write plan overlaps incompatibly at PC 0x${pc.toString(16)}: " +
+                    "${sources.getValue(pc)} writes 0x${checkNotNull(previous).toString(16).padStart(2, '0')}, " +
+                    "${group.label} writes 0x${byte.toString(16).padStart(2, '0')}"
+            }
             bytes[pc] = byte
+            sources[pc] = group.label
         }
         return SpcData.packSpcBytesToWrites(bytes)
     }

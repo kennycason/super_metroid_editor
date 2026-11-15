@@ -66,6 +66,7 @@ import com.supermetroid.editor.rom.SourceSaveResource
 import com.supermetroid.editor.rom.words
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.data.isDeclaredIncompatibleWith
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_1
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
@@ -1402,9 +1403,15 @@ class EditorState(
 
     fun requestTogglePatch(id: String) {
         val patch = project.patches.find { it.id == id } ?: return
+        selectedPatchId = id
         if (patch.enabled && patchHasCustomSettings(patch)) pendingPatchDisable = patch
         else togglePatch(id)
     }
+
+    fun enabledPatchIncompatibilities(patch: SmPatch): List<SmPatch> =
+        project.patches.filter { other ->
+            other.id != patch.id && other.enabled && patch.isDeclaredIncompatibleWith(other)
+        }
 
     internal fun patchHasCustomSettings(patch: SmPatch): Boolean =
         (patch.configType == com.supermetroid.editor.rom.RoomNamePauseMapPatch.CONFIG_TYPE && project.roomNameOverrides.isNotEmpty()) ||
@@ -4602,6 +4609,13 @@ class EditorState(
                 return
             }
         }
+        if (enabled) {
+            val incompatible = enabledPatchIncompatibilities(patch)
+            require(incompatible.isEmpty()) {
+                "'${patch.name}' cannot be enabled with ${incompatible.joinToString { "'${it.name}'" }}. " +
+                    "Disable ${if (incompatible.size == 1) "that patch" else "those patches"} first."
+            }
+        }
         if (asmNavigationEnabled && patch.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID) {
             requireNotNull(fastDoorsBridge) { "Wait for patch source indexing." }.setEnabled(enabled)
             return
@@ -5526,6 +5540,11 @@ class EditorState(
                         it.description = patch.description
                         if (it.exclusiveGroup != patch.exclusiveGroup) {
                             it.exclusiveGroup = patch.exclusiveGroup
+                            refreshed++
+                        }
+                        if (it.incompatiblePatchIds != patch.incompatiblePatchIds) {
+                            it.incompatiblePatchIds.clear()
+                            it.incompatiblePatchIds.addAll(patch.incompatiblePatchIds)
                             refreshed++
                         }
                         if (it.customItems != patch.customItems) {
@@ -13060,7 +13079,10 @@ class EditorState(
         }
     }
 
-    internal fun buildRomPreview(romParser: RomParser): com.supermetroid.editor.asm.AsmRomPreviewBuild {
+    internal fun buildRomPreview(
+        romParser: RomParser,
+        onBuildOutput: (String) -> Unit = {},
+    ): com.supermetroid.editor.asm.AsmRomPreviewBuild {
         seedDefaultPatches(forceRefreshBundled = true)
         if (project.romPath.isEmpty()) return com.supermetroid.editor.asm.AsmRomPreviewBuild(
             preview = null,
@@ -13071,11 +13093,25 @@ class EditorState(
         val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
         var latestStatus = ""
         var latestSpace: RomSpaceBuildSnapshot? = null
+        val buildOutput = mutableListOf<String>()
+        fun recordBuildOutput(message: String) {
+            val line = message.trimEnd()
+            if (line.isBlank() || buildOutput.lastOrNull() == line) return
+            buildOutput += line
+            onBuildOutput(line)
+        }
         val result = ProjectFileService.buildRom(
             projectSnapshot,
             sourceParser,
-            ::editorLog,
-            { message -> latestStatus = message; postStatus(message) },
+            { message ->
+                recordBuildOutput(message)
+                editorLog(message)
+            },
+            { message ->
+                latestStatus = message
+                recordBuildOutput(message)
+                postStatus(message)
+            },
             projectFilePath,
             onRomSpaceSnapshot = { latestSpace = it },
         )
@@ -13101,6 +13137,7 @@ class EditorState(
             preview = preview,
             spacePlan = preview?.spacePlan ?: failedSpacePlan,
             error = if (preview == null) latestStatus.ifBlank { "SMEDIT Result could not be built. No ROM was written." } else null,
+            output = buildOutput,
         )
     }
 

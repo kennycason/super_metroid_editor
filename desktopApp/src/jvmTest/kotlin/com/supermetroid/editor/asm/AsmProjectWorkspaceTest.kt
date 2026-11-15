@@ -544,8 +544,14 @@ class AsmProjectWorkspaceTest {
         state.bindProject(file.path, true)
         state.showInstruction("LDA")
 
-        assertFalse(state.validateProjectBuild { error("bank_80.asm:3: Unsupported source record") })
+        assertFalse(state.validateProjectBuild { output ->
+            output("Planning editor-owned source assets…")
+            error("bank_80.asm:3: Unsupported source record")
+        })
         val failure = requireNotNull(state.buildReport)
+        assertEquals(AsmProjectBuildStatus.FAILED, state.projectBuildStatus)
+        assertTrue(state.projectBuildOutput.any { it.contains("Planning editor-owned") })
+        assertTrue(state.projectBuildOutput.last().startsWith("Build failed:"))
         state.showBuildFailure()
         assertEquals(AsmWorkspaceKind.PROJECT, state.workspaceKind)
         assertEquals(AsmBrowserMode.SOURCE, state.browserMode)

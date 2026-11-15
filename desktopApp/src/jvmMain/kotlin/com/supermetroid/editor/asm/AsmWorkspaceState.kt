@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -18,6 +20,8 @@ import java.io.File
 import java.time.Instant
 
 internal enum class AsmBrowserMode { SOURCE, GENERATED_ROOMS, PLM_PLACEMENT, ASSETS, LIBRARY, ROM }
+
+internal enum class AsmProjectBuildStatus { IDLE, BUILDING, SUCCEEDED, FAILED }
 
 internal data class AsmSourceBankBudget(
     val bank: Int,
@@ -314,6 +318,14 @@ internal class AsmWorkspaceState(
     var sourceBufferRevision by mutableStateOf(0L)
         private set
     var buildReport by mutableStateOf<AsmBuildReport?>(null)
+        private set
+    var buildProblemsRequestSerial by mutableStateOf(0L)
+        private set
+    var projectBuildStatus by mutableStateOf(AsmProjectBuildStatus.IDLE)
+        private set
+    var projectBuildOutput by mutableStateOf<List<String>>(emptyList())
+        private set
+    var buildOutputRequestSerial by mutableStateOf(0L)
         private set
     var projectChangesRequestSerial by mutableStateOf(0L)
         private set
@@ -789,6 +801,8 @@ internal class AsmWorkspaceState(
         if (changedProject) {
             clearEditSessions()
             projectWorkspace = null
+            projectBuildStatus = AsmProjectBuildStatus.IDLE
+            projectBuildOutput = emptyList()
             plmPlacementSnapshot = null
             // A captured placement belongs to one project; it cannot be reinterpreted in another.
             (backStacks.values + forwardStacks.values).forEach { stack ->
@@ -830,9 +844,12 @@ internal class AsmWorkspaceState(
                 val validation = sourceRoot?.takeIf { validateSources }?.let {
                     AsmSourceLinter.lintTree(it, disabled)
                 }.orEmpty()
-                Triple(buildArtifactRepository.loadGeneratedRooms(projectFilePath),
+                val persistedReport = buildArtifactRepository.load(projectFilePath)
+                Triple(
+                    buildArtifactRepository.loadGeneratedRooms(projectFilePath),
                     buildArtifactRepository.loadRoomData(projectFilePath),
-                    AsmSourceLinter.report(validation) ?: buildArtifactRepository.load(projectFilePath))
+                    AsmSourceLinter.mergeWithBuildReport(validation, persistedReport),
+                )
         }
         if (projectFilePath != boundProjectFilePath || generation != projectBindingGeneration || !boundProjectEnabled) return
         generatedRoomInput = result.first
@@ -1199,32 +1216,79 @@ internal class AsmWorkspaceState(
 
     /** Runs the same non-writing validated build as ROM comparison while
      * keeping the user in Source. */
-    suspend fun validateProjectBuild(builder: () -> AsmRomPreviewBuild): Boolean {
+    suspend fun validateProjectBuild(builder: ((String) -> Unit) -> AsmRomPreviewBuild): Boolean {
         if (previewBusy) return false
         val requestedProjectRevision = currentProjectRevision
+        projectBuildStatus = AsmProjectBuildStatus.BUILDING
+        projectBuildOutput = listOf("Build started…")
+        buildOutputRequestSerial++
         previewBusy = true
         error = null
         return try {
-            val result = withContext(Dispatchers.Default) { builder() }
+            val result = runProjectBuildWithOutput(builder)
             refreshBuildReport()
             romSpacePlan = result.spacePlan
+            mergeProjectBuildOutput(result.output)
+            mergeProjectBuildOutput(buildReport?.output.orEmpty())
             if (result.preview == null) {
-                retainOrCreateBuildFailure(result.error ?: "ROM build did not complete. No ROM was written.")
+                val message = result.error ?: "ROM build did not complete. No ROM was written."
+                retainOrCreateBuildFailure(message)
+                finishProjectBuild(false, message)
                 false
             } else {
                 romPreview = result.preview
                 romPreviewProjectRevision = requestedProjectRevision
                 romPreviewBuildGeneratedAt = buildReport?.takeIf { it.succeeded }?.generatedAt
                 romPreviewSymbols = buildReport?.takeIf { it.succeeded }?.symbols
+                finishProjectBuild(true)
                 true
             }
         } catch (problem: Exception) {
             refreshBuildReport()
-            retainOrCreateBuildFailure(problem.message ?: "ROM build did not complete")
+            val message = problem.message ?: "ROM build did not complete"
+            retainOrCreateBuildFailure(message)
+            mergeProjectBuildOutput(buildReport?.output.orEmpty())
+            finishProjectBuild(false, message)
             false
         } finally {
             previewBusy = false
         }
+    }
+
+    private suspend fun runProjectBuildWithOutput(
+        builder: ((String) -> Unit) -> AsmRomPreviewBuild,
+    ): AsmRomPreviewBuild = coroutineScope {
+        val updates = Channel<String>(Channel.UNLIMITED)
+        val reporter = launch {
+            for (message in updates) appendProjectBuildOutput(message)
+        }
+        try {
+            val result = withContext(Dispatchers.Default) {
+                builder { message -> updates.trySend(message).getOrThrow() }
+            }
+            updates.close()
+            reporter.join()
+            result
+        } finally {
+            updates.close()
+        }
+    }
+
+    private fun appendProjectBuildOutput(message: String) {
+        val line = message.trimEnd()
+        if (line.isBlank() || projectBuildOutput.lastOrNull() == line) return
+        projectBuildOutput = (projectBuildOutput + line).takeLast(MAX_PROJECT_BUILD_OUTPUT_LINES)
+    }
+
+    private fun mergeProjectBuildOutput(lines: List<String>) {
+        lines.forEach { line ->
+            if (line !in projectBuildOutput) appendProjectBuildOutput(line)
+        }
+    }
+
+    private fun finishProjectBuild(succeeded: Boolean, failure: String? = null) {
+        projectBuildStatus = if (succeeded) AsmProjectBuildStatus.SUCCEEDED else AsmProjectBuildStatus.FAILED
+        appendProjectBuildOutput(if (succeeded) "Build succeeded." else "Build failed: ${failure.orEmpty()}")
     }
 
     /** Compilation/export failures belong to the source diagnostics drawer,
@@ -1232,20 +1296,24 @@ internal class AsmWorkspaceState(
      * more specific, so retain it when one already exists. */
     private fun retainOrCreateBuildFailure(message: String) {
         val existing = buildReport
-        if (existing != null && !existing.succeeded) return
+        if (existing != null && !existing.succeeded && existing.diagnostics.any {
+                it.severity == AsmDiagnosticSeverity.ERROR
+            }
+        ) return
         val diagnostic = AsmBuildOutputParser.pipelineDiagnostic(message)
         buildReport = AsmBuildReport(
             succeeded = false,
             generatedAt = Instant.now().toString(),
             assemblerVersion = existing?.assemblerVersion.orEmpty(),
-            output = listOf(message),
-            diagnostics = listOf(diagnostic),
+            output = (listOf(message) + existing?.output.orEmpty()).distinct(),
+            diagnostics = AsmSourceLinter.orderDiagnostics(listOf(diagnostic) + existing?.diagnostics.orEmpty()),
             symbols = existing?.symbols ?: AsmCompiledSymbols.EMPTY,
         )
     }
 
     /** Bring the build drawer into view and reveal the first located error in editable source. */
     fun showBuildFailure() {
+        buildProblemsRequestSerial++
         showProjectWorkspace()
         showSourceBrowser()
         displayedDiagnostics.firstOrNull {
@@ -2947,6 +3015,7 @@ internal class AsmWorkspaceState(
         private const val MAX_HISTORY = 100
         private const val MAX_SOURCE_PANES = 2
         private const val MAX_SOURCE_UNDO_STEPS = 250
+        private const val MAX_PROJECT_BUILD_OUTPUT_LINES = 2_000
         private const val PRIMARY_SOURCE_PANE_ID = 0L
         private const val LOROM_BANK_CAPACITY_BYTES = 0x8000
     }

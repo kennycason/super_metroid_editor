@@ -288,6 +288,7 @@ class PatchRepositoryTest {
     @Test
     fun `spider ball activation variants share assets but use distinct movement gates`() {
         val patches = PatchRepository.loadBundledPatches()
+        val respin = assertNotNull(patches.firstOrNull { it.id == "bundled_respin" })
         val directional = assertNotNull(patches.firstOrNull { it.id == "bundled_spider_ball" })
         val holdAimDown = assertNotNull(
             patches.firstOrNull { it.id == "bundled_spider_ball_hold_aim_down" }
@@ -301,6 +302,12 @@ class PatchRepositoryTest {
 
         assertEquals("spider_ball_activation", directional.exclusiveGroup)
         assertEquals(directional.exclusiveGroup, holdAimDown.exclusiveGroup)
+        assertEquals(
+            setOf(directional.id, holdAimDown.id),
+            respin.incompatiblePatchIds.toSet(),
+        )
+        assertTrue(respin.isDeclaredIncompatibleWith(directional))
+        assertTrue(holdAimDown.isDeclaredIncompatibleWith(respin))
         assertEquals(directional.customItems, holdAimDown.customItems)
         assertEquals(directional.resources, holdAimDown.resources)
         assertEquals(2019, directionalCode.bytes.size)

@@ -164,6 +164,7 @@ internal data class AsmRomPreviewBuild(
     val preview: AsmRomPreview?,
     val spacePlan: AsmRomSpacePlan?,
     val error: String?,
+    val output: List<String> = emptyList(),
 )
 
 internal data class AsmRomDiffRange(

@@ -182,7 +182,18 @@ internal object AsmSourceLinter {
         if (!sourceRoot.isDirectory) return emptyList()
         val sourceTexts = sourceRoot.walkTopDown()
             .filter { it.isFile && it.extension.equals("asm", ignoreCase = true) }
-            .associate { file -> file.relativeTo(sourceRoot).invariantSeparatorsPath to file.readText() }
+            .mapNotNull { file ->
+                // Module creation/removal can race a background validation
+                // snapshot. A file gone after enumeration is simply no longer
+                // part of that snapshot; the next revision will lint the final
+                // tree. Other I/O failures still surface normally.
+                try {
+                    file.relativeTo(sourceRoot).invariantSeparatorsPath to file.readText()
+                } catch (_: java.io.FileNotFoundException) {
+                    null
+                }
+            }
+            .toMap()
         val activeTexts = sourceTexts.filterKeys { it !in excludedFileIds }
         val macros = activeTexts.flatMap { (fileId, text) -> parseAsmMacros(fileId, text) }
         val index = if (File(sourceRoot, "main.asm").isFile) {
@@ -216,6 +227,7 @@ internal object AsmSourceLinter {
 
     fun report(diagnostics: List<AsmBuildDiagnostic>): AsmBuildReport? {
         if (diagnostics.isEmpty()) return null
+        val ordered = orderDiagnostics(diagnostics)
         return AsmBuildReport(
             // A validation snapshot is not compiled output, even when it contains
             // warnings only. Runtime/source-map consumers must keep requiring a
@@ -223,12 +235,41 @@ internal object AsmSourceLinter {
             succeeded = false,
             generatedAt = Instant.now().toString(),
             assemblerVersion = "SMEDIT source validation",
-            output = diagnostics.map(::format),
-            diagnostics = diagnostics,
+            output = ordered.map(::format),
+            diagnostics = ordered,
             symbols = AsmCompiledSymbols.EMPTY,
             validationOnly = true,
         )
     }
+
+    /**
+     * Source validation supplements the last pipeline report; warning-only
+     * validation must never hide a compiler/export failure. Authored source
+     * errors still take precedence because compiling known-invalid input would
+     * only produce noisier, less useful follow-on diagnostics.
+     */
+    fun mergeWithBuildReport(
+        diagnostics: List<AsmBuildDiagnostic>,
+        buildReport: AsmBuildReport?,
+    ): AsmBuildReport? {
+        if (diagnostics.any { it.severity == AsmDiagnosticSeverity.ERROR }) return report(diagnostics)
+        if (buildReport == null) return report(diagnostics)
+        if (diagnostics.isEmpty()) return buildReport
+
+        val validationOutput = diagnostics.map(::format)
+        return buildReport.copy(
+            output = (buildReport.output + validationOutput).distinct(),
+            diagnostics = orderDiagnostics(buildReport.diagnostics + diagnostics),
+        )
+    }
+
+    fun orderDiagnostics(diagnostics: List<AsmBuildDiagnostic>): List<AsmBuildDiagnostic> =
+        diagnostics.distinct().sortedBy { diagnostic ->
+            when (diagnostic.severity) {
+                AsmDiagnosticSeverity.ERROR -> 0
+                AsmDiagnosticSeverity.WARNING -> 1
+            }
+        }
 
     fun format(diagnostic: AsmBuildDiagnostic): String {
         val file = diagnostic.fileId?.let { "src/$it" } ?: "source"

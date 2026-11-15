@@ -9,6 +9,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
+import com.supermetroid.editor.data.enabledPatchIncompatibilities
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
@@ -385,6 +386,11 @@ class SmeditBuildService(
                     "(group '$group'). Enable only one variant."
             )
         }
+        resolved.map { it.patch }.enabledPatchIncompatibilities().firstOrNull()?.let { (first, second) ->
+            throw IllegalArgumentException(
+                "Patches '${first.name}' and '${second.name}' are incompatible. Enable only one."
+            )
+        }
         return resolved
     }
 
@@ -397,6 +403,9 @@ class SmeditBuildService(
         }
         if (target.exclusiveGroup == null) {
             target.exclusiveGroup = catalogPatch.exclusiveGroup
+        }
+        if (target.incompatiblePatchIds.isEmpty()) {
+            target.incompatiblePatchIds.addAll(catalogPatch.incompatiblePatchIds)
         }
         val catalogWrites = catalogPatch.writes.associateBy { it.offset to it.bytes }
         for (index in target.writes.indices) {
@@ -2367,4 +2376,5 @@ private fun SmPatch.deepCopy(): SmPatch =
         compatibleRomHashes = compatibleRomHashes.toMutableList(),
         resources = resources.map { it.copy() }.toMutableList(),
         exclusiveGroup = exclusiveGroup,
+        incompatiblePatchIds = incompatiblePatchIds.toMutableList(),
     )

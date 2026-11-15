@@ -8,6 +8,27 @@ import kotlin.test.assertTrue
 
 class PatchVariantExclusivityTest {
     @Test
+    fun `attempting an incompatible patch selects it but leaves the existing patch enabled`() {
+        val state = EditorState()
+        val respin = SmPatch(
+            id = "respin",
+            name = "Respin",
+            enabled = true,
+            incompatiblePatchIds = mutableListOf("spider_ball"),
+        )
+        val spiderBall = SmPatch(id = "spider_ball", name = "Directional Spider Ball")
+        state.project.patches.addAll(listOf(respin, spiderBall))
+
+        state.requestTogglePatch(spiderBall.id)
+
+        assertEquals(spiderBall.id, state.selectedPatchId)
+        assertTrue(respin.enabled)
+        assertFalse(spiderBall.enabled)
+        assertTrue(state.statusMessage.contains("cannot be enabled with", ignoreCase = true))
+        assertEquals(listOf(respin), state.enabledPatchIncompatibilities(spiderBall))
+    }
+
+    @Test
     fun `enabling one patch variant disables its exclusive sibling`() {
         val state = EditorState()
         val directional = SmPatch(

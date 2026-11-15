@@ -7,7 +7,11 @@
   {
     "file": "respin.ips",
     "name": "Respin",
-    "description": "Press jump while airborne to re-enter spin jump. Full ASM respin from MapRandomizer."
+    "description": "Press jump while airborne to re-enter spin jump. Full ASM respin from MapRandomizer.",
+    "incompatiblePatchIds": [
+      "bundled_spider_ball",
+      "bundled_spider_ball_hold_aim_down"
+    ]
   },
   {
     "file": "echolocation_beam.ips",

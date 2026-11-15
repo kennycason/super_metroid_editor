@@ -95,17 +95,22 @@ class AsmEditorViewportTest {
         val original = state.sourceEditText("bank_8F.asm")
         val navigation = state.navigationSerial
         withEditor(state) { scene, render ->
-            val top = editableNode(scene).positionInRoot.y + 6f
-            scene.sendPointerEvent(PointerEventType.Press, Offset(995f, top), button = PointerButton.Primary)
-            scene.sendPointerEvent(PointerEventType.Move, Offset(995f, 780f))
+            val scrollbar = nodes(scene).first {
+                it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("asm-source-vertical-scrollbar-") == true
+            }.boundsInRoot
+            val x = scrollbar.center.x
+            val top = scrollbar.top + 6f
+            val bottom = scrollbar.bottom - 6f
+            scene.sendPointerEvent(PointerEventType.Press, Offset(x, top), button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Move, Offset(x, bottom))
             render()
-            scene.sendPointerEvent(PointerEventType.Release, Offset(995f, 780f), button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, Offset(x, bottom), button = PointerButton.Primary)
             render()
             assertTrue(visibleLine(scene) > 15_700, "Dragging the thumb to the bottom must reach the actual end")
-            scene.sendPointerEvent(PointerEventType.Press, Offset(995f, 780f), button = PointerButton.Primary)
-            scene.sendPointerEvent(PointerEventType.Move, Offset(995f, top))
+            scene.sendPointerEvent(PointerEventType.Press, Offset(x, bottom), button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Move, Offset(x, top))
             render()
-            scene.sendPointerEvent(PointerEventType.Release, Offset(995f, top), button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, Offset(x, top), button = PointerButton.Primary)
             render()
             val topLine = visibleLine(scene)
             assertTrue(topLine < 10, "Dragging back to the top must not recenter on the previous target: $topLine")

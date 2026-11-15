@@ -95,6 +95,7 @@ import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.asm.AsmEditorTarget
+import com.supermetroid.editor.asm.AsmProjectBuildStatus
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmPlmPlacementTarget
@@ -841,8 +842,8 @@ fun main() = application {
                 val parser = romParser ?: return
                 scope.launch {
                     if (saveAsmForExecution()) {
-                        val succeeded = asmWorkspaceState.validateProjectBuild {
-                            editorState.buildRomPreview(parser)
+                        val succeeded = asmWorkspaceState.validateProjectBuild { onBuildOutput ->
+                            editorState.buildRomPreview(parser, onBuildOutput)
                         }
                         if (!succeeded && editorState.project.asmWorkspace.enabled &&
                             editorState.project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE
@@ -980,7 +981,9 @@ fun main() = application {
                                 Text(
                                     when {
                                         asmWorkspaceState.previewBusy -> "BUILDING…"
+                                        buildFailed -> "BUILD FAILED"
                                         asmWorkspaceState.sourceBuildRequired -> "BUILD*"
+                                        asmWorkspaceState.projectBuildStatus == AsmProjectBuildStatus.SUCCEEDED -> "BUILD ✓"
                                         else -> "BUILD"
                                     },
                                     fontSize = fs.detail,

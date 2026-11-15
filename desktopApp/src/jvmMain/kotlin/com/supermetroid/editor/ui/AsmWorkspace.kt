@@ -63,6 +63,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -95,6 +96,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.input.InputMode
@@ -177,6 +179,7 @@ import com.supermetroid.editor.asm.AsmMacroCallAnalyzer
 import com.supermetroid.editor.asm.AsmMacroCallHint
 import com.supermetroid.editor.asm.AsmMacroUsage
 import com.supermetroid.editor.asm.AsmProjectSourceChange
+import com.supermetroid.editor.asm.AsmProjectBuildStatus
 import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceExpansionTarget
 import com.supermetroid.editor.asm.AsmReferenceIndex
@@ -2099,9 +2102,17 @@ private fun AsmWorkspaceCanvasContent(
         Column(modifier.fillMaxSize()) {
             AsmGeneratedRoomsCanvas(state, onOpenInEditor, Modifier.weight(1f).fillMaxWidth())
             if (state.buildReport != null || state.displayedDiagnostics.isNotEmpty()) {
-                AsmBuildProblemsStrip(
-                    state, state.buildReport, state.displayedDiagnostics,
-                    problemsPaneHeightDp, onProblemsPaneHeightChange,
+                AsmBottomToolWindow(
+                    state = state,
+                    report = state.buildReport,
+                    diagnostics = state.displayedDiagnostics,
+                    toolContext = null,
+                    emulatorState = emulatorState,
+                    onOpenInEditor = onOpenInEditor,
+                    onRunInEmulator = onRunInEmulator,
+                    onOpenRomSpaceBank = onOpenRomSpaceBank,
+                    requestedHeightDp = problemsPaneHeightDp,
+                    onHeightChange = onProblemsPaneHeightChange,
                 )
             }
         }
@@ -2130,6 +2141,9 @@ private fun AsmWorkspaceCanvasContent(
         if (panes.isEmpty()) {
             AsmWelcomeCanvas(state, modifier)
         } else {
+            var sourceToolContext by remember(state, workspace.root) {
+                mutableStateOf<AsmSourceToolContext?>(null)
+            }
             Column(modifier.fillMaxSize()) {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     val splitWidthPx = with(LocalDensity.current) { maxWidth.toPx() }.coerceAtLeast(1f)
@@ -2165,6 +2179,9 @@ private fun AsmWorkspaceCanvasContent(
                                     onBuildProject = onBuildProject,
                                     onRunInEmulator = onRunInEmulator,
                                     onOpenRomSpaceBank = onOpenRomSpaceBank,
+                                    onToolContextChanged = { context ->
+                                        if (context.paneId == state.activeSourcePaneId) sourceToolContext = context
+                                    },
                                     modifier = Modifier.weight(paneWeight).fillMaxHeight(),
                                 )
                             }
@@ -2172,13 +2189,17 @@ private fun AsmWorkspaceCanvasContent(
                     }
                 }
                 if (
-                    state.workspaceKind == AsmWorkspaceKind.PROJECT &&
-                    (state.buildReport != null || state.displayedDiagnostics.isNotEmpty())
+                    state.workspaceKind == AsmWorkspaceKind.PROJECT
                 ) {
-                    AsmBuildProblemsStrip(
+                    AsmBottomToolWindow(
                         state = state,
                         report = state.buildReport,
                         diagnostics = state.displayedDiagnostics,
+                        toolContext = sourceToolContext?.takeIf { it.paneId == state.activeSourcePaneId },
+                        emulatorState = emulatorState,
+                        onOpenInEditor = onOpenInEditor,
+                        onRunInEmulator = onRunInEmulator,
+                        onOpenRomSpaceBank = onOpenRomSpaceBank,
                         requestedHeightDp = problemsPaneHeightDp,
                         onHeightChange = onProblemsPaneHeightChange,
                     )
@@ -2991,6 +3012,7 @@ private fun AsmSourceCanvas(
     onBuildProject: (() -> Unit)?,
     onRunInEmulator: (() -> Unit)?,
     onOpenRomSpaceBank: (Int) -> Unit,
+    onToolContextChanged: (AsmSourceToolContext) -> Unit,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -3072,6 +3094,26 @@ private fun AsmSourceCanvas(
     val runtimeLineIndex = runtimeInspection?.currentSource
         ?.takeIf { it.fileId == source.id }
         ?.lineIndex
+    LaunchedEffect(
+        isActivePane,
+        visualEditorLine,
+        compiledOutput,
+        editorLinks,
+        runtimeInspection,
+    ) {
+        if (isActivePane && state.workspaceKind == AsmWorkspaceKind.PROJECT) {
+            onToolContextChanged(
+                AsmSourceToolContext(
+                    paneId = pane.id,
+                    compiledOutput = compiledOutput,
+                    visualEditorLinks = editorLinks,
+                    runtimeInspection = runtimeInspection,
+                    cursorAddress = compiledOutput.ranges.firstOrNull()?.snesStart
+                        ?: compiledOutput.symbols.firstOrNull()?.second,
+                ),
+            )
+        }
+    }
     var visualEditorChoices by remember(pane.id, source.id, pane.navigationSerial) { mutableStateOf(emptyList<AsmEditorLink>()) }
     fun openVisualEditors(links: List<AsmEditorLink>) {
         if (links.size == 1) onOpenInEditor(links.single().target) else visualEditorChoices = links
@@ -3264,27 +3306,6 @@ private fun AsmSourceCanvas(
                 referenceLabel != null -> AsmReferencesBar(state, index, referenceLabel, labelUsages)
                 referenceMacro != null -> AsmMacroReferencesBar(state, index, referenceMacro, macroUsages)
             }
-            AsmCompiledOutputPanel(
-                inspection = compiledOutput,
-                visualEditorLinks = editorLinks,
-                onOpenVisualEditors = ::openVisualEditors,
-                onOpenSource = { fileId, line -> state.openSource(fileId, line) },
-                onOpenRomComparison = { state.openRomComparison(compiledOutput.ranges.firstOrNull()?.pcStart) },
-                onOpenSpacePlanner = {
-                    val bank = compiledOutput.allocation?.bank
-                        ?: compiledOutput.ranges.firstOrNull()?.snesStart?.ushr(16)?.and(0xFF)
-                    if (bank != null) onOpenRomSpaceBank(bank) else state.selectRomPreviewView(AsmRomPreviewView.SPACE)
-                },
-                onOpenProjectChanges = state::requestProjectChanges,
-            )
-            AsmRuntimeDebuggerPanel(
-                state = state,
-                emulatorState = emulatorState,
-                inspection = runtimeInspection,
-                cursorAddress = compiledOutput.ranges.firstOrNull()?.snesStart
-                    ?: compiledOutput.symbols.firstOrNull()?.second,
-                onStartEmulator = onRunInEmulator,
-            )
             AsmEditableSourcePane(
                 state = state,
                 pane = pane,
@@ -3407,38 +3428,104 @@ private fun AsmSourceCanvas(
     }
 }
 
+private enum class AsmBottomToolTab { PROBLEMS, BUILD_OUTPUT, COMPILED_OUTPUT, DEBUGGER }
+
+private data class AsmSourceToolContext(
+    val paneId: Long,
+    val compiledOutput: AsmCompiledOutputInspection,
+    val visualEditorLinks: List<AsmEditorLink>,
+    val runtimeInspection: AsmRuntimeInspection?,
+    val cursorAddress: Int?,
+)
+
 @Composable
-private fun AsmBuildProblemsStrip(
+private fun AsmBottomToolWindow(
     state: AsmWorkspaceState,
     report: AsmBuildReport?,
     diagnostics: List<AsmBuildDiagnostic>,
+    toolContext: AsmSourceToolContext?,
+    emulatorState: EmulatorWorkspaceState?,
+    onOpenInEditor: (AsmEditorTarget) -> Unit,
+    onRunInEmulator: (() -> Unit)?,
+    onOpenRomSpaceBank: (Int) -> Unit,
     requestedHeightDp: Float,
     onHeightChange: (Float) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val density = LocalDensity.current
-    val errors = diagnostics.count { it.severity == AsmDiagnosticSeverity.ERROR }
-    val warnings = diagnostics.count { it.severity == AsmDiagnosticSeverity.WARNING }
-    val firstError = diagnostics.firstOrNull {
+    val orderedDiagnostics = remember(diagnostics) { AsmSourceLinter.orderDiagnostics(diagnostics) }
+    val errors = orderedDiagnostics.count { it.severity == AsmDiagnosticSeverity.ERROR }
+    val warnings = orderedDiagnostics.count { it.severity == AsmDiagnosticSeverity.WARNING }
+    val firstError = orderedDiagnostics.firstOrNull {
         it.severity == AsmDiagnosticSeverity.ERROR && state.diagnosticPresentation(it).navigable
     }
-    var expanded by remember(report?.generatedAt, diagnostics) {
-        mutableStateOf(errors > 0 || warnings > 0 || report?.succeeded == false && report.validationOnly.not())
+    val failed = errors > 0 || report?.succeeded == false && (report.validationOnly.not() || errors > 0)
+    var selectedTab by remember(state) { mutableStateOf(AsmBottomToolTab.PROBLEMS) }
+    var expanded by remember(state) { mutableStateOf(failed || warnings > 0) }
+    var handledProblemsRequest by remember(state) { mutableStateOf(state.buildProblemsRequestSerial) }
+    var handledBuildOutputRequest by remember(state) { mutableStateOf(state.buildOutputRequestSerial) }
+    LaunchedEffect(report?.generatedAt, failed) {
+        if (failed) {
+            selectedTab = AsmBottomToolTab.PROBLEMS
+            expanded = true
+        }
+    }
+    LaunchedEffect(state.buildProblemsRequestSerial) {
+        if (state.buildProblemsRequestSerial != handledProblemsRequest) {
+            handledProblemsRequest = state.buildProblemsRequestSerial
+            selectedTab = AsmBottomToolTab.PROBLEMS
+            expanded = true
+        }
+    }
+    LaunchedEffect(state.buildOutputRequestSerial, state.projectBuildStatus) {
+        if (
+            state.buildOutputRequestSerial != handledBuildOutputRequest ||
+            state.projectBuildStatus == AsmProjectBuildStatus.BUILDING
+        ) {
+            handledBuildOutputRequest = state.buildOutputRequestSerial
+            selectedTab = AsmBottomToolTab.BUILD_OUTPUT
+            expanded = true
+        }
     }
     val panelHeightDp = requestedHeightDp.takeIf(Float::isFinite)
         ?.coerceIn(MIN_ASM_PROBLEMS_HEIGHT_DP, MAX_ASM_PROBLEMS_HEIGHT_DP)
         ?: DEFAULT_ASM_PROBLEMS_HEIGHT_DP
-    val bodyScroll = rememberScrollState()
-    val failed = errors > 0 || report?.succeeded == false && (report.validationOnly.not() || errors > 0)
     val accent = when {
         failed -> MaterialTheme.colorScheme.error
         warnings > 0 -> Color(0xFFE0A12B)
         else -> MaterialTheme.colorScheme.primary
     }
-    val container = when {
-        failed -> MaterialTheme.colorScheme.errorContainer
-        warnings > 0 -> MaterialTheme.colorScheme.tertiaryContainer
-        else -> MaterialTheme.colorScheme.primaryContainer
+    var visualEditorChoices by remember { mutableStateOf(emptyList<AsmEditorLink>()) }
+    fun openVisualEditors(links: List<AsmEditorLink>) {
+        if (links.size == 1) onOpenInEditor(links.single().target) else visualEditorChoices = links
+    }
+    if (visualEditorChoices.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { visualEditorChoices = emptyList() },
+            title = { Text("Visual Editor") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(visualEditorChoices.size) { position ->
+                        val link = visualEditorChoices[position]
+                        TextButton(
+                            onClick = {
+                                visualEditorChoices = emptyList()
+                                onOpenInEditor(link.target)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(link.title)
+                                Text(link.detail, fontSize = fs.detail)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { visualEditorChoices = emptyList() }) { Text("Close") }
+            },
+        )
     }
 
     Column(
@@ -3461,116 +3548,288 @@ private fun AsmBuildProblemsStrip(
             )
         }
         Surface(
-            color = container.copy(alpha = 0.7f),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = if (expanded) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
         ) {
             Column(if (expanded) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
                 Row(
-                    Modifier.fillMaxWidth()
-                        .clickable { expanded = !expanded }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
-                    Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = accent)
-                    Text(
-                        buildString {
-                            append(
-                                when {
-                                    state.liveDiagnostics.isNotEmpty() -> "Source diagnostics"
-                                    report?.succeeded == true -> "Build completed"
-                                    report?.validationOnly == true -> "Source validation"
-                                    else -> "Build failed"
-                                },
-                            )
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.size(30.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                    ) {
+                        Text(if (expanded) "▾" else "▸", fontSize = fs.body, color = accent)
+                    }
+                    AsmBottomToolTabButton(
+                        label = buildString {
+                            append("Problems")
                             if (errors > 0) append(" · $errors error${if (errors == 1) "" else "s"}")
                             if (warnings > 0) append(" · $warnings warning${if (warnings == 1) "" else "s"}")
                         },
-                        fontSize = fs.detail,
-                        fontWeight = FontWeight.SemiBold,
+                        selected = selectedTab == AsmBottomToolTab.PROBLEMS,
                         color = accent,
-                        textDecoration = if (firstError != null) TextDecoration.Underline else null,
-                        modifier = if (firstError != null) Modifier
-                            .pointerHoverIcon(PointerIcon.Hand)
-                            .clickable { state.openDiagnostic(firstError) }
-                            else Modifier,
+                        onClick = {
+                            selectedTab = AsmBottomToolTab.PROBLEMS
+                            expanded = true
+                        },
                     )
+                    AsmBottomToolTabButton(
+                        label = when (state.projectBuildStatus) {
+                            AsmProjectBuildStatus.IDLE -> "Build Output"
+                            AsmProjectBuildStatus.BUILDING -> "Build Output · Building…"
+                            AsmProjectBuildStatus.SUCCEEDED -> "Build Output · Succeeded"
+                            AsmProjectBuildStatus.FAILED -> "Build Output · Failed"
+                        },
+                        selected = selectedTab == AsmBottomToolTab.BUILD_OUTPUT,
+                        color = when (state.projectBuildStatus) {
+                            AsmProjectBuildStatus.FAILED -> MaterialTheme.colorScheme.error
+                            AsmProjectBuildStatus.SUCCEEDED -> Color(0xFF24B39B)
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                        onClick = {
+                            selectedTab = AsmBottomToolTab.BUILD_OUTPUT
+                            expanded = true
+                        },
+                    )
+                    AsmBottomToolTabButton(
+                        label = "Compiled Output",
+                        selected = selectedTab == AsmBottomToolTab.COMPILED_OUTPUT,
+                        enabled = toolContext != null,
+                        onClick = {
+                            selectedTab = AsmBottomToolTab.COMPILED_OUTPUT
+                            expanded = true
+                        },
+                    )
+                    AsmBottomToolTabButton(
+                        label = "Debugger",
+                        selected = selectedTab == AsmBottomToolTab.DEBUGGER,
+                        enabled = toolContext != null,
+                        onClick = {
+                            selectedTab = AsmBottomToolTab.DEBUGGER
+                            expanded = true
+                        },
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (selectedTab == AsmBottomToolTab.PROBLEMS && firstError != null) {
+                        TextButton(onClick = { state.openDiagnostic(firstError) }) {
+                            Text("First error", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
                 if (expanded) {
-                    Column(
-                        Modifier.weight(1f).fillMaxWidth().verticalScroll(bodyScroll),
-                    ) {
-                        if (diagnostics.isEmpty()) {
-                            report?.output.orEmpty().takeLast(4).forEach { line ->
-                                Text(
-                                    line,
-                                    fontSize = fs.detail,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp, vertical = 2.dp),
-                                )
-                            }
-                        } else {
-                            diagnostics.forEach { problem ->
-                                val presentation = state.diagnosticPresentation(problem)
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .then(
-                                            if (presentation.navigable) {
-                                                Modifier.pointerHoverIcon(PointerIcon.Hand).clickable {
-                                                    state.openDiagnostic(problem)
-                                                }
-                                            } else Modifier
-                                        )
-                                        .padding(horizontal = 26.dp, vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.Top,
-                                ) {
-                                    Text(
-                                        if (problem.severity == AsmDiagnosticSeverity.ERROR) "Error" else "Warning",
-                                        fontSize = fs.detail,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (problem.severity == AsmDiagnosticSeverity.ERROR) {
-                                            MaterialTheme.colorScheme.error
-                                        } else Color(0xFFE0A12B)
-                                    )
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            buildString {
-                                                if (presentation.location != null) append(presentation.location).append(" · ")
-                                                append(problem.message)
-                                            },
-                                            fontSize = fs.detail,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            textDecoration = if (presentation.navigable) TextDecoration.Underline else null,
-                                        )
-                                        presentation.sourceLine?.let { sourceLine ->
-                                            Text(
-                                                sourceLine.trim(),
-                                                fontSize = fs.detail,
-                                                fontFamily = FontFamily.Monospace,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                        presentation.authority?.let { authority ->
-                                            Text(
-                                                authority,
-                                                fontSize = fs.statusBar,
-                                                color = Color(0xFFE0A12B),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                    when (selectedTab) {
+                        AsmBottomToolTab.PROBLEMS -> AsmProblemsContent(
+                            state = state,
+                            report = report,
+                            diagnostics = orderedDiagnostics,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                        AsmBottomToolTab.BUILD_OUTPUT -> AsmBuildOutputContent(
+                            status = state.projectBuildStatus,
+                            output = state.projectBuildOutput,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                        AsmBottomToolTab.COMPILED_OUTPUT -> toolContext?.let { context ->
+                            val inspection = context.compiledOutput
+                            AsmCompiledOutputPanel(
+                                inspection = inspection,
+                                visualEditorLinks = context.visualEditorLinks,
+                                onOpenVisualEditors = ::openVisualEditors,
+                                onOpenSource = { fileId, line -> state.openSource(fileId, line) },
+                                onOpenRomComparison = { state.openRomComparison(inspection.ranges.firstOrNull()?.pcStart) },
+                                onOpenSpacePlanner = {
+                                    val bank = inspection.allocation?.bank
+                                        ?: inspection.ranges.firstOrNull()?.snesStart?.ushr(16)?.and(0xFF)
+                                    if (bank != null) onOpenRomSpaceBank(bank)
+                                    else state.selectRomPreviewView(AsmRomPreviewView.SPACE)
+                                },
+                                onOpenProjectChanges = state::requestProjectChanges,
+                                embedded = true,
+                            )
                         }
-                        Spacer(Modifier.height(4.dp))
+                        AsmBottomToolTab.DEBUGGER -> toolContext?.let { context ->
+                            AsmRuntimeDebuggerPanel(
+                                state = state,
+                                emulatorState = emulatorState,
+                                inspection = context.runtimeInspection,
+                                cursorAddress = context.cursorAddress,
+                                onStartEmulator = onRunInEmulator,
+                                embedded = true,
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AsmBottomToolTabButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    color: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(
+        color = if (selected) color.copy(alpha = 0.14f) else Color.Transparent,
+        shape = RectangleShape,
+    ) {
+        TextButton(onClick = onClick, enabled = enabled, shape = RectangleShape) {
+            Text(
+                label,
+                fontSize = fs.detail,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = when {
+                    !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    selected -> color
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AsmBuildOutputContent(
+    status: AsmProjectBuildStatus,
+    output: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val statusColor = when (status) {
+        AsmProjectBuildStatus.FAILED -> MaterialTheme.colorScheme.error
+        AsmProjectBuildStatus.SUCCEEDED -> Color(0xFF24B39B)
+        AsmProjectBuildStatus.BUILDING -> MaterialTheme.colorScheme.primary
+        AsmProjectBuildStatus.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val statusText = when (status) {
+        AsmProjectBuildStatus.IDLE -> "No build has run in this session."
+        AsmProjectBuildStatus.BUILDING -> "Building project…"
+        AsmProjectBuildStatus.SUCCEEDED -> "Build succeeded"
+        AsmProjectBuildStatus.FAILED -> "Build failed"
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(output.size) {
+        if (output.isNotEmpty()) listState.scrollToItem(output.lastIndex + 1)
+    }
+    LazyColumn(modifier, state = listState) {
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (status == AsmProjectBuildStatus.BUILDING) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                }
+                Text(statusText, fontSize = fs.detail, fontWeight = FontWeight.SemiBold, color = statusColor)
+            }
+        }
+        itemsIndexed(output) { _, line ->
+            Text(
+                line,
+                fontSize = fs.detail,
+                fontFamily = FontFamily.Monospace,
+                color = when {
+                    line.startsWith("ERROR", ignoreCase = true) || line.startsWith("Build failed") ->
+                        MaterialTheme.colorScheme.error
+                    line.startsWith("WARN", ignoreCase = true) -> Color(0xFFE0A12B)
+                    line == "Build succeeded." -> Color(0xFF24B39B)
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+            )
+        }
+        item { Spacer(Modifier.height(6.dp)) }
+    }
+}
+
+@Composable
+private fun AsmProblemsContent(
+    state: AsmWorkspaceState,
+    report: AsmBuildReport?,
+    diagnostics: List<AsmBuildDiagnostic>,
+    modifier: Modifier = Modifier,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Column(modifier.verticalScroll(rememberScrollState())) {
+        if (diagnostics.isEmpty()) {
+            val output = report?.output.orEmpty().takeLast(12)
+            if (output.isEmpty()) {
+                Text(
+                    "No build errors or warnings.",
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            } else output.forEach { line ->
+                Text(
+                    line,
+                    fontSize = fs.detail,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                )
+            }
+        } else diagnostics.forEach { problem ->
+            val presentation = state.diagnosticPresentation(problem)
+            Row(
+                Modifier.fillMaxWidth()
+                    .then(
+                        if (presentation.navigable) {
+                            Modifier.pointerHoverIcon(PointerIcon.Hand).clickable { state.openDiagnostic(problem) }
+                        } else Modifier
+                    )
+                    .padding(horizontal = 16.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Text(
+                    if (problem.severity == AsmDiagnosticSeverity.ERROR) "Error" else "Warning",
+                    fontSize = fs.detail,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (problem.severity == AsmDiagnosticSeverity.ERROR) {
+                        MaterialTheme.colorScheme.error
+                    } else Color(0xFFE0A12B),
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        buildString {
+                            if (presentation.location != null) append(presentation.location).append(" · ")
+                            append(problem.message)
+                        },
+                        fontSize = fs.detail,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textDecoration = if (presentation.navigable) TextDecoration.Underline else null,
+                    )
+                    presentation.sourceLine?.let { sourceLine ->
+                        Text(
+                            sourceLine.trim(),
+                            fontSize = fs.detail,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    presentation.authority?.let { authority ->
+                        Text(authority, fontSize = fs.statusBar, color = Color(0xFFE0A12B))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -3651,9 +3910,10 @@ private fun AsmCompiledOutputPanel(
     onOpenRomComparison: () -> Unit,
     onOpenSpacePlanner: () -> Unit,
     onOpenProjectChanges: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
-    var expanded by remember(inspection.fileId) { mutableStateOf(false) }
+    var expanded by remember(inspection.fileId, embedded) { mutableStateOf(embedded) }
     val statusColor = when (inspection.status) {
         AsmCompiledOutputStatus.CURRENT -> MaterialTheme.colorScheme.primary
         AsmCompiledOutputStatus.STALE -> Color(0xFFE0A12B)
@@ -3669,35 +3929,56 @@ private fun AsmCompiledOutputPanel(
         AsmCompiledOutputStatus.BUILD_REQUIRED -> "Build to inspect output"
     }
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().testTag("asm-compiled-output"),
+        color = if (embedded) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
+        border = if (embedded) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = (if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+            .testTag("asm-compiled-output"),
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().clickable { expanded = !expanded }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = statusColor)
-                Text("Compiled Output", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
-                Text(statusLabel, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
-                inspection.ranges.firstOrNull()?.let { range ->
-                    Text(
-                        "${formatSnesAddress(range.snesStart)} · ${inspection.emittedByteCount} B",
-                        fontSize = fs.detail,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+        Column(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
+            if (!embedded) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { expanded = !expanded }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = statusColor)
+                    Text("Compiled Output", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
+                    Text(statusLabel, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
+                    inspection.ranges.firstOrNull()?.let { range ->
+                        Text(
+                            "${formatSnesAddress(range.snesStart)} · ${inspection.emittedByteCount} B",
+                            fontSize = fs.detail,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             if (expanded) {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState())
-                        .padding(start = 28.dp, end = 10.dp, bottom = 9.dp),
+                    (if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(max = 340.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = if (embedded) 16.dp else 28.dp, end = 10.dp, bottom = 9.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
+                    if (embedded) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(statusLabel, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
+                            inspection.ranges.firstOrNull()?.let { range ->
+                                Text(
+                                    "${formatSnesAddress(range.snesStart)} · ${inspection.emittedByteCount} B",
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                     if (inspection.status == AsmCompiledOutputStatus.STALE) {
                         Text(
                             "These addresses and bytes belong to the last successful build. Rebuild before relying on them.",
@@ -3783,10 +4064,11 @@ private fun AsmRuntimeDebuggerPanel(
     inspection: AsmRuntimeInspection?,
     cursorAddress: Int?,
     onStartEmulator: (() -> Unit)?,
+    embedded: Boolean = false,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val scope = rememberCoroutineScope()
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by remember(embedded) { mutableStateOf(embedded) }
     val available = emulatorState?.cpuDebugAvailable == true
     val cpu = inspection?.cpu
     val statusColor = when {
@@ -3806,35 +4088,56 @@ private fun AsmRuntimeDebuggerPanel(
         else -> "Paused"
     }
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().testTag("asm-runtime-debugger"),
+        color = if (embedded) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
+        border = if (embedded) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = (if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+            .testTag("asm-runtime-debugger"),
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().clickable { expanded = !expanded }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = statusColor)
-                Text("Runtime Debugger", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
-                Text(status, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
-                cpu?.let {
-                    Text(
-                        formatSnesAddress(it.pc),
-                        fontSize = fs.detail,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+        Column(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
+            if (!embedded) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { expanded = !expanded }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(if (expanded) "▾" else "▸", fontSize = fs.detail, color = statusColor)
+                    Text("Runtime Debugger", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
+                    Text(status, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
+                    cpu?.let {
+                        Text(
+                            formatSnesAddress(it.pc),
+                            fontSize = fs.detail,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             if (expanded) {
                 Column(
-                    Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState())
-                        .padding(start = 28.dp, end = 10.dp, bottom = 9.dp),
+                    (if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxWidth().heightIn(max = 430.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = if (embedded) 16.dp else 28.dp, end = 10.dp, bottom = 9.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
+                    if (embedded) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(status, fontSize = fs.detail, color = statusColor, modifier = Modifier.weight(1f))
+                            cpu?.let {
+                                Text(
+                                    formatSnesAddress(it.pc),
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                     when {
                         emulatorState == null -> Text(
                             "The emulator workspace is not connected to this ASM view.",
@@ -5074,7 +5377,8 @@ private fun AsmEditableSourcePane(
                 modifier = Modifier.align(Alignment.CenterEnd)
                     .padding(bottom = ASM_SCROLLBAR_SIZE)
                     .fillMaxHeight()
-                    .width(ASM_SCROLLBAR_SIZE),
+                    .width(ASM_SCROLLBAR_SIZE)
+                    .testTag("asm-source-vertical-scrollbar-${pane.id}"),
                 style = scrollbarStyle,
             )
             HorizontalScrollbar(

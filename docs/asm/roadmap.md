@@ -295,6 +295,13 @@ controls go stale until restart. A clean native-core build plus 56 focused
 native, resolver, artifact, library and workspace/UI-state tests cover the
 completion boundary.
 
+The implementation is pinned from the
+[`kennycason/snes9x` `smedit-debugger` branch](https://github.com/kennycason/snes9x/tree/smedit-debugger),
+with `libretro/snes9x` retained as upstream. The fork is intentionally limited
+to the versioned debugger bridge; update the parent submodule pointer only
+after a clean native-core build and debugger test against an explicit ROM
+fixture.
+
 Build on retained project symbols and the Compiled Output Inspector.
 
 - Prove an emulator/core integration capable of deterministic pause, resume,

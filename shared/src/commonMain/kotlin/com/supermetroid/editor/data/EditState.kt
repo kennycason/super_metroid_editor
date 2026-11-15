@@ -648,6 +648,10 @@ data class SmPatch(
     val resources: MutableList<PatchResourceClaim> = mutableListOf(),
     /** Optional variant family in which only one patch may be enabled. */
     var exclusiveGroup: String? = null,
+    /** Patch IDs that cannot safely coexist with this patch. Unlike
+     * [exclusiveGroup], this supports one patch conflicting with several
+     * otherwise unrelated features. The relationship is treated symmetrically. */
+    val incompatiblePatchIds: MutableList<String> = mutableListOf(),
 )
 
 private val SHARED_ROM_RESOURCE_NAMESPACES = setOf("rom_hook", "rom_region")
@@ -678,6 +682,19 @@ fun Iterable<SmPatch>.enabledPatchVariantConflicts(): Map<String, List<SmPatch>>
     }
         .groupBy(keySelector = { it.first }, valueTransform = { it.second })
         .filterValues { it.size > 1 }
+
+fun SmPatch.isDeclaredIncompatibleWith(other: SmPatch): Boolean =
+    other.id in incompatiblePatchIds || id in other.incompatiblePatchIds
+
+/** Enabled patch pairs that are explicitly known not to compose. */
+fun Iterable<SmPatch>.enabledPatchIncompatibilities(): List<Pair<SmPatch, SmPatch>> {
+    val enabled = filter(SmPatch::enabled)
+    return enabled.indices.flatMap { first ->
+        (first + 1 until enabled.size).mapNotNull { second ->
+            (enabled[first] to enabled[second]).takeIf { (a, b) -> a.isDeclaredIncompatibleWith(b) }
+        }
+    }
+}
 
 /**
  * Custom tileset graphics data (base64-encoded raw 4bpp bytes).

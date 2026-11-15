@@ -4,10 +4,42 @@ import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AsmBuildArtifactsTest {
+    @Test
+    fun `validation warnings supplement rather than hide pipeline failures`() {
+        val pipelineError = AsmBuildDiagnostic(
+            severity = AsmDiagnosticSeverity.ERROR,
+            message = "Music write plan overlaps incompatibly",
+        )
+        val pipelineReport = AsmBuildReport(
+            succeeded = false,
+            generatedAt = "pipeline",
+            assemblerVersion = "Asar",
+            output = listOf("Export failed safely"),
+            diagnostics = listOf(pipelineError),
+            symbols = AsmCompiledSymbols.EMPTY,
+        )
+        val warning = AsmBuildDiagnostic(
+            severity = AsmDiagnosticSeverity.WARNING,
+            message = "A source label is unused",
+            fileId = "bank_90.asm",
+            lineIndex = 4,
+        )
+
+        val merged = requireNotNull(AsmSourceLinter.mergeWithBuildReport(listOf(warning), pipelineReport))
+
+        assertFalse(merged.succeeded)
+        assertEquals(listOf(AsmDiagnosticSeverity.ERROR, AsmDiagnosticSeverity.WARNING), merged.diagnostics.map { it.severity })
+        assertEquals("Music write plan overlaps incompatibly", merged.diagnostics.first().message)
+        assertTrue(merged.output.any { it.contains("Export failed safely") })
+        assertTrue(merged.output.any { it.contains("unused") })
+        assertFalse(merged.validationOnly)
+    }
+
     @Test
     fun `post assembler safety failures have visible diagnostics without losing source errors`() {
         val directory = createTempDirectory("smedit-pipeline-report-").toFile()

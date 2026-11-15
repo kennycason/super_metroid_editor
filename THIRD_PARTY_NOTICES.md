@@ -13,6 +13,7 @@ license text—not this summary—controls your use of each component.
 ### Snes9x / libretro core
 
 - Upstream: <https://github.com/libretro/snes9x>
+- SMEDIT debugger fork: <https://github.com/kennycason/snes9x/tree/smedit-debugger>
 - Pinned source: `tools/snes9x/`
 - License: custom Snes9x license; full text at `tools/snes9x/LICENSE`
 
@@ -23,6 +24,13 @@ permission from its copyright holders. This restriction applies to the
 embedded emulator core even though SMEDIT's own code is Apache-2.0. Snes9x
 also contains separately licensed portions listed at the end of its license
 and in license files inside `tools/snes9x/`.
+
+SMEDIT's fork adds a narrow, versioned debugger capability for CPU state,
+instruction stepping, bounded breakpoints, and side-effect-free mapped-memory
+reads. Stock libretro cores remain supported for ordinary emulation; the
+source debugger fails closed when the optional ABI is unavailable. Fork
+maintenance and verification are documented in
+`tools/snes9x/SMEDIT_DEBUGGER.md`.
 
 ### snes_spc
 

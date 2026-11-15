@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class AsmRomPreviewTest {
     @Test
@@ -274,5 +275,27 @@ class AsmRomPreviewTest {
         state.requestProjectChanges()
         state.requestProjectChanges()
         assertEquals(2L, state.projectChangesRequestSerial)
+    }
+
+    @Test
+    fun `validated build retains output and an explicit successful lifecycle`() = runBlocking {
+        val loaded = ByteArray(16)
+        val preview = AsmRomPreview.create(loaded, loaded.copyOf(), 0, RomWritePlan(loaded).report())
+        val state = AsmWorkspaceState()
+
+        assertTrue(state.validateProjectBuild { output ->
+            output("EXPORT VERIFICATION: all checks passed")
+            AsmRomPreviewBuild(
+                preview = preview,
+                spacePlan = preview.spacePlan,
+                error = null,
+                output = listOf("Compiler output retained"),
+            )
+        })
+
+        assertEquals(AsmProjectBuildStatus.SUCCEEDED, state.projectBuildStatus)
+        assertTrue(state.projectBuildOutput.any { it.contains("EXPORT VERIFICATION") })
+        assertTrue(state.projectBuildOutput.any { it.contains("Compiler output retained") })
+        assertEquals("Build succeeded.", state.projectBuildOutput.last())
     }
 }

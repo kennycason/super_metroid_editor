@@ -516,10 +516,19 @@ val buildLibretroCore by tasks.registering(Exec::class) {
         include("**/*.c", "**/*.cpp", "**/*.h", "**/Makefile*", "**/*.T")
         exclude("**/*.o", "**/*.a", "**/*.so", "**/*.dylib", "**/*.dll")
     })
+    // Snes9x embeds its Git revision in the core. Source contents can remain
+    // identical when the pinned submodule commit advances, so make the commit
+    // itself part of Gradle's cache key and force make to refresh those flags.
+    inputs.property(
+        "snes9xRevision",
+        providers.exec {
+            commandLine("git", "-C", file("tools/snes9x").absolutePath, "rev-parse", "HEAD")
+        }.standardOutput.asText.map { it.trim() },
+    )
     outputs.file(outputFile)
 
     val cpuCount = Runtime.getRuntime().availableProcessors()
-    commandLine("make", "-j$cpuCount")
+    commandLine("make", "-B", "-j$cpuCount")
 
     if (os.contains("mac")) {
         val commandLineTools = file("/Library/Developer/CommandLineTools")

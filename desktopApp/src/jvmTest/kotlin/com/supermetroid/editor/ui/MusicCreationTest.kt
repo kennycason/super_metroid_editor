@@ -63,6 +63,37 @@ class MusicCreationTest {
             }
         }
     }
+    @Test fun `lower Norfair clone composes its expanded table entry with its relocated upload pointer`() {
+        val (parser, editor) = context()
+        val plan = MusicCreation.plan(parser, editor.project, "Lower Norfair Techno", 0x18, "Lower Norfair Techno", null)
+        editor.applyMusicCreation(plan)
+        val song = NspcSequence.Song().apply {
+            tempo = 36
+            channels[0].notes += NspcSequence.Note(0, 24, 0x98, instrument = 11)
+            channels[1].notes += NspcSequence.Note(24, 24, 0x99, instrument = 11)
+        }
+        editor.setMusicEdit(
+            MusicTrackEdit.key(plan.track.songSet, plan.track.playIndex),
+            MusicEditConversion.toProjectEdit(plan.track, song),
+        )
+
+        val rom = parser.copyRomData()
+        MusicRomExporter(editor.project, {}).applyMusicEditsToRom(rom)
+
+        val exported = RomParser(rom)
+        val table = SpcMusicBankTable.read(exported)
+        assertTrue(table.expanded)
+        assertNotEquals(
+            SpcData.readSongSetPointer(exported, 0x18),
+            SpcData.readSongSetPointer(exported, plan.track.songSet),
+        )
+        assertContentEquals(
+            MusicBankResolver.resolve(parser, editor.project, plan.track.songSet).ram,
+            SpcData.buildInitialSpcRam(exported).also {
+                SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exported, plan.track.songSet))
+            },
+        )
+    }
     @Test fun `bank palette copies owned samples and settings without linking later edits to its source`() = runBlocking {
         val (parser, editor) = context()
         val target = SampleBankPreview.Target(3, NspcSequence.Note(0, 48, 0xA4, instrument = 24), "Title", "Sound", MusicBankTransitions.snapshot(editor.project))

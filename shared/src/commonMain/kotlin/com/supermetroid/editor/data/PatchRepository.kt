@@ -16,6 +16,7 @@ private data class PatchMeta(
     val compatibleRomHashes: List<String> = listOf(VANILLA_JU_SHA256),
     val resources: List<PatchResourceClaim> = emptyList(),
     val exclusiveGroup: String? = null,
+    val incompatiblePatchIds: List<String> = emptyList(),
 )
 
 const val VANILLA_JU_SHA256 = "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72"
@@ -105,6 +106,7 @@ object PatchRepository {
                     compatibleRomHashes = meta.compatibleRomHashes.map { it.lowercase() }.toMutableList(),
                     resources = meta.resources.map { it.copy() }.toMutableList(),
                     exclusiveGroup = meta.exclusiveGroup,
+                    incompatiblePatchIds = meta.incompatiblePatchIds.toMutableList(),
                 )
             } catch (e: Exception) {
                 EditorLog.warn(e, "[PatchRepository] Failed to parse ${meta.file}: ${e.message}")

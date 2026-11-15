@@ -307,10 +307,12 @@ fun PatchListPanel(
                 )
             }
             for (patch in filtered) {
+                val incompatibleEnabled = editorState.enabledPatchIncompatibilities(patch)
                 PatchListItem(
                     patch = patch,
                     isSelected = patch.id == selectedId,
                     isFavorite = patch.id in favoritePatchIds,
+                    incompatibleEnabled = incompatibleEnabled,
                     onSelect = {
                         requestVerticalSelectionFocus(navigationFocusRequester)
                         editorState.selectPatch(patch.id)
@@ -339,13 +341,19 @@ private fun PatchListItem(
     patch: SmPatch,
     isSelected: Boolean,
     isFavorite: Boolean,
+    incompatibleEnabled: List<SmPatch>,
     onSelect: () -> Unit,
     onToggle: () -> Unit,
     onToggleFavorite: () -> Unit,
     onDelete: (() -> Unit)?,
 ) {
-    val bg = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-             else Color.Transparent
+    val blocked = !patch.enabled && incompatibleEnabled.isNotEmpty()
+    val bg = when {
+        blocked && isSelected -> MaterialTheme.colorScheme.errorContainer
+        blocked -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.42f)
+        isSelected -> MaterialTheme.colorScheme.primaryContainer
+        else -> Color.Transparent
+    }
 
     Surface(
         modifier = Modifier
@@ -379,9 +387,21 @@ private fun PatchListItem(
                     lineHeight = LocalEditorTheme.current.fontSize.value.heading,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (patch.enabled) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    color = when {
+                        blocked -> MaterialTheme.colorScheme.error
+                        patch.enabled -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    }
                 )
+                if (blocked) {
+                    Text(
+                        "Conflicts with ${incompatibleEnabled.joinToString { it.name }}",
+                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             IconButton(
@@ -512,6 +532,7 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
     var editingName by remember(patch.id) { mutableStateOf(false) }
     var nameText by remember(patch.id) { mutableStateOf(patch.name) }
     var descText by remember(patch.id) { mutableStateOf(patch.description) }
+    val incompatibleEnabled = editorState.enabledPatchIncompatibilities(patch)
 
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
         Row(
@@ -572,6 +593,21 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                 ) {
                     Text(if (patch.enabled) "Disable" else "Enable", fontSize = LocalEditorTheme.current.fontSize.value.body)
                 }
+            }
+        }
+        if (!patch.enabled && incompatibleEnabled.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                Text(
+                    "Cannot enable with ${incompatibleEnabled.joinToString { it.name }}. Disable " +
+                        "${if (incompatibleEnabled.size == 1) "that patch" else "those patches"} first.",
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
             }
         }
         if (!patch.enabled && patch.configType in editorState.project.asmWorkspace.disabledPatchValues) {

@@ -9,6 +9,7 @@ import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
+import com.supermetroid.editor.data.enabledPatchIncompatibilities
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.CommunitySamusSourceCodec
@@ -940,6 +941,11 @@ internal class RomExporter(
             throw RomWritePlanException(
                 "Patch variants '${patches.joinToString { it.name }}' are mutually exclusive " +
                     "(group '$group'). Enable only one variant."
+            )
+        }
+        project.patches.enabledPatchIncompatibilities().firstOrNull()?.let { (first, second) ->
+            throw RomWritePlanException(
+                "Patches '${first.name}' and '${second.name}' are incompatible. Disable one before building."
             )
         }
         val enabledCount = project.patches.count { it.enabled }
