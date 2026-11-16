@@ -16,13 +16,84 @@ class MemoryGameExportTest {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
+    // Converters for different AssembledSprite types
+    private fun EnemySpritemap.AssembledSprite.toFrame() = RenderedFrame(pixels, width, height)
+    private fun KraidSpritemap.AssembledSprite.toFrame() = RenderedFrame(pixels, width, height)
+    private fun PhantoonSpritemap.AssembledSprite.toFrame() = RenderedFrame(pixels, width, height)
+
     /**
-     * Export the best available preview sprite for each enemy. Uses a fallback chain:
-     * 1. Special enemy preview (Metroid, Suspensor Platform) via renderSpecialEnemyPreview
-     * 2. Source-verified animation first frame via buildSourceAnimation (SourceEnemyAnimations)
-     * 3. Animation system first frame via buildAnimation (instruction list tracer)
-     * 4. Default spritemap via findDefaultSpritemap (original approach, last resort)
+     * Try to render a boss using its dedicated spritemap renderer.
+     * Returns null for non-boss species or if rendering fails.
      */
+    private fun renderBossPreview(rp: RomParser, speciesId: Int): RenderedFrame? {
+        return when (speciesId) {
+            // Crocomire
+            0xDDBF -> {
+                val croc = CrocomireSpritemap(rp)
+                val tiles = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return null
+                if (!croc.load(tiles)) return null
+                croc.renderComposition(CrocomireSpritemap.COMPOSITIONS.first())?.toFrame()
+            }
+            // Draygon
+            0xDE3F, 0xDE7F, 0xDEBF, 0xDEFF -> {
+                val drag = DraygonSpritemap(rp)
+                val tiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDE3F)
+                if (!drag.load(tiles)) return null
+                drag.renderComposition(DraygonSpritemap.COMPOSITIONS.first())?.toFrame()
+            }
+            // Kraid
+            0xE2BF -> {
+                val kraid = KraidSpritemap(rp)
+                if (!kraid.load()) return null
+                kraid.renderFullBody()?.toFrame()
+            }
+            // Phantoon
+            0xE4BF, 0xE4FF, 0xE53F, 0xE57F -> {
+                val phantoon = PhantoonSpritemap(rp)
+                if (!phantoon.load()) return null
+                phantoon.renderFullBody()?.toFrame()
+            }
+            // Ridley
+            0xE17F -> {
+                val ridley = RidleySpritemap(rp)
+                val tiles = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId)
+                if (!ridley.load(tiles)) return null
+                ridley.renderComposition(RidleySpritemap.COMPOSITIONS.first())?.toFrame()
+            }
+            // Mother Brain
+            0xEC3F, 0xEC7F -> {
+                val mb = MotherBrainSpritemap(rp)
+                if (!mb.load()) return null
+                mb.renderComposition(MotherBrainSpritemap.COMPOSITIONS.first())?.toFrame()
+            }
+            // Torizo (bomb and gold)
+            0xEEFF, 0xEF3F, 0xEF7F, 0xEFBF -> {
+                val torizo = TorizoSpritemap(rp)
+                val tiles = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return null
+                if (!torizo.load(tiles)) return null
+                val encounter = if (speciesId == 0xEF7F || speciesId == 0xEFBF) TorizoSpritemap.Encounter.GOLDEN else TorizoSpritemap.Encounter.BOMB
+                val comp = TorizoSpritemap.COMPOSITIONS.firstOrNull { it.encounter == encounter } ?: return null
+                val palette = TorizoSpritemap.PALETTE_STAGES.firstOrNull { it.encounter == encounter } ?: return null
+                torizo.renderComposition(comp, palette)?.toFrame()
+            }
+            // Botwoon
+            0xF293 -> {
+                val botwoon = BotwoonSpritemap(rp)
+                val tiles = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return null
+                if (!botwoon.load(tiles)) return null
+                botwoon.renderComposition(BotwoonSpritemap.COMPOSITIONS.first())?.toFrame()
+            }
+            // Spore Spawn
+            0xDF3F -> {
+                val spore = SporeSpawnSpritemap(rp)
+                val tiles = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return null
+                if (!spore.load(tiles)) return null
+                spore.renderComposition(SporeSpawnSpritemap.COMPOSITIONS.first())?.toFrame()
+            }
+            else -> null
+        }
+    }
+
     @Test
     fun `export all enemy sprites for memory game`() {
         val rp = loadTestRom() ?: return
@@ -31,17 +102,12 @@ class MemoryGameExportTest {
         val outputDir = File("build/memory-game-enemies")
         outputDir.mkdirs()
 
-        // Index source animation definitions by species ID for quick lookup
+        // Index source animation definitions by species ID
         val sourceAnimsBySpecies = mutableMapOf<Int, SourceEnemyAnimations.Definition>()
         for (def in SourceEnemyAnimations.DEFINITIONS) {
-            // Use the first definition for each species as the preview
-            if (def.speciesId !in sourceAnimsBySpecies) {
-                sourceAnimsBySpecies[def.speciesId] = def
-            }
+            if (def.speciesId !in sourceAnimsBySpecies) sourceAnimsBySpecies[def.speciesId] = def
             for (alias in def.aliasSpeciesIds) {
-                if (alias !in sourceAnimsBySpecies) {
-                    sourceAnimsBySpecies[alias] = def
-                }
+                if (alias !in sourceAnimsBySpecies) sourceAnimsBySpecies[alias] = def
             }
         }
 
@@ -54,76 +120,82 @@ class MemoryGameExportTest {
             val name = entry.name
             val hexId = speciesId.toString(16).uppercase().padStart(4, '0')
 
-            val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId)
-            if (palette == null) {
-                println("SKIP (no palette): $hexId $name")
-                failed++
-                continue
+            var result: RenderedFrame? = null
+            var method = ""
+
+            // Strategy 1: Dedicated boss renderer
+            renderBossPreview(rp, speciesId)?.let {
+                if (it.width > 8 && it.height > 8) { result = it; method = "boss" }
             }
 
-            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId)
-            if (tileData == null) {
-                println("SKIP (no tile data): $hexId $name")
-                failed++
-                continue
+            // Load common data for remaining strategies
+            val palette = if (result == null) EnemySpriteGraphics.readEnemyPalette(rp, speciesId) else null
+            val tileData = if (result == null) EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) else null
+
+            if (result == null && (palette == null || tileData == null)) {
+                if (result == null) {
+                    println("SKIP (no palette/tiles): $hexId $name")
+                    failed++
+                    continue
+                }
             }
 
-            val paletteRows = EnemySpriteGraphics.readEnemyPaletteRows(rp, speciesId)
+            // Strategy 2: Special enemy preview (Metroid, Suspensor Platform)
+            if (result == null && palette != null && tileData != null) {
+                smap.renderSpecialEnemyPreview(speciesId, tileData, palette)?.let { sp ->
+                    if (sp.width > 8 && sp.height > 8) { result = sp.toFrame(); method = "special" }
+                }
+            }
 
-            // Strategy 1: Special enemy preview (Metroid, Suspensor Platform)
-            var assembled = smap.renderSpecialEnemyPreview(speciesId, tileData, palette)
-            var method = "special"
-
-            // Strategy 2: Source-verified animation first frame
-            if (assembled == null || assembled.width <= 8 || assembled.height <= 8) {
-                val sourceDef = sourceAnimsBySpecies[speciesId]
-                if (sourceDef != null) {
-                    val anim = smap.buildSourceAnimation(sourceDef, tileData, palette)
-                    if (anim != null && anim.frames.isNotEmpty()) {
-                        val frame = anim.frames.first()
-                        assembled = EnemySpritemap.AssembledSprite(frame.width, frame.height, frame.pixels)
-                        method = "source-anim"
+            // Strategy 3: Source-verified animation first frame
+            if (result == null && palette != null && tileData != null) {
+                sourceAnimsBySpecies[speciesId]?.let { sourceDef ->
+                    smap.buildSourceAnimation(sourceDef, tileData, palette)?.let { anim ->
+                        if (anim.frames.isNotEmpty()) {
+                            val f = anim.frames.first()
+                            if (f.width > 8 && f.height > 8) { result = RenderedFrame(f.pixels, f.width, f.height); method = "source-anim" }
+                        }
                     }
                 }
             }
 
-            // Strategy 3: Animation system first frame (instruction list tracer)
-            if (assembled == null || assembled.width <= 8 || assembled.height <= 8) {
+            // Strategy 4: Animation system first frame
+            if (result == null && palette != null && tileData != null) {
                 val specialAnim = smap.buildSpecialEnemyAnimation(speciesId, tileData, palette, name)
                 val anim = specialAnim ?: smap.buildAnimation(speciesId, tileData, palette, name)
                 if (anim != null && anim.frames.isNotEmpty()) {
-                    val frame = anim.frames.first()
-                    assembled = EnemySpritemap.AssembledSprite(frame.pixels, frame.width, frame.height)
-                    method = "animation"
+                    val f = anim.frames.first()
+                    if (f.width > 8 && f.height > 8) { result = RenderedFrame(f.pixels, f.width, f.height); method = "animation" }
                 }
             }
 
-            // Strategy 4: Default spritemap (original fallback)
-            if (assembled == null || assembled.width <= 8 || assembled.height <= 8) {
-                val defaultSmap = smap.findDefaultSpritemap(speciesId)
-                if (defaultSmap != null) {
-                    assembled = smap.renderSpritemap(defaultSmap, tileData, palette, paletteRows)
-                    method = "default-smap"
+            // Strategy 5: Default spritemap (last resort)
+            if (result == null && palette != null && tileData != null) {
+                val paletteRows = EnemySpriteGraphics.readEnemyPaletteRows(rp, speciesId)
+                smap.findDefaultSpritemap(speciesId)?.let { defaultSmap ->
+                    smap.renderSpritemap(defaultSmap, tileData, palette, paletteRows)?.let { sp ->
+                        result = sp.toFrame(); method = "default-smap"
+                    }
                 }
             }
 
-            if (assembled == null || assembled.width == 0 || assembled.height == 0) {
+            val r = result
+            if (r == null || r.width == 0 || r.height == 0) {
                 println("SKIP (all strategies failed): $hexId $name")
                 failed++
                 continue
             }
 
-            val img = BufferedImage(assembled.width, assembled.height, BufferedImage.TYPE_INT_ARGB)
-            img.setRGB(0, 0, assembled.width, assembled.height, assembled.pixels, 0, assembled.width)
+            val img = BufferedImage(r.width, r.height, BufferedImage.TYPE_INT_ARGB)
+            img.setRGB(0, 0, r.width, r.height, r.pixels, 0, r.width)
 
             val outFile = File(outputDir, "${hexId}.png")
             ImageIO.write(img, "PNG", outFile)
-            println("OK [$method]: $hexId $name (${assembled.width}x${assembled.height})")
-            manifest.add("$hexId|$name|${entry.category}|${assembled.width}|${assembled.height}")
+            println("OK [$method]: $hexId $name (${r.width}x${r.height})")
+            manifest.add("$hexId|$name|${entry.category}|${r.width}|${r.height}")
             exported++
         }
 
-        // Write manifest
         File(outputDir, "manifest.txt").writeText(manifest.joinToString("\n"))
         println("\nExported: $exported, Failed: $failed")
     }
