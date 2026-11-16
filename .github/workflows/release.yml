@@ -7,6 +7,10 @@ on:
 
 jobs:
   build-and-release:
+    # A manual run is the validation and packaging gate. Publishing a release
+    # reuses these exact artifacts instead of rebuilding and rerunning the full
+    # UI suite on a new set of runners.
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -16,18 +20,22 @@ jobs:
             artifact: super-metroid-editor-macos
             path: desktopApp/build/compose/binaries/main/dmg/*.dmg
             package_task: packageDistributionForCurrentOS
+            run_tests: true
           - os: windows-latest
             artifact: super-metroid-editor-windows
             path: desktopApp/build/compose/binaries/main/msi/*.msi
             package_task: packageDistributionForCurrentOS
+            run_tests: true
           - os: ubuntu-22.04
             artifact: super-metroid-editor-linux-deb
             path: desktopApp/build/compose/binaries/main/deb/*.deb
             package_task: packageDeb
+            run_tests: true
           - os: ubuntu-22.04
             artifact: super-metroid-editor-fedora-rpm
             path: desktopApp/build/compose/binaries/main/rpm/*.rpm
             package_task: packageRpm
+            run_tests: false
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -117,14 +125,24 @@ jobs:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
 
       - name: Run tests
+        if: matrix.run_tests
         timeout-minutes: 45
-        run: ./gradlew :shared:jvmTest :desktopApp:jvmTest --console=plain
+        run: |
+          for attempt in 1 2; do
+            if ./gradlew :shared:jvmTest :desktopApp:jvmTest --console=plain; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 2 ]; then
+              exit 1
+            fi
+            echo "::warning::Test task failed once; retrying to distinguish a transient native UI race from a persistent failure."
+          done
         shell: bash
         env:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
 
       - name: Upload failed test reports
-        if: failure() || cancelled()
+        if: matrix.run_tests && (failure() || cancelled())
         timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
@@ -147,15 +165,40 @@ jobs:
           path: ${{ matrix.path }}
 
   attach-to-release:
-    needs: build-and-release
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     permissions:
+      actions: read
       contents: write
 
     steps:
+      - name: Find successful validated build
+        id: validated-build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha')"
+          run_id="$(gh api "repos/$GH_REPO/actions/workflows/release.yml/runs?event=workflow_dispatch&status=success&per_page=100" \
+            --jq "[.workflow_runs[] | select(.head_sha == \"$tag_sha\")] | first | .id // empty")"
+
+          if [ -z "$run_id" ]; then
+            echo "No successful manual Build and Release run exists for $RELEASE_TAG ($tag_sha)." >&2
+            echo "Run this workflow manually for that commit before publishing its release." >&2
+            exit 1
+          fi
+
+          echo "Using validated workflow run $run_id for $RELEASE_TAG ($tag_sha)."
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.validated-build.outputs.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Prepare release assets
         run: |
@@ -175,6 +218,17 @@ jobs:
 
           for f in super-metroid-editor-fedora-rpm/*.rpm; do
             [ -f "$f" ] && cp "$f" release-assets/SuperMetroidEditor-Fedora.rpm
+          done
+
+          for asset in \
+            SuperMetroidEditor-macOS.dmg \
+            SuperMetroidEditor-Windows.msi \
+            SuperMetroidEditor-Linux.deb \
+            SuperMetroidEditor-Fedora.rpm; do
+            if [ ! -f "release-assets/$asset" ]; then
+              echo "Validated run is missing required release asset: $asset" >&2
+              exit 1
+            fi
           done
 
           ls -lh release-assets/

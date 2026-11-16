@@ -70,6 +70,13 @@ class AsmRoomSourceActionsTest {
             var time = System.nanoTime()
             fun render() { repeat(12) { time += 16_666_667; scene.render(surface.canvas, time) } }
             fun field() = assertNotNull(nodes(scene).singleOrNull { it.config.contains(SemanticsProperties.EditableText) })
+            fun renderUntil(message: String, condition: () -> Boolean) {
+                repeat(20) {
+                    render()
+                    if (condition()) return
+                }
+                assertTrue(condition(), message)
+            }
             render()
             click(scene, "Edit door data…"); render()
             val planned = workspace.sourceEditorText(DOOR_SOURCE_FILE)
@@ -78,16 +85,17 @@ class AsmRoomSourceActionsTest {
             assertEquals(presented, field().config[SemanticsProperties.EditableText].text)
             assertTrue(nodes(scene).none { text(it) == "Create editable source" })
             val cursor = presented.indexOf("dw ${'$'}0000 ; Distance") + 4
-            // Establish BasicTextField focus in its own frame before setting
-            // the selection. Native editing can otherwise restore its old
-            // caret after SetSelection on a cold macOS runner.
-            assertTrue(field().config[SemanticsActions.OnClick].action!!.invoke())
-            render()
+            // Wait until BasicTextField's native editing processor owns focus
+            // before changing selection. A click action can be accepted while
+            // a cold macOS runner is still restoring its previous caret.
+            assertTrue(field().config[SemanticsActions.RequestFocus].action!!.invoke())
+            renderUntil("ASM source field did not receive focus") {
+                field().config.getOrNull(SemanticsProperties.Focused) == true
+            }
             assertTrue(field().config[SemanticsActions.SetSelection].action!!.invoke(cursor, cursor + 4, false))
-            render()
-            val selectedDistance = field().config[SemanticsProperties.TextSelectionRange]
-            assertEquals(cursor, selectedDistance.start)
-            assertEquals(cursor + 4, selectedDistance.end)
+            renderUntil("ASM source field did not retain the requested Distance selection") {
+                field().config[SemanticsProperties.TextSelectionRange].let { it.start == cursor && it.end == cursor + 4 }
+            }
             assertEquals(model, Json.encodeToString(SmEditProject.serializer(), project))
             assertEquals(source, workspace.projectSourceText(DOOR_SOURCE_FILE)); assertEquals(revision, workspace.sourceBufferRevision)
             val edited = planned.replace("dw ${'$'}0000 ; Distance", "dw ${'$'}1234 ; Distance")

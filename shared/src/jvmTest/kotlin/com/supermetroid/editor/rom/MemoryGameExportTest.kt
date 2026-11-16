@@ -7,6 +7,34 @@ import javax.imageio.ImageIO
 
 private data class RenderedFrame(val pixels: IntArray, val width: Int, val height: Int)
 
+/** Trim fully transparent rows/columns from a rendered frame. */
+private fun RenderedFrame.trimTransparent(padding: Int = 1): RenderedFrame {
+    var left = width; var top = height; var right = 0; var bottom = 0
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            if ((pixels[y * width + x] ushr 24) != 0) {
+                if (x < left) left = x
+                if (x > right) right = x
+                if (y < top) top = y
+                if (y > bottom) bottom = y
+            }
+        }
+    }
+    if (left > right || top > bottom) return this
+    left = (left - padding).coerceAtLeast(0)
+    top = (top - padding).coerceAtLeast(0)
+    right = (right + padding).coerceAtMost(width - 1)
+    bottom = (bottom + padding).coerceAtMost(height - 1)
+    val newW = right - left + 1
+    val newH = bottom - top + 1
+    if (newW == width && newH == height) return this
+    val newPixels = IntArray(newW * newH)
+    for (y in 0 until newH) {
+        System.arraycopy(pixels, (top + y) * width + left, newPixels, y * newW, newW)
+    }
+    return RenderedFrame(newPixels, newW, newH)
+}
+
 /**
  * Export enemy sprites and item-room data for the Super Metroid memory game.
  * Run with SMEDIT_TEST_ROM and JDK 17:
@@ -111,6 +139,12 @@ class MemoryGameExportTest {
             }
         }
 
+        // Species where the animation strategy picks a bad frame; force default spritemap instead
+        val forceDefaultSmap = setOf(
+            0xE6FF, // Fune - animation frame has huge sparse bounds
+            0xE73F, // Namihe - same issue as Fune
+        )
+
         var exported = 0
         var failed = 0
         val manifest = mutableListOf<String>()
@@ -140,15 +174,18 @@ class MemoryGameExportTest {
                 }
             }
 
+            // For enemies in the force list, skip animation strategies entirely
+            val useAnimations = speciesId !in forceDefaultSmap
+
             // Strategy 2: Special enemy preview (Metroid, Suspensor Platform)
-            if (result == null && palette != null && tileData != null) {
+            if (result == null && palette != null && tileData != null && useAnimations) {
                 smap.renderSpecialEnemyPreview(speciesId, tileData, palette)?.let { sp ->
                     if (sp.width > 8 && sp.height > 8) { result = sp.toFrame(); method = "special" }
                 }
             }
 
             // Strategy 3: Source-verified animation first frame
-            if (result == null && palette != null && tileData != null) {
+            if (result == null && palette != null && tileData != null && useAnimations) {
                 sourceAnimsBySpecies[speciesId]?.let { sourceDef ->
                     smap.buildSourceAnimation(sourceDef, tileData, palette)?.let { anim ->
                         if (anim.frames.isNotEmpty()) {
@@ -160,7 +197,7 @@ class MemoryGameExportTest {
             }
 
             // Strategy 4: Animation system first frame
-            if (result == null && palette != null && tileData != null) {
+            if (result == null && palette != null && tileData != null && useAnimations) {
                 val specialAnim = smap.buildSpecialEnemyAnimation(speciesId, tileData, palette, name)
                 val anim = specialAnim ?: smap.buildAnimation(speciesId, tileData, palette, name)
                 if (anim != null && anim.frames.isNotEmpty()) {
@@ -179,7 +216,7 @@ class MemoryGameExportTest {
                 }
             }
 
-            val r = result
+            val r = result?.trimTransparent()
             if (r == null || r.width == 0 || r.height == 0) {
                 println("SKIP (all strategies failed): $hexId $name")
                 failed++
