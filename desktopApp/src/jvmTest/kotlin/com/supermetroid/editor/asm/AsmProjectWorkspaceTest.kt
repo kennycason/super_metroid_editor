@@ -1,7 +1,9 @@
 package com.supermetroid.editor.asm
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -944,6 +946,52 @@ class AsmProjectWorkspaceTest {
         assertFalse(File(deleted.root, "modules/.disabled").exists())
         assertEquals(listOf(renamedId), requireNotNull(repository.load(projectFile.absolutePath)).projectModuleFileIds)
         assertEquals(setOf(renamedId), repository.sourceOverrideFileIds(projectFile.absolutePath))
+    }
+
+    @Test
+    fun `module mutations wait for the project source transaction lock`() = runBlocking {
+        val repository = AsmProjectWorkspaceRepository(emptyList(), starterModules = emptyList())
+        val projectFile = File(tempDirectory, "Locked modules.smedit").apply { writeText("{}") }
+        repository.initialize(projectFile.path, fakeReference(emptyList()))
+        val (_, moduleId) = repository.createModule(projectFile.path, "before")
+
+        suspend fun <T> assertWaitsForSourceLock(mutation: () -> T): T {
+            val lockEntered = CompletableDeferred<Unit>()
+            val releaseLock = CompletableDeferred<Unit>()
+            val holder = launch(Dispatchers.IO) {
+                repository.withBaselineUpdateLock(projectFile.path) {
+                    lockEntered.complete(Unit)
+                    runBlocking { releaseLock.await() }
+                }
+            }
+            lockEntered.await()
+            val result = async(Dispatchers.IO) { mutation() }
+            try {
+                delay(100)
+                assertFalse(result.isCompleted, "module mutation escaped the per-project source lock")
+            } finally {
+                releaseLock.complete(Unit)
+            }
+            holder.join()
+            return result.await()
+        }
+
+        val (workspace, renamedId) = assertWaitsForSourceLock {
+            repository.updateModuleSettings(projectFile.path, moduleId, "after", "locked update")
+        }
+        assertEquals("project/after.asm", renamedId)
+        assertEquals(listOf(renamedId), workspace.projectModuleFileIds)
+
+        val disabled = assertWaitsForSourceLock {
+            repository.setModuleEnabled(projectFile.path, renamedId, enabled = false)
+        }
+        assertEquals(setOf(renamedId), disabled.disabledProjectModuleFileIds)
+
+        val (_, secondId) = repository.createModule(projectFile.path, "second")
+        val reordered = assertWaitsForSourceLock {
+            repository.moveModule(projectFile.path, secondId, -1)
+        }
+        assertEquals(listOf(secondId, renamedId), reordered.projectModuleFileIds)
     }
 
     @Test

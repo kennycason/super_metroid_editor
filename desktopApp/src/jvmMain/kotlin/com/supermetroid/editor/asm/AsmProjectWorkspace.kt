@@ -807,10 +807,14 @@ internal class AsmProjectWorkspaceRepository(
         } to fileId
     }
 
-    fun renameModule(projectFilePath: String, fileId: String, requestedName: String): Pair<AsmProjectWorkspace, String> {
+    fun renameModule(
+        projectFilePath: String,
+        fileId: String,
+        requestedName: String,
+    ): Pair<AsmProjectWorkspace, String> = withSourceLock(projectFilePath) {
         val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
         val source = resolveProjectModule(File(current.root, MODULES_DIRECTORY), fileId)
-        return updateModuleSettings(
+        updateModuleSettings(
             projectFilePath = projectFilePath,
             fileId = fileId,
             requestedName = requestedName,
@@ -823,7 +827,7 @@ internal class AsmProjectWorkspaceRepository(
         fileId: String,
         requestedName: String,
         description: String,
-    ): Pair<AsmProjectWorkspace, String> {
+    ): Pair<AsmProjectWorkspace, String> = withSourceLock(projectFilePath) {
         val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
         require(isProjectModuleFileId(fileId)) { "Not a project ASM module: $fileId" }
         val managedOwners = AsmManagedAssets.load(current.root).assets.filter { it.sourceFileId == fileId }
@@ -856,7 +860,7 @@ internal class AsmProjectWorkspaceRepository(
         writeDisabledModules(modulesDirectory, disabled)
         syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))
         val newFileId = ASM_PROJECT_MODULE_PREFIX + newName
-        return checkNotNull(load(projectFilePath)) {
+        checkNotNull(load(projectFilePath)) {
             "Project ASM workspace did not validate after updating $oldName"
         } to newFileId
     }
@@ -927,40 +931,42 @@ internal class AsmProjectWorkspaceRepository(
         }
     }
 
-    fun moveModule(projectFilePath: String, fileId: String, offset: Int): AsmProjectWorkspace {
-        require(offset == -1 || offset == 1) { "Module order offset must be -1 or 1" }
-        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
-        require(isProjectModuleFileId(fileId)) { "Not a project ASM module: $fileId" }
-        val modulesDirectory = File(current.root, MODULES_DIRECTORY)
-        val fileName = fileId.removePrefix(ASM_PROJECT_MODULE_PREFIX)
-        val order = readModuleOrder(modulesDirectory).toMutableList()
-        val index = order.indexOf(fileName)
-        require(index >= 0) { "Project ASM module is missing from its order: $fileId" }
-        val destination = (index + offset).coerceIn(order.indices)
-        if (destination != index) {
-            order[index] = order[destination]
-            order[destination] = fileName
-            writeModuleOrder(modulesDirectory, order)
-            syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))
+    fun moveModule(projectFilePath: String, fileId: String, offset: Int): AsmProjectWorkspace =
+        withSourceLock(projectFilePath) {
+            require(offset == -1 || offset == 1) { "Module order offset must be -1 or 1" }
+            val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
+            require(isProjectModuleFileId(fileId)) { "Not a project ASM module: $fileId" }
+            val modulesDirectory = File(current.root, MODULES_DIRECTORY)
+            val fileName = fileId.removePrefix(ASM_PROJECT_MODULE_PREFIX)
+            val order = readModuleOrder(modulesDirectory).toMutableList()
+            val index = order.indexOf(fileName)
+            require(index >= 0) { "Project ASM module is missing from its order: $fileId" }
+            val destination = (index + offset).coerceIn(order.indices)
+            if (destination != index) {
+                order[index] = order[destination]
+                order[destination] = fileName
+                writeModuleOrder(modulesDirectory, order)
+                syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))
+            }
+            checkNotNull(load(projectFilePath)) { "Project ASM workspace did not validate after reordering $fileName" }
         }
-        return checkNotNull(load(projectFilePath)) { "Project ASM workspace did not validate after reordering $fileName" }
-    }
 
-    fun setModuleEnabled(projectFilePath: String, fileId: String, enabled: Boolean): AsmProjectWorkspace {
-        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
-        require(isProjectModuleFileId(fileId)) { "Not a project ASM module: $fileId" }
-        val modulesDirectory = File(current.root, MODULES_DIRECTORY)
-        val fileName = fileId.removePrefix(ASM_PROJECT_MODULE_PREFIX)
-        val order = readModuleOrder(modulesDirectory)
-        require(fileName in order) { "Project ASM module is missing from its order: $fileId" }
-        val disabled = readDisabledModules(modulesDirectory, order).toMutableSet()
-        if (enabled) disabled.remove(fileName) else disabled.add(fileName)
-        writeDisabledModules(modulesDirectory, order.filterTo(linkedSetOf(), disabled::contains))
-        syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))
-        return checkNotNull(load(projectFilePath)) {
-            "Project ASM workspace did not validate after ${if (enabled) "enabling" else "disabling"} $fileName"
+    fun setModuleEnabled(projectFilePath: String, fileId: String, enabled: Boolean): AsmProjectWorkspace =
+        withSourceLock(projectFilePath) {
+            val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
+            require(isProjectModuleFileId(fileId)) { "Not a project ASM module: $fileId" }
+            val modulesDirectory = File(current.root, MODULES_DIRECTORY)
+            val fileName = fileId.removePrefix(ASM_PROJECT_MODULE_PREFIX)
+            val order = readModuleOrder(modulesDirectory)
+            require(fileName in order) { "Project ASM module is missing from its order: $fileId" }
+            val disabled = readDisabledModules(modulesDirectory, order).toMutableSet()
+            if (enabled) disabled.remove(fileName) else disabled.add(fileName)
+            writeDisabledModules(modulesDirectory, order.filterTo(linkedSetOf(), disabled::contains))
+            syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))
+            checkNotNull(load(projectFilePath)) {
+                "Project ASM workspace did not validate after ${if (enabled) "enabling" else "disabling"} $fileName"
+            }
         }
-    }
 
     private fun referenceWorkspace(root: File, metadata: AsmReferenceMetadata, fileIds: Set<String>? = null,
                                    ranges: List<AsmAssetRange> = assetRanges): AsmReferenceWorkspace {
