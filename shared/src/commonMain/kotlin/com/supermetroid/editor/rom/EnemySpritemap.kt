@@ -478,6 +478,11 @@ class EnemySpritemap(private val romParser: RomParser) {
             }
             SUSPENSOR_PLATFORM_SPECIES_ID ->
                 findSpecialPreviewSpritemap(speciesId)?.let { renderSpritemap(it, tileData, palette) }
+            ZEBETITE_SPECIES_ID -> findDefaultSpritemap(speciesId)
+                ?.let { renderSpritemap(it, tileData, palette) }
+                ?.let(::composeZebetitePreview)
+            DRAGON_SPECIES_ID -> renderDragonIdlePreview(tileData, palette)
+            BANG_SPECIES_ID -> renderBangIdlePreview(tileData, palette)
             else -> null
         }
 
@@ -493,8 +498,195 @@ class EnemySpritemap(private val romParser: RomParser) {
                 else renderer.renderAnimation(MetroidSpritemap.ANIMATIONS.first())?.copy(name = enemyName)
             }
             SUSPENSOR_PLATFORM_SPECIES_ID -> buildSuspensorPlatformAnimation(tileData, palette, enemyName)
+            BANG_SPECIES_ID -> buildBangDischargeAnimation(tileData, palette, enemyName)
             else -> null
         }
+
+    /** Dragon occupies paired body and wing slots even while idling. */
+    private fun renderDragonIdlePreview(
+        tileData: ByteArray,
+        palette: IntArray,
+    ): AssembledSprite? {
+        val body = traceRenderedLayer(DRAGON_BODY_IDLE_LIST, 1, tileData, palette)?.firstOrNull()?.second
+        val wings = traceRenderedLayer(DRAGON_WINGS_IDLE_LIST, 1, tileData, palette)?.firstOrNull()?.second
+        return composeAssembledSprites(listOf(wings, body))
+    }
+
+    /**
+     * Bang is three adjacent enemy slots at runtime: electricity, core, and shell.
+     * The ordinary preview must therefore assemble the two visible idle slots instead
+     * of presenting one of their alternating half-spritemaps as the whole enemy.
+     */
+    private fun renderBangIdlePreview(
+        tileData: ByteArray,
+        palette: IntArray,
+    ): AssembledSprite? {
+        val core = traceRenderedLayer(BANG_CORE_IDLE_LIST, 1, tileData, palette)?.firstOrNull()?.second
+        val shell = traceRenderedLayer(BANG_SHELL_IDLE_LIST, 1, tileData, palette)?.firstOrNull()?.second
+        // Shell is the later enemy slot. Draw it first so the lower-index core slot
+        // retains the same overlap priority it has in SNES OAM.
+        return composeAssembledSprites(listOf(shell, core))
+    }
+
+    /**
+     * Zebetite OAM is only the animated red core and its two thin rails. The
+     * familiar metallic ends are foreground tiles in Mother Brain's room. Crop
+     * those source-owned caps from the room renderer and attach them to every
+     * health-state pose so the sprite workspace shows the in-game composite.
+     */
+    private fun composeZebetitePreview(core: AssembledSprite): AssembledSprite {
+        val casing = zebetiteCasing ?: return core
+        val width = ZEBETITE_CASING_WIDTH
+        val height = core.height + ZEBETITE_CAP_HEIGHT * 2
+        val pixels = IntArray(width * height)
+
+        fun copyCap(cap: IntArray, destinationY: Int) {
+            cap.forEachIndexed { index, color ->
+                // MapRenderer has an opaque room backdrop; the preview canvas
+                // should retain the normal transparent checkerboard around caps.
+                if (color != RomConstants.ROM_BG_COLOR) {
+                    val x = index % width
+                    val y = index / width
+                    pixels[(destinationY + y) * width + x] = color
+                }
+            }
+        }
+
+        copyCap(casing.top, 0)
+        val coreLeft = (width - core.width) / 2
+        for (y in 0 until core.height) for (x in 0 until core.width) {
+            val color = core.pixels[y * core.width + x]
+            if (color ushr 24 != 0) {
+                pixels[(y + ZEBETITE_CAP_HEIGHT) * width + coreLeft + x] = color
+            }
+        }
+        copyCap(casing.bottom, height - ZEBETITE_CAP_HEIGHT)
+
+        return AssembledSprite(
+            width = width,
+            height = height,
+            pixels = pixels,
+            originX = width / 2,
+            originY = core.originY + ZEBETITE_CAP_HEIGHT,
+            spritemap = core.spritemap,
+        )
+    }
+
+    private data class ZebetiteCasing(val top: IntArray, val bottom: IntArray)
+
+    private val zebetiteCasing: ZebetiteCasing? by lazy {
+        val room = romParser.readRoomHeader(MOTHER_BRAIN_ROOM_ID) ?: return@lazy null
+        val render = MapRenderer(romParser).renderRoom(room) ?: return@lazy null
+        if (render.width < ZEBETITE_CASING_X + ZEBETITE_CASING_WIDTH ||
+            render.height < ZEBETITE_BOTTOM_CAP_Y + ZEBETITE_CAP_HEIGHT) return@lazy null
+
+        fun crop(y: Int) = IntArray(ZEBETITE_CASING_WIDTH * ZEBETITE_CAP_HEIGHT) { index ->
+            val x = index % ZEBETITE_CASING_WIDTH
+            val dy = index / ZEBETITE_CASING_WIDTH
+            render.pixels[(y + dy) * render.width + ZEBETITE_CASING_X + x]
+        }
+        ZebetiteCasing(crop(ZEBETITE_TOP_CAP_Y), crop(ZEBETITE_BOTTOM_CAP_Y))
+    }
+
+    /**
+     * Reproduce Bang's full-growth discharge from its three independently timed
+     * native instruction lists. Frame boundaries are the union of all three lists,
+     * so sparks do not get stretched to the core/shell cadence.
+     */
+    private fun buildBangDischargeAnimation(
+        tileData: ByteArray,
+        palette: IntArray,
+        enemyName: String,
+    ): SpriteAnimation? {
+        val core = traceRenderedLayer(BANG_CORE_GROWING_LIST, 7, tileData, palette) ?: return null
+        val shell = traceRenderedLayer(BANG_SHELL_GROWING_LIST, 7, tileData, palette) ?: return null
+        val electricity = traceRenderedLayer(BANG_ELECTRICITY_LIST, 14, tileData, palette) ?: return null
+        val layers = listOf(shell, core, electricity)
+        val totalTicks = layers.maxOf { layer -> layer.sumOf { it.first } }
+        val boundaries = buildSet {
+            add(0)
+            add(totalTicks)
+            layers.forEach { layer ->
+                var elapsed = 0
+                layer.forEach { (duration, _) ->
+                    elapsed += duration
+                    if (elapsed < totalTicks) add(elapsed)
+                }
+            }
+        }.sorted()
+
+        fun spriteAt(layer: List<Pair<Int, AssembledSprite?>>, tick: Int): AssembledSprite? {
+            var elapsed = 0
+            layer.forEach { (duration, sprite) ->
+                elapsed += duration
+                if (tick < elapsed) return sprite
+            }
+            // A sleeping instruction list continues displaying its final spritemap.
+            return layer.lastOrNull()?.second
+        }
+
+        val composed = boundaries.zipWithNext().mapNotNull { (start, end) ->
+            val sprite = composeAssembledSprites(layers.map { spriteAt(it, start) }) ?: return@mapNotNull null
+            (end - start) to sprite
+        }
+        if (composed.isEmpty()) return null
+        return anchoredSpriteAnimation("$enemyName · full-growth discharge", composed, loop = true)
+    }
+
+    private fun traceRenderedLayer(
+        instructionList: Int,
+        expectedFrames: Int,
+        tileData: ByteArray,
+        palette: IntArray,
+    ): List<Pair<Int, AssembledSprite?>>? {
+        val trace = traceInstructionList(instructionList, expectedFrames)
+        if (trace.termination == InstructionTraceTermination.UNSUPPORTED_HANDLER ||
+            trace.termination == InstructionTraceTermination.INVALID_DATA ||
+            trace.frames.size != expectedFrames
+        ) return null
+        return trace.frames.map { frame ->
+            frame.duration to if (frame.spritemap.entries.isEmpty()) {
+                null
+            } else {
+                renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return null
+            }
+        }
+    }
+
+    /** Layers are supplied from back to front in painter order. */
+    private fun composeAssembledSprites(layers: List<AssembledSprite?>): AssembledSprite? {
+        val sprites = layers.filterNotNull()
+        if (sprites.isEmpty()) return null
+        val minX = sprites.minOf { -it.originX }
+        val minY = sprites.minOf { -it.originY }
+        val maxX = sprites.maxOf { it.width - it.originX }
+        val maxY = sprites.maxOf { it.height - it.originY }
+        val width = maxX - minX
+        val height = maxY - minY
+        if (width <= 0 || height <= 0) return null
+
+        val pixels = IntArray(width * height)
+        sprites.forEach { sprite ->
+            for (y in 0 until sprite.height) for (x in 0 until sprite.width) {
+                val color = sprite.pixels[y * sprite.width + x]
+                if (color ushr 24 == 0) continue
+                val dx = x - sprite.originX - minX
+                val dy = y - sprite.originY - minY
+                if (dx in 0 until width && dy in 0 until height) pixels[dy * width + dx] = color
+            }
+        }
+        return AssembledSprite(
+            width = width,
+            height = height,
+            pixels = pixels,
+            originX = -minX,
+            originY = -minY,
+            spritemap = Spritemap(
+                entries = sprites.flatMap { it.spritemap.entries },
+                snesAddress = sprites.first().spritemap.snesAddress,
+            ),
+        )
+    }
 
     /**
      * Find the direction table address from the init function, if one exists.
@@ -1022,10 +1214,28 @@ class EnemySpritemap(private val romParser: RomParser) {
 
     companion object {
         fun hasSpecialEnemyPreview(speciesId: Int): Boolean =
-            speciesId == METROID_SPECIES_ID || speciesId == SUSPENSOR_PLATFORM_SPECIES_ID
+            speciesId == METROID_SPECIES_ID || speciesId == SUSPENSOR_PLATFORM_SPECIES_ID ||
+                speciesId == DRAGON_SPECIES_ID || speciesId == BANG_SPECIES_ID ||
+                speciesId == ZEBETITE_SPECIES_ID
 
         private const val METROID_SPECIES_ID = 0xDD7F
         private const val SUSPENSOR_PLATFORM_SPECIES_ID = 0xD83F
+        private const val DRAGON_SPECIES_ID = 0xD4BF
+        private const val BANG_SPECIES_ID = 0xDB3F
+        private const val ZEBETITE_SPECIES_ID = 0xE27F
+        private const val MOTHER_BRAIN_ROOM_ID = 0xDD58
+        private const val ZEBETITE_CASING_X = 0x330
+        private const val ZEBETITE_CASING_WIDTH = 16
+        private const val ZEBETITE_TOP_CAP_Y = 0x50
+        private const val ZEBETITE_BOTTOM_CAP_Y = 0x88
+        private const val ZEBETITE_CAP_HEIGHT = 8
+        private const val DRAGON_BODY_IDLE_LIST = 0xA2E59B
+        private const val DRAGON_WINGS_IDLE_LIST = 0xA2E5A1
+        private const val BANG_CORE_IDLE_LIST = 0xA3B85A
+        private const val BANG_CORE_GROWING_LIST = 0xA3B88A
+        private const val BANG_SHELL_IDLE_LIST = 0xA3B9A8
+        private const val BANG_SHELL_GROWING_LIST = 0xA3B9D8
+        private const val BANG_ELECTRICITY_LIST = 0xA3BA00
         private const val EXTENDED_TILEMAP_BASE_DEST = 0x2000
         private const val MAX_INTERPRETER_OPERATIONS = 512
 
@@ -1034,13 +1244,21 @@ class EnemySpritemap(private val romParser: RomParser) {
          * are deliberately narrow until additional init-AI paths are modeled.
          */
         private val SOURCE_VERIFIED_DEFAULT_INSTRUCTION_LISTS = mapOf(
+            0xCEBF to 0xA286AB, // Boyon: idle list after the one-time setup handlers
             0xCFBF to 0xA299AD, // Puyo: init calls SetPuyoInstList with grounded/fast
             0xD03F to 0xA2A3AD, // Owtch: left setup list falls through here
+            0xD33F to 0xA2C61C, // Holtz: visible body idle loop (not its flame companion)
             0xD3BF to 0xA2D82C, // Choot: init calls SetChootInstList with idle
+            0xD4BF to 0xA2E59B, // Dragon: main body idle, facing left
             0xD73F to 0xA394D6, // Elevator: global standard sprite tiles
             0xD87F to 0xA3A071, // Sbug/roach: direction is selected through a runtime table
             0xD8BF to 0xA3A071, // Sbug/roach alternate VRAM layout, same visual lists
+            0xD8FF to 0xA3A745, // Mochtroid: free-floating loop
             0xD93F to 0xA3AA82, // Sidehopper, landed upside-up (init0 = 0)
+            0xD97F to 0xA3AFAD, // Dessgeega, landed upside-up (variant index 3)
+            0xD9BF to 0xA3B0D1, // Large Sidehopper, landed upside-up
+            0xD9FF to 0xA3B0D1, // Tourian/invincible Large Sidehopper, shared visual list
+            0xDA3F to 0xA3B23F, // Large Dessgeega, landed upside-up
             0xDCFF to 0xA3E25C, // Zoomer, upside-right (init orientation = 0)
             0xE63F to 0xA886A7, // Evir body: facing is selected relative to Samus
             0xE67F to 0xA8876F, // Evir projectile: normal/attached pose
@@ -1054,6 +1272,8 @@ class EnemySpritemap(private val romParser: RomParser) {
             0xEBFF to 0xA8EA4E, // Kihunter gold wings: shared wing animation data
             0xE1FF to 0xA6F061, // Ceres steam, visible up animation
             0xE27F to 0xA6FDCC, // Big zebetite, HP >= 800
+            0xE8FF to 0xA8C6E5, // Powered work robot: native initial standing pose
+            0xE93F to 0xA8C6D3, // Deactivated work robot: neutral pose selected by init0 = 0
             0xECBF to 0xA9CFA2, // Baby Metroid cutscene, initial animation
             0xECFF to 0xA98C69, // Mother Brain falling tubes, bottom-left
             0xED7F to 0xA9ECE3, // Sidehopper corpse: initially alive, idle (parameter 1 = 0)
@@ -1070,6 +1290,18 @@ class EnemySpritemap(private val romParser: RomParser) {
          * tracer can fall through into the adjacent labeled action.
          */
         private val SOURCE_VERIFIED_DEFAULT_FRAME_COUNTS = mapOf(
+            0xCEBF to 4,
+            0xD33F to 4,
+            0xD4BF to 1,
+            0xD8FF to 4,
+            0xD93F to 4,
+            0xD97F to 4,
+            0xD9BF to 4,
+            0xD9FF to 4,
+            0xDA3F to 4,
+            0xE27F to 1,
+            0xE8FF to 1,
+            0xE93F to 1,
             0xEABF to 3,
             0xEAFF to 3,
             0xEB3F to 3,
@@ -1082,6 +1314,12 @@ class EnemySpritemap(private val romParser: RomParser) {
         private val SOURCE_VERIFIED_LINEAR_HANDLERS = mapOf(
             0xA3AA68 to 2, // Sidehopper: queue sound [[Y]]
             0xA3AAFE to 0, // Sidehopper: ready to hop
+            0xA3BA78 to 0, // Bang: queue acquired-suit sound
+            0xA3BAA8 to 0, // Bang: finished-growing flag = 1
+            0xA2C6D2 to 0, // Holtz: animation finished flag = 1
+            0xA2C6DD to 0, // Holtz: hide flame companion
+            0xA2C6E8 to 0, // Holtz: show flame companion
+            0xA2E5FB to 0, // Dragon: animation finished flag = 1
             0xA3E660 to 2, // Crawler/Zoomer: function = [[Y]]
             0xA6F11D to 0, // Ceres steam: intangible and invisible
             0xA6F135 to 0, // Ceres steam: tangible and visible
@@ -1102,6 +1340,16 @@ class EnemySpritemap(private val romParser: RomParser) {
             0xA8F67F to 0, // Kihunter: finish landing / acid animation
             0xA8F6D2 to 0, // Kihunter: fire acid facing left
             0xA8F6D8 to 0, // Kihunter: fire acid facing right
+            0xA8CD09 to 0, // Work robot: move left, handling wall/fall
+            0xA8CECF to 0, // Work robot: move right, handling wall/fall
+            0xA8D091 to 0, // Work robot: play movement sound if on screen
+            0xA8D0C6 to 0, // Work robot: try shooting down-right
+            0xA8D0D2 to 0, // Work robot: try shooting up-left
+            0xA8D100 to 0, // Work robot: try shooting right
+            0xA8D107 to 0, // Work robot: try shooting left
+            0xA8D131 to 0, // Work robot: try shooting down-left
+            0xA8D13D to 0, // Work robot: go to the left-facing walking list
+            0xA8D16B to 0, // Work robot: try shooting up-right
             0xB2FCB8 to 2, // Walking pirate: function = [[Y]]
         )
 
@@ -1408,10 +1656,13 @@ class EnemySpritemap(private val romParser: RomParser) {
         return null
     }
 
-    private fun parseRenderableSpritemap(snesAddr: Int): Pair<RenderableFrame, Spritemap>? {
+    private fun parseRenderableSpritemap(
+        snesAddr: Int,
+        allowEmpty: Boolean = false,
+    ): Pair<RenderableFrame, Spritemap>? {
         val frame = parseRenderableFrame(snesAddr) ?: return null
         val flattened = flattenRenderableFrame(frame)
-        if (flattened.entries.isEmpty()) return null
+        if (!allowEmpty && flattened.entries.isEmpty()) return null
         return frame to flattened
     }
 
@@ -1524,7 +1775,12 @@ class EnemySpritemap(private val romParser: RomParser) {
                     trace.termination == InstructionTraceTermination.INVALID_DATA ||
                     trace.frames.size != expectedFrames) return null
                 trace.frames.forEachIndexed { frameIndex, frame ->
-                    val sprite = renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return null
+                    val rawSprite = renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return null
+                    val sprite = if (definition.speciesId == ZEBETITE_SPECIES_ID) {
+                        composeZebetitePreview(rawSprite)
+                    } else {
+                        rawSprite
+                    }
                     val context = contextSprites.getOrNull(actionFrameIndex % contextSprites.size.coerceAtLeast(1))
                     val layers = if (context == null) {
                         listOf(sprite)
@@ -1634,7 +1890,7 @@ class EnemySpritemap(private val romParser: RomParser) {
                 val spritemapPointer = wordAt(bank or (((address and 0xFFFF) + 2) and 0xFFFF))
                     ?: return finish(InstructionTraceTermination.INVALID_DATA)
                 val spritemapAddress = bank or spritemapPointer
-                val (renderable, flattened) = parseRenderableSpritemap(spritemapAddress)
+                val (renderable, flattened) = parseRenderableSpritemap(spritemapAddress, allowEmpty = true)
                     ?: return finish(InstructionTraceTermination.INVALID_DATA)
                 frames += AnimationFrame(opcode, flattened, renderable)
                 advance(4)

@@ -129,10 +129,11 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private const val BABY_METROID_TILES_SIZE = 0x0C00
         private const val CORPSE_COMMON_TILES_SNES = 0xB7C000
         private const val CORPSE_COMMON_TILES_SIZE = 0x0E00
-        private const val COMMON_SPRITE_PALETTE_2_SNES = 0x9A8140
+        private const val RINKA_ZEBETITE_TILES_SIZE = 0x0520
         private const val COMMON_SPRITE_PALETTE_5_SNES = 0x9A81A0
 
         private const val ELEVATOR_SPECIES_ID = 0xD73F
+        private const val RINKA_SPECIES_ID = 0xD23F
         private const val CERES_STEAM_SPECIES_ID = 0xE1FF
         private const val ZEBETITE_SPECIES_ID = 0xE27F
         private const val MOTHER_BRAIN_HEAD_SPECIES_ID = 0xEC3F
@@ -302,7 +303,7 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             0xD4FF, 0xD53F, 0xD57F, 0xD5BF, 0xD5FF, 0xF0BF,
             // Additional independently renderable species, previously absent from the picker.
             0xD73F, 0xD8FF, 0xE1FF, 0xE23F, 0xF0FF, 0xF2D3, 0xF313,
-            0xEDFF, 0xEE3F, 0xEE7F, 0xEFFF,
+            0xEDFF, 0xEE3F, 0xEE7F,
         )
 
         val EDITOR_ENEMIES: List<EnemySpriteEntry> = EDITOR_ENEMY_IDS.map { id ->
@@ -342,8 +343,10 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
 
         /**
          * Resolve the palette that is actually present when the species is
-         * drawn. Elevator, Ceres steam, and zebetites bypass the palette field
-         * in their headers and select already-loaded global sprite rows in AI.
+         * drawn. Elevator and Ceres steam select a global sprite row in AI.
+         * Zebetites select row 2 after Mother Brain's enemy set has loaded the
+         * Rinka/Polyp palette into that row; their palette animation then cycles
+         * the same two red entries already present in the first phase.
          */
         fun loadEnemyPreviewPaletteSource(
             romParser: RomParser,
@@ -356,16 +359,23 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
                     "Common sprite palette 5",
                     EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
                 )
-                ZEBETITE_SPECIES_ID -> Triple(
-                    COMMON_SPRITE_PALETTE_2_SNES,
-                    "Common sprite palette 2",
-                    EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
-                )
                 else -> null
             }
             if (global != null) {
                 val colors = readPaletteAt(romParser, global.first) ?: return null
                 return EnemyPreviewPaletteSource(colors, global.first, global.second, global.third)
+            }
+
+            if ((speciesId and 0xFFFF) == ZEBETITE_SPECIES_ID) {
+                val rinka = readSpeciesHeader(romParser, RINKA_SPECIES_ID) ?: return null
+                val address = (rinka.aiBank shl 16) or rinka.palettePointer
+                val colors = readPaletteAt(romParser, address) ?: return null
+                return EnemyPreviewPaletteSource(
+                    colors = colors,
+                    snesAddress = address,
+                    label = "Rinka/Polyp palette loaded in Mother Brain's room",
+                    ownership = EnemyPreviewAssetOwnership.SHARED_SPECIES,
+                )
             }
 
             val header = readSpeciesHeader(romParser, speciesId) ?: return null
@@ -586,7 +596,23 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
                     "Standard sprite tiles",
                     EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
                 )
-                ZEBETITE_SPECIES_ID,
+                ZEBETITE_SPECIES_ID -> {
+                    // The zero-size Zebetite header's GRAPHADR is never transferred.
+                    // In Mother Brain's room, the $1000-byte head sheet is followed by
+                    // the Rinka/Polyp sheet. Init then forces GFXOffset=$80, making
+                    // Zebetite OAM tile $10C resolve to Rinka/Polyp source tile $0C.
+                    // That OAM draws only the animated core and rails; the room layer
+                    // supplies the metallic caps assembled by EnemySpritemap.
+                    val rinka = readSpeciesHeader(romParser, RINKA_SPECIES_ID) ?: return null
+                    rawPreviewSource(
+                        romParser,
+                        rinka.tileDataAddress,
+                        RINKA_ZEBETITE_TILES_SIZE,
+                        "Rinka/Polyp tiles at Zebetite runtime offset",
+                        EnemyPreviewAssetOwnership.SHARED_SPECIES,
+                        RINKA_SPECIES_ID,
+                    )
+                }
                 MOTHER_BRAIN_TUBES_SPECIES_ID -> rawPreviewSource(
                     romParser,
                     MOTHER_BRAIN_HEAD_TILES_SNES,

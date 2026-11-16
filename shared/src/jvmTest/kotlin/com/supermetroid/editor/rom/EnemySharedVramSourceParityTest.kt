@@ -183,10 +183,10 @@ class EnemySharedVramSourceParityTest {
                 0xA6F061, "InstList_CeresSteam_Up_2", 8,
             ),
             Contract(
-                0xE27F, 0xB78000, 0x1000, listOf("Tiles_MotherBrainHead"),
-                EnemyPreviewAssetOwnership.SHARED_SPECIES, 0xEC3F, false,
-                0x9A8140, "Initial_Palette_spritePalette2",
-                EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
+                0xE27F, 0xAEB800, 0x0520, listOf("Tiles_Polyp_Rinka"),
+                EnemyPreviewAssetOwnership.SHARED_SPECIES, 0xD23F, false,
+                0xA2BA5B, "Palette_Polyp_Rinka",
+                EnemyPreviewAssetOwnership.SHARED_SPECIES,
                 0xA6FDCC, "InstList_Big_HealthGreaterThanEqualTo800", 1,
             ),
             Contract(

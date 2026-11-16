@@ -226,8 +226,10 @@ The game's `ProcessEnemyTilesets` (`$A0:8D64`) loads exactly 32 bytes (one 16-co
 palette row) from `$(aiBank):$(palPtr)`. Always row 0, directly at the pointer address.
 It performs that palette copy independently before staging the graphics transfer, so
 a zero-byte graphics header can still own an editable palette. Cutscene Baby Metroid,
-Mother Brain's falling tubes, and the three small corpse headers do exactly that;
-Elevator, Ceres Steam, and Zebetite instead select global palette rows from AI.
+Mother Brain's falling tubes, and the three small corpse headers do exactly that.
+Elevator and Ceres Steam select global palette row 5 from AI. Zebetite selects row 2,
+but Mother Brain's enemy set first fills that row with `Palette_Polyp_Rinka`; its own
+palette animation cycles two red entries in that shared runtime row.
 
 The `vram_dst` low byte + 8 selects the CGRAM destination row (8-15 = OBJ palettes).
 
@@ -702,14 +704,16 @@ header is a no-op graphics-transfer owner whose visible consumer is an enemy pro
 
 The former eight failures have zero-size header transfers, but are not empty. Elevator
 and Ceres Steam use the always-loaded standard sprite tiles and common sprite palette
-5; Zebetite uses Mother Brain's head tiles and common sprite palette 2; the cutscene
+5. Zebetite's forced `$80` graphics offset selects the Rinka/Polyp payload and its
+palette from Mother Brain's enemy set; that OAM supplies the animated core and rails,
+while tileset `$0E` supplies the metallic end caps in the room-composite preview. The cutscene
 Baby Metroid shares the normal Baby Metroid payload; Mother Brain's falling tubes use
 the head payload; and the Zoomer/Ripper/Skree corpses share the Sidehopper corpse
 payload. Exact source lists now yield 19 visible timed frame occurrences across these
 eight species. SMEDIT exposes those bytes only through a read-only preview source:
 the tile sheet and exporter still honor the species' zero-byte ownership declaration.
-Palette ownership remains independent: the three global-row users are read-only,
-while the five headers whose palettes are copied by `ProcessEnemyTilesets` remain
+Palette ownership remains independent: the two global-row users and Zebetite's shared
+Rinka row are read-only, while the five headers whose palettes are copied by `ProcessEnemyTilesets` remain
 editable.
 
 The machine-readable and human ledgers are generated at

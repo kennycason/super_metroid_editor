@@ -619,10 +619,12 @@ render.
 
 Eight active visual headers legitimately transfer zero graphics bytes. Their E-07
 preview contract follows runtime ownership instead: Elevator and Ceres Steam borrow
-the global standard sprite bank, Zebetite and Mother Brain tubes borrow Mother Brain
-head graphics, cutscene Baby Metroid borrows the normal Baby Metroid payload, and the
-three small corpse species borrow the Sidehopper-owned common corpse payload. Global
-palette rows 5 and 2 are selected for Elevator/Steam and Zebetite respectively. These
+the global standard sprite bank; Zebetite's forced `$80` graphics offset borrows the
+Rinka/Polyp core and rails and composes them with tileset-`$0E` room caps; Mother Brain
+tubes borrow the head graphics; cutscene Baby Metroid borrows the normal Baby Metroid
+payload; and the three small corpse species borrow the Sidehopper-owned common corpse
+payload. Global palette row 5 is selected for Elevator/Steam, while Zebetite selects
+the Rinka/Polyp palette loaded into row 2 by Mother Brain's enemy set. These
 providers are preview-only; a zero-byte species never gains a writable tile range.
 `ProcessEnemyTilesets` copies palettes independently of the graphics byte count, so
 the cutscene Baby Metroid, falling tubes, and three corpse palette rows remain

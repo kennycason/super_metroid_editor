@@ -1,17 +1,23 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /** The same filled selection row for Samus, enemies, and native-asset workspaces. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun SpriteMenuItem(
     label: String,
@@ -21,8 +27,15 @@ internal fun SpriteMenuItem(
     trailing: @Composable () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    LaunchedEffect(selected) {
+        if (selected) bringIntoViewRequester.bringIntoView()
+    }
     Surface(
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .clickable(onClick = onClick),
         color = if (selected) colors.primaryContainer else colors.surface,
         shape = RoundedCornerShape(6.dp),
     ) {

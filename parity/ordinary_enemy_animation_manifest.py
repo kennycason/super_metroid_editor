@@ -18,6 +18,16 @@ DEFAULT_OUTPUT = DEFAULT_REPORT_DIR / "ordinary-enemy-animations.json"
 
 SPECIES = (
     {
+        "key": "boyon", "name": "Boyon", "speciesId": 0xCEBF,
+        "header": "EnemyHeaders_Boyon", "asset": "Tiles_Boyon", "palette": "Palette_Boyon",
+        "mapPrefix": "Spritemap_Boyon_", "mapCount": 7, "listPrefix": "InstList_Boyon_",
+        "defaultInstructionLists": {0xCEBF: "InstList_Boyon_Idle_1"},
+        "animations": (
+            ("boyon-idle", "Idle", ("InstList_Boyon_Idle_1",), (4,), True),
+            ("boyon-bounce", "Bouncing", ("InstList_Boyon_Bouncing_1",), (6,), True),
+        ),
+    },
+    {
         "key": "puyo", "name": "Puyo", "speciesId": 0xCFBF,
         "header": "EnemyHeaders_Puyo", "asset": "Tiles_Puyo", "palette": "Palette_Puyo",
         "mapPrefix": "Spritemap_Puyo_", "mapCount": 8, "listPrefix": "InstList_Puyo_",
@@ -58,6 +68,137 @@ SPECIES = (
             ("choot-idle", "Idle", ("InstList_Choot_Idle",), (1,), False),
             ("choot-jumping", "Jumping", ("InstList_Choot_Jumping",), (2,), False),
             ("choot-falling", "Falling", ("InstList_Choot_Falling",), (2,), False),
+        ),
+    },
+    {
+        "key": "holtz", "name": "Holtz", "speciesId": 0xD33F,
+        "header": "EnemyHeaders_Holtz", "asset": "Tiles_Holtz", "palette": "Palette_Holtz",
+        "mapPrefix": "Spritemap_Holtz_", "mapCount": 18, "listPrefix": "InstList_Holtz_",
+        "defaultInstructionLists": {0xD33F: "InstList_Holtz_Idle_1"},
+        "animationContexts": {
+            "holtz-flames": ("InstList_Holtz_Idle_1", 4, True),
+        },
+        "animations": (
+            ("holtz-idle", "Body · idle", ("InstList_Holtz_Idle_1",), (4,), True),
+            ("holtz-prepare", "Body · prepare to swoop", ("InstList_Holtz_PrepareToSwoop",), (9,), False),
+            ("holtz-descend", "Body · descending", ("InstList_Holtz_Swoop_Descending",), (1,), False),
+            ("holtz-ascend", "Body · ascending", ("InstList_Holtz_Swoop_Ascending_Part1",), (3,), False),
+            ("holtz-flight", "Body · flight", ("InstList_Holtz_Swoop_Part2_1",), (3,), True),
+            ("holtz-cooldown", "Body · landing", ("InstList_Holtz_SwoopCooldown",), (9,), False),
+            ("holtz-flames", "Flame companion · with body", ("InstList_Holtz_Flames",), (3,), True),
+        ),
+    },
+    {
+        "key": "dragon", "name": "Dragon", "speciesId": 0xD4BF,
+        "header": "EnemyHeaders_Dragon", "asset": "Tiles_Dragon", "palette": "Palette_Dragon",
+        "mapPrefix": "Spritemap_Dragon_", "mapCount": 12, "listPrefix": "InstList_Dragon_",
+        "defaultInstructionLists": {0xD4BF: "InstList_Dragon_Idle_FacingLeft"},
+        "animationContexts": {
+            "dragon-idle-left": ("InstList_Dragon_Wings_FacingLeft", 2, False),
+            "dragon-idle-right": ("InstList_Dragon_Wings_FacingRight", 2, False),
+            "dragon-attack-left": ("InstList_Dragon_Wings_FacingLeft", 2, False),
+            "dragon-attack-right": ("InstList_Dragon_Wings_FacingRight", 2, False),
+            "dragon-wings-left": ("InstList_Dragon_Idle_FacingLeft", 1, True),
+            "dragon-wings-right": ("InstList_Dragon_Idle_FacingRight", 1, True),
+        },
+        "animations": (
+            ("dragon-idle-left", "Idle · facing left", ("InstList_Dragon_Idle_FacingLeft",), (1,), False),
+            ("dragon-idle-right", "Idle · facing right", ("InstList_Dragon_Idle_FacingRight",), (1,), False),
+            ("dragon-attack-left", "Attack · facing left", ("InstList_Dragon_Attacking_FacingLeft",), (5,), False),
+            ("dragon-attack-right", "Attack · facing right", ("InstList_Dragon_Attacking_FacingRight",), (5,), False),
+            ("dragon-wings-left", "Wings · facing left", ("InstList_Dragon_Wings_FacingLeft",), (2,), True),
+            ("dragon-wings-right", "Wings · facing right", ("InstList_Dragon_Wings_FacingRight",), (2,), True),
+        ),
+    },
+    {
+        "key": "mochtroid", "name": "Mochtroid", "speciesId": 0xD8FF,
+        "header": "EnemyHeaders_Mochtroid", "asset": "Tiles_Mochtroid", "palette": "Palette_Mochtroid",
+        "aiBank": 0xA3,
+        "mapPrefix": "Spritemap_Mochtroid_", "mapCount": 6, "listPrefix": "InstList_Mochtroid_",
+        "animations": (
+            ("mochtroid-free", "Floating", ("InstList_Mochtroid_NotTouchingSamus",), (4,), True),
+            ("mochtroid-latched", "Touching Samus", ("InstList_Mochtroid_TouchingSamus",), (4,), True),
+        ),
+    },
+    {
+        "key": "sidehopper", "name": "Sidehopper", "speciesId": 0xD93F,
+        "header": "EnemyHeaders_Sidehopper", "asset": "Tiles_Sidehopper", "palette": "Palette_Sidehopper",
+        "aiBank": 0xA3,
+        "mapPrefix": "Spritemap_Sidehopper_", "mapCount": 6, "listPrefix": "InstList_Sidehopper_",
+        "defaultInstructionLists": {0xD93F: "InstList_Sidehopper_Landed_UpsideUp"},
+        "animations": (
+            ("sidehopper-landed-up", "Landed · floor", ("InstList_Sidehopper_Landed_UpsideUp",), (4,), True),
+            ("sidehopper-hopping-up", "Hopping · floor", ("InstList_Sidehopper_Hopping_UpsideUp",), (1,), False),
+            ("sidehopper-landed-down", "Landed · ceiling", ("InstList_Sidehopper_Landed_UpsideDown",), (4,), True),
+            ("sidehopper-hopping-down", "Hopping · ceiling", ("InstList_Sidehopper_Hopping_UpsideDown",), (1,), False),
+        ),
+    },
+    {
+        "key": "dessgeega", "name": "Dessgeega", "speciesId": 0xD97F,
+        "header": "EnemyHeaders_Dessgeega", "asset": "Tiles_Dessgeega", "palette": "Palette_Dessgeega",
+        "aiBank": 0xA3,
+        "mapPrefix": "Spritemap_Dessgeega_", "mapCount": 6, "listPrefix": "InstList_Dessgeega_",
+        "defaultInstructionLists": {0xD97F: "InstList_Dessgeega_Landed_UpsideUp"},
+        "animations": (
+            ("dessgeega-landed-up", "Landed · floor", ("InstList_Dessgeega_Landed_UpsideUp",), (4,), True),
+            ("dessgeega-hopping-up", "Hopping · floor", ("InstList_Dessgeega_Hopping_UpsideUp",), (1,), False),
+            ("dessgeega-landed-down", "Landed · ceiling", ("InstList_Dessgeega_Landed_UpsideDown",), (4,), True),
+            ("dessgeega-hopping-down", "Hopping · ceiling", ("InstList_Dessgeega_Hopping_UpsideDown",), (1,), False),
+        ),
+    },
+    {
+        "key": "sidehopper-large", "name": "Sidehopper (big)", "speciesId": 0xD9BF,
+        "header": "EnemyHeaders_SidehopperLarge", "asset": "Tiles_SidehopperLarge", "palette": "Palette_SidehopperLarge",
+        "aiBank": 0xA3,
+        "headerAliases": ((0xD9FF, "EnemyHeaders_SidehopperTourian", "Sidehopper (large, Tourian)"),),
+        "headerPaletteOverrides": {0xD9FF: "Palette_SidehopperTourian"},
+        "mapPrefix": "Spritemap_SidehopperTourian_", "mapCount": 6,
+        "listPrefix": "InstList_SidehopperLarge_",
+        "defaultInstructionLists": {
+            0xD9BF: "InstList_SidehopperLarge_Landed_UpsideUp",
+            0xD9FF: "InstList_SidehopperLarge_Landed_UpsideUp",
+        },
+        "animations": (
+            ("sidehopper-large-landed-up", "Landed · floor", ("InstList_SidehopperLarge_Landed_UpsideUp",), (4,), True),
+            ("sidehopper-large-hopping-up", "Hopping · floor", ("InstList_SidehopperLarge_Hopping_UpsideUp",), (1,), False),
+            ("sidehopper-large-landed-down", "Landed · ceiling", ("InstList_SidehopperLarge_Landed_UpsideDown",), (4,), True),
+            ("sidehopper-large-hopping-down", "Hopping · ceiling", ("InstList_SidehopperLarge_Hopping_UpsideDown",), (1,), False),
+        ),
+    },
+    {
+        "key": "dessgeega-large", "name": "Dessgeega (large)", "speciesId": 0xDA3F,
+        "header": "EnemyHeaders_DessgeegaLarge", "asset": "Tiles_DessgeegaLarge", "palette": "Palette_DessgeegaLarge",
+        "aiBank": 0xA3,
+        "mapPrefix": "Spritemap_DessgeegaLarge_", "mapCount": 6,
+        "listPrefix": "InstList_DessgeegaLarge_",
+        "defaultInstructionLists": {0xDA3F: "InstList_DessgeegaLarge_Landed_UpsideUp"},
+        "animations": (
+            ("dessgeega-large-landed-up", "Landed · floor", ("InstList_DessgeegaLarge_Landed_UpsideUp",), (4,), True),
+            ("dessgeega-large-hopping-up", "Hopping · floor", ("InstList_DessgeegaLarge_Hopping_UpsideUp",), (1,), False),
+            ("dessgeega-large-landed-down", "Landed · ceiling", ("InstList_DessgeegaLarge_Landed_UpsideDown",), (4,), True),
+            ("dessgeega-large-hopping-down", "Hopping · ceiling", ("InstList_DessgeegaLarge_Hopping_UpsideDown",), (1,), False),
+        ),
+    },
+    {
+        "key": "zebetite", "name": "Zebetite", "speciesId": 0xE27F,
+        "header": "EnemyHeaders_Zebetite", "headerAsset": "Tiles_MotherBrainHead",
+        "asset": "Tiles_Polyp_Rinka",
+        "palette": "Palette_Polyp_Rinka", "headerPalette": None, "paletteEditable": False,
+        "aiBank": 0xA6,
+        "mapPrefixes": ("Spritemap_Zebetite_", "SpritemapZebetite_"), "mapCount": 10,
+        "listPrefixes": ("InstList_Big_Health", "InstList_Small_Health"),
+        "defaultInstructionLists": {0xE27F: "InstList_Big_HealthGreaterThanEqualTo800"},
+        "animations": (
+            ("zebetite-big-full", "Large · full health", ("InstList_Big_HealthGreaterThanEqualTo800",), (1,), False),
+            ("zebetite-big-800", "Large · below 800 HP", ("InstList_Big_HealthLessThan800",), (1,), False),
+            ("zebetite-big-600", "Large · below 600 HP", ("InstList_Big_HealthLessThan600",), (1,), False),
+            ("zebetite-big-400", "Large · below 400 HP", ("InstList_Big_HealthLessThan400",), (1,), False),
+            ("zebetite-big-200", "Large · below 200 HP", ("InstList_Big_HealthLessThan200",), (1,), False),
+            ("zebetite-small-full", "Small pair · full health", ("InstList_Small_HealthGreaterThanEqualTo800",), (1,), False),
+            ("zebetite-small-800", "Small pair · below 800 HP", ("InstList_Small_HealthLessThan800",), (1,), False),
+            ("zebetite-small-600", "Small pair · below 600 HP", ("InstList_Small_HealthLessThan600",), (1,), False),
+            ("zebetite-small-400", "Small pair · below 400 HP", ("InstList_Small_HealthLessThan400",), (1,), False),
+            ("zebetite-small-200", "Small pair · below 200 HP", ("InstList_Small_HealthLessThan200",), (1,), False),
         ),
     },
     {
@@ -145,6 +286,31 @@ SPECIES = (
             ("beetom-drain-left", "Draining Samus · left", ("InstList_Beetom_DrainingSamus_FacingLeft_1",), (4,), True),
             ("beetom-latch-right", "Latching onto Samus · right", ("InstList_Beetom_DrainingSamus_FacingRight_0",), (4,), False),
             ("beetom-drain-right", "Draining Samus · right", ("InstList_Beetom_DrainingSamus_FacingRight_1",), (4,), True),
+        ),
+    },
+    {
+        "key": "robot", "name": "Work Robot", "speciesId": 0xE8FF,
+        "header": "EnemyHeaders_Robot", "asset": "Tiles_Robot", "palette": "Palette_Robot",
+        "aiBank": 0xA8,
+        "mapPrefix": "Spritemap_Robot_", "mapExcludePrefixes": ("Spritemap_Robot_Deactivated_",),
+        "mapCount": 24, "listPrefix": "InstList_Robot_",
+        "defaultInstructionLists": {0xE8FF: "InstList_Robot_Initial"},
+        "animations": (
+            ("robot-walk-left", "Walking · facing left", ("InstList_Robot_FacingLeft_WalkingForwards_1",), (15,), True),
+            ("robot-walk-right", "Walking · facing right", ("InstList_Robot_FacingRight_WalkingForwards_1",), (15,), True),
+        ),
+    },
+    {
+        "key": "robot-no-power", "name": "Work Robot (deactivated)", "speciesId": 0xE93F,
+        "header": "EnemyHeaders_RobotNoPower", "asset": "Tiles_Robot", "palette": "Palette_Robot",
+        "aiBank": 0xA8,
+        "mapPrefix": "Spritemap_Robot_Deactivated_", "mapCount": 3,
+        "listPrefix": "InstList_RobotNoPower_",
+        "defaultInstructionLists": {0xE93F: "InstList_RobotNoPower_Neutral"},
+        "animations": (
+            ("robot-no-power-neutral", "Deactivated · neutral", ("InstList_RobotNoPower_Neutral",), (1,), False),
+            ("robot-no-power-left", "Deactivated · leaning left", ("InstList_RobotNoPower_LeaningLeft",), (1,), False),
+            ("robot-no-power-right", "Deactivated · leaning right", ("InstList_RobotNoPower_LeaningRight",), (1,), False),
         ),
     },
     {
@@ -315,16 +481,23 @@ def main() -> int:
             if int(fields["bank"]["value"]) != ai_bank:
                 fail(f"{display_name} no longer uses AI bank ${ai_bank:02X}")
             asset_label = spec.get("headerAssetOverrides", {}).get(species_id, spec["asset"])
+            header_asset_label = spec.get("headerAsset", asset_label)
             palette_label = spec.get("headerPaletteOverrides", {}).get(species_id, spec["palette"])
-            if fields["tileData"]["targetLabel"] != asset_label:
+            header_palette_label = spec.get("headerPalette", palette_label)
+            if fields["tileData"]["targetLabel"] != header_asset_label:
                 fail(f"{display_name} tile ownership changed")
-            if fields["palette"]["targetLabel"] != palette_label:
+            if header_palette_label is None:
+                if int(fields["palette"]["value"]) != 0:
+                    fail(f"{display_name} no longer uses its runtime palette")
+            elif fields["palette"]["targetLabel"] != header_palette_label:
                 fail(f"{display_name} palette ownership changed")
             asset = assets_by_name.get(asset_label)
-            if asset is None or int(asset["snesAddress"]) != int(fields["tileData"]["value"]):
+            if asset is None:
                 fail(f"missing {asset_label} asset")
+            if header_asset_label == asset_label and int(asset["snesAddress"]) != int(fields["tileData"]["value"]):
+                fail(f"{display_name} tile ownership changed")
             palette_address = address(palette_label)
-            if (palette_address & 0xFFFF) != int(fields["palette"]["value"]):
+            if header_palette_label is not None and (address(header_palette_label) & 0xFFFF) != int(fields["palette"]["value"]):
                 fail(f"{display_name} palette address changed")
             validated_headers.append((
                 species_id, header_label, display_name, header,
@@ -338,9 +511,12 @@ def main() -> int:
         ))
         if any(species_id not in {record[0] for record in validated_headers} for species_id in animation_species_ids):
             fail(f"{spec['name']} animation species are not declared headers")
+        map_prefixes = spec.get("mapPrefixes", (spec.get("mapPrefix"),))
+        map_exclude_prefixes = spec.get("mapExcludePrefixes", ())
         species_maps = [
             record for label, record in maps_by_label.items()
-            if str(label).startswith(spec["mapPrefix"])
+            if any(str(label).startswith(prefix) for prefix in map_prefixes)
+            and not any(str(label).startswith(prefix) for prefix in map_exclude_prefixes)
         ]
         species_maps.sort(key=lambda record: int(record["snesAddress"]))
         if len(species_maps) != spec["mapCount"] or any(record["sourceDeclaredUnused"] for record in species_maps):
@@ -355,9 +531,10 @@ def main() -> int:
         } for record in species_maps]
         all_maps.extend(compact_maps)
 
+        list_prefixes = spec.get("listPrefixes", (spec.get("listPrefix"),))
         species_lists = [
             record for label, record in lists_by_label.items()
-            if str(label).startswith(spec["listPrefix"])
+            if any(str(label).startswith(prefix) for prefix in list_prefixes)
         ]
         species_lists.sort(key=lambda record: int(record["snesAddress"]))
         compact_lists = [{
@@ -449,7 +626,9 @@ def main() -> int:
         "pixelOwner": record["tileDataLabel"],
         "paletteOwner": record["paletteLabel"],
         "placementOwner": f"bank-${int(headers_by_label[record['headerLabel']]['fields']['bank']['value']):02X}-{record['familyKey']}-instruction-lists",
-        "editable": ["pixels", "header palette"],
+        "editable": ["pixels"] + (["header palette"] if next(
+            spec for spec in SPECIES if spec["key"] == record["familyKey"]
+        ).get("paletteEditable", True) else []),
         "readOnly": ["OAM placement", "instruction timing", "AI action selection"],
     } for record in species_records]
     unique_assets = {record["tileDataLabel"]: record for record in species_records}

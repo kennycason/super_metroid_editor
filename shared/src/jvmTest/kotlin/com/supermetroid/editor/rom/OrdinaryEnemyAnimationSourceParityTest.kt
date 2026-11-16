@@ -88,7 +88,9 @@ class OrdinaryEnemyAnimationSourceParityTest {
             )
             val speciesId = speciesIdForKey(root, source.string("speciesKey"))
             val tiles = assertNotNull(EnemySpriteGraphics.loadStandardOamRenderTileData(parser, speciesId))
-            val palette = assertNotNull(EnemySpriteGraphics.readEnemyPalette(parser, speciesId))
+            val palette = assertNotNull(
+                EnemySpriteGraphics.loadEnemyPreviewPaletteSource(parser, speciesId)?.colors,
+            )
             val rendered = assertNotNull(renderer.renderSpritemap(map, tiles, palette), source.string("sourceLabel"))
             updatePixelDigest(componentDigest, rendered.pixels)
         }
@@ -101,7 +103,7 @@ class OrdinaryEnemyAnimationSourceParityTest {
                 definition.name,
             )
             val palette = assertNotNull(
-                EnemySpriteGraphics.readEnemyPalette(parser, definition.speciesId),
+                EnemySpriteGraphics.loadEnemyPreviewPaletteSource(parser, definition.speciesId)?.colors,
                 definition.name,
             )
             val animation = assertNotNull(

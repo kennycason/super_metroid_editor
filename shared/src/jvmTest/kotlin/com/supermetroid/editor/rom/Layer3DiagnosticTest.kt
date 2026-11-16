@@ -63,7 +63,7 @@ class Layer3DiagnosticTest {
         assertEquals("Dragon", RomParser.enemyName(0xD4BF), "0xD4BF ROM:DRAGON")
         assertEquals("Multiviola", RomParser.enemyName(0xD1BF), "0xD1BF ROM:MULTI")
         assertEquals("Oum (baby)", RomParser.enemyName(0xD37F), "0xD37F ROM:OUM")
-        assertEquals("Dessgeega", RomParser.enemyName(0xDA3F), "0xDA3F ROM:DESSGEEGA")
+        assertEquals("Dessgeega (large)", RomParser.enemyName(0xDA3F), "0xDA3F ROM:DESSGEEGA")
         assertEquals("Zoa", RomParser.enemyName(0xDA7F), "0xDA7F ROM:ZOA")
         assertEquals("Metroid", RomParser.enemyName(0xDD7F), "0xDD7F ROM:METROID")
         // Round 2: verified via SMILE GIF sprites
