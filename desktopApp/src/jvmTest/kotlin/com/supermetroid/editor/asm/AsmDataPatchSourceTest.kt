@@ -510,6 +510,16 @@ class AsmDataPatchSourceTest {
             fun nodes(): List<SemanticsNode> { fun walk(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::walk)
                 return scene.roots.flatMap { walk(it.semanticsOwner.unmergedRootSemanticsNode) } }
             fun tag(value: String) = nodes().single { it.config.getOrNull(SemanticsProperties.TestTag) == value }
+            suspend fun renderUntil(message: String, condition: () -> Boolean) {
+                repeat(12) {
+                    render()
+                    if (runCatching(condition).getOrDefault(false)) return
+                }
+                assertTrue(
+                    runCatching(condition).getOrDefault(false),
+                    "$message; status=${f.editor.statusMessage}; revision=${f.workspace.sourceBufferRevision}",
+                )
+            }
             fun click(value: String) { assertTrue(tag(value).config[SemanticsActions.OnClick].action!!.invoke(), "Click rejected: $value; ${f.editor.statusMessage}") }
             fun input(key: String, value: String) { assertTrue(tag("native-patch-$key").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString(value)), "Input rejected: $key=$value; ${f.editor.statusMessage}") }
             render(); val before = Json.encodeToString(SmEditProject.serializer(), f.project); val revision = f.workspace.sourceBufferRevision
@@ -550,8 +560,12 @@ class AsmDataPatchSourceTest {
             val packed = f.bridge.catalog.field(dataPatchKey(SHORT_CHARGE_CONFIG_TYPE, "stages"), f.bridge.texts()).words.first()
             assertTrue(f.workspace.updateSourceEditText("bank_91.asm", f.workspace.projectSourceText("bank_91.asm").replaceRange(packed.span, "\$0307")))
             render(); assertTrue(tag("native-short-charge-1").config[SemanticsProperties.Selected])
-            click("patch-header-toggle"); render(); click("patch-disable-confirm"); render()
-            assertTrue(tag("native-short-charge-4").config[SemanticsProperties.Selected])
+            click("patch-header-toggle"); render(); click("patch-disable-confirm")
+            assertFalse(charge.enabled, "Confirming disable should update the Short Charge model immediately: ${f.editor.statusMessage}")
+            assertEquals(4, f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").value)
+            renderUntil("Short Charge UI did not reflect the disabled vanilla value") {
+                tag("native-short-charge-4").config[SemanticsProperties.Selected]
+            }
             click("patch-header-toggle"); render(); assertTrue(tag("native-short-charge-1").config[SemanticsProperties.Selected])
             val doors = f.project.patches.single { it.id == AsmFastDoorsModule.PATCH_ID }
             f.editor.selectPatch(doors.id); render()
