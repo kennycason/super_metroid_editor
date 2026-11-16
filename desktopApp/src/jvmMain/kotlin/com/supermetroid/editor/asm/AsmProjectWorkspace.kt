@@ -1165,22 +1165,66 @@ internal class AsmProjectWorkspaceRepository(
             return
         }
         ensureProjectModuleDirectory(modulesDirectory)
-        if (projectSource.exists()) deleteTree(workingSourceRoot, projectSource)
-        projectSource.mkdirs()
         val order = readModuleOrder(modulesDirectory)
-        order.forEach { fileName ->
-            Files.copy(
-                File(modulesDirectory, fileName).toPath(),
-                File(projectSource, fileName).toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        }
-        writeTextAtomically(
-            File(projectSource, ASM_PROJECT_MODULE_ORDER_FILE),
-            order.joinToString("\n", postfix = if (order.isEmpty()) "" else "\n"),
-        )
         val disabled = readDisabledModules(modulesDirectory, order)
-        writeDisabledModules(projectSource, disabled)
+        if (projectModuleMirrorIsCurrent(modulesDirectory, projectSource, order, disabled)) return
+        if (projectSource.exists() && (!projectSource.isDirectory || Files.isSymbolicLink(projectSource.toPath()))) {
+            Files.delete(projectSource.toPath())
+        }
+        projectSource.mkdirs()
+        val expectedNames = buildSet {
+            addAll(order)
+            add(ASM_PROJECT_MODULE_ORDER_FILE)
+            if (disabled.isNotEmpty()) add(ASM_PROJECT_MODULE_DISABLED_FILE)
+        }
+        // Publish every new/renamed module before removing stale mirrors. A UI
+        // reader can therefore never observe the new module path as missing.
+        order.forEach { fileName ->
+            val authored = File(modulesDirectory, fileName).readBytes()
+            val mirror = File(projectSource, fileName)
+            if (Files.isSymbolicLink(mirror.toPath()) || !mirror.isFile || !mirror.readBytes().contentEquals(authored)) {
+                if (Files.isSymbolicLink(mirror.toPath())) Files.delete(mirror.toPath())
+                else if (mirror.isDirectory) deleteTree(projectSource, mirror)
+                writeBytesAtomically(mirror, authored)
+            }
+        }
+        val orderText = order.joinToString("\n", postfix = if (order.isEmpty()) "" else "\n")
+        val orderMirror = File(projectSource, ASM_PROJECT_MODULE_ORDER_FILE)
+        if (Files.isSymbolicLink(orderMirror.toPath())) Files.delete(orderMirror.toPath())
+        if (!orderMirror.isFile || orderMirror.readText() != orderText) writeTextAtomically(orderMirror, orderText)
+        val disabledText = disabled.joinToString("\n", postfix = if (disabled.isEmpty()) "" else "\n")
+        val disabledMirror = File(projectSource, ASM_PROJECT_MODULE_DISABLED_FILE)
+        if (Files.isSymbolicLink(disabledMirror.toPath())) Files.delete(disabledMirror.toPath())
+        if (disabled.isEmpty()) Files.deleteIfExists(disabledMirror.toPath())
+        else if (!disabledMirror.isFile || disabledMirror.readText() != disabledText) {
+            writeTextAtomically(disabledMirror, disabledText)
+        }
+        projectSource.listFiles().orEmpty().filter { it.name !in expectedNames }.forEach { stale ->
+            when {
+                Files.isSymbolicLink(stale.toPath()) || stale.isFile -> Files.deleteIfExists(stale.toPath())
+                stale.isDirectory -> deleteTree(projectSource, stale)
+                else -> Files.deleteIfExists(stale.toPath())
+            }
+        }
+    }
+
+    private fun projectModuleMirrorIsCurrent(
+        modulesDirectory: File,
+        projectSource: File,
+        order: List<String>,
+        disabled: Set<String>,
+    ): Boolean {
+        if (!projectSource.isDirectory || Files.isSymbolicLink(projectSource.toPath())) return false
+        val mirroredOrder = runCatching { readWorkingModuleOrder(projectSource) }.getOrNull() ?: return false
+        if (mirroredOrder != order) return false
+        val mirroredDisabled = runCatching { readDisabledModules(projectSource, mirroredOrder) }.getOrNull() ?: return false
+        if (mirroredDisabled != disabled) return false
+        return order.all { fileName ->
+            val authored = File(modulesDirectory, fileName)
+            val mirror = File(projectSource, fileName)
+            authored.isFile && mirror.isFile && !Files.isSymbolicLink(mirror.toPath()) &&
+                authored.readBytes().contentEquals(mirror.readBytes())
+        }
     }
 
     private fun readProjectModuleOrder(workingDirectory: File): List<String> =

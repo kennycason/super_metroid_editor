@@ -193,8 +193,13 @@ class AsmEditorViewportTest {
             fun select(offset: Int) {
                 val node = editableNode(scene)
                 assertTrue(node.config[SemanticsActions.OnClick].action!!.invoke())
+                // Establish BasicTextField focus before changing its selection.
+                // Combining both semantics actions in one frame races the native
+                // editing processor on Windows and can reset the caret to zero.
+                render()
                 assertTrue(node.config[SemanticsActions.SetSelection].action!!.invoke(offset, offset, false))
                 render()
+                assertEquals(offset, editableNode(scene).config[SemanticsProperties.TextSelectionRange].end)
             }
             fun key(code: Int) {
                 scene.sendKeyEvent(KeyEvent(AwtKeyEvent(Canvas(), AwtKeyEvent.KEY_PRESSED, 0L, 0, code, AwtKeyEvent.CHAR_UNDEFINED)))

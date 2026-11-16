@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.attribute.FileTime
 import com.supermetroid.editor.ui.asmOpenEditableReference
 import com.supermetroid.editor.ui.asmEditableReferenceIsNavigable
 
@@ -916,6 +917,13 @@ class AsmProjectWorkspaceTest {
         assertTrue(File(withSecond.root, "modules/first_hook.asm").isFile)
         assertTrue(File(withSecond.workingDirectory, "src/project/first_hook.asm").isFile)
         assertFalse(File(withSecond.root, "overrides/src/project/first_hook.asm").exists())
+
+        val stableMirror = File(withSecond.workingDirectory, "src/project/first_hook.asm")
+        val stableTimestamp = FileTime.fromMillis(1_600_000_000_000L)
+        java.nio.file.Files.setLastModifiedTime(stableMirror.toPath(), stableTimestamp)
+        repository.load(projectFile.path)
+        assertEquals(stableTimestamp, java.nio.file.Files.getLastModifiedTime(stableMirror.toPath()),
+            "Reading an unchanged workspace must not destructively rebuild its module mirror")
 
         val moduleText = "; first module\norg ${'$'}808000\nProjectHook:\n    NOP\n"
         val saved = repository.saveSource(projectFile.absolutePath, firstId, moduleText)
