@@ -63,7 +63,10 @@ class AsmManagedAssetPointerTest {
             ByteArray(4),
         )
         val symbols = AsmCompiledSymbols(
-            labels = mapOf("Tileset_Table_0_Test" to tableAddress),
+            labels = mapOf(
+                "Tileset_Table_0_Test" to tableAddress,
+                "LoadManagedTest" to bankImmediateAddress,
+            ),
             lineAddressesByFile = mapOf(
                 "bank_82.asm" to intArrayOf(bankImmediateAddress, 1, lowImmediateAddress, 2),
             ),
@@ -73,6 +76,78 @@ class AsmManagedAssetPointerTest {
         rom[requireNotNull(snesLoRomToPc(tableAddress))] = 1
         assertFailsWith<IllegalArgumentException> {
             AsmManagedAssets.validatePointerBindings(listOf(placement), temporary, rom, symbols)
+        }
+    }
+
+    @Test
+    fun `managed immediate validation falls back to exact label offsets when WLA lines are absent`() {
+        val sourceRoot = File(temporary, "src").apply { mkdirs() }
+        val source = """
+            LoadManagedTest:
+                LDA.W #Managed_Test>>8&${'$'}FF00
+                LDA.W #Managed_Test
+        """.trimIndent() + "\n"
+        File(sourceRoot, "bank_82.asm").writeText(source)
+        val bindings = requireNotNull(AsmManagedAssets.pointerBindings(
+            mapOf("bank_82.asm" to source),
+            "Managed_Test",
+        ))
+        val destination = 0xE08000
+        val consumerAddress = 0x82E000
+        val rom = ByteArray(RomConstants.EXPANDED_ROM_SIZE)
+        val pc = requireNotNull(snesLoRomToPc(consumerAddress))
+        byteArrayOf(0xA9.toByte(), 0x00, 0xE0.toByte(), 0xA9.toByte(), 0x00, 0x80.toByte())
+            .copyInto(rom, pc)
+        val placement = AsmManagedAssetPlacement(
+            AsmManagedAssetRecord(
+                id = "managed-test",
+                kind = "test",
+                sourceFileId = "bank_B9.asm",
+                sourceLabel = "Managed_Test",
+                originalAssetPath = "Managed_Test.bin",
+                managedAssetPath = "smedit-managed/managed-test.bin",
+                originalPcOffset = 0x100,
+                originalLength = 4,
+                originalDeclaration = "Managed_Test:\nincbin \"../data/Managed_Test.bin\"",
+                pointerBindings = bindings,
+            ),
+            RomAllocation(0xE0, requireNotNull(snesLoRomToPc(destination)), destination, 4, "Managed_Test"),
+            ByteArray(4),
+        )
+        val symbolsWithoutWlaLines = AsmCompiledSymbols(
+            labels = mapOf("LoadManagedTest" to consumerAddress),
+            lineAddressesByFile = emptyMap(),
+        )
+
+        AsmManagedAssets.validatePointerBindings(
+            listOf(placement),
+            temporary,
+            rom,
+            symbolsWithoutWlaLines,
+        )
+
+        rom[pc + 4] = 1
+        assertFailsWith<IllegalArgumentException> {
+            AsmManagedAssets.validatePointerBindings(
+                listOf(placement),
+                temporary,
+                rom,
+                symbolsWithoutWlaLines,
+            )
+        }
+
+        rom[pc + 4] = 0
+        File(sourceRoot, "bank_82.asm").writeText(source.replace(
+            "    LDA.W #Managed_Test\n",
+            "    NOP\n    LDA.W #Managed_Test\n",
+        ))
+        assertFailsWith<IllegalArgumentException> {
+            AsmManagedAssets.validatePointerBindings(
+                listOf(placement),
+                temporary,
+                rom,
+                symbolsWithoutWlaLines,
+            )
         }
     }
 

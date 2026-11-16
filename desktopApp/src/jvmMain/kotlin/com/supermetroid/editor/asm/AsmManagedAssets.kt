@@ -430,12 +430,19 @@ internal object AsmManagedAssets {
                     }
                     return@bindingLoop
                 }
-                val lines = source.readLines().mapIndexedNotNull { index, line ->
-                    index.takeIf { pointerKind(asmExecutableCode(line).trim(), record.sourceLabel) == binding.kind }
-                }
-                lines.forEach { lineIndex ->
-                    val consumerAddress = requireNotNull(symbols.addressAt(binding.sourceFileId, lineIndex)) {
-                        "Managed ASM pointer for ${record.sourceLabel} at ${binding.sourceFileId}:${lineIndex + 1} emitted no mapped bytes"
+                immediatePointerSites(source.readText(), record.sourceLabel, binding.kind).forEach { site ->
+                    // Asar 1.81's WLA source map can omit an emitted instruction on Windows even though
+                    // the instruction and its enclosing label are present in the compiled ROM. Prefer
+                    // the exact source map, but retain a fail-closed label + byte-offset fallback for
+                    // simple instruction runs whose widths SMEDIT can prove.
+                    val anchoredAddress = if (site.consumerLabel != null && site.byteOffset != null) {
+                        symbols.labels[site.consumerLabel]?.plus(site.byteOffset)
+                    } else {
+                        null
+                    }
+                    val consumerAddress = symbols.addressAt(binding.sourceFileId, site.lineIndex) ?: anchoredAddress
+                    requireNotNull(consumerAddress) {
+                        "Managed ASM pointer for ${record.sourceLabel} at ${binding.sourceFileId}:${site.lineIndex + 1} emitted no mapped bytes"
                     }
                     val pc = requireNotNull(snesLoRomToPc(consumerAddress)) {
                         "Managed ASM pointer for ${record.sourceLabel} is outside LoROM"
@@ -462,6 +469,49 @@ internal object AsmManagedAssets {
             }
         }
     }
+
+    private data class ImmediatePointerSite(
+        val lineIndex: Int,
+        val consumerLabel: String?,
+        val byteOffset: Int?,
+    )
+
+    /** Locates a supported immediate pointer relative to its nearest provable
+     * global-label anchor. Unknown emitted statements invalidate the fallback
+     * offset until the next global label, so validation never guesses. */
+    private fun immediatePointerSites(
+        text: String,
+        sourceLabel: String,
+        kind: AsmManagedPointerKind,
+    ): List<ImmediatePointerSite> {
+        var consumerLabel: String? = null
+        var byteOffset = 0
+        var offsetKnown = true
+        return buildList {
+            text.lineSequence().forEachIndexed { lineIndex, line ->
+                val code = asmExecutableCode(line).trim()
+                val label = POINTER_GLOBAL_LABEL.matchEntire(code)
+                if (label != null) {
+                    consumerLabel = label.groupValues[1]
+                    byteOffset = 0
+                    offsetKnown = true
+                    return@forEachIndexed
+                }
+                if (pointerKind(code, sourceLabel) == kind) {
+                    add(ImmediatePointerSite(
+                        lineIndex = lineIndex,
+                        consumerLabel = consumerLabel.takeIf { offsetKnown },
+                        byteOffset = byteOffset.takeIf { offsetKnown },
+                    ))
+                }
+                val width = emittedWidth(code)
+                if (width != null) byteOffset += width else if (code.isNotBlank()) offsetKnown = false
+            }
+        }
+    }
+
+    private fun emittedWidth(code: String): Int? =
+        directiveWidth(code) ?: 3.takeIf { POINTER_IMMEDIATE_LDA.matches(code) }
 
     private fun directiveWidth(code: String): Int? {
         val match = POINTER_DATA_DIRECTIVE.matchEntire(code) ?: return null
@@ -503,6 +553,7 @@ internal object AsmManagedAssets {
     private val POINTER_GLOBAL_LABEL = Regex("^([A-Za-z_][A-Za-z0-9_]*):$")
     private val POINTER_IDENTIFIER = Regex("[A-Za-z_][A-Za-z0-9_]*")
     private val POINTER_DATA_DIRECTIVE = Regex("^(db|dw|dl|dd)\\s+(.+)$", RegexOption.IGNORE_CASE)
+    private val POINTER_IMMEDIATE_LDA = Regex("^LDA\\.W\\s+#.+$", RegexOption.IGNORE_CASE)
 }
 
 private fun managedAssetSafeRelative(path: String): Boolean = path.isNotBlank() && !path.contains('\\') &&
