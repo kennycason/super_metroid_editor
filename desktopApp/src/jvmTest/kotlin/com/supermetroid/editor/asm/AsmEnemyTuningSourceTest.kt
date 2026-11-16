@@ -277,17 +277,17 @@ class AsmEnemyTuningSourceTest {
             assertEquals(before, f.b()); assertTrue(f.project.asmWorkspace.enemyTuningSourceKeys.isEmpty())
 
             assertTrue(input(scene, "zoomer_vuln1").config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("255")))
-            render()
-            assertEquals("255", inputText(scene, "ripper_vuln1"))
             assertEquals(255, f.bridge.view("zoomer_vuln1").value)
+            awaitFrame(render) { inputText(scene, "ripper_vuln1") == "255" }
+            assertEquals("255", inputText(scene, "ripper_vuln1"))
             assertNull(patch.configData)
             val raw = f.bridge.catalog.edit("zoomer_vuln1", 130, f.a(), f.b()).second
             assertTrue(f.workspace.updateSourceEditText(ENEMY_DROP_SOURCE_FILE, raw))
-            render()
+            awaitFrame(render) { inputText(scene, "zoomer_vuln1") == "130" && inputText(scene, "ripper_vuln1") == "130" }
             assertEquals("130", inputText(scene, "zoomer_vuln1"))
             assertEquals("130", inputText(scene, "ripper_vuln1"))
             assertTrue(f.workspace.undoSourceEdit(ENEMY_DROP_SOURCE_FILE), f.workspace.error)
-            render()
+            awaitFrame(render) { inputText(scene, "zoomer_vuln1") == "255" }
             assertEquals("255", inputText(scene, "zoomer_vuln1"))
         }
     }

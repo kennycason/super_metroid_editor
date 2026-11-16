@@ -298,6 +298,9 @@ class SoundRoadmapUiTest {
         fun read(node: SemanticsNode): List<String> = node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } + node.children.flatMap(::read)
         return read(tag(scene, key)).joinToString(" ")
     }
+    private suspend fun awaitFrame(render: suspend () -> Unit, condition: () -> Boolean) = withTimeout(2000) {
+        while (!condition()) { render(); delay(1) }
+    }
 
     @Test fun `expression markers select existing events and additions remain editable during in place song updates`() = runBlocking {
         var song by mutableStateOf(NspcSequence.Song().apply {
@@ -350,6 +353,7 @@ class SoundRoadmapUiTest {
             tag(scene, "expression-delete").config[SemanticsActions.OnClick].action!!.invoke(); render()
             assertEquals(3, song.channels[0].commands.size); assertTrue(song.channels[0].commands.none { it.command == 0xED })
             tapExpression(scene, 0, 192, 3, render)
+            awaitFrame(render) { text(scene, "expression-selection").contains("Sound change") }
             assertTrue(text(scene, "expression-selection").contains("Sound change"))
             assertTrue(tag(scene, "expression-apply").config.contains(SemanticsProperties.Disabled))
             assertEquals(original.channels[0].notes, song.channels[0].notes)

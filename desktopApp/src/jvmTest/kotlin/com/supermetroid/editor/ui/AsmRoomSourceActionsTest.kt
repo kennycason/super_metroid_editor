@@ -78,8 +78,16 @@ class AsmRoomSourceActionsTest {
             assertEquals(presented, field().config[SemanticsProperties.EditableText].text)
             assertTrue(nodes(scene).none { text(it) == "Create editable source" })
             val cursor = presented.indexOf("dw ${'$'}0000 ; Distance") + 4
+            // Establish BasicTextField focus in its own frame before setting
+            // the selection. Native editing can otherwise restore its old
+            // caret after SetSelection on a cold macOS runner.
+            assertTrue(field().config[SemanticsActions.OnClick].action!!.invoke())
+            render()
             assertTrue(field().config[SemanticsActions.SetSelection].action!!.invoke(cursor, cursor + 4, false))
             render()
+            val selectedDistance = field().config[SemanticsProperties.TextSelectionRange]
+            assertEquals(cursor, selectedDistance.start)
+            assertEquals(cursor + 4, selectedDistance.end)
             assertEquals(model, Json.encodeToString(SmEditProject.serializer(), project))
             assertEquals(source, workspace.projectSourceText(DOOR_SOURCE_FILE)); assertEquals(revision, workspace.sourceBufferRevision)
             val edited = planned.replace("dw ${'$'}0000 ; Distance", "dw ${'$'}1234 ; Distance")
