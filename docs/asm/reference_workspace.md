@@ -4836,20 +4836,27 @@ libretro: stock cores and the external RetroArch backend continue to run frames,
 but debugger controls fail closed and explain that the bundled core is required.
 The editor probes a versioned native ABI before exposing any CPU state.
 
-Start the current project in the bundled emulator, pause it, then expand Runtime
-Debugger. **Step Instruction** executes exactly one 65c816 opcode. **Run to
-Cursor** and **Add Breakpoint** use the selected statement's exact retained WLA
-address; a label-only line is supported when it owns an exact compiled symbol.
-Stale/unbuilt source disables those address controls. **Resume** advances in
+Start the current project in the bundled emulator, pause it, then open the bottom
+**Debugger** tab. **Step** executes exactly one 65c816 opcode. **Run to Cursor**
+and **Add Breakpoint** use the selected statement's exact retained WLA address; a
+label-only line is supported when it owns an exact compiled symbol. The narrow
+left breakpoint lane toggles that exact address directly, while a source-line
+right click offers Add/Remove Breakpoint, Run to Cursor and Open Debugger. A
+filled red circle is armed; a hollow red circle retains a mapping that became
+stale. Stale/unbuilt source disables address actions and opens the debugger's
+explanation instead of guessing. **Resume** advances in
 bounded frame chunks and stops before executing a target PC. Continuing from a
 breakpoint steps over that one stopped instruction before re-arming it, so it
 does not immediately stop on the same PC forever. Debugger-driven frame chunks
 still publish the current controller input, so arming a breakpoint does not
 freeze or reuse stale gameplay controls. Breakpoints belong only to the active
-emulator session, may be cleared together, and are cleared on close/restart.
+emulator session, may be removed individually or cleared together, and are
+cleared on close/restart. The tab lists each one by symbol, SNES address and
+file/line, and an authored row navigates back to source.
 
-When the core stops, SMEDIT opens and highlights the exact authored source
-statement when the current build maps that PC. Generated checked-hook helpers
+When the core stops, SMEDIT opens the exact authored source statement and marks
+it with a yellow execution arrow plus a subtle full-line highlight when the
+current build maps that PC. Generated checked-hook helpers
 and relocated managed segments keep their generated line and symbol as
 first-class execution evidence, but their disposable compiler files never
 become an editing authority. The emulator session retains the exact successful

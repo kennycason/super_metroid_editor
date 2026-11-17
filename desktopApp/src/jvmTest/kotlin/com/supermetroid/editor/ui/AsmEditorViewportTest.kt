@@ -241,6 +241,27 @@ class AsmEditorViewportTest {
         }
     }
 
+    @Test fun `breakpoint lane is independent from the display gutter and reveals unavailable debugger state`() = runBlocking {
+        val raw = "LDA #1\nRTL"
+        val state = workspace(raw)
+        state.openSource("bank_8F.asm", 0)
+        withEditor(state) { scene, render ->
+            val lane = nodes(scene).single {
+                it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("asm-breakpoint-gutter-") == true
+            }
+            val before = state.debuggerRequestSerial
+            val position = lane.positionInRoot + Offset(lane.size.width / 2f, 12f)
+            scene.sendPointerEvent(PointerEventType.Press, position, button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, position, button = PointerButton.Primary)
+            render()
+
+            assertEquals(before + 1, state.debuggerRequestSerial)
+            assertEquals(AsmSourceGutterMode.LINES, state.sourceGutterMode)
+            assertEquals(raw, state.sourceEditText("bank_8F.asm"))
+            assertFalse(state.hasUnsavedSourceChanges("bank_8F.asm"))
+        }
+    }
+
     @Test fun `horizontally hidden gutter cannot intercept clicks on source code`() = runBlocking {
         val raw = (0 until 1000).joinToString("\n") { "; " + "x".repeat(160) + " source line $it" }
         val state = workspace(raw)

@@ -327,6 +327,8 @@ internal class AsmWorkspaceState(
         private set
     var buildOutputRequestSerial by mutableStateOf(0L)
         private set
+    var debuggerRequestSerial by mutableStateOf(0L)
+        private set
     var projectChangesRequestSerial by mutableStateOf(0L)
         private set
     var roomDataSnapshot by mutableStateOf<AsmGeneratedRoomSource?>(null)
@@ -1065,6 +1067,12 @@ internal class AsmWorkspaceState(
 
     fun requestProjectChanges() {
         projectChangesRequestSerial++
+    }
+
+    /** Reveals the source debugger without coupling editor actions to the
+     * bottom-tool-window's local tab state. */
+    fun requestDebugger() {
+        debuggerRequestSerial++
     }
 
     private fun clearRomPreview() {

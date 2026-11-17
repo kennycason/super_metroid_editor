@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuDataProvider
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -96,8 +98,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
@@ -300,6 +304,56 @@ internal fun asmCheckedHookContextMenuItems(
 ): List<ContextMenuItem> = if (nativeProjectSource) {
     listOf(ContextMenuItem("Create Checked Hook…", onCreate))
 } else emptyList()
+
+internal fun asmDebuggerContextMenuItems(
+    address: Int?,
+    available: Boolean,
+    mappingFresh: Boolean,
+    hasBreakpoint: (Int) -> Boolean,
+    onToggleBreakpoint: (Int) -> Unit,
+    onRunToAddress: (Int) -> Unit,
+    onOpenDebugger: () -> Unit,
+): List<ContextMenuItem> = buildList {
+    if (address != null && available && mappingFresh) {
+        add(ContextMenuItem(if (hasBreakpoint(address)) "Remove Breakpoint" else "Add Breakpoint") {
+            onToggleBreakpoint(address)
+        })
+        add(ContextMenuItem("Run to Cursor") { onRunToAddress(address) })
+    }
+    add(ContextMenuItem("Open Debugger") { onOpenDebugger() })
+}
+
+internal enum class AsmBreakpointMarker { RESOLVED, STALE }
+
+internal fun asmBreakpointMarkers(
+    addressesByLine: Map<Int, Int>,
+    breakpoints: Set<Int>,
+    mappingFresh: Boolean,
+): Map<Int, AsmBreakpointMarker> = addressesByLine.mapNotNull { (line, address) ->
+    if (address !in breakpoints) null
+    else line to if (mappingFresh) AsmBreakpointMarker.RESOLVED else AsmBreakpointMarker.STALE
+}.toMap()
+
+internal data class AsmBreakpointRow(
+    val address: Int,
+    val title: String,
+    val detail: String,
+    val location: com.supermetroid.editor.asm.AsmRuntimeSourceLocation?,
+)
+
+internal fun asmBreakpointRows(
+    breakpoints: Collection<Int>,
+    sourceAt: (Int) -> com.supermetroid.editor.asm.AsmRuntimeSourceLocation?,
+): List<AsmBreakpointRow> = breakpoints.distinct().sorted().map { address ->
+    val location = sourceAt(address)
+    val title = location?.symbols?.firstOrNull()
+        ?: location?.sourceLine?.trim()?.takeIf(String::isNotEmpty)
+        ?: "Breakpoint"
+    val detail = location?.let {
+        "${it.fileId}:${it.lineIndex + 1}${if (it.generated) " · generated" else ""}"
+    } ?: "Source mapping unavailable"
+    AsmBreakpointRow(address, title, detail, location)
+}
 
 @Composable
 @OptIn(ExperimentalComposeUiApi::class)
@@ -3047,6 +3101,10 @@ private fun AsmSourceCanvas(
     val compiledAddressesByLine = remember(currentCompiledAddresses, state.buildReport?.generatedAt, source.id) {
         if (currentCompiledAddresses) state.buildReport?.symbols?.addressesFor(source.id).orEmpty() else emptyMap()
     }
+    val debugAddressesByLine = remember(state.buildReport?.generatedAt, source.id) {
+        state.buildReport?.takeIf { it.succeeded }?.symbols?.addressesFor(source.id).orEmpty()
+    }
+    val debugMappingFresh = emulatorState?.let { state.runtimeMappingFresh(it.debugBuildIdentity) } == true
     val visualEditorAddresses = remember(addressAnchorsByLine, compiledAddressesByLine) {
         addressAnchorsByLine.mapValues { it.value.snesAddress } + compiledAddressesByLine
     }
@@ -3092,7 +3150,7 @@ private fun AsmSourceCanvas(
         )
     }
     val runtimeLineIndex = runtimeInspection?.currentSource
-        ?.takeIf { it.fileId == source.id }
+        ?.takeIf { !emulatorState.isRunning && it.fileId == source.id }
         ?.lineIndex
     LaunchedEffect(
         isActivePane,
@@ -3319,6 +3377,9 @@ private fun AsmSourceCanvas(
                 visualEditorLinksAt = visualEditors::linksAt,
                 onOpenVisualEditors = ::openVisualEditors,
                 runtimeLineIndex = runtimeLineIndex,
+                emulatorState = emulatorState,
+                debugAddressesByLine = debugAddressesByLine,
+                debugMappingFresh = debugMappingFresh,
                 modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
             )
         } else {
@@ -3464,6 +3525,7 @@ private fun AsmBottomToolWindow(
     var expanded by remember(state) { mutableStateOf(failed || warnings > 0) }
     var handledProblemsRequest by remember(state) { mutableStateOf(state.buildProblemsRequestSerial) }
     var handledBuildOutputRequest by remember(state) { mutableStateOf(state.buildOutputRequestSerial) }
+    var handledDebuggerRequest by remember(state) { mutableStateOf(state.debuggerRequestSerial) }
     LaunchedEffect(report?.generatedAt, failed) {
         if (failed) {
             selectedTab = AsmBottomToolTab.PROBLEMS
@@ -3484,6 +3546,13 @@ private fun AsmBottomToolWindow(
         ) {
             handledBuildOutputRequest = state.buildOutputRequestSerial
             selectedTab = AsmBottomToolTab.BUILD_OUTPUT
+            expanded = true
+        }
+    }
+    LaunchedEffect(state.debuggerRequestSerial) {
+        if (state.debuggerRequestSerial != handledDebuggerRequest) {
+            handledDebuggerRequest = state.debuggerRequestSerial
+            selectedTab = AsmBottomToolTab.DEBUGGER
             expanded = true
         }
     }
@@ -3606,7 +3675,11 @@ private fun AsmBottomToolWindow(
                         },
                     )
                     AsmBottomToolTabButton(
-                        label = "Debugger",
+                        label = buildString {
+                            append("Debugger")
+                            val count = emulatorState?.executionBreakpoints?.size ?: 0
+                            if (count > 0) append(" · $count")
+                        },
                         selected = selectedTab == AsmBottomToolTab.DEBUGGER,
                         enabled = toolContext != null,
                         onClick = {
@@ -4167,52 +4240,44 @@ private fun AsmRuntimeDebuggerPanel(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
-                            OutlinedButton(
+                            AsmDebuggerActionButton(
+                                label = "Step",
+                                icon = AsmDebuggerIcon.STEP,
                                 onClick = { scope.launch { emulatorState.stepCpuInstruction() } },
                                 enabled = !emulatorState.isBusy,
-                                shape = ASM_CONTROL_SHAPE,
-                            ) { Text("Step Instruction", fontSize = fs.detail) }
-                            OutlinedButton(
+                            )
+                            AsmDebuggerActionButton(
+                                label = if (emulatorState.isRunning) "Pause" else "Resume",
+                                icon = if (emulatorState.isRunning) AsmDebuggerIcon.PAUSE else AsmDebuggerIcon.RESUME,
                                 onClick = {
                                     val resume = !emulatorState.isRunning
                                     emulatorState.setLoopRunning(resume)
                                     if (!resume) scope.launch { emulatorState.refreshCpuDebugContext() }
                                 },
                                 enabled = !emulatorState.isBusy,
-                                shape = ASM_CONTROL_SHAPE,
-                            ) { Text(if (emulatorState.isRunning) "Pause" else "Resume", fontSize = fs.detail) }
-                            OutlinedButton(
+                            )
+                            AsmDebuggerActionButton(
+                                label = "Run to Cursor",
+                                icon = AsmDebuggerIcon.RUN_TO,
                                 onClick = { cursorAddress?.let(emulatorState::runToAddress) },
                                 enabled = cursorAddress != null && inspection?.mappingStale == false && !emulatorState.isBusy,
-                                shape = ASM_CONTROL_SHAPE,
-                            ) { Text("Run to Cursor", fontSize = fs.detail) }
-                            OutlinedButton(
+                            )
+                            AsmDebuggerActionButton(
+                                label = if (cursorAddress != null && emulatorState.hasExecutionBreakpoint(cursorAddress)) {
+                                    "Remove Breakpoint"
+                                } else "Add Breakpoint",
+                                icon = AsmDebuggerIcon.BREAKPOINT,
                                 onClick = { cursorAddress?.let(emulatorState::toggleExecutionBreakpoint) },
                                 enabled = cursorAddress != null && inspection?.mappingStale == false && !emulatorState.isBusy,
-                                shape = ASM_CONTROL_SHAPE,
-                            ) {
-                                Text(
-                                    if (cursorAddress != null && emulatorState.hasExecutionBreakpoint(cursorAddress)) {
-                                        "Remove Breakpoint"
-                                    } else "Add Breakpoint",
-                                    fontSize = fs.detail,
-                                )
-                            }
-                            if (emulatorState.executionBreakpoints.isNotEmpty()) {
-                                TextButton(
-                                    onClick = emulatorState::clearExecutionBreakpoints,
-                                    enabled = !emulatorState.isBusy,
-                                ) {
-                                    Text(
-                                        "Clear Breakpoints (${emulatorState.executionBreakpoints.size})",
-                                        fontSize = fs.detail,
-                                    )
-                                }
-                            }
-                            TextButton(
+                                accent = Color(0xFFE45454),
+                            )
+                            AsmDebuggerActionButton(
+                                label = "Refresh",
+                                icon = AsmDebuggerIcon.REFRESH,
                                 onClick = { scope.launch { emulatorState.refreshCpuDebugContext() } },
                                 enabled = !emulatorState.isBusy,
-                            ) { Text("Refresh", fontSize = fs.detail) }
+                                outlined = false,
+                            )
                         }
                         if (cursorAddress == null || inspection?.mappingStale != false) {
                             Text(
@@ -4221,6 +4286,11 @@ private fun AsmRuntimeDebuggerPanel(
                                 color = Color(0xFFE0A12B),
                             )
                         }
+                        AsmDebuggerBreakpointList(
+                            state = state,
+                            emulatorState = emulatorState,
+                            mappingFresh = inspection?.mappingStale == false,
+                        )
                         cpu?.let { current ->
                             AsmCompiledOutputFact(
                                 "Registers",
@@ -4368,6 +4438,160 @@ private fun AsmRuntimeDebuggerPanel(
     }
 }
 
+private enum class AsmDebuggerIcon { STEP, RESUME, PAUSE, RUN_TO, BREAKPOINT, REFRESH }
+
+@Composable
+private fun AsmDebuggerActionButton(
+    label: String,
+    icon: AsmDebuggerIcon,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    accent: Color = MaterialTheme.colorScheme.primary,
+    outlined: Boolean = true,
+) {
+    val content: @Composable () -> Unit = {
+        AsmDebuggerGlyph(icon, if (enabled) accent else MaterialTheme.colorScheme.outline)
+        Spacer(Modifier.width(5.dp))
+        Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail)
+    }
+    if (outlined) {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            shape = ASM_CONTROL_SHAPE,
+            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 5.dp),
+        ) { content() }
+    } else {
+        TextButton(
+            onClick = onClick,
+            enabled = enabled,
+            shape = ASM_CONTROL_SHAPE,
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 5.dp),
+        ) { content() }
+    }
+}
+
+@Composable
+private fun AsmDebuggerGlyph(kind: AsmDebuggerIcon, color: Color) {
+    Canvas(Modifier.size(14.dp)) {
+        val stroke = Stroke(width = 1.8.dp.toPx())
+        when (kind) {
+            AsmDebuggerIcon.BREAKPOINT -> drawCircle(color, radius = 5.dp.toPx(), center = center)
+            AsmDebuggerIcon.RESUME -> drawPath(Path().apply {
+                moveTo(3.dp.toPx(), 2.dp.toPx())
+                lineTo(12.dp.toPx(), center.y)
+                lineTo(3.dp.toPx(), 12.dp.toPx())
+                close()
+            }, color)
+            AsmDebuggerIcon.PAUSE -> {
+                drawRect(color, Offset(3.dp.toPx(), 2.dp.toPx()), Size(3.dp.toPx(), 10.dp.toPx()))
+                drawRect(color, Offset(9.dp.toPx(), 2.dp.toPx()), Size(3.dp.toPx(), 10.dp.toPx()))
+            }
+            AsmDebuggerIcon.STEP, AsmDebuggerIcon.RUN_TO -> {
+                drawLine(color, Offset(2.dp.toPx(), center.y), Offset(9.dp.toPx(), center.y), strokeWidth = stroke.width)
+                drawLine(color, Offset(6.dp.toPx(), 3.dp.toPx()), Offset(10.dp.toPx(), center.y), strokeWidth = stroke.width)
+                drawLine(color, Offset(6.dp.toPx(), 11.dp.toPx()), Offset(10.dp.toPx(), center.y), strokeWidth = stroke.width)
+                if (kind == AsmDebuggerIcon.RUN_TO) {
+                    drawLine(color, Offset(12.dp.toPx(), 2.dp.toPx()), Offset(12.dp.toPx(), 12.dp.toPx()), strokeWidth = stroke.width)
+                } else {
+                    drawLine(color, Offset(3.dp.toPx(), 2.dp.toPx()), Offset(3.dp.toPx(), 12.dp.toPx()), strokeWidth = stroke.width)
+                }
+            }
+            AsmDebuggerIcon.REFRESH -> {
+                drawArc(color, 38f, 275f, useCenter = false, style = stroke)
+                drawLine(color, Offset(11.dp.toPx(), 2.dp.toPx()), Offset(12.dp.toPx(), 6.dp.toPx()), strokeWidth = stroke.width)
+                drawLine(color, Offset(11.dp.toPx(), 2.dp.toPx()), Offset(7.dp.toPx(), 3.dp.toPx()), strokeWidth = stroke.width)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsmDebuggerBreakpointList(
+    state: AsmWorkspaceState,
+    emulatorState: EmulatorWorkspaceState,
+    mappingFresh: Boolean,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val rows = asmBreakpointRows(emulatorState.executionBreakpoints) { address ->
+        if (mappingFresh) state.runtimeSourceAt(address, emulatorState.debugBuildIdentity) else null
+    }
+    if (rows.isEmpty()) return
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.48f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = ASM_CONTROL_SHAPE,
+        modifier = Modifier.fillMaxWidth().testTag("asm-debugger-breakpoints"),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Breakpoints",
+                    fontSize = fs.detail,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = emulatorState::clearExecutionBreakpoints,
+                    enabled = !emulatorState.isBusy,
+                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp),
+                ) {
+                    Text("Clear all", fontSize = fs.statusBar)
+                }
+            }
+            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+            rows.forEach { row ->
+                val navigable = row.location?.generated == false
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(if (navigable) Modifier.clickable { state.openRuntimeSource(checkNotNull(row.location)) } else Modifier)
+                        .padding(start = 10.dp, end = 2.dp, top = 4.dp, bottom = 4.dp)
+                        .testTag("asm-debugger-breakpoint-${row.address}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Canvas(Modifier.size(12.dp)) {
+                        drawCircle(Color(0xFFE45454), radius = 4.5.dp.toPx(), center = center)
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text(
+                            row.title,
+                            fontSize = fs.detail,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (navigable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            row.detail,
+                            fontSize = fs.statusBar,
+                            color = if (mappingFresh) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFE0A12B),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Text(
+                        formatSnesAddress(row.address),
+                        fontSize = fs.detail,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    IconButton(
+                        onClick = { emulatorState.toggleExecutionBreakpoint(row.address) },
+                        enabled = !emulatorState.isBusy,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(Icons.Default.Close, "Remove breakpoint", modifier = Modifier.size(15.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
 internal fun parseDebugAddress(text: String): Int? {
     val compact = text.trim().removePrefix("$").replace(":", "").replace("_", "")
     return compact.toIntOrNull(16)?.takeIf { it in 0..0xFFFFFF }
@@ -4503,6 +4727,9 @@ private fun AsmEditableSourcePane(
     visualEditorLinksAt: (Int) -> List<AsmEditorLink>,
     onOpenVisualEditors: (List<AsmEditorLink>) -> Unit,
     runtimeLineIndex: Int?,
+    emulatorState: EmulatorWorkspaceState?,
+    debugAddressesByLine: Map<Int, Int>,
+    debugMappingFresh: Boolean,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -4864,8 +5091,9 @@ private fun AsmEditableSourcePane(
         (fs.body.toPx() * MONOSPACE_CHARACTER_WIDTH * 6).toDp() + 20.dp
     }.coerceAtLeast(ASM_ADDRESS_GUTTER_WIDTH)
     val gutterMode = state.sourceGutterMode
-    val gutterWidth = (if (gutterMode.lines) numberWidth else 0.dp) +
+    val sourceGutterWidth = (if (gutterMode.lines) numberWidth else 0.dp) +
         (if (gutterMode.addresses) addressWidth else 0.dp)
+    val gutterWidth = ASM_BREAKPOINT_GUTTER_WIDTH + sourceGutterWidth
     val longestLine = presentation.text.lineSequence().maxOfOrNull(String::length)
         ?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
     val lineHeight = fs.body * 1.4f
@@ -4879,6 +5107,19 @@ private fun AsmEditableSourcePane(
     val runtimePageLine = runtimeLineIndex
         ?.minus(page.startLine)
         ?.takeIf { it in 0 until lineCount }
+    val breakpointAddresses = emulatorState?.executionBreakpoints?.toSet().orEmpty()
+    val breakpointPageMarkers = remember(
+        debugAddressesByLine,
+        breakpointAddresses,
+        debugMappingFresh,
+        page.startLine,
+        lineCount,
+    ) {
+        asmBreakpointMarkers(debugAddressesByLine, breakpointAddresses, debugMappingFresh)
+            .mapNotNull { (line, marker) ->
+                (line - page.startLine).takeIf { it in 0 until lineCount }?.let { it to marker }
+            }.toMap()
+    }
     val diagnosticPageLines = remember(
         state.buildReport?.generatedAt,
         state.liveDiagnostics,
@@ -4901,8 +5142,12 @@ private fun AsmEditableSourcePane(
         }
     }
     val selectedLineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-    val runtimeLineColor = Color(0xFF55D6BE).copy(alpha = 0.20f)
-    val runtimeEdgeColor = Color(0xFF24B39B)
+    val runtimeLineColor = Color(0xFFFFC857).copy(alpha = 0.18f)
+    val runtimeEdgeColor = Color(0xFFFFC857)
+    val breakpointColor = Color(0xFFE45454)
+    val staleBreakpointColor = Color(0xFFE45454).copy(alpha = 0.58f)
+    val breakpointLaneWidthPx = with(density) { ASM_BREAKPOINT_GUTTER_WIDTH.toPx() }
+    val breakpointRadiusPx = with(density) { ASM_BREAKPOINT_RADIUS.toPx() }
     val errorLineColor = MaterialTheme.colorScheme.error.copy(alpha = 0.16f)
     val selectedErrorLineColor = MaterialTheme.colorScheme.error.copy(alpha = 0.25f)
     val errorEdgeColor = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
@@ -5029,20 +5274,6 @@ private fun AsmEditableSourcePane(
                     .width(contentWidth)
                     .drawBehind {
                         val layout = fieldLayout ?: return@drawBehind
-                        runtimePageLine?.takeIf { it < layout.lineCount }?.let { lineIndex ->
-                            val lineTop = sourceTopPaddingPx + layout.getLineTop(lineIndex)
-                            val lineBottom = sourceTopPaddingPx + layout.getLineBottom(lineIndex)
-                            drawRect(
-                                color = runtimeLineColor,
-                                topLeft = Offset(0f, lineTop),
-                                size = Size(size.width, lineBottom - lineTop),
-                            )
-                            drawRect(
-                                color = runtimeEdgeColor,
-                                topLeft = Offset(0f, lineTop),
-                                size = Size(diagnosticEdgeWidthPx, lineBottom - lineTop),
-                            )
-                        }
                         diagnosticPageLines.forEach { (lineIndex, severity) ->
                             if (lineIndex >= layout.lineCount) return@forEach
                             val lineTop = sourceTopPaddingPx + layout.getLineTop(lineIndex)
@@ -5067,6 +5298,20 @@ private fun AsmEditableSourcePane(
                                 size = Size(diagnosticEdgeWidthPx, lineBottom - lineTop),
                             )
                         }
+                        runtimePageLine?.takeIf { it < layout.lineCount }?.let { lineIndex ->
+                            val lineTop = sourceTopPaddingPx + layout.getLineTop(lineIndex)
+                            val lineBottom = sourceTopPaddingPx + layout.getLineBottom(lineIndex)
+                            drawRect(
+                                color = runtimeLineColor,
+                                topLeft = Offset(0f, lineTop),
+                                size = Size(size.width, lineBottom - lineTop),
+                            )
+                            drawRect(
+                                color = runtimeEdgeColor,
+                                topLeft = Offset(0f, lineTop),
+                                size = Size(diagnosticEdgeWidthPx, lineBottom - lineTop),
+                            )
+                        }
                         selectedPageLine
                             ?.takeIf { it !in diagnosticPageLines && it != runtimePageLine && it < layout.lineCount }
                             ?.let { lineIndex ->
@@ -5078,10 +5323,38 @@ private fun AsmEditableSourcePane(
                                     size = Size(size.width, lineBottom - lineTop),
                                 )
                             }
+                        breakpointPageMarkers.forEach { (lineIndex, marker) ->
+                            if (lineIndex >= layout.lineCount) return@forEach
+                            val centerY = sourceTopPaddingPx +
+                                (layout.getLineTop(lineIndex) + layout.getLineBottom(lineIndex)) / 2f
+                            val center = Offset(breakpointLaneWidthPx - 7.dp.toPx(), centerY)
+                            if (marker == AsmBreakpointMarker.RESOLVED) {
+                                drawCircle(breakpointColor, breakpointRadiusPx, center)
+                            } else {
+                                drawCircle(
+                                    staleBreakpointColor,
+                                    breakpointRadiusPx,
+                                    center,
+                                    style = Stroke(width = 1.5.dp.toPx()),
+                                )
+                            }
+                        }
+                        runtimePageLine?.takeIf { it < layout.lineCount }?.let { lineIndex ->
+                            val centerY = sourceTopPaddingPx +
+                                (layout.getLineTop(lineIndex) + layout.getLineBottom(lineIndex)) / 2f
+                            val arrow = Path().apply {
+                                moveTo(3.dp.toPx(), centerY - 5.dp.toPx())
+                                lineTo(11.dp.toPx(), centerY)
+                                lineTo(3.dp.toPx(), centerY + 5.dp.toPx())
+                                close()
+                            }
+                            drawPath(arrow, runtimeEdgeColor)
+                        }
                     }
                     .padding(vertical = ASM_SOURCE_VERTICAL_PADDING),
                 verticalAlignment = Alignment.Top,
             ) {
+                Spacer(Modifier.width(ASM_BREAKPOINT_GUTTER_WIDTH))
                 if (gutterMode.lines) Text(
                     buildString {
                         repeat(lineCount) { index ->
@@ -5122,6 +5395,15 @@ private fun AsmEditableSourcePane(
                                     state.redoSourceEdit(source.id)
                                 })
                                 addAll(asmVisualEditorContextMenuItems(visualEditorLinksAt(contextLine), onOpenVisualEditors))
+                                addAll(asmDebuggerContextMenuItems(
+                                    address = debugAddressesByLine[contextLine],
+                                    available = emulatorState?.cpuDebugAvailable == true,
+                                    mappingFresh = debugMappingFresh,
+                                    hasBreakpoint = emulatorState?.let { debug -> debug::hasExecutionBreakpoint } ?: { false },
+                                    onToggleBreakpoint = { address -> emulatorState?.toggleExecutionBreakpoint(address) },
+                                    onRunToAddress = { address -> emulatorState?.runToAddress(address) },
+                                    onOpenDebugger = state::requestDebugger,
+                                ))
                                 addAll(asmCheckedHookContextMenuItems(
                                     nativeProjectSource = romParser != null && !state.isProjectModule(source.id),
                                 ) {
@@ -5362,10 +5644,35 @@ private fun AsmEditableSourcePane(
                     }
                 }
             }
+            AsmBreakpointGutter(
+                paneId = pane.id,
+                width = ASM_BREAKPOINT_GUTTER_WIDTH,
+                horizontalOffset = horizontal.value,
+                onLineClick = { viewportY ->
+                    val layout = fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text }
+                    val contentY = viewportY + vertical.value - sourceTopPaddingPx
+                    val pageLine = layout?.takeIf { contentY in 0f..it.size.height.toFloat() }
+                        ?.getLineForVerticalPosition(contentY)
+                    val address = pageLine?.let { debugAddressesByLine[page.startLine + it] }
+                    if (
+                        address != null && debugMappingFresh &&
+                        emulatorState?.cpuDebugAvailable == true
+                    ) {
+                        emulatorState.toggleExecutionBreakpoint(address)
+                    } else {
+                        state.requestDebugger()
+                    }
+                },
+                onScroll = { delta, shift ->
+                    if (!scrollSourceWheel(delta, shift)) horizontal.dispatchRawDelta(delta.x * ASM_MOUSE_WHEEL_SCALE)
+                },
+                modifier = Modifier.fillMaxSize().padding(end = ASM_SCROLLBAR_SIZE, bottom = ASM_SCROLLBAR_SIZE),
+            )
             AsmSourceGutterToggle(
                 state = state,
                 paneId = pane.id,
-                width = gutterWidth,
+                width = sourceGutterWidth,
+                leadingOffset = ASM_BREAKPOINT_GUTTER_WIDTH,
                 horizontalOffset = horizontal.value,
                 onScroll = { delta, shift ->
                     if (!scrollSourceWheel(delta, shift)) horizontal.dispatchRawDelta(delta.x * ASM_MOUSE_WHEEL_SCALE)
@@ -6916,6 +7223,8 @@ private const val ASM_EDIT_PAGE_LINES = 250
 private const val ASM_EDIT_TARGET_CONTEXT_LINES = 4
 private val ASM_SOURCE_VERTICAL_PADDING = 5.dp
 private val ASM_DIAGNOSTIC_EDGE_WIDTH = 3.dp
+private val ASM_BREAKPOINT_GUTTER_WIDTH = 24.dp
+private val ASM_BREAKPOINT_RADIUS = 5.dp
 private val ASM_LINE_NUMBER_WIDTH = 60.dp
 private val ASM_ADDRESS_GUTTER_WIDTH = 92.dp
 private const val MONOSPACE_CHARACTER_WIDTH = 0.64f

@@ -295,6 +295,21 @@ controls go stale until restart. A clean native-core build plus 56 focused
 native, resolver, artifact, library and workspace/UI-state tests cover the
 completion boundary.
 
+**IDE workflow expansion complete (2026-11-17).** Editable project source now
+has a dedicated breakpoint gutter independent of the line/address display
+gutter. Exact fresh statements support left-click toggle plus right-click Add or
+Remove Breakpoint, Run to Cursor and Open Debugger. Filled and hollow red markers
+distinguish armed from stale mappings; a yellow execution arrow and full-line
+highlight identify the paused PC. The bottom Debugger tab shows a navigable,
+removable session breakpoint list with symbol, address and file/line evidence,
+and compact original debugger glyphs make the control row scannable without
+copying another IDE's assets.
+
+The next debugger increments, in order, are 65c816-aware Step Over and Step Out,
+named watches with typed memory formatting, then native data watchpoints once the
+Snes9x bridge can stop on proven reads/writes. Call-stack work must continue to
+separate proven frames from conservative return candidates.
+
 The implementation is pinned from the
 [`kennycason/snes9x` `smedit-debugger` branch](https://github.com/kennycason/snes9x/tree/smedit-debugger),
 with `libretro/snes9x` retained as upstream. The fork is intentionally limited

@@ -426,7 +426,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
   complete existing-room graph now has an atomic byte-faithful ASM backend; the
   remaining room work is typed label/table output plus stable source identities
   for project-created rooms.
-- [ ] Add emulator run-to-address, breakpoints, register/stack inspection, and
+- [x] Add emulator run-to-address, breakpoints, register/stack inspection, and
   source-mapped crash diagnostics.
 
 ## Progress log
