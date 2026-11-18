@@ -808,6 +808,7 @@ private fun SelectedAddressDetail(
                             expression = expression,
                             resolvedAddress = busAddress,
                             width = width,
+                            currentAddressVerified = true,
                         ),
                     )
                 },

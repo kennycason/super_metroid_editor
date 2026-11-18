@@ -129,6 +129,31 @@ open class SmeditDebugCpuState : Structure() {
     @JvmField var instructions: Long = 0
 }
 
+@Structure.FieldOrder("address", "size", "access", "reserved")
+open class SmeditDebugWatchpoint : Structure() {
+    @JvmField var address: Int = 0
+    @JvmField var size: Int = 0
+    @JvmField var access: Int = 0
+    @JvmField var reserved: Int = 0
+}
+
+@Structure.FieldOrder(
+    "struct_size", "watchpoint_index", "instruction_pc", "access_address", "access_size",
+    "access", "value_before", "value_after", "value_size", "flags",
+)
+open class SmeditDebugWatchpointHit : Structure() {
+    @JvmField var struct_size: Int = 0
+    @JvmField var watchpoint_index: Int = 0
+    @JvmField var instruction_pc: Int = 0
+    @JvmField var access_address: Int = 0
+    @JvmField var access_size: Int = 0
+    @JvmField var access: Int = 0
+    @JvmField var value_before: Int = 0
+    @JvmField var value_after: Int = 0
+    @JvmField var value_size: Int = 0
+    @JvmField var flags: Int = 0
+}
+
 // ── Callback interfaces ────────────────────────────────────────────────────
 
 fun interface RetroVideoRefreshCallback : Callback {
@@ -194,5 +219,7 @@ interface LibretroLib : Library {
     fun smedit_debug_step_over(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
     fun smedit_debug_step_out(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
     fun smedit_debug_run_until(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
+    fun smedit_debug_set_watchpoints(watchpoints: Pointer?, watchpointCount: Int): Int
+    fun smedit_debug_get_watchpoint_hit(hit: SmeditDebugWatchpointHit): Int
     fun smedit_debug_read_bus(address: Int, data: Pointer, size: Int): Int
 }

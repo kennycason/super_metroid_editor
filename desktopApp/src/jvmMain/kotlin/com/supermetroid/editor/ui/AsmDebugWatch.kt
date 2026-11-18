@@ -1,5 +1,7 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.emulator.DebugWatchpointHit
+
 enum class AsmDebugWatchWidth(val byteCount: Int, val displayName: String) {
     BYTE(1, "8-bit"),
     WORD(2, "16-bit"),
@@ -18,6 +20,8 @@ data class AsmDebugWatchDraft(
     val expression: String = "",
     val resolvedAddress: Int? = null,
     val width: AsmDebugWatchWidth = AsmDebugWatchWidth.WORD,
+    /** True only when this address was explicit or resolved against the ROM currently running. */
+    val currentAddressVerified: Boolean = false,
 )
 
 data class AsmDebugWatch(
@@ -26,6 +30,7 @@ data class AsmDebugWatch(
     val expression: String,
     val address: Int,
     val width: AsmDebugWatchWidth,
+    val currentAddressVerified: Boolean = false,
     val bytes: ByteArray = ByteArray(0),
     val readError: String? = null,
 ) {
@@ -56,8 +61,23 @@ data class AsmDebugWatch(
         expression = expression,
         resolvedAddress = address,
         width = width,
+        currentAddressVerified = currentAddressVerified,
     )
 }
+
+data class AsmDebugWatchpointSettings(
+    val pauseOnRead: Boolean = false,
+    val pauseOnWrite: Boolean = false,
+    val historyLimit: Int = 25,
+) {
+    val active: Boolean get() = pauseOnRead || pauseOnWrite
+}
+
+data class AsmDebugWatchpointHistoryEntry(
+    val id: Long,
+    val hit: DebugWatchpointHit,
+    val coreFrame: Long,
+)
 
 internal fun isWramDebugAddress(address: Int): Boolean = address ushr 16 in 0x7E..0x7F
 

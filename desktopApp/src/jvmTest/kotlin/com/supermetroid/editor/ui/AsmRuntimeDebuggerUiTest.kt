@@ -1,5 +1,7 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.emulator.DebugWatchpointAccess
+import com.supermetroid.editor.emulator.DebugWatchpointHit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -52,5 +54,29 @@ class AsmRuntimeDebuggerUiTest {
         assertNull(wramDebugAddress(0x20000))
         assertEquals(true, isDebugWatchRangeValid(0xFFFFFC, AsmDebugWatchWidth.DWORD))
         assertEquals(false, isDebugWatchRangeValid(0xFFFFFD, AsmDebugWatchWidth.DWORD))
+    }
+
+    @Test
+    fun `watchpoint history distinguishes reads from before and after writes`() {
+        assertEquals(
+            "READ  \$1234",
+            debugWatchpointHistorySummary(
+                DebugWatchpointHit(1, 0x82AB40, 0x7E09C2, 2, DebugWatchpointAccess.READ, valueAfter = 0x1234),
+            ),
+        )
+        assertEquals(
+            "WRITE  \$0063 → \$004F",
+            debugWatchpointHistorySummary(
+                DebugWatchpointHit(
+                    1,
+                    0x82AB40,
+                    0x7E09C2,
+                    2,
+                    DebugWatchpointAccess.WRITE,
+                    valueBefore = 99,
+                    valueAfter = 79,
+                ),
+            ),
+        )
     }
 }

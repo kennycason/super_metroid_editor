@@ -305,8 +305,8 @@ removable session breakpoint list with symbol, address and file/line evidence,
 and compact original debugger glyphs make the control row scannable without
 copying another IDE's assets.
 
-**Structured stepping and named watches complete (2026-11-17).** Debugger ABI
-v2 adds bounded 65c816-aware **Step Over** and **Step Out**. The native core
+**Structured stepping, named watches and data watchpoints complete (2026-11-18).**
+Debugger ABI v2 adds bounded 65c816-aware **Step Over** and **Step Out**. The native core
 tracks executed `JSR`, `JSL`, `JSR (abs,X)`, `RTS` and `RTL` instructions,
 including nested calls, while leaving user breakpoints armed; it deliberately
 does not infer a return frame from raw stack candidates or treat `RTI` as a
@@ -315,18 +315,31 @@ handler-local calls cannot contaminate the selected routine. ABI v1 cores retain
 the original debugger and disable these two controls with an explicit capability
 message.
 
-The Debugger tab is also the single owner of read-only, session-only named
-watches. A watch accepts a current compiled symbol or 24-bit SNES address plus
+The Debugger tab is also the single owner of read-only named watches. A watch
+definition is saved with its project and accepts a current compiled symbol or 24-bit SNES address plus
 8/16/24/32-bit width and always shows aligned decimal, hexadecimal and binary
 columns. Source right-click and the WRAM Hex inspector open the same watch
 editor; WRAM watches can navigate back to the exact highlighted Hex range.
 Running watches refresh between completed emulator calls using the same
 side-effect-free bus peek as memory inspection, so hardware/coprocessor ranges
-fail closed as unavailable and no project file acquires debug state.
+fail closed as unavailable. Live values and read failures are never persisted and
+watch definitions are excluded from ROM/build identity.
 
-The next debugger increment is native data watchpoints once the Snes9x bridge
-can stop on proven reads/writes. Call-stack work must continue to separate
-proven frames from conservative return candidates.
+Debugger ABI v3 promotes an existing Watch into a native data watchpoint without
+introducing another Add workflow. Its eye popover selects **Pause on Read** and
+**Pause on Write** independently, retains a bounded 10/25/50/100-entry hit
+history, and navigates proven triggering source. The core observes the real CPU
+bus access and pauses only after the matching instruction completes, reporting
+the triggering PC, address, access size and read value or write before/after
+values. Pause choices, history and history limits are session-only; closing or
+restarting the emulator returns every saved Watch to passive display. A symbol
+may pause execution only when resolved against the exact ROM currently running;
+stale saved addresses remain visible as passive Watches but cannot silently
+become watchpoints.
+
+The next debugger increment is proven call-stack/call-history work. It must
+continue to separate native-core evidence from conservative raw-stack return
+candidates.
 
 The implementation is pinned from the
 [`kennycason/snes9x` `smedit-debugger` branch](https://github.com/kennycason/snes9x/tree/smedit-debugger),

@@ -289,11 +289,11 @@ class LibretroBackend(
         c.readCpuDebugState()
     }
 
-    override suspend fun stepInstruction(): DebugExecutionResult {
+    override suspend fun stepInstruction(request: DebugRunRequest): DebugExecutionResult {
         val c = core ?: throw IllegalStateException("Not connected")
         check(sessionActive) { "No active session" }
         val (execution, capture) = onEmuThread {
-            c.stepInstruction() to captureStep(c, includeFrame = true)
+            c.stepInstruction(request.watchpoints) to captureStep(c, includeFrame = true)
         }
         syncDebugFrame(execution.cpu.coreFrame)
         pushFrame(capture.snapshot.frame)
@@ -302,6 +302,7 @@ class LibretroBackend(
             haltReason = execution.haltReason,
             cpu = execution.cpu,
             snapshot = buildSnapshot(capture.snapshot),
+            watchpointHit = execution.watchpointHit,
         )
     }
 
@@ -313,13 +314,13 @@ class LibretroBackend(
 
     private suspend fun structuredStep(
         request: DebugRunRequest,
-        execute: LibretroCore.(List<Int>, Long, Int) -> LibretroCore.CpuDebugExecution,
+        execute: LibretroCore.(List<Int>, Long, Int, List<com.supermetroid.editor.emulator.DebugWatchpointRequest>) -> LibretroCore.CpuDebugExecution,
     ): DebugExecutionResult {
         val c = core ?: throw IllegalStateException("Not connected")
         check(sessionActive) { "No active session" }
         val (execution, capture) = onEmuThread {
             c.setInput(0, request.input.buttons)
-            c.execute(request.addresses, request.instructionLimit, request.frameLimit) to
+            c.execute(request.addresses, request.instructionLimit, request.frameLimit, request.watchpoints) to
                 captureStep(c, includeFrame = request.input.includeFrame)
         }
         syncDebugFrame(execution.cpu.coreFrame)
@@ -329,6 +330,7 @@ class LibretroBackend(
             haltReason = execution.haltReason,
             cpu = execution.cpu,
             snapshot = buildSnapshot(capture.snapshot),
+            watchpointHit = execution.watchpointHit,
         )
     }
 
@@ -337,7 +339,7 @@ class LibretroBackend(
         check(sessionActive) { "No active session" }
         val (execution, capture) = onEmuThread {
             c.setInput(0, request.input.buttons)
-            c.runUntil(request.addresses, request.instructionLimit, request.frameLimit) to
+            c.runUntil(request.addresses, request.instructionLimit, request.frameLimit, request.watchpoints) to
                 captureStep(c, includeFrame = request.input.includeFrame)
         }
         syncDebugFrame(execution.cpu.coreFrame)
@@ -347,6 +349,7 @@ class LibretroBackend(
             haltReason = execution.haltReason,
             cpu = execution.cpu,
             snapshot = buildSnapshot(capture.snapshot),
+            watchpointHit = execution.watchpointHit,
         )
     }
 

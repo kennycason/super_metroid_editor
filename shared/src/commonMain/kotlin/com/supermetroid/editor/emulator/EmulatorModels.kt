@@ -27,7 +27,31 @@ enum class DebugHaltReason {
     INVALID_REQUEST,
     STEP_OVER,
     STEP_OUT,
+    WATCHPOINT,
 }
+
+@Serializable
+enum class DebugWatchpointAccess { READ, WRITE }
+
+@Serializable
+data class DebugWatchpointRequest(
+    val watchId: Long,
+    val address: Int,
+    val size: Int,
+    val pauseOnRead: Boolean,
+    val pauseOnWrite: Boolean,
+)
+
+@Serializable
+data class DebugWatchpointHit(
+    val watchId: Long,
+    val instructionPc: Int,
+    val accessAddress: Int,
+    val accessSize: Int,
+    val access: DebugWatchpointAccess,
+    val valueBefore: Long? = null,
+    val valueAfter: Long? = null,
+)
 
 @Serializable
 data class CpuDebugState(
@@ -61,6 +85,7 @@ data class CpuDebugState(
 @Serializable
 data class DebugRunRequest(
     val addresses: List<Int> = emptyList(),
+    val watchpoints: List<DebugWatchpointRequest> = emptyList(),
     val instructionLimit: Long = 1_000_000,
     val frameLimit: Int = 1,
     val input: EmulatorInput = EmulatorInput(),
@@ -71,6 +96,7 @@ data class DebugExecutionResult(
     val haltReason: DebugHaltReason,
     val cpu: CpuDebugState,
     val snapshot: GameSnapshot = GameSnapshot(),
+    val watchpointHit: DebugWatchpointHit? = null,
 )
 
 @Serializable

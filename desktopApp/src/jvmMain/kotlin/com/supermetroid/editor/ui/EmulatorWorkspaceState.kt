@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
@@ -17,6 +18,7 @@ import com.supermetroid.editor.emulator.CpuDebugState
 import com.supermetroid.editor.emulator.DebugExecutionResult
 import com.supermetroid.editor.emulator.DebugHaltReason
 import com.supermetroid.editor.emulator.DebugRunRequest
+import com.supermetroid.editor.emulator.DebugWatchpointRequest
 import com.supermetroid.editor.emulator.EmulatorRegistry
 import com.supermetroid.editor.emulator.FrameHolder
 import com.supermetroid.editor.emulator.GameSnapshot
@@ -50,6 +52,7 @@ private const val DEBUG_STACK_BYTES = 32
 private const val DEBUG_MEMORY_BYTES = 32
 private const val MAX_SESSION_BREAKPOINTS = 255 // Native ABI supports 256 targets; reserve one for Run to Cursor.
 private const val MAX_SESSION_WATCHES = 64
+internal val WATCHPOINT_HISTORY_LIMITS = listOf(10, 25, 50, 100)
 private const val STRUCTURED_STEP_INSTRUCTION_LIMIT = 5_000_000L
 private const val STRUCTURED_STEP_FRAME_LIMIT = 120
 private const val DEBUG_BUS_READ_BLOCKED =
@@ -241,6 +244,8 @@ class EmulatorWorkspaceState(
     /** Execution state is session-only. Watch definitions are hydrated from the active project. */
     val executionBreakpoints = mutableStateListOf<Int>()
     val debugWatches = mutableStateListOf<AsmDebugWatch>()
+    val debugWatchpointSettings = mutableStateMapOf<Long, AsmDebugWatchpointSettings>()
+    val debugWatchpointHistory = mutableStateListOf<AsmDebugWatchpointHistoryEntry>()
     var onDebugWatchesChanged: (List<AsmDebugWatchDraft>) -> Unit = {}
     var pendingDebugWatchDraft by mutableStateOf<AsmDebugWatchDraft?>(null)
         private set
@@ -249,6 +254,8 @@ class EmulatorWorkspaceState(
     var debugCpu by mutableStateOf<CpuDebugState?>(null)
         private set
     var debugHaltReason by mutableStateOf(DebugHaltReason.NONE)
+        private set
+    var lastDebugWatchpointHit by mutableStateOf<com.supermetroid.editor.emulator.DebugWatchpointHit?>(null)
         private set
     var debugRunToAddress by mutableStateOf<Int?>(null)
         private set
@@ -269,12 +276,23 @@ class EmulatorWorkspaceState(
         private set
     private var skipBreakpointOnceAt: Int? = null
     private var nextDebugWatchId = 1L
+    private var nextDebugWatchpointHistoryId = 1L
 
     val cpuDebugAvailable: Boolean
         get() = session.active && capabilities?.supportsCpuDebugging == true
 
     val structuredCpuStepAvailable: Boolean
         get() = cpuDebugAvailable && (capabilities?.cpuDebugApiVersion ?: 0) >= 2
+
+    val dataWatchpointsAvailable: Boolean
+        get() = cpuDebugAvailable && (capabilities?.cpuDebugApiVersion ?: 0) >= 3
+
+    /** Source address to explain. The CPU PC remains the real post-instruction PC after a watchpoint. */
+    val debugExecutionAddress: Int?
+        get() = lastDebugWatchpointHit
+            ?.takeIf { debugHaltReason == DebugHaltReason.WATCHPOINT }
+            ?.instructionPc
+            ?: debugCpu?.pc
 
     /** Requests that the floating emulator become visible and actively run.
      * The window owns the build/connect lifecycle and observes this serial. */
@@ -498,15 +516,25 @@ class EmulatorWorkspaceState(
         val startedAt = System.nanoTime()
         try {
             val debugTargets = (executionBreakpoints + listOfNotNull(debugRunToAddress)).distinct()
-            if (capsSupportCpuDebugging() && debugTargets.isNotEmpty()) {
+            val dataWatchpoints = activeDebugWatchpoints()
+            if (capsSupportCpuDebugging() && (debugTargets.isNotEmpty() || dataWatchpoints.isNotEmpty())) {
                 val skip = skipBreakpointOnceAt
                 if (skip != null && debugCpu?.pc == skip) {
-                    applyDebugExecution(b.stepInstruction())
+                    val skipped = b.stepInstruction(DebugRunRequest(watchpoints = dataWatchpoints))
+                    applyDebugExecution(skipped)
                     skipBreakpointOnceAt = null
+                    if (skipped.haltReason == DebugHaltReason.WATCHPOINT) {
+                        isRunning = false
+                        debugRunToAddress = null
+                        setStatus(debugHaltMessage(skipped.haltReason))
+                        refreshCpuDebugContext(skipped.cpu)
+                        return
+                    }
                 }
                 val debugResult = b.runUntil(
                     DebugRunRequest(
                         addresses = debugTargets,
+                        watchpoints = dataWatchpoints,
                         instructionLimit = 2_000_000L * repeat.coerceAtLeast(1),
                         frameLimit = repeat.coerceAtLeast(1),
                         input = EmulatorInput(
@@ -520,10 +548,14 @@ class EmulatorWorkspaceState(
                 applyDebugExecution(debugResult)
                 when (debugResult.haltReason) {
                     DebugHaltReason.FRAME_LIMIT -> Unit
-                    DebugHaltReason.BREAKPOINT -> {
+                    DebugHaltReason.BREAKPOINT, DebugHaltReason.WATCHPOINT -> {
                         isRunning = false
                         debugRunToAddress = null
-                        setStatus("Paused at $${debugResult.cpu.pc.toString(16).uppercase().padStart(6, '0')}")
+                        setStatus(
+                            if (debugResult.haltReason == DebugHaltReason.WATCHPOINT) {
+                                debugHaltMessage(debugResult.haltReason)
+                            } else "Paused at $${debugResult.cpu.pc.toString(16).uppercase().padStart(6, '0')}"
+                        )
                         refreshCpuDebugContext(debugResult.cpu)
                     }
                     else -> {
@@ -890,7 +922,7 @@ class EmulatorWorkspaceState(
         }
         val existingIndex = draft.id?.let { id -> debugWatches.indexOfFirst { it.id == id } } ?: -1
         if (existingIndex < 0 && debugWatches.size >= MAX_SESSION_WATCHES) {
-            setStatus("At most $MAX_SESSION_WATCHES session watches can be active")
+            setStatus("At most $MAX_SESSION_WATCHES watches can be saved in one project")
             return false
         }
         val watch = AsmDebugWatch(
@@ -899,6 +931,7 @@ class EmulatorWorkspaceState(
             expression = draft.expression.trim().ifEmpty { formatDebugAddress(address) },
             address = address,
             width = draft.width,
+            currentAddressVerified = draft.currentAddressVerified,
         )
         if (existingIndex >= 0) debugWatches[existingIndex] = watch else debugWatches += watch
         notifyDebugWatchesChanged()
@@ -908,28 +941,110 @@ class EmulatorWorkspaceState(
     }
 
     fun removeDebugWatch(id: Long) {
-        if (debugWatches.removeAll { it.id == id }) notifyDebugWatchesChanged()
+        if (debugWatches.removeAll { it.id == id }) {
+            debugWatchpointSettings.remove(id)
+            debugWatchpointHistory.removeAll { it.hit.watchId == id }
+            notifyDebugWatchesChanged()
+        }
     }
 
     fun clearDebugWatches() {
         if (debugWatches.isEmpty()) return
         debugWatches.clear()
+        debugWatchpointSettings.clear()
+        debugWatchpointHistory.clear()
         notifyDebugWatchesChanged()
     }
 
     fun replaceProjectDebugWatches(watches: List<AsmDebugWatchDraft>) {
-        debugWatches.clear()
-        watches.take(MAX_SESSION_WATCHES).forEach { draft ->
-            val address = draft.resolvedAddress ?: return@forEach
-            if (!isDebugWatchRangeValid(address, draft.width)) return@forEach
-            debugWatches += AsmDebugWatch(
-                id = nextDebugWatchId++,
-                name = draft.name.trim().ifEmpty { draft.expression.trim().ifEmpty { formatDebugAddress(address) } },
-                expression = draft.expression.trim().ifEmpty { formatDebugAddress(address) },
+        val unmatched = debugWatches.toMutableList()
+        val replacements = watches.take(MAX_SESSION_WATCHES).mapNotNull { draft ->
+            val address = draft.resolvedAddress ?: return@mapNotNull null
+            if (!isDebugWatchRangeValid(address, draft.width)) return@mapNotNull null
+            val name = draft.name.trim().ifEmpty { draft.expression.trim().ifEmpty { formatDebugAddress(address) } }
+            val expression = draft.expression.trim().ifEmpty { formatDebugAddress(address) }
+            val existing = unmatched.firstOrNull {
+                it.name == name && it.expression == expression && it.width == draft.width
+            }?.also(unmatched::remove)
+            AsmDebugWatch(
+                id = existing?.id ?: nextDebugWatchId++,
+                name = name,
+                expression = expression,
                 address = address,
                 width = draft.width,
+                currentAddressVerified = draft.currentAddressVerified,
+                bytes = existing?.bytes?.takeIf { existing.address == address } ?: ByteArray(0),
+                readError = existing?.readError?.takeIf { existing.address == address },
             )
         }
+        debugWatches.clear()
+        debugWatches.addAll(replacements)
+        val retainedIds = replacements.mapTo(mutableSetOf()) { it.id }
+        debugWatchpointSettings.keys.removeAll { it !in retainedIds }
+        debugWatchpointHistory.removeAll { it.hit.watchId !in retainedIds }
+    }
+
+    fun debugWatchpointSettings(watchId: Long): AsmDebugWatchpointSettings =
+        debugWatchpointSettings[watchId] ?: AsmDebugWatchpointSettings()
+
+    fun updateDebugWatchpoint(
+        watchId: Long,
+        pauseOnRead: Boolean,
+        pauseOnWrite: Boolean,
+    ): Boolean {
+        val watch = debugWatches.firstOrNull { it.id == watchId } ?: return false
+        if ((pauseOnRead || pauseOnWrite) && !dataWatchpointsAvailable) {
+            setStatus("Data watchpoints require the bundled debugger API v3")
+            return false
+        }
+        if ((pauseOnRead || pauseOnWrite) && !watch.currentAddressVerified) {
+            setStatus("Restart the emulator with the current build before using this watchpoint")
+            return false
+        }
+        val current = debugWatchpointSettings(watchId)
+        debugWatchpointSettings[watchId] = current.copy(
+            pauseOnRead = pauseOnRead,
+            pauseOnWrite = pauseOnWrite,
+        )
+        setStatus(
+            when {
+                pauseOnRead && pauseOnWrite -> "${watch.name} will pause on reads and writes"
+                pauseOnRead -> "${watch.name} will pause on reads"
+                pauseOnWrite -> "${watch.name} will pause on writes"
+                else -> "${watch.name} is now a passive watch"
+            },
+        )
+        return true
+    }
+
+    fun setDebugWatchpointHistoryLimit(watchId: Long, limit: Int) {
+        require(limit in WATCHPOINT_HISTORY_LIMITS) { "Unsupported watchpoint history limit" }
+        val current = debugWatchpointSettings(watchId)
+        debugWatchpointSettings[watchId] = current.copy(historyLimit = limit)
+        trimDebugWatchpointHistory(watchId, limit)
+    }
+
+    fun clearDebugWatchpointHistory(watchId: Long) {
+        debugWatchpointHistory.removeAll { it.hit.watchId == watchId }
+    }
+
+    internal fun activeDebugWatchpoints(): List<DebugWatchpointRequest> = debugWatches.mapNotNull { watch ->
+        val settings = debugWatchpointSettings[watch.id] ?: return@mapNotNull null
+        if (!settings.active || !watch.currentAddressVerified || !dataWatchpointsAvailable) return@mapNotNull null
+        DebugWatchpointRequest(
+            watchId = watch.id,
+            address = watch.address,
+            size = watch.width.byteCount,
+            pauseOnRead = settings.pauseOnRead,
+            pauseOnWrite = settings.pauseOnWrite,
+        )
+    }
+
+    private fun trimDebugWatchpointHistory(watchId: Long, limit: Int) {
+        val idsToRemove = debugWatchpointHistory.filter { it.hit.watchId == watchId }
+            .dropLast(limit)
+            .mapTo(mutableSetOf()) { it.id }
+        if (idsToRemove.isNotEmpty()) debugWatchpointHistory.removeAll { it.id in idsToRemove }
     }
 
     private fun notifyDebugWatchesChanged() {
@@ -961,7 +1076,7 @@ class EmulatorWorkspaceState(
         if (!cpuDebugAvailable || isBusy) return
         stepInFlight = true
         try {
-            val result = b.stepInstruction()
+            val result = b.stepInstruction(DebugRunRequest(watchpoints = activeDebugWatchpoints()))
             applyDebugExecution(result)
             refreshCpuDebugContext(result.cpu)
             setStatus(
@@ -1006,6 +1121,7 @@ class EmulatorWorkspaceState(
             val result = b.execute(
                 DebugRunRequest(
                     addresses = executionBreakpoints.distinct(),
+                    watchpoints = activeDebugWatchpoints(),
                     instructionLimit = STRUCTURED_STEP_INSTRUCTION_LIMIT,
                     frameLimit = STRUCTURED_STEP_FRAME_LIMIT,
                     input = EmulatorInput(buttons = currentAction(), includeFrame = true),
@@ -1114,18 +1230,33 @@ class EmulatorWorkspaceState(
     private suspend fun applyDebugExecution(result: DebugExecutionResult) {
         debugCpu = result.cpu
         debugHaltReason = result.haltReason
+        lastDebugWatchpointHit = result.watchpointHit
+        result.watchpointHit?.let { hit ->
+            debugWatchpointHistory += AsmDebugWatchpointHistoryEntry(
+                id = nextDebugWatchpointHistoryId++,
+                hit = hit,
+                coreFrame = result.cpu.coreFrame,
+            )
+            trimDebugWatchpointHistory(
+                hit.watchId,
+                debugWatchpointSettings(hit.watchId).historyLimit,
+            )
+        }
         session = session.copy(frameCounter = result.snapshot.frameCounter)
         applySnapshot(result.snapshot)
     }
 
     private fun clearCpuDebugSession() {
         executionBreakpoints.clear()
+        debugWatchpointSettings.clear()
+        debugWatchpointHistory.clear()
         debugWatches.indices.forEach { index ->
             debugWatches[index] = debugWatches[index].copy(bytes = ByteArray(0), readError = null)
         }
         pendingDebugWatchDraft = null
         debugCpu = null
         debugHaltReason = DebugHaltReason.NONE
+        lastDebugWatchpointHit = null
         debugRunToAddress = null
         debugStackAddress = 0
         debugStackBytes = ByteArray(0)
@@ -1147,6 +1278,10 @@ class EmulatorWorkspaceState(
         DebugHaltReason.INVALID_REQUEST -> "The core rejected the debug request"
         DebugHaltReason.STEP_OVER -> "CPU step over completed"
         DebugHaltReason.STEP_OUT -> "CPU step out completed"
+        DebugHaltReason.WATCHPOINT -> lastDebugWatchpointHit?.let { hit ->
+            val watch = debugWatches.firstOrNull { it.id == hit.watchId }
+            "Paused: ${watch?.name ?: "watchpoint"} was ${hit.access.name.lowercase()}"
+        } ?: "Data watchpoint reached"
     }
 
     private fun formatDebugAddress(address: Int): String =

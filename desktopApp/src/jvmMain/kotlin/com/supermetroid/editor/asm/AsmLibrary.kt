@@ -1601,14 +1601,14 @@ internal object AsmLibrary {
             summary = "Pause the bundled emulator on exact compiled statements, inspect the 65c816, and follow proven source and stack evidence.",
             keywords = setOf(
                 "debugger", "breakpoint", "run to cursor", "step instruction", "step over", "step out", "registers",
-                "watch", "watches", "stack", "memory", "pc", "source map", "crash", "libretro",
+                "watch", "watches", "watchpoint", "read breakpoint", "write breakpoint", "stack", "memory", "pc", "source map", "crash", "libretro",
             ),
             sections = listOf(
                 AsmLibrarySection(
                     "A capability, not a libretro assumption",
                     listOf(
                         "Stock libretro advances frames but does not promise instruction stepping or CPU registers. SMEDIT's bundled Snes9x core exposes a separate versioned debug capability; external cores and RetroArch fail closed instead of displaying invented state.",
-                        "The core and editor remain single-threaded. Pause means no core call is executing. Step executes one 65c816 opcode, and Run to Cursor advances in bounded frame chunks until the CPU reaches one exact compiled 24-bit address. Debugger ABI v2 adds native Step Over and Step Out; an older ABI keeps the original controls and disables only those two actions.",
+                        "The core and editor remain single-threaded. Pause means no core call is executing. Step executes one 65c816 opcode, and Run to Cursor advances in bounded frame chunks until the CPU reaches one exact compiled 24-bit address. Debugger ABI v2 adds native Step Over and Step Out; ABI v3 adds native data watchpoints. Older or stock cores retain only the capabilities they prove.",
                     ),
                 ),
                 AsmLibrarySection(
@@ -1630,11 +1630,13 @@ internal object AsmLibrary {
                     ),
                 ),
                 AsmLibrarySection(
-                    "Step Over, Step Out, and watches",
+                    "Step Over, Step Out, watches, and watchpoints",
                     listOf(
                         "Step Over and Step Out follow instructions executed by the native core: JSR, JSL and JSR (abs,X) increase the selected call depth, while RTS and RTL reduce it. RTI is deliberately not a routine return; NMI, IRQ, BRK and COP use a separate interrupt scope so handler-local calls do not contaminate the selected routine. Nested calls are handled, user breakpoints stay armed, and instruction/frame limits still fail closed. This does not promote a raw stack candidate into a guessed call frame.",
-                        "The Debugger tab owns read-only session watches. Add a current compiled symbol or 24-bit SNES address and choose its 8/16/24/32-bit width. The aligned watch table always shows decimal, hexadecimal and binary together. Right-clicking a resolved project-source symbol and Add Watch in Hex both open this same watch editor.",
-                        "WRAM watches offer Hex navigation to the exact highlighted byte range. Running watches refresh between completed emulator calls through the side-effect-free bus API; unsafe hardware ranges show unavailable. Watches clear with the emulator session and are never written into source or project metadata.",
+                        "The Debugger tab owns read-only Watches. Add a current compiled symbol or 24-bit SNES address and choose its 8/16/24/32-bit width. The aligned table always shows decimal, hexadecimal and binary together. Right-clicking a resolved project-source symbol and Add Watch in Hex both open this same editor. Watch definitions are saved with the project, while live values and failures are not and cannot invalidate a build.",
+                        "WRAM Watches offer Hex navigation to the exact highlighted byte range. Running values refresh between completed emulator calls through the side-effect-free bus API; unsafe hardware ranges show unavailable.",
+                        "The eye on a Watch opens one compact Watchpoint popover. Pause on Read and Pause on Write are independent; choosing either promotes that Watch without adding a second object or Add command. The core completes the triggering CPU instruction, then reports its PC, access and value evidence. Registers retain the truthful post-instruction CPU state while source highlighting identifies the instruction that triggered the pause. DMA and HDMA transfers are excluded because they have no triggering 65c816 instruction to navigate to. Recent hits retain the last 10, 25, 50 or 100 entries and navigate to proven source.",
+                        "Watchpoint pause choices and hit history are session-only. A symbol must resolve against the ROM currently running before it can pause execution; stale symbols remain useful passive Watches and explain that the emulator must restart instead of using an old address.",
                     ),
                 ),
                 AsmLibrarySection(

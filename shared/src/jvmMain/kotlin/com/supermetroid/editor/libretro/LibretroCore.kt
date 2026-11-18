@@ -6,6 +6,9 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.supermetroid.editor.emulator.CpuDebugState
 import com.supermetroid.editor.emulator.DebugHaltReason
+import com.supermetroid.editor.emulator.DebugWatchpointAccess
+import com.supermetroid.editor.emulator.DebugWatchpointHit
+import com.supermetroid.editor.emulator.DebugWatchpointRequest
 import java.io.File
 
 // dlopen flags for loading libretro cores with isolated symbol scope
@@ -21,6 +24,7 @@ class LibretroCore(private val corePath: String) {
     data class CpuDebugExecution(
         val haltReason: DebugHaltReason,
         val cpu: CpuDebugState,
+        val watchpointHit: DebugWatchpointHit? = null,
     )
 
     data class FrameSnapshot(
@@ -154,18 +158,20 @@ class LibretroCore(private val corePath: String) {
         return state.toModel()
     }
 
-    fun stepInstruction(): CpuDebugExecution {
+    fun stepInstruction(watchpoints: List<DebugWatchpointRequest> = emptyList()): CpuDebugExecution {
         requireCpuDebugging()
         check(gameLoaded) { "No game loaded" }
+        configureWatchpoints(watchpoints)
         val reason = debugHaltReason(lib.smedit_debug_step_instruction())
-        return CpuDebugExecution(reason, readCpuDebugState())
+        return CpuDebugExecution(reason, readCpuDebugState(), readWatchpointHit(reason, watchpoints))
     }
 
     fun stepOver(
         addresses: List<Int>,
         instructionLimit: Long,
         frameLimit: Int,
-    ): CpuDebugExecution = structuredStep(addresses, instructionLimit, frameLimit, "over") { pointer, count ->
+        watchpoints: List<DebugWatchpointRequest> = emptyList(),
+    ): CpuDebugExecution = structuredStep(addresses, instructionLimit, frameLimit, watchpoints, "over") { pointer, count ->
         lib.smedit_debug_step_over(pointer, count, instructionLimit, frameLimit)
     }
 
@@ -173,7 +179,8 @@ class LibretroCore(private val corePath: String) {
         addresses: List<Int>,
         instructionLimit: Long,
         frameLimit: Int,
-    ): CpuDebugExecution = structuredStep(addresses, instructionLimit, frameLimit, "out") { pointer, count ->
+        watchpoints: List<DebugWatchpointRequest> = emptyList(),
+    ): CpuDebugExecution = structuredStep(addresses, instructionLimit, frameLimit, watchpoints, "out") { pointer, count ->
         lib.smedit_debug_step_out(pointer, count, instructionLimit, frameLimit)
     }
 
@@ -181,6 +188,7 @@ class LibretroCore(private val corePath: String) {
         addresses: List<Int>,
         instructionLimit: Long,
         frameLimit: Int,
+        watchpoints: List<DebugWatchpointRequest>,
         operation: String,
         execute: (Pointer?, Int) -> Int,
     ): CpuDebugExecution {
@@ -190,19 +198,21 @@ class LibretroCore(private val corePath: String) {
         require(addresses.all { it in 0..0xFFFFFF }) { "Execution addresses must be 24-bit SNES addresses" }
         require(instructionLimit > 0) { "Step $operation instruction limit must be positive" }
         require(frameLimit > 0) { "Step $operation frame limit must be positive" }
+        configureWatchpoints(watchpoints)
         val addressMemory = addresses.takeIf(List<Int>::isNotEmpty)?.let { values ->
             Memory((values.size * Int.SIZE_BYTES).toLong()).also { memory ->
                 values.forEachIndexed { index, value -> memory.setInt((index * Int.SIZE_BYTES).toLong(), value) }
             }
         }
         val reason = debugHaltReason(execute(addressMemory, addresses.size))
-        return CpuDebugExecution(reason, readCpuDebugState())
+        return CpuDebugExecution(reason, readCpuDebugState(), readWatchpointHit(reason, watchpoints))
     }
 
     fun runUntil(
         addresses: List<Int>,
         instructionLimit: Long,
         frameLimit: Int,
+        watchpoints: List<DebugWatchpointRequest> = emptyList(),
     ): CpuDebugExecution {
         requireCpuDebugging()
         check(gameLoaded) { "No game loaded" }
@@ -210,6 +220,7 @@ class LibretroCore(private val corePath: String) {
         require(addresses.all { it in 0..0xFFFFFF }) { "Execution addresses must be 24-bit SNES addresses" }
         require(instructionLimit > 0) { "Instruction limit must be positive" }
         require(frameLimit > 0) { "Frame limit must be positive" }
+        configureWatchpoints(watchpoints)
         val addressMemory = addresses.takeIf(List<Int>::isNotEmpty)?.let { values ->
             Memory((values.size * Int.SIZE_BYTES).toLong()).also { memory ->
                 values.forEachIndexed { index, value -> memory.setInt((index * Int.SIZE_BYTES).toLong(), value) }
@@ -218,7 +229,77 @@ class LibretroCore(private val corePath: String) {
         val reason = debugHaltReason(
             lib.smedit_debug_run_until(addressMemory, addresses.size, instructionLimit, frameLimit),
         )
-        return CpuDebugExecution(reason, readCpuDebugState())
+        return CpuDebugExecution(reason, readCpuDebugState(), readWatchpointHit(reason, watchpoints))
+    }
+
+    private fun configureWatchpoints(watchpoints: List<DebugWatchpointRequest>) {
+        require(watchpoints.size <= MAX_CPU_WATCHPOINTS) { "At most $MAX_CPU_WATCHPOINTS data watchpoints are supported" }
+        if (watchpoints.isNotEmpty()) requireCpuDebugging(WATCHPOINT_CPU_DEBUG_API_VERSION)
+        watchpoints.forEach { watchpoint ->
+            require(watchpoint.address in 0..0xFFFFFF) { "Watchpoint address must be 24-bit" }
+            require(watchpoint.size in 1..4) { "Watchpoint size must be 1-4 bytes" }
+            require(watchpoint.address.toLong() + watchpoint.size <= 0x1000000L) { "Watchpoint range is out of bounds" }
+            require(watchpoint.pauseOnRead || watchpoint.pauseOnWrite) { "Watchpoint must pause on read or write" }
+        }
+        if ((cpuDebugApiVersion ?: 0) < WATCHPOINT_CPU_DEBUG_API_VERSION) return
+        val memory = watchpoints.takeIf { it.isNotEmpty() }?.let { values ->
+            Memory((values.size * SMEDIT_WATCHPOINT_STRUCT_BYTES).toLong()).also { buffer ->
+                values.forEachIndexed { index, watchpoint ->
+                    val offset = (index * SMEDIT_WATCHPOINT_STRUCT_BYTES).toLong()
+                    buffer.setInt(offset, watchpoint.address)
+                    buffer.setInt(offset + 4, watchpoint.size)
+                    buffer.setInt(
+                        offset + 8,
+                        (if (watchpoint.pauseOnRead) SMEDIT_WATCH_READ else 0) or
+                            (if (watchpoint.pauseOnWrite) SMEDIT_WATCH_WRITE else 0),
+                    )
+                    buffer.setInt(offset + 12, 0)
+                }
+            }
+        }
+        check(lib.smedit_debug_set_watchpoints(memory, watchpoints.size) != 0) {
+            "Core rejected data watchpoints"
+        }
+    }
+
+    private fun readWatchpointHit(
+        reason: DebugHaltReason,
+        watchpoints: List<DebugWatchpointRequest>,
+    ): DebugWatchpointHit? {
+        if (reason != DebugHaltReason.WATCHPOINT) return null
+        requireCpuDebugging(WATCHPOINT_CPU_DEBUG_API_VERSION)
+        val native = SmeditDebugWatchpointHit().apply {
+            struct_size = size()
+            write()
+        }
+        check(lib.smedit_debug_get_watchpoint_hit(native) != 0) { "Core omitted the watchpoint hit" }
+        native.read()
+        check(native.struct_size >= native.size()) { "Core returned a truncated watchpoint hit" }
+        check(native.access_size in 1..4 && native.value_size in 1..4) {
+            "Core returned an invalid watchpoint access width"
+        }
+        val request = watchpoints.getOrNull(native.watchpoint_index)
+            ?: error("Core returned an unknown watchpoint index ${native.watchpoint_index}")
+        val mask = when (native.value_size) {
+            1 -> 0xFFL
+            2 -> 0xFFFFL
+            3 -> 0xFFFFFFL
+            else -> 0xFFFFFFFFL
+        }
+        val access = when (native.access) {
+            SMEDIT_WATCH_READ -> DebugWatchpointAccess.READ
+            SMEDIT_WATCH_WRITE -> DebugWatchpointAccess.WRITE
+            else -> error("Core returned an unknown watchpoint access ${native.access}")
+        }
+        return DebugWatchpointHit(
+            watchId = request.watchId,
+            instructionPc = native.instruction_pc and 0xFFFFFF,
+            accessAddress = native.access_address and 0xFFFFFF,
+            accessSize = native.access_size,
+            access = access,
+            valueBefore = native.value_before.toLong().and(mask).takeIf { native.flags and SMEDIT_HIT_BEFORE_VALID != 0 },
+            valueAfter = native.value_after.toLong().and(mask).takeIf { native.flags and SMEDIT_HIT_AFTER_VALID != 0 },
+        )
     }
 
     /** Reads the SNES CPU bus while execution is synchronously paused. */
@@ -407,6 +488,7 @@ class LibretroCore(private val corePath: String) {
         6 -> DebugHaltReason.INVALID_REQUEST
         7 -> DebugHaltReason.STEP_OVER
         8 -> DebugHaltReason.STEP_OUT
+        9 -> DebugHaltReason.WATCHPOINT
         else -> DebugHaltReason.INVALID_REQUEST
     }
 
@@ -576,8 +658,15 @@ class LibretroCore(private val corePath: String) {
     companion object {
         private const val MIN_CPU_DEBUG_API_VERSION = 1
         private const val STEP_CONTROL_CPU_DEBUG_API_VERSION = 2
-        private const val SUPPORTED_CPU_DEBUG_API_VERSION = 2
+        private const val WATCHPOINT_CPU_DEBUG_API_VERSION = 3
+        private const val SUPPORTED_CPU_DEBUG_API_VERSION = 3
         private const val MAX_CPU_BREAKPOINTS = 256
+        private const val MAX_CPU_WATCHPOINTS = 64
+        private const val SMEDIT_WATCHPOINT_STRUCT_BYTES = 16
+        private const val SMEDIT_WATCH_READ = 1
+        private const val SMEDIT_WATCH_WRITE = 2
+        private const val SMEDIT_HIT_BEFORE_VALID = 1
+        private const val SMEDIT_HIT_AFTER_VALID = 2
         // ~1 second of stereo audio at 32040 Hz
         private const val AUDIO_BUFFER_SIZE = 32040 * 2 * 2
         private val EMPTY_SHORT_ARRAY = ShortArray(0)

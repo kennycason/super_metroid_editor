@@ -64,12 +64,14 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -209,6 +211,8 @@ import com.supermetroid.editor.asm.AsmRoomSourceLink
 import com.supermetroid.editor.asm.asmRoomSourceLinksAt
 import com.supermetroid.editor.asm.AsmSourceFile
 import com.supermetroid.editor.emulator.DebugHaltReason
+import com.supermetroid.editor.emulator.DebugWatchpointAccess
+import com.supermetroid.editor.emulator.DebugWatchpointHit
 import com.supermetroid.editor.emulator.CpuDebugState
 import com.supermetroid.editor.asm.AsmSourceBankBudget
 import com.supermetroid.editor.asm.AsmSourcePaneState
@@ -2197,14 +2201,15 @@ private fun AsmWorkspaceCanvasContent(
         }
     }
     val workspace = state.workspace
-    val runtimeCpu = emulatorState?.debugCpu
-    val runtimeLocation = runtimeCpu?.let { state.runtimeSourceAt(it.pc, emulatorState.debugBuildIdentity) }
-    LaunchedEffect(runtimeCpu?.pc, emulatorState?.debugHaltReason, runtimeLocation) {
+    val runtimeAddress = emulatorState?.debugExecutionAddress
+    val runtimeLocation = runtimeAddress?.let { state.runtimeSourceAt(it, emulatorState.debugBuildIdentity) }
+    LaunchedEffect(runtimeAddress, emulatorState?.debugHaltReason, runtimeLocation) {
         val stopped = emulatorState?.debugHaltReason in setOf(
             com.supermetroid.editor.emulator.DebugHaltReason.STEP,
             com.supermetroid.editor.emulator.DebugHaltReason.STEP_OVER,
             com.supermetroid.editor.emulator.DebugHaltReason.STEP_OUT,
             com.supermetroid.editor.emulator.DebugHaltReason.BREAKPOINT,
+            com.supermetroid.editor.emulator.DebugHaltReason.WATCHPOINT,
             com.supermetroid.editor.emulator.DebugHaltReason.CPU_STOPPED,
         )
         if (stopped && runtimeLocation != null && !state.sourceBuildRequired) {
@@ -3539,6 +3544,7 @@ private fun AsmSourceCanvas(
             emulatorState.debugStackAddress,
             emulatorState.debugStackBytes,
             emulatorState.debugBuildIdentity,
+            emulatorState.debugExecutionAddress ?: cpu.pc,
         )
     }
     val runtimeLineIndex = runtimeInspection?.currentSource
@@ -4554,6 +4560,7 @@ private fun AsmRuntimeDebuggerPanel(
         cpu == null -> "Refresh CPU state"
         emulatorState.isRunning -> "Running"
         emulatorState.debugHaltReason == DebugHaltReason.BREAKPOINT -> "Paused · breakpoint"
+        emulatorState.debugHaltReason == DebugHaltReason.WATCHPOINT -> "Paused · watchpoint"
         emulatorState.debugHaltReason == DebugHaltReason.STEP -> "Paused · stepped"
         emulatorState.debugHaltReason == DebugHaltReason.STEP_OVER -> "Paused · stepped over"
         emulatorState.debugHaltReason == DebugHaltReason.STEP_OUT -> "Paused · stepped out"
@@ -4714,7 +4721,11 @@ private fun AsmRuntimeDebuggerPanel(
                                     emulatorState = emulatorState,
                                     mappingFresh = inspection?.mappingStale == false,
                                 )
-                        Text("Execution", fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (emulatorState.debugHaltReason == DebugHaltReason.WATCHPOINT) "Triggering instruction" else "Execution",
+                            fontSize = fs.detail,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         inspection?.currentSource?.let { source ->
                             val title = buildString {
                                 append(source.fileId).append(':').append(source.lineIndex + 1)
@@ -4740,16 +4751,16 @@ private fun AsmRuntimeDebuggerPanel(
                                     )
                                 }
                             }
-                        } ?: cpu?.let {
+                        } ?: inspection?.let {
                             Text(
-                                "No exact source statement is mapped at ${formatSnesAddress(it.pc)}.",
+                                "No exact source statement is mapped at ${formatSnesAddress(it.executionAddress)}.",
                                 fontSize = fs.detail,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         inspection?.currentSymbol?.let { (name, address) ->
                             Text(
-                                "$name + ${inspection.cpu.pc - address}  ·  ${formatSnesAddress(address)}",
+                                "$name + ${inspection.executionAddress - address}  ·  ${formatSnesAddress(address)}",
                                 fontSize = fs.detail,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -4848,6 +4859,7 @@ private fun AsmRuntimeDebuggerPanel(
                         )
                                 }
                                 AsmDebuggerWatchList(
+                                state = state,
                                     emulatorState = emulatorState,
                                     onAdd = { emulatorState.requestDebugWatch() },
                                     onEdit = { emulatorState.requestDebugWatch(it.draft()) },
@@ -4895,14 +4907,15 @@ private fun AsmDebugWatchDialog(
     var expression by remember(initial) { mutableStateOf(initial.expression) }
     var width by remember(initial) { mutableStateOf(initial.width) }
     var saving by remember(initial) { mutableStateOf(false) }
-    val address = resolveDebugWatchAddress(
-        expression = expression,
-        initialExpression = initial.expression,
-        initialAddress = initial.resolvedAddress,
-        symbolAddress = { candidate ->
-            state.runtimeWatchTarget(candidate, emulatorState.debugBuildIdentity)?.address
-        },
-    )
+    val trimmedExpression = expression.trim()
+    val explicitAddress = parseDebugAddress(trimmedExpression)
+    val currentTarget = state.runtimeWatchTarget(trimmedExpression, emulatorState.debugBuildIdentity)
+    val sameInitialExpression = trimmedExpression == initial.expression.trim()
+    val address = explicitAddress
+        ?: currentTarget?.address
+        ?: initial.resolvedAddress?.takeIf { sameInitialExpression }
+    val currentAddressVerified = explicitAddress != null || currentTarget != null ||
+        (sameInitialExpression && initial.currentAddressVerified)
     val rangeValid = address?.let { isDebugWatchRangeValid(it, width) } == true
     AlertDialog(
         onDismissRequest = { if (!saving) onDismiss() },
@@ -4944,7 +4957,7 @@ private fun AsmDebugWatchDialog(
                     }
                 }
                 Text(
-                    "Watches show decimal, hexadecimal, and binary together. Reads occur safely between emulator calls; open a WRAM watch in Hex to edit memory.",
+                    "Watches are saved with the project and show decimal, hexadecimal, and binary together. Reads occur safely between emulator calls; use the eye for session-only pause behavior.",
                     fontSize = fs.statusBar,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -4962,6 +4975,7 @@ private fun AsmDebugWatchDialog(
                                 expression = expression,
                                 resolvedAddress = resolved,
                                 width = width,
+                                currentAddressVerified = currentAddressVerified,
                             ),
                             resolved,
                         )
@@ -5081,6 +5095,7 @@ private fun AsmDebuggerRegisterTable(registers: List<Pair<String, String>>) {
 
 @Composable
 private fun AsmDebuggerWatchList(
+    state: AsmWorkspaceState,
     emulatorState: EmulatorWorkspaceState,
     onAdd: () -> Unit,
     onEdit: (AsmDebugWatch) -> Unit,
@@ -5142,6 +5157,8 @@ private fun AsmDebuggerWatchList(
                             AsmWatchTableRow(
                                 watch,
                                 nameWidth,
+                                state,
+                                emulatorState,
                                 onEdit,
                                 onOpenHexAddress,
                                 emulatorState::removeDebugWatch,
@@ -5160,9 +5177,9 @@ private fun AsmDebuggerWatchList(
 private val ASM_WATCH_DEC_WIDTH = 76.dp
 private val ASM_WATCH_HEX_WIDTH = 80.dp
 private val ASM_WATCH_BIN_WIDTH = 310.dp
-private val ASM_WATCH_ACTION_WIDTH = 92.dp
-private val ASM_WATCH_MIN_TABLE_WIDTH = 756.dp
-private val ASM_WATCH_FIXED_TABLE_WIDTH = 578.dp
+private val ASM_WATCH_ACTION_WIDTH = 120.dp
+private val ASM_WATCH_MIN_TABLE_WIDTH = 784.dp
+private val ASM_WATCH_FIXED_TABLE_WIDTH = 606.dp
 
 @Composable
 private fun AsmWatchTableHeader(label: String, width: Dp, textAlign: TextAlign = TextAlign.Start) {
@@ -5176,10 +5193,199 @@ private fun AsmWatchTableHeader(label: String, width: Dp, textAlign: TextAlign =
     )
 }
 
+internal fun formatDebugWatchpointValue(value: Long?, size: Int): String = value
+    ?.toString(16)
+    ?.uppercase()
+    ?.padStart(size.coerceIn(1, 4) * 2, '0')
+    ?.let { "\$$it" }
+    ?: "—"
+
+internal fun debugWatchpointHistorySummary(hit: DebugWatchpointHit): String = when (hit.access) {
+    DebugWatchpointAccess.READ -> "READ  ${formatDebugWatchpointValue(hit.valueAfter, hit.accessSize)}"
+    DebugWatchpointAccess.WRITE ->
+        "WRITE  ${formatDebugWatchpointValue(hit.valueBefore, hit.accessSize)} → " +
+            formatDebugWatchpointValue(hit.valueAfter, hit.accessSize)
+}
+
+@Composable
+private fun AsmWatchpointMenu(
+    watch: AsmDebugWatch,
+    state: AsmWorkspaceState,
+    emulatorState: EmulatorWorkspaceState,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var expanded by remember(watch.id) { mutableStateOf(false) }
+    val settings = emulatorState.debugWatchpointSettings(watch.id)
+    val history = emulatorState.debugWatchpointHistory
+        .filter { it.hit.watchId == watch.id }
+        .asReversed()
+    val canPause = emulatorState.dataWatchpointsAvailable && watch.currentAddressVerified
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.size(28.dp).testTag("asm-debug-watchpoint-${watch.id}"),
+        ) {
+            Icon(
+                Icons.Default.Visibility,
+                when {
+                    settings.active && canPause -> "Watchpoint active"
+                    settings.active -> "Watchpoint unavailable until restart"
+                    else -> "Watchpoint settings"
+                },
+                tint = when {
+                    settings.active && canPause -> Color(0xFFE45454)
+                    settings.active -> Color(0xFFE0A12B)
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.width(440.dp),
+        ) {
+            Column(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Watchpoint · ${watch.name}", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Pause after a CPU instruction accesses this watch. DMA/HDMA transfers are excluded. The watch remains saved; these pause settings and hits last only for this emulator session.",
+                    fontSize = fs.statusBar,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!emulatorState.dataWatchpointsAvailable) {
+                    Text(
+                        "Start this project with SMEDIT's bundled debugger API v3 to use watchpoints.",
+                        fontSize = fs.statusBar,
+                        color = Color(0xFFE0A12B),
+                    )
+                } else if (!watch.currentAddressVerified) {
+                    Text(
+                        "Restart the emulator with the current build before using this symbol as a watchpoint.",
+                        fontSize = fs.statusBar,
+                        color = Color(0xFFE0A12B),
+                    )
+                }
+                Text("Pause on", fontSize = fs.statusBar, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    AsmWatchpointToggle(
+                        label = "Read",
+                        checked = settings.pauseOnRead,
+                        enabled = canPause,
+                        onCheckedChange = { checked ->
+                            emulatorState.updateDebugWatchpoint(watch.id, checked, settings.pauseOnWrite)
+                        },
+                    )
+                    AsmWatchpointToggle(
+                        label = "Write",
+                        checked = settings.pauseOnWrite,
+                        enabled = canPause,
+                        onCheckedChange = { checked ->
+                            emulatorState.updateDebugWatchpoint(watch.id, settings.pauseOnRead, checked)
+                        },
+                    )
+                }
+                Divider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Recent hits", fontSize = fs.detail, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    if (history.isNotEmpty()) {
+                        TextButton(
+                            onClick = { emulatorState.clearDebugWatchpointHistory(watch.id) },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        ) { Text("Clear", fontSize = fs.statusBar) }
+                    }
+                }
+                if (history.isEmpty()) {
+                    Text(
+                        "No hits this session.",
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 210.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        history.forEach { entry ->
+                            val source = state.runtimeSourceAt(entry.hit.instructionPc, emulatorState.debugBuildIdentity)
+                            val sourceLabel = source?.let { "${it.fileId}:${it.lineIndex + 1}" }
+                                ?: formatSnesAddress(entry.hit.instructionPc)
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                shape = ASM_CONTROL_SHAPE,
+                                modifier = Modifier.fillMaxWidth().then(
+                                    source?.takeIf { !it.generated }?.let { location ->
+                                        Modifier.clickable {
+                                            state.openRuntimeSource(location)
+                                            expanded = false
+                                        }
+                                    } ?: Modifier,
+                                ),
+                            ) {
+                                Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+                                    Text(
+                                        debugWatchpointHistorySummary(entry.hit),
+                                        fontSize = fs.detail,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (entry.hit.access == DebugWatchpointAccess.WRITE) {
+                                            Color(0xFFE0A12B)
+                                        } else MaterialTheme.colorScheme.primary,
+                                    )
+                                    Text(
+                                        "${formatSnesAddress(entry.hit.accessAddress)} · $sourceLabel · frame ${entry.coreFrame}",
+                                        fontSize = fs.statusBar,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Text("Keep last", fontSize = fs.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    WATCHPOINT_HISTORY_LIMITS.forEach { limit ->
+                        AsmDebugWatchChoice(limit.toString(), settings.historyLimit == limit) {
+                            emulatorState.setDebugWatchpointHistoryLimit(watch.id, limit)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsmWatchpointToggle(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.clickable(enabled = enabled) { onCheckedChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        Text(
+            label,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+        )
+    }
+}
+
 @Composable
 private fun AsmWatchTableRow(
     watch: AsmDebugWatch,
     nameWidth: Dp,
+    state: AsmWorkspaceState,
+    emulatorState: EmulatorWorkspaceState,
     onEdit: (AsmDebugWatch) -> Unit,
     onOpenHexAddress: (Int, Int) -> Unit,
     onRemove: (Long) -> Unit,
@@ -5219,6 +5425,7 @@ private fun AsmWatchTableRow(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            AsmWatchpointMenu(watch, state, emulatorState)
             if (isWramDebugAddress(watch.address)) {
                 IconButton(
                     onClick = { onOpenHexAddress(watch.address, watch.width.byteCount) },
@@ -6261,6 +6468,7 @@ private fun AsmEditableSourcePane(
                                                 name = target.displayName,
                                                 expression = target.expression,
                                                 resolvedAddress = target.address,
+                                                currentAddressVerified = true,
                                             ),
                                         )
                                         state.requestDebugger()

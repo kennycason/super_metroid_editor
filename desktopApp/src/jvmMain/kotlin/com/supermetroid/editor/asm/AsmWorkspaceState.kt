@@ -567,6 +567,7 @@ internal class AsmWorkspaceState(
         stackAddress: Int,
         stackBytes: ByteArray,
         sessionBuildIdentity: String?,
+        executionAddress: Int = cpu.pc,
     ): AsmRuntimeInspection {
         val report = buildReport
         val mappingFresh = runtimeMappingFresh(sessionBuildIdentity)
@@ -579,6 +580,7 @@ internal class AsmWorkspaceState(
             mappingStale = !mappingFresh,
             sourceLine = { fileId, lineIndex -> runtimeSourceLine(fileId, lineIndex) },
             isGenerated = { fileId -> generatedAsmAuthority(fileId) != null || workspace?.index?.file(fileId) == null },
+            executionAddress = executionAddress,
         )
     }
 

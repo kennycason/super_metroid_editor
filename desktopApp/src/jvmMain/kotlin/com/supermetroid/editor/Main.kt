@@ -814,19 +814,23 @@ fun main() = application {
                 editorState.project,
                 emulatorWorkspaceState.debugBuildIdentity,
                 asmWorkspaceState.buildReport?.generatedAt,
+                asmWorkspaceState.sourceBuildRequired,
             ) {
                 val buildIdentity = emulatorWorkspaceState.debugBuildIdentity
                 emulatorWorkspaceState.replaceProjectDebugWatches(
                     editorState.project.asmWorkspace.debugWatches.map { saved ->
                         val expression = saved.expression.trim()
-                        val resolved = com.supermetroid.editor.ui.parseDebugAddress(expression)
-                            ?: asmWorkspaceState.runtimeWatchTarget(expression, buildIdentity)?.address
+                        val explicitAddress = com.supermetroid.editor.ui.parseDebugAddress(expression)
+                        val currentTarget = asmWorkspaceState.runtimeWatchTarget(expression, buildIdentity)
+                        val resolved = explicitAddress
+                            ?: currentTarget?.address
                             ?: saved.resolvedAddress
                         com.supermetroid.editor.ui.AsmDebugWatchDraft(
                             name = saved.name,
                             expression = saved.expression,
                             resolvedAddress = resolved,
                             width = com.supermetroid.editor.ui.AsmDebugWatchWidth.nearest(saved.widthBytes),
+                            currentAddressVerified = explicitAddress != null || currentTarget != null,
                         )
                     },
                 )

@@ -4902,12 +4902,28 @@ little-endian width. The watch table always shows aligned **DEC**, **HEX** and
 **BIN** columns instead of hiding representations behind a display setting.
 Right-click a resolved symbol in fresh project source or choose **Add Watch…**
 for the selected WRAM byte in Hex; both routes open the same editor and create
-the same session model. A WRAM watch offers **Hex** to open and highlight its
+the same Watch model. A WRAM watch offers **Hex** to open and highlight its
 exact byte range. While the emulator runs, watches refresh after each completed
 core call, when the bus is synchronously safe to inspect; unsafe ranges remain
-unavailable. Watches clear when the emulator session ends and are never
-persisted into ASM or the `.smedit` project; editing WRAM remains an explicit
-Hex action.
+unavailable. Watch definitions are saved in the `.smedit` project, while live
+values and read failures are not; adding a Watch therefore never invalidates the
+prepared ASM build. Editing WRAM remains an explicit Hex action.
+
+The eye on a Watch opens its session-only **Watchpoint** controls. **Pause on
+Read** and **Pause on Write** are independent because reads often occur much more
+frequently than writes. Selecting either promotes the existing Watch rather than
+creating a separate debugger object. The bundled debugger ABI v3 observes the
+actual CPU bus access, completes that instruction, then pauses with the triggering
+PC, address, width and read value or write before/after values. The same popover
+keeps the most recent 10, 25, 50 or 100 hits and links retained PCs back to proven
+source. Register values, including the CPU's real next PC, remain the truthful
+post-instruction state while the editor highlights the separate triggering PC.
+DMA and HDMA transfers are excluded because they do not have a triggering
+65c816 instruction or source statement to explain.
+Pause choices, history and the selected limit clear with the emulator
+session; the saved Watch returns to passive display. Symbol-backed watchpoints
+require a fresh match to the exact running ROM, while explicit addresses remain
+eligible; an old saved symbol address is never used to pause execution silently.
 
 ## Next layers
 

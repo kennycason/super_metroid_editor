@@ -28,7 +28,7 @@ class LibretroCpuDebuggerTest {
         val core = LibretroCore(requireNotNull(corePath))
         core.init()
         try {
-            assertEquals(2, core.cpuDebugApiVersion())
+            assertEquals(3, core.cpuDebugApiVersion())
             assertTrue(core.supportsCpuDebugging())
             assertTrue(core.loadGame(rom.absolutePath))
 
@@ -91,6 +91,71 @@ class LibretroCpuDebuggerTest {
             val afterRead = core.readCpuDebugState()
             assertEquals(beforeRead.pc, afterRead.pc)
             assertEquals(beforeRead.cycles, afterRead.cycles, "Paused memory inspection must not advance CPU timing")
+
+            core.unserializeState(saved)
+            val beforeWrite = core.runUntil(
+                addresses = listOf(0x008013),
+                instructionLimit = 1_000,
+                frameLimit = 1,
+            )
+            assertEquals(DebugHaltReason.BREAKPOINT, beforeWrite.haltReason)
+            val watchedWrite = core.runUntil(
+                addresses = emptyList(),
+                instructionLimit = 1_000,
+                frameLimit = 1,
+                watchpoints = listOf(
+                    DebugWatchpointRequest(7L, 0x7E09C2, 2, pauseOnRead = false, pauseOnWrite = true),
+                ),
+            )
+            assertEquals(DebugHaltReason.WATCHPOINT, watchedWrite.haltReason)
+            assertEquals(7L, watchedWrite.watchpointHit?.watchId)
+            assertEquals(0x008013, watchedWrite.watchpointHit?.instructionPc)
+            assertEquals(0x7E09C2, watchedWrite.watchpointHit?.accessAddress)
+            assertEquals(2, watchedWrite.watchpointHit?.accessSize)
+            assertEquals(DebugWatchpointAccess.WRITE, watchedWrite.watchpointHit?.access)
+            assertEquals(0x1234L, watchedWrite.watchpointHit?.valueAfter)
+            assertEquals(0x008017, watchedWrite.cpu.pc, "the core stops after the triggering instruction")
+
+            val watchedRead = core.runUntil(
+                addresses = emptyList(),
+                instructionLimit = 1_000,
+                frameLimit = 1,
+                watchpoints = listOf(
+                    DebugWatchpointRequest(7L, 0x7E09C2, 2, pauseOnRead = true, pauseOnWrite = false),
+                ),
+            )
+            assertEquals(DebugHaltReason.WATCHPOINT, watchedRead.haltReason)
+            assertEquals(0x008017, watchedRead.watchpointHit?.instructionPc)
+            assertEquals(DebugWatchpointAccess.READ, watchedRead.watchpointHit?.access)
+            assertEquals(0x1234L, watchedRead.watchpointHit?.valueAfter)
+            assertEquals(0x00801B, watchedRead.cpu.pc)
+
+            val boundaryWrite = core.runUntil(
+                addresses = emptyList(),
+                instructionLimit = 1_000,
+                frameLimit = 1,
+                watchpoints = listOf(
+                    DebugWatchpointRequest(8L, 0x7EFFFF, 2, pauseOnRead = false, pauseOnWrite = true),
+                ),
+            )
+            assertEquals(DebugHaltReason.WATCHPOINT, boundaryWrite.haltReason)
+            assertEquals(0x00801B, boundaryWrite.watchpointHit?.instructionPc)
+            assertEquals(0x7EFFFF, boundaryWrite.watchpointHit?.accessAddress)
+            assertEquals(2, boundaryWrite.watchpointHit?.accessSize, "a cross-boundary word remains one access")
+            assertEquals(0x1234L, boundaryWrite.watchpointHit?.valueAfter)
+
+            val boundaryRead = core.runUntil(
+                addresses = emptyList(),
+                instructionLimit = 1_000,
+                frameLimit = 1,
+                watchpoints = listOf(
+                    DebugWatchpointRequest(8L, 0x7EFFFF, 2, pauseOnRead = true, pauseOnWrite = false),
+                ),
+            )
+            assertEquals(DebugHaltReason.WATCHPOINT, boundaryRead.haltReason)
+            assertEquals(0x00801F, boundaryRead.watchpointHit?.instructionPc)
+            assertEquals(2, boundaryRead.watchpointHit?.accessSize)
+            assertEquals(0x1234L, boundaryRead.watchpointHit?.valueAfter)
 
             core.unserializeState(saved)
             var callState: ByteArray? = null
@@ -158,16 +223,20 @@ class LibretroCpuDebuggerTest {
         program.copyInto(rom, destinationOffset = 0)
         byteArrayOf(
             0xA9.toByte(), 0x34, 0x12,    // $8010: LDA #$1234
-            0x20, 0x20, 0x80.toByte(),    // JSR $8020
-            0x60,                         // RTS
+            0x8F.toByte(), 0xC2.toByte(), 0x09, 0x7E, // $8013: STA.L $7E09C2
+            0xAF.toByte(), 0xC2.toByte(), 0x09, 0x7E, // $8017: LDA.L $7E09C2
+            0x8F.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x7E, // $801B: STA.L $7EFFFF
+            0xAF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x7E, // $801F: LDA.L $7EFFFF
+            0x20, 0x30, 0x80.toByte(),    // $8023: JSR $8030
+            0x60,                         // $8026: RTS
         ).copyInto(rom, destinationOffset = 0x10)
         byteArrayOf(
-            0xA2.toByte(), 0x78, 0x56,    // $8020: LDX #$5678
+            0xA2.toByte(), 0x78, 0x56,    // $8030: LDX #$5678
             0x60,                         // RTS
-        ).copyInto(rom, destinationOffset = 0x20)
-        rom[0x30] = 0x40 // $8030: RTI for every interrupt vector
+        ).copyInto(rom, destinationOffset = 0x30)
+        rom[0x40] = 0x40 // $8040: RTI for every interrupt vector
         for (vector in listOf(0x7FE4, 0x7FE6, 0x7FE8, 0x7FEA, 0x7FEE, 0x7FF4, 0x7FFA, 0x7FFE)) {
-            rom[vector] = 0x30
+            rom[vector] = 0x40
             rom[vector + 1] = 0x80.toByte()
         }
         rom[0x7FFC] = 0x00 // reset -> $8000

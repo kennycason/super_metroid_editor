@@ -9,6 +9,8 @@ import com.supermetroid.editor.emulator.CpuDebugState
 import com.supermetroid.editor.emulator.DebugExecutionResult
 import com.supermetroid.editor.emulator.DebugHaltReason
 import com.supermetroid.editor.emulator.DebugRunRequest
+import com.supermetroid.editor.emulator.DebugWatchpointAccess
+import com.supermetroid.editor.emulator.DebugWatchpointHit
 import com.supermetroid.editor.emulator.GameSnapshot
 import com.supermetroid.editor.emulator.ModelInfo
 import com.supermetroid.editor.emulator.SessionConfig
@@ -187,6 +189,105 @@ class EmulatorWorkspaceStateTest {
         state.closeSession()
         assertEquals(2, state.debugWatches.size)
         assertTrue(state.debugWatches.all { it.bytes.isEmpty() && it.readError == null })
+    }
+
+    @Test
+    fun `saved watches gain session only read write pauses and bounded hit history`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(
+                backendName = "debug-fake",
+                supportsCpuDebugging = true,
+                cpuDebugApiVersion = 3,
+            )
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+            it.debugCpuResult = debugCpu(0x808000)
+            it.closeSessionResult = StepResult(session = SessionState(active = false, paused = true))
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+        assertTrue(state.addOrUpdateDebugWatch(
+            AsmDebugWatchDraft(
+                name = "Energy",
+                expression = "Energy",
+                resolvedAddress = 0x7E09C2,
+                currentAddressVerified = true,
+            ),
+            0x7E09C2,
+        ))
+        val watchId = state.debugWatches.single().id
+        assertTrue(state.updateDebugWatchpoint(watchId, pauseOnRead = false, pauseOnWrite = true))
+        state.setDebugWatchpointHistoryLimit(watchId, 10)
+
+        repeat(12) { index ->
+            backend.runUntilResult = DebugExecutionResult(
+                haltReason = DebugHaltReason.WATCHPOINT,
+                cpu = debugCpu(0x82AB44).copy(coreFrame = index.toLong()),
+                snapshot = GameSnapshot(frameCounter = index + 2),
+                watchpointHit = DebugWatchpointHit(
+                    watchId = watchId,
+                    instructionPc = 0x82AB40,
+                    accessAddress = 0x7E09C2,
+                    accessSize = 2,
+                    access = DebugWatchpointAccess.WRITE,
+                    valueBefore = (99 - index).toLong(),
+                    valueAfter = (98 - index).toLong(),
+                ),
+            )
+            state.setLoopRunning(true)
+            state.stepFrame()
+        }
+
+        assertFalse(state.isRunning)
+        assertEquals(DebugHaltReason.WATCHPOINT, state.debugHaltReason)
+        assertEquals(0x82AB40, state.debugExecutionAddress)
+        assertEquals(0x82AB44, state.debugCpu?.pc, "registers retain the real post-instruction PC")
+        assertEquals(1, backend.lastDebugRunRequest?.watchpoints?.size)
+        assertEquals(false, backend.lastDebugRunRequest?.watchpoints?.single()?.pauseOnRead)
+        assertEquals(true, backend.lastDebugRunRequest?.watchpoints?.single()?.pauseOnWrite)
+        assertEquals(10, state.debugWatchpointHistory.size)
+
+        state.replaceProjectDebugWatches(listOf(
+            AsmDebugWatchDraft(
+                name = "Energy",
+                expression = "Energy",
+                resolvedAddress = 0x7E09C2,
+                currentAddressVerified = true,
+            ),
+        ))
+        assertEquals(watchId, state.debugWatches.single().id, "project autosave hydration must retain session watchpoint state")
+        assertTrue(state.debugWatchpointSettings(watchId).pauseOnWrite)
+
+        state.closeSession()
+        assertEquals(1, state.debugWatches.size, "the saved watch definition survives the emulator session")
+        assertTrue(state.debugWatchpointSettings.isEmpty())
+        assertTrue(state.debugWatchpointHistory.isEmpty())
+    }
+
+    @Test
+    fun `watchpoints reject stale symbol addresses while passive watches remain usable`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities("debug-fake", supportsCpuDebugging = true, cpuDebugApiVersion = 3)
+            it.startSessionResult = StepResult(session = SessionState(active = true))
+            it.debugCpuResult = debugCpu(0x808000)
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+        assertTrue(state.addOrUpdateDebugWatch(
+            AsmDebugWatchDraft(name = "Energy", expression = "Energy", currentAddressVerified = false),
+            0x7E09C2,
+        ))
+
+        val watchId = state.debugWatches.single().id
+        assertFalse(state.updateDebugWatchpoint(watchId, pauseOnRead = false, pauseOnWrite = true))
+        assertTrue(state.activeDebugWatchpoints().isEmpty())
+        assertEquals("\$C3C2", state.debugWatches.single().hexadecimalValue())
     }
 
     @Test
@@ -735,7 +836,10 @@ class EmulatorWorkspaceStateTest {
         override suspend fun readMemory(address: Int, size: Int): ByteArray = ByteArray(size)
         override suspend fun writeMemory(address: Int, data: ByteArray) {}
         override suspend fun debugCpuState(): CpuDebugState = debugCpuResult
-        override suspend fun stepInstruction(): DebugExecutionResult = stepInstructionResult
+        override suspend fun stepInstruction(request: DebugRunRequest): DebugExecutionResult {
+            lastDebugRunRequest = request
+            return stepInstructionResult
+        }
         override suspend fun stepOver(request: DebugRunRequest): DebugExecutionResult {
             lastCommand = "step_over"
             lastDebugRunRequest = request

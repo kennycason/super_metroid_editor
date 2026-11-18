@@ -27,6 +27,8 @@ internal data class AsmRuntimeWatchTarget(
 
 internal data class AsmRuntimeInspection(
     val cpu: CpuDebugState,
+    /** Address whose source should be explained; differs from cpu.pc after a completed watchpoint instruction. */
+    val executionAddress: Int,
     val currentSource: AsmRuntimeSourceLocation?,
     val currentSymbol: Pair<String, Int>?,
     val stackAddress: Int,
@@ -53,6 +55,7 @@ internal object AsmRuntimeDebugResolver {
         mappingStale: Boolean,
         sourceLine: (String, Int) -> String?,
         isGenerated: (String) -> Boolean,
+        executionAddress: Int = cpu.pc,
     ): AsmRuntimeInspection {
         fun location(address: Int): AsmRuntimeSourceLocation? = symbols.locationsAt(address)
             .firstOrNull()
@@ -67,8 +70,8 @@ internal object AsmRuntimeDebugResolver {
                 )
             }
 
-        val currentSource = location(cpu.pc)
-        val currentSymbol = symbols.nearestLabelAtOrBefore(cpu.pc)
+        val currentSource = location(executionAddress)
+        val currentSymbol = symbols.nearestLabelAtOrBefore(executionAddress)
         val candidates = buildList {
             for (offset in stackBytes.indices) {
                 if (offset + 2 < stackBytes.size) {
@@ -99,11 +102,12 @@ internal object AsmRuntimeDebugResolver {
         val concern = when {
             cpu.halted -> "The CPU reported a stopped/invalid execution state."
             cpu.pc ushr 16 in 0x7E..0x7F -> "Execution entered WRAM; this is usually data or generated runtime code and deserves inspection."
-            currentSource == null && symbols.labelCount > 0 -> "The current PC is not present in the retained source map. The ROM may not match this build, or execution entered unmapped/generated code."
+            currentSource == null && symbols.labelCount > 0 -> "The current execution address is not present in the retained source map. The ROM may not match this build, or execution entered unmapped/generated code."
             else -> null
         }
         return AsmRuntimeInspection(
             cpu = cpu,
+            executionAddress = executionAddress,
             currentSource = currentSource,
             currentSymbol = currentSymbol,
             stackAddress = stackAddress,
