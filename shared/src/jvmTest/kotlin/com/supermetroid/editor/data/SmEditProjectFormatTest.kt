@@ -56,6 +56,21 @@ class SmEditProjectFormatTest {
         assertEquals(project.introSequence, reopened.introSequence)
     }
 
+    @Test fun `debugger watches round trip while older projects default to none`() {
+        val project = SmEditProject("base.smc")
+        project.asmWorkspace.debugWatches += ProjectAsmDebugWatch(
+            name = "Energy",
+            expression = "Energy",
+            resolvedAddress = 0x7E09C2,
+            widthBytes = 2,
+        )
+
+        val reopened = SmEditProjectFormat.decode(SmEditProjectFormat.encode(project))
+
+        assertEquals(project.asmWorkspace.debugWatches, reopened.asmWorkspace.debugWatches)
+        assertTrue(SmEditProjectFormat.decode(minimal().toString()).asmWorkspace.debugWatches.isEmpty())
+    }
+
     @Test fun `missing old future malformed and wrong format headers are rejected before their contents`() {
         val header = minimal()
         val bad = listOf(JsonPrimitive(0), JsonPrimitive(2), JsonPrimitive(21), JsonPrimitive("1"), JsonNull, JsonPrimitive(true), JsonPrimitive(1.5))

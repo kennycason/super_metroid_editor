@@ -49,6 +49,9 @@ private const val SCREEN_PIXELS = 256f
 private const val DEBUG_STACK_BYTES = 32
 private const val DEBUG_MEMORY_BYTES = 32
 private const val MAX_SESSION_BREAKPOINTS = 255 // Native ABI supports 256 targets; reserve one for Run to Cursor.
+private const val MAX_SESSION_WATCHES = 64
+private const val STRUCTURED_STEP_INSTRUCTION_LIMIT = 5_000_000L
+private const val STRUCTURED_STEP_FRAME_LIMIT = 120
 private const val DEBUG_BUS_READ_BLOCKED =
     "Unavailable: this range includes I/O or unsupported hardware, so SMEDIT did not read it while paused."
 private val ACTION_LABELS = listOf("B", "Y", "Select", "Start", "Up", "Down", "Left", "Right", "A", "X", "L", "R")
@@ -235,8 +238,14 @@ class EmulatorWorkspaceState(
     private var handledRunRequestSerial = 0L
     var saveSlotIndex by mutableStateOf(0)
 
-    /** CPU debug state is intentionally session-only; no project file owns it. */
+    /** Execution state is session-only. Watch definitions are hydrated from the active project. */
     val executionBreakpoints = mutableStateListOf<Int>()
+    val debugWatches = mutableStateListOf<AsmDebugWatch>()
+    var onDebugWatchesChanged: (List<AsmDebugWatchDraft>) -> Unit = {}
+    var pendingDebugWatchDraft by mutableStateOf<AsmDebugWatchDraft?>(null)
+        private set
+    var debugWatchRequestSerial by mutableStateOf(0L)
+        private set
     var debugCpu by mutableStateOf<CpuDebugState?>(null)
         private set
     var debugHaltReason by mutableStateOf(DebugHaltReason.NONE)
@@ -259,9 +268,13 @@ class EmulatorWorkspaceState(
     var debugBuildIdentity by mutableStateOf<String?>(null)
         private set
     private var skipBreakpointOnceAt: Int? = null
+    private var nextDebugWatchId = 1L
 
     val cpuDebugAvailable: Boolean
         get() = session.active && capabilities?.supportsCpuDebugging == true
+
+    val structuredCpuStepAvailable: Boolean
+        get() = cpuDebugAvailable && (capabilities?.cpuDebugApiVersion ?: 0) >= 2
 
     /** Requests that the floating emulator become visible and actively run.
      * The window owns the build/connect lifecycle and observes this serial. */
@@ -271,6 +284,15 @@ class EmulatorWorkspaceState(
 
     fun attachDebugBuildIdentity(identity: String?) {
         debugBuildIdentity = identity
+    }
+
+    fun requestDebugWatch(draft: AsmDebugWatchDraft = AsmDebugWatchDraft()) {
+        pendingDebugWatchDraft = draft
+        debugWatchRequestSerial++
+    }
+
+    fun consumeDebugWatchDraft(serial: Long) {
+        if (serial == debugWatchRequestSerial) pendingDebugWatchDraft = null
     }
 
     internal fun consumeRunRequest(): Boolean {
@@ -521,6 +543,13 @@ class EmulatorWorkspaceState(
                     )
                 )
                 applyStepResult(result)
+            }
+            // The emulator call above has returned, so the core is
+            // synchronously paused even while the UI remains in Running mode.
+            // Refresh only the compact watch set here; stack/register context
+            // is still an explicit pause/debugger operation.
+            if (isRunning && session.active && capsSupportCpuDebugging() && debugWatches.isNotEmpty()) {
+                refreshDebugWatches(b)
             }
             updateLoopMetrics(
                 previousFrameCounter = previousFrameCounter,
@@ -849,6 +878,64 @@ class EmulatorWorkspaceState(
         }
     }
 
+    suspend fun addOrUpdateDebugWatch(draft: AsmDebugWatchDraft, address: Int): Boolean {
+        val b = backend
+        if (!cpuDebugAvailable || b == null) {
+            setStatus("Start the bundled debugger before adding a watch")
+            return false
+        }
+        if (!isDebugWatchRangeValid(address, draft.width)) {
+            setStatus("Watch range must fit inside the 24-bit SNES bus")
+            return false
+        }
+        val existingIndex = draft.id?.let { id -> debugWatches.indexOfFirst { it.id == id } } ?: -1
+        if (existingIndex < 0 && debugWatches.size >= MAX_SESSION_WATCHES) {
+            setStatus("At most $MAX_SESSION_WATCHES session watches can be active")
+            return false
+        }
+        val watch = AsmDebugWatch(
+            id = draft.id ?: nextDebugWatchId++,
+            name = draft.name.trim().ifEmpty { draft.expression.trim().ifEmpty { formatDebugAddress(address) } },
+            expression = draft.expression.trim().ifEmpty { formatDebugAddress(address) },
+            address = address,
+            width = draft.width,
+        )
+        if (existingIndex >= 0) debugWatches[existingIndex] = watch else debugWatches += watch
+        notifyDebugWatchesChanged()
+        withPausedDebugCore { refreshDebugWatches(b) }
+        setStatus("${if (existingIndex >= 0) "Updated" else "Added"} watch ${watch.name}")
+        return true
+    }
+
+    fun removeDebugWatch(id: Long) {
+        if (debugWatches.removeAll { it.id == id }) notifyDebugWatchesChanged()
+    }
+
+    fun clearDebugWatches() {
+        if (debugWatches.isEmpty()) return
+        debugWatches.clear()
+        notifyDebugWatchesChanged()
+    }
+
+    fun replaceProjectDebugWatches(watches: List<AsmDebugWatchDraft>) {
+        debugWatches.clear()
+        watches.take(MAX_SESSION_WATCHES).forEach { draft ->
+            val address = draft.resolvedAddress ?: return@forEach
+            if (!isDebugWatchRangeValid(address, draft.width)) return@forEach
+            debugWatches += AsmDebugWatch(
+                id = nextDebugWatchId++,
+                name = draft.name.trim().ifEmpty { draft.expression.trim().ifEmpty { formatDebugAddress(address) } },
+                expression = draft.expression.trim().ifEmpty { formatDebugAddress(address) },
+                address = address,
+                width = draft.width,
+            )
+        }
+    }
+
+    private fun notifyDebugWatchesChanged() {
+        onDebugWatchesChanged(debugWatches.map { it.draft().copy(id = null) })
+    }
+
     fun runToAddress(address: Int) {
         if (!cpuDebugAvailable) {
             setStatus("CPU debugging requires an active session using SMEDIT's bundled core")
@@ -889,15 +976,74 @@ class EmulatorWorkspaceState(
         }
     }
 
+    suspend fun stepOverCpuInstruction() = structuredCpuStep(
+        label = "over",
+        expectedReason = DebugHaltReason.STEP_OVER,
+        execute = EmulatorBackend::stepOver,
+    )
+
+    suspend fun stepOutCpuInstruction() = structuredCpuStep(
+        label = "out",
+        expectedReason = DebugHaltReason.STEP_OUT,
+        execute = EmulatorBackend::stepOut,
+    )
+
+    private suspend fun structuredCpuStep(
+        label: String,
+        expectedReason: DebugHaltReason,
+        execute: suspend EmulatorBackend.(DebugRunRequest) -> DebugExecutionResult,
+    ) {
+        val b = backend ?: return
+        if (!structuredCpuStepAvailable || isBusy) {
+            if (!structuredCpuStepAvailable) setStatus("Step ${label.replaceFirstChar(Char::uppercase)} requires the bundled debugger API v2")
+            return
+        }
+        isRunning = false
+        while (stepInFlight) yield()
+        if (!structuredCpuStepAvailable || isBusy) return
+        stepInFlight = true
+        try {
+            val result = b.execute(
+                DebugRunRequest(
+                    addresses = executionBreakpoints.distinct(),
+                    instructionLimit = STRUCTURED_STEP_INSTRUCTION_LIMIT,
+                    frameLimit = STRUCTURED_STEP_FRAME_LIMIT,
+                    input = EmulatorInput(buttons = currentAction(), includeFrame = true),
+                ),
+            )
+            applyDebugExecution(result)
+            refreshCpuDebugContext(result.cpu)
+            setStatus(
+                if (result.haltReason == expectedReason) {
+                    "Stepped $label to ${formatDebugAddress(result.cpu.pc)}"
+                } else debugHaltMessage(result.haltReason)
+            )
+        } catch (e: Exception) {
+            setStatus("CPU step $label failed: ${e.message}")
+        } finally {
+            stepInFlight = false
+        }
+    }
+
     suspend fun refreshCpuDebugContext(cpu: CpuDebugState? = null) {
         val b = backend ?: return
         if (!cpuDebugAvailable) return
-        val current = try {
-            cpu ?: b.debugCpuState()
-        } catch (e: Exception) {
-            setStatus("CPU state refresh failed: ${e.message}")
-            return
+        if (cpu != null) {
+            refreshCpuDebugContextOwned(b, cpu)
+        } else {
+            withPausedDebugCore {
+                val current = try {
+                    b.debugCpuState()
+                } catch (e: Exception) {
+                    setStatus("CPU state refresh failed: ${e.message}")
+                    return@withPausedDebugCore
+                }
+                refreshCpuDebugContextOwned(b, current)
+            }
         }
+    }
+
+    private suspend fun refreshCpuDebugContextOwned(b: EmulatorBackend, current: CpuDebugState) {
         debugCpu = current
         val stackBase = if (current.emulation) 0x0100 else 0x0000
         val stackLimit = if (current.emulation) 0x0200 else 0x10000
@@ -926,6 +1072,34 @@ class EmulatorWorkspaceState(
             debugMemoryReadError = DEBUG_BUS_READ_BLOCKED
             ByteArray(0)
         }
+        refreshDebugWatches(b)
+    }
+
+    /** Safe bus peeks never overlap a frame/instruction call. Preserve whether
+     * the user had the emulator running after this short synchronous pause. */
+    private suspend fun <T> withPausedDebugCore(block: suspend () -> T): T {
+        val resumeAfter = isRunning
+        isRunning = false
+        while (stepInFlight) yield()
+        return try {
+            block()
+        } finally {
+            if (resumeAfter && session.active) isRunning = true
+        }
+    }
+
+    private suspend fun refreshDebugWatches(b: EmulatorBackend) {
+        debugWatches.indices.forEach { index ->
+            val watch = debugWatches[index]
+            debugWatches[index] = try {
+                watch.copy(
+                    bytes = b.readBusMemory(watch.address, watch.width.byteCount),
+                    readError = null,
+                )
+            } catch (_: Exception) {
+                watch.copy(bytes = ByteArray(0), readError = DEBUG_BUS_READ_BLOCKED)
+            }
+        }
     }
 
     suspend fun setDebugMemoryAddress(address: Int) {
@@ -946,6 +1120,10 @@ class EmulatorWorkspaceState(
 
     private fun clearCpuDebugSession() {
         executionBreakpoints.clear()
+        debugWatches.indices.forEach { index ->
+            debugWatches[index] = debugWatches[index].copy(bytes = ByteArray(0), readError = null)
+        }
+        pendingDebugWatchDraft = null
         debugCpu = null
         debugHaltReason = DebugHaltReason.NONE
         debugRunToAddress = null
@@ -967,7 +1145,12 @@ class EmulatorWorkspaceState(
         DebugHaltReason.FRAME_LIMIT -> "CPU paused at the frame safety limit"
         DebugHaltReason.CPU_STOPPED -> "CPU stopped or entered invalid execution"
         DebugHaltReason.INVALID_REQUEST -> "The core rejected the debug request"
+        DebugHaltReason.STEP_OVER -> "CPU step over completed"
+        DebugHaltReason.STEP_OUT -> "CPU step out completed"
     }
+
+    private fun formatDebugAddress(address: Int): String =
+        "\$${address.toString(16).uppercase().padStart(6, '0')}"
 
     fun toggleAudioMute() {
         val b = backend as? LibretroBackend ?: return

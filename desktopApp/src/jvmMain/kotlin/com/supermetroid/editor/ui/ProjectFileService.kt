@@ -5,6 +5,7 @@ import com.supermetroid.editor.asm.AsmBuildArtifactRepository
 import com.supermetroid.editor.asm.AsmCompilationException
 import com.supermetroid.editor.asm.ASM_ROOM_GRAPH_OWNER
 import com.supermetroid.editor.asm.AsmProjectCompiler
+import com.supermetroid.editor.asm.AsmPreparedBuildDiskCache
 import com.supermetroid.editor.asm.AsmPatchBackendRegistry
 import com.supermetroid.editor.asm.AsmProjectWorkspaceRepository
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
@@ -288,7 +289,11 @@ internal object ProjectFileService {
             }
         }
         val preparedKey = preparedAsmCacheKey(project, sourceInputs)
-        getPreparedAsmBase(preparedKey)?.let { cached ->
+        val memoryPrepared = getPreparedAsmBase(preparedKey)
+        val cachedPrepared = memoryPrepared ?: AsmPreparedBuildDiskCache.load(projectFilePath, preparedKey)?.also {
+            putPreparedAsmBase(preparedKey, it)
+        }
+        cachedPrepared?.let { cached ->
             // A different prepared build may have replaced the on-disk report.
             // Restore symbols and generated source together when revisiting this build.
             runCatching {
@@ -297,7 +302,11 @@ internal object ProjectFileService {
                     generatedRoomSource = cached.generatedRoomSource,
                 )
             }
-            val message = "ASM/project inputs unchanged — reusing prepared source base…"
+            val message = if (memoryPrepared != null) {
+                "ASM/project inputs unchanged — reusing prepared source base…"
+            } else {
+                "ASM/project inputs unchanged — reusing verified prepared source base from disk…"
+            }
             onLog("[ASM-BUILD] $message")
             onStatus(message)
             return cached
@@ -671,11 +680,15 @@ internal object ProjectFileService {
                 "${compiled.generatedPatchClaims.sumOf { it.length }} ASM patch byte(s)"
         )
         putPreparedAsmBase(preparedKey, compiled)
+        AsmPreparedBuildDiskCache.store(projectFilePath, preparedKey, compiled)
         // The exporter may hydrate deterministic patch safety metadata on its
         // isolated project snapshot. Accept that equivalent post-plan snapshot
         // too, without allowing unrelated project changes to hit this entry.
         val hydratedPreparedKey = preparedAsmCacheKey(project, sourceInputs)
-        if (hydratedPreparedKey != preparedKey) putPreparedAsmBase(hydratedPreparedKey, compiled)
+        if (hydratedPreparedKey != preparedKey) {
+            putPreparedAsmBase(hydratedPreparedKey, compiled)
+            AsmPreparedBuildDiskCache.store(projectFilePath, hydratedPreparedKey, compiled)
+        }
         return compiled
     }
 
@@ -691,7 +704,13 @@ internal object ProjectFileService {
         }
         update(PREPARED_ASM_CACHE_VERSION.toByteArray())
         update(sourceInputs.toByteArray())
-        update(SmEditProjectFormat.encode(project).toByteArray())
+        // Debugger watches are project UI intent and cannot change ROM output.
+        // Keeping them out of the build identity prevents adding a watch from
+        // invalidating an otherwise exact prepared source base.
+        val buildProject = project.copy(
+            asmWorkspace = project.asmWorkspace.copy(debugWatches = mutableListOf()),
+        )
+        update(SmEditProjectFormat.encode(buildProject).toByteArray())
         return digest.digest().joinToString("") {
             (it.toInt() and 0xFF).toString(16).padStart(2, '0')
         }
@@ -710,6 +729,7 @@ internal object ProjectFileService {
     internal fun clearAsmBuildCachesForTests() {
         preparedAsmBases.clear()
         AsmProjectCompiler.clearBuildCacheForTests()
+        AsmPreparedBuildDiskCache.clearForTests()
     }
 
     private fun exportCustomGfxPngs(

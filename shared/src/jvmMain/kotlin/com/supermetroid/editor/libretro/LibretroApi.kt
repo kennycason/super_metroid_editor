@@ -191,6 +191,8 @@ interface LibretroLib : Library {
     fun smedit_debug_api_version(): Int
     fun smedit_debug_get_cpu_state(state: SmeditDebugCpuState): Int
     fun smedit_debug_step_instruction(): Int
+    fun smedit_debug_step_over(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
+    fun smedit_debug_step_out(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
     fun smedit_debug_run_until(addresses: Pointer?, addressCount: Int, instructionLimit: Long, frameLimit: Int): Int
     fun smedit_debug_read_bus(address: Int, data: Pointer, size: Int): Int
 }

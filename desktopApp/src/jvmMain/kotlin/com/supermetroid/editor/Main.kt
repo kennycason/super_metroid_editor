@@ -80,6 +80,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.data.ProjectRomBuildMode
+import com.supermetroid.editor.data.ProjectAsmDebugWatch
 import com.supermetroid.editor.data.RomPreferences
 import com.supermetroid.editor.ui.OpenProject
 import com.supermetroid.editor.ui.ProjectLifecycle
@@ -95,6 +96,7 @@ import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.asm.AsmEditorTarget
+import com.supermetroid.editor.asm.AsmIntegrationVisualEditor
 import com.supermetroid.editor.asm.AsmProjectBuildStatus
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
@@ -111,6 +113,7 @@ import com.supermetroid.editor.ui.EnemySpriteCache
 import com.supermetroid.editor.ui.EmulatorWorkspaceState
 import com.supermetroid.editor.ui.HexEditorPanel
 import com.supermetroid.editor.ui.HexEditorState
+import com.supermetroid.editor.ui.debugWatchWramOffset
 import com.supermetroid.editor.ui.EnemyTabCanvas
 import com.supermetroid.editor.ui.EnemyTabSidebar
 import com.supermetroid.editor.ui.FloatingEmulatorWindow
@@ -729,6 +732,41 @@ fun main() = application {
                 }
             }
 
+            fun openAsmIntegrationEditor(target: AsmIntegrationVisualEditor) {
+                navigate {
+                    when (target) {
+                        AsmIntegrationVisualEditor.ROOM_INFO,
+                        AsmIntegrationVisualEditor.ROOM_LAYOUT,
+                        AsmIntegrationVisualEditor.ROOM_OBJECTS,
+                        AsmIntegrationVisualEditor.ROOM_CONNECTIONS,
+                        AsmIntegrationVisualEditor.ROOM_FX,
+                        AsmIntegrationVisualEditor.ROOM_ENEMIES,
+                        AsmIntegrationVisualEditor.ROOM_SCROLLS -> {
+                            roomsSidebarState.select(com.supermetroid.editor.ui.RoomSidebarTab.ROOM_INFO)
+                            leftTab = TAB_ROOMS
+                        }
+                        AsmIntegrationVisualEditor.MINIMAP -> leftTab = TAB_MAP
+                        AsmIntegrationVisualEditor.TILESET_GRAPHICS -> {
+                            tilesetSubTab = 0
+                            leftTab = TAB_TILES
+                        }
+                        AsmIntegrationVisualEditor.TILESET_PALETTES -> {
+                            tilesetSubTab = 2
+                            leftTab = TAB_TILES
+                        }
+                        AsmIntegrationVisualEditor.SPRITE_GRAPHICS,
+                        AsmIntegrationVisualEditor.SPRITE_PALETTES -> leftTab = TAB_SPRITES
+                        AsmIntegrationVisualEditor.CINEMATICS,
+                        AsmIntegrationVisualEditor.TEXT -> leftTab = TAB_TEXT
+                        AsmIntegrationVisualEditor.ENEMY_TUNING -> leftTab = TAB_ENEMY
+                        AsmIntegrationVisualEditor.BOSS_TUNING -> leftTab = TAB_BOSS
+                        AsmIntegrationVisualEditor.PATCHES -> leftTab = TAB_PATCHES
+                        AsmIntegrationVisualEditor.SOUND -> leftTab = TAB_SOUND
+                        AsmIntegrationVisualEditor.NONE -> Unit
+                    }
+                }
+            }
+
             fun reloadPaletteBackedViews() {
                 val parser = romParser ?: return
                 val id = editorState.editorTilesetId
@@ -749,11 +787,48 @@ fun main() = application {
             LaunchedEffect(Unit) {
                 asmWorkspaceState.loadInstalled()
             }
+            LaunchedEffect(emulatorWorkspaceState) {
+                emulatorWorkspaceState.onDebugWatchesChanged = { watches ->
+                    val saved = watches.mapNotNull { watch ->
+                        val address = watch.resolvedAddress ?: return@mapNotNull null
+                        ProjectAsmDebugWatch(
+                            name = watch.name,
+                            expression = watch.expression,
+                            resolvedAddress = address,
+                            widthBytes = watch.width.byteCount,
+                        )
+                    }
+                    if (editorState.updateAsmDebugWatches(saved) && editorState.projectFilePath.isNotBlank()) {
+                        scope.launch { editorState.saveProjectAsync() }
+                    }
+                }
+            }
             LaunchedEffect(editorState.projectFilePath, editorState.project.asmWorkspace.enabled) {
                 asmWorkspaceState.bindProject(
                     projectFilePath = editorState.projectFilePath,
                     enabled = editorState.project.asmWorkspace.enabled,
                     progressive = true,
+                )
+            }
+            LaunchedEffect(
+                editorState.project,
+                emulatorWorkspaceState.debugBuildIdentity,
+                asmWorkspaceState.buildReport?.generatedAt,
+            ) {
+                val buildIdentity = emulatorWorkspaceState.debugBuildIdentity
+                emulatorWorkspaceState.replaceProjectDebugWatches(
+                    editorState.project.asmWorkspace.debugWatches.map { saved ->
+                        val expression = saved.expression.trim()
+                        val resolved = com.supermetroid.editor.ui.parseDebugAddress(expression)
+                            ?: asmWorkspaceState.runtimeWatchTarget(expression, buildIdentity)?.address
+                            ?: saved.resolvedAddress
+                        com.supermetroid.editor.ui.AsmDebugWatchDraft(
+                            name = saved.name,
+                            expression = saved.expression,
+                            resolvedAddress = resolved,
+                            width = com.supermetroid.editor.ui.AsmDebugWatchWidth.nearest(saved.widthBytes),
+                        )
+                    },
                 )
             }
             LaunchedEffect(editorState.romBuildInProgress, editorState.projectFilePath) {
@@ -1674,6 +1749,7 @@ fun main() = application {
                                         emulatorState = emulatorWorkspaceState,
                                         romParser = romParser,
                                         onOpenInEditor = ::openAsmEditorTarget,
+                                        onOpenIntegrationEditor = ::openAsmIntegrationEditor,
                                         onOpenRoomSource = editorState.projectAsmNavigation<(AsmRoomSourceLink) -> Unit> {
                                             roomAsmNavigation.openFromAsm(it)
                                         }.takeIf { !romReadOnly },
@@ -1683,6 +1759,13 @@ fun main() = application {
                                         },
                                         onBuildProject = ::buildAsmProject,
                                         onRunInEmulator = ::runProjectInEmulator,
+                                        onOpenHexAddress = { address, size ->
+                                            debugWatchWramOffset(address)?.let { offset ->
+                                                hexEditorState.goToAddress(offset)
+                                                hexEditorState.highlightSize = size
+                                                hexEditorEnabled = true
+                                            }
+                                        },
                                         onOpenRomSpaceBank = ::openAsmRomSpaceBank,
                                         problemsPaneHeightDp = asmProblemsPaneHeightDp,
                                         onProblemsPaneHeightChange = { asmProblemsPaneHeightDp = it },
@@ -1900,6 +1983,14 @@ fun main() = application {
                             containerSizePx = emulatorContainerSize,
                             density = windowDensity.density,
                             onClose = { hexEditorEnabled = false },
+                            onAddWatch = { draft ->
+                                emulatorWorkspaceState.requestDebugWatch(draft)
+                                navigate {
+                                    asmWorkspaceState.showProjectWorkspace()
+                                    asmWorkspaceState.requestDebugger()
+                                    leftTab = TAB_ASM
+                                }
+                            },
                         )
                     }
                 }

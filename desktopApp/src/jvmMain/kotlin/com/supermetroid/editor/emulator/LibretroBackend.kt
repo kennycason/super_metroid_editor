@@ -305,6 +305,33 @@ class LibretroBackend(
         )
     }
 
+    override suspend fun stepOver(request: DebugRunRequest): DebugExecutionResult =
+        structuredStep(request, LibretroCore::stepOver)
+
+    override suspend fun stepOut(request: DebugRunRequest): DebugExecutionResult =
+        structuredStep(request, LibretroCore::stepOut)
+
+    private suspend fun structuredStep(
+        request: DebugRunRequest,
+        execute: LibretroCore.(List<Int>, Long, Int) -> LibretroCore.CpuDebugExecution,
+    ): DebugExecutionResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        check(sessionActive) { "No active session" }
+        val (execution, capture) = onEmuThread {
+            c.setInput(0, request.input.buttons)
+            c.execute(request.addresses, request.instructionLimit, request.frameLimit) to
+                captureStep(c, includeFrame = request.input.includeFrame)
+        }
+        syncDebugFrame(execution.cpu.coreFrame)
+        pushFrame(capture.snapshot.frame)
+        audio?.writeSamples(capture.audioSamples)
+        return DebugExecutionResult(
+            haltReason = execution.haltReason,
+            cpu = execution.cpu,
+            snapshot = buildSnapshot(capture.snapshot),
+        )
+    }
+
     override suspend fun runUntil(request: DebugRunRequest): DebugExecutionResult {
         val c = core ?: throw IllegalStateException("Not connected")
         check(sessionActive) { "No active session" }

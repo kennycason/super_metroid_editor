@@ -1535,7 +1535,8 @@ internal object AsmLibrary {
                     "Read every capability literally",
                     listOf(
                         "The checked matrix records Inspect, ASM edit, Visual edit, Live refresh, Aliases, Restore, Relocation and Cold build for every integration. Y means the capability is supported by the named source contract; N is an intentional boundary; a dash means the shape has no such concept, not that testing was skipped.",
-                        "The complete inventory and each supported/unsupported source boundary live in docs/asm/capability_matrix.md. Sound/music and arbitrary custom source deliberately support authored ASM without claiming that SMEDIT can decompile them into reciprocal visual models.",
+                        "The interactive inventory below is generated from that registry. Search it by data, bank, bridge class, or proof suite; expand a row to see its authority, supported boundary, source locations, implementation, tests, and direct editor/source destinations. The same checked locations are mirrored in docs/asm/capability_matrix.md.",
+                        "Sound/music and arbitrary custom source deliberately support authored ASM without claiming that SMEDIT can decompile them into reciprocal visual models.",
                     ),
                 ),
                 AsmLibrarySection(
@@ -1599,15 +1600,15 @@ internal object AsmLibrary {
             title = "Source-level runtime debugger",
             summary = "Pause the bundled emulator on exact compiled statements, inspect the 65c816, and follow proven source and stack evidence.",
             keywords = setOf(
-                "debugger", "breakpoint", "run to cursor", "step instruction", "registers",
-                "stack", "memory", "pc", "source map", "crash", "libretro",
+                "debugger", "breakpoint", "run to cursor", "step instruction", "step over", "step out", "registers",
+                "watch", "watches", "stack", "memory", "pc", "source map", "crash", "libretro",
             ),
             sections = listOf(
                 AsmLibrarySection(
                     "A capability, not a libretro assumption",
                     listOf(
                         "Stock libretro advances frames but does not promise instruction stepping or CPU registers. SMEDIT's bundled Snes9x core exposes a separate versioned debug capability; external cores and RetroArch fail closed instead of displaying invented state.",
-                        "The core and editor remain single-threaded. Pause means no core call is executing. Step executes one 65c816 opcode, and Run to Cursor advances in bounded frame chunks until the CPU reaches one exact compiled 24-bit address.",
+                        "The core and editor remain single-threaded. Pause means no core call is executing. Step executes one 65c816 opcode, and Run to Cursor advances in bounded frame chunks until the CPU reaches one exact compiled 24-bit address. Debugger ABI v2 adds native Step Over and Step Out; an older ABI keeps the original controls and disables only those two actions.",
                     ),
                 ),
                 AsmLibrarySection(
@@ -1626,6 +1627,14 @@ internal object AsmLibrary {
                         "The panel shows A/X/Y, D/DB/PB, S, packed P flags, accumulator/index widths, emulation mode, scanline/cycle position and interrupt-wait state. The current symbol is reported as a symbol plus byte offset.",
                         "Nearby stack bytes are raw evidence. Native mode wraps through bank \$00 and emulation mode wraps inside page \$01xx. SMEDIT labels an RTS or RTL candidate only when return-address-plus-one matches an exact retained source/symbol address; it calls these candidates rather than pretending it reconstructed a perfect call stack.",
                         "Selected memory uses a side-effect-free paused bus peek for directly mapped ROM, WRAM and SRAM. Hardware/coprocessor registers are refused because merely reading them could acknowledge or advance emulated state; an unsafe range is shown as unavailable without hiding the registers.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Step Over, Step Out, and watches",
+                    listOf(
+                        "Step Over and Step Out follow instructions executed by the native core: JSR, JSL and JSR (abs,X) increase the selected call depth, while RTS and RTL reduce it. RTI is deliberately not a routine return; NMI, IRQ, BRK and COP use a separate interrupt scope so handler-local calls do not contaminate the selected routine. Nested calls are handled, user breakpoints stay armed, and instruction/frame limits still fail closed. This does not promote a raw stack candidate into a guessed call frame.",
+                        "The Debugger tab owns read-only session watches. Add a current compiled symbol or 24-bit SNES address and choose its 8/16/24/32-bit width. The aligned watch table always shows decimal, hexadecimal and binary together. Right-clicking a resolved project-source symbol and Add Watch in Hex both open this same watch editor.",
+                        "WRAM watches offer Hex navigation to the exact highlighted byte range. Running watches refresh between completed emulator calls through the side-effect-free bus API; unsafe hardware ranges show unavailable. Watches clear with the emulator session and are never written into source or project metadata.",
                     ),
                 ),
                 AsmLibrarySection(

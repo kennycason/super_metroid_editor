@@ -129,6 +129,116 @@ class EmulatorWorkspaceStateTest {
     }
 
     @Test
+    fun `named watches refresh safely format values and persist beyond the session`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(
+                backendName = "debug-fake",
+                supportsCpuDebugging = true,
+                cpuDebugApiVersion = 2,
+            )
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+            it.debugCpuResult = debugCpu(0x808000)
+            it.closeSessionResult = StepResult(session = SessionState(active = false, paused = true))
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        val persisted = mutableListOf<List<AsmDebugWatchDraft>>()
+        state.onDebugWatchesChanged = { persisted += it }
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+
+        assertTrue(state.addOrUpdateDebugWatch(
+            AsmDebugWatchDraft(
+                name = "Energy",
+                expression = "Energy",
+                width = AsmDebugWatchWidth.WORD,
+            ),
+            0x7E09C2,
+        ))
+        assertEquals(1, state.debugWatches.size)
+        assertEquals("Energy", state.debugWatches.single().name)
+        assertEquals("50114", state.debugWatches.single().decimalValue())
+        assertEquals("\$C3C2", state.debugWatches.single().hexadecimalValue())
+        assertEquals(0x7E09C2 to 2, backend.busReadRequests.last())
+        assertTrue(state.isRunning, "safe watch peeks should restore the prior run state")
+        assertEquals(1, persisted.size)
+        assertEquals(null, persisted.single().single().id, "session IDs and live bytes are not durable watch intent")
+
+        backend.busByteOffset = 1
+        backend.stepResult = StepResult(
+            session = SessionState(active = true, frameCounter = 2),
+            snapshot = GameSnapshot(frameCounter = 2),
+        )
+        state.stepFrame()
+        assertEquals("\$C4C3", state.debugWatches.first().hexadecimalValue())
+        assertEquals(1, persisted.size, "live value refreshes must not rewrite the project")
+
+        backend.rejectedBusRanges = listOf(0x002100..0x0021FF)
+        assertTrue(state.addOrUpdateDebugWatch(
+            AsmDebugWatchDraft(expression = "\$00:2100", width = AsmDebugWatchWidth.BYTE),
+            0x002100,
+        ))
+        assertTrue(state.debugWatches.last().bytes.isEmpty())
+        assertNotNull(state.debugWatches.last().readError)
+
+        state.closeSession()
+        assertEquals(2, state.debugWatches.size)
+        assertTrue(state.debugWatches.all { it.bytes.isEmpty() && it.readError == null })
+    }
+
+    @Test
+    fun `structured stepping preserves input and breakpoints while api v1 fails closed`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(
+                backendName = "debug-fake",
+                supportsCpuDebugging = true,
+                cpuDebugApiVersion = 2,
+            )
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+            it.debugCpuResult = debugCpu(0x808000)
+            it.stepOverResult = DebugExecutionResult(DebugHaltReason.STEP_OVER, debugCpu(0x808003))
+            it.stepOutResult = DebugExecutionResult(DebugHaltReason.STEP_OUT, debugCpu(0x81A0AE))
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+        state.updateRomPath("/tmp/debug.sfc")
+        state.connectBridge()
+        state.startSession()
+        state.toggleExecutionBreakpoint(0x81A0AE)
+        state.updateKey(Key.Z, down = true)
+
+        assertTrue(state.structuredCpuStepAvailable)
+        state.stepOverCpuInstruction()
+        assertEquals("step_over", backend.lastCommand)
+        assertEquals(listOf(0x81A0AE), backend.lastDebugRunRequest?.addresses)
+        assertEquals(1, backend.lastDebugRunRequest?.input?.buttons?.get(0))
+        assertEquals(DebugHaltReason.STEP_OVER, state.debugHaltReason)
+
+        state.stepOutCpuInstruction()
+        assertEquals("step_out", backend.lastCommand)
+        assertEquals(listOf(0x81A0AE), backend.lastDebugRunRequest?.addresses)
+        assertEquals(DebugHaltReason.STEP_OUT, state.debugHaltReason)
+
+        val legacy = FakeBackend().also {
+            it.connectResult = backend.connectResult.copy(cpuDebugApiVersion = 1)
+            it.startSessionResult = backend.startSessionResult
+            it.debugCpuResult = debugCpu(0x808000)
+        }
+        val legacyState = EmulatorWorkspaceState(backendFactory = { legacy })
+        legacyState.updateRomPath("/tmp/debug-v1.sfc")
+        legacyState.connectBridge()
+        legacyState.startSession()
+        assertFalse(legacyState.structuredCpuStepAvailable)
+        legacyState.stepOverCpuInstruction()
+        assertFalse(legacy.lastCommand == "step_over")
+    }
+
+    @Test
     fun `run requests are observable even when repeated`() {
         val state = EmulatorWorkspaceState()
 
@@ -139,6 +249,24 @@ class EmulatorWorkspaceStateTest {
         state.requestRun()
         assertEquals(2L, state.runRequestSerial)
         assertTrue(state.consumeRunRequest())
+    }
+
+    @Test
+    fun `project hydration replaces watches without treating the load as an edit`() {
+        val state = EmulatorWorkspaceState()
+        var writes = 0
+        state.onDebugWatchesChanged = { writes++ }
+
+        state.replaceProjectDebugWatches(listOf(
+            AsmDebugWatchDraft(name = "Energy", expression = "Energy", resolvedAddress = 0x7E09C2),
+        ))
+        assertEquals(listOf("Energy"), state.debugWatches.map { it.name })
+        state.replaceProjectDebugWatches(listOf(
+            AsmDebugWatchDraft(name = "Missiles", expression = "Missiles", resolvedAddress = 0x7E09C6),
+        ))
+
+        assertEquals(listOf("Missiles"), state.debugWatches.map { it.name })
+        assertEquals(0, writes)
     }
 
     @Test
@@ -549,8 +677,12 @@ class EmulatorWorkspaceStateTest {
         var debugCpuResult = debugCpu(0x808000)
         var runUntilResult = DebugExecutionResult(DebugHaltReason.FRAME_LIMIT, debugCpuResult)
         var stepInstructionResult = DebugExecutionResult(DebugHaltReason.STEP, debugCpuResult)
+        var stepOverResult = DebugExecutionResult(DebugHaltReason.STEP_OVER, debugCpuResult)
+        var stepOutResult = DebugExecutionResult(DebugHaltReason.STEP_OUT, debugCpuResult)
+        var stepResult = StepResult()
         var lastDebugRunRequest: DebugRunRequest? = null
         var rejectedBusRanges = emptyList<IntRange>()
+        var busByteOffset = 0
         val busReadRequests = mutableListOf<Pair<Int, Int>>()
 
         override suspend fun connect(): EmulatorCapabilities {
@@ -576,7 +708,7 @@ class EmulatorWorkspaceStateTest {
 
         override suspend fun step(input: EmulatorInput): StepResult {
             lastCommand = "step"
-            return StepResult()
+            return stepResult
         }
 
         override suspend fun snapshot(): GameSnapshot {
@@ -604,6 +736,16 @@ class EmulatorWorkspaceStateTest {
         override suspend fun writeMemory(address: Int, data: ByteArray) {}
         override suspend fun debugCpuState(): CpuDebugState = debugCpuResult
         override suspend fun stepInstruction(): DebugExecutionResult = stepInstructionResult
+        override suspend fun stepOver(request: DebugRunRequest): DebugExecutionResult {
+            lastCommand = "step_over"
+            lastDebugRunRequest = request
+            return stepOverResult
+        }
+        override suspend fun stepOut(request: DebugRunRequest): DebugExecutionResult {
+            lastCommand = "step_out"
+            lastDebugRunRequest = request
+            return stepOutResult
+        }
         override suspend fun runUntil(request: DebugRunRequest): DebugExecutionResult {
             lastDebugRunRequest = request
             return runUntilResult
@@ -614,7 +756,7 @@ class EmulatorWorkspaceStateTest {
             check(rejectedBusRanges.none { rejected ->
                 requested.first <= rejected.last && rejected.first <= requested.last
             }) { "Core rejected bus read" }
-            return ByteArray(size) { (address + it).toByte() }
+            return ByteArray(size) { (address + it + busByteOffset).toByte() }
         }
         override fun close() { isConnected = false }
     }

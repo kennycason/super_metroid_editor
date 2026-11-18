@@ -68,6 +68,57 @@ class AsmEditorViewportTest {
         }
     }
 
+    @Test fun `navigation to an already visible line preserves the user viewport`() = runBlocking {
+        val state = workspace()
+        state.openSource("bank_8F.asm", 1_000)
+        withEditor(state) { scene, render ->
+            val before = visibleLine(scene)
+            val visibleTarget = before + 8
+
+            // Debugger rows, definitions, and usage results all use openSource.
+            // Re-selecting a line already in this viewport must not pin it to
+            // the top; the user remains in control of local scrolling.
+            state.openSource("bank_8F.asm", visibleTarget, addToHistory = false)
+            render()
+
+            assertEquals(before, visibleLine(scene))
+            assertEquals(visibleTarget, state.selectedLineIndex)
+        }
+    }
+
+    @Test fun `ordinary source click moves the caret without moving the viewport`() = runBlocking {
+        val state = workspace()
+        state.openSource("bank_8F.asm", 1_000)
+        withEditor(state) { scene, render ->
+            val editor = editableNode(scene)
+            assertFalse(editor.config[SemanticsProperties.Focused], "The regression needs the editor to regain focus")
+            val position = Offset(editor.positionInRoot.x + 80f, 360f)
+            repeat(12) {
+                scene.sendPointerEvent(PointerEventType.Scroll, position, scrollDelta = Offset(0f, 1f))
+                render()
+            }
+            val before = visibleLine(scene)
+            assertTrue(before > 1_000, "The old caret must be above the viewport before the click: $before")
+
+            scene.sendPointerEvent(PointerEventType.Press, position, button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, position, button = PointerButton.Primary)
+            render()
+
+            val afterEditor = editableNode(scene)
+            val caret = afterEditor.config[SemanticsProperties.TextSelectionRange].end
+            val layout = textLayout(afterEditor)
+            val caretLine = layout.getLineForOffset(caret)
+            val caretSourceLine = layout.layoutInput.text.text.lines()[caretLine].substringAfterLast(' ').toInt()
+            assertTrue(caretSourceLine >= before, "The click must place the caret in the visible viewport: $caretSourceLine < $before")
+            assertEquals(
+                before,
+                visibleLine(scene),
+                "Placing the caret must leave scrolling under user control (caret page line $caretLine)",
+            )
+            assertFalse(state.hasUnsavedSourceChanges("bank_8F.asm"))
+        }
+    }
+
     @Test fun `large font five digit gutter has one visual row per source row`() = runBlocking {
         val state = workspace()
         state.openSource("bank_8F.asm", 15_620)

@@ -25,6 +25,8 @@ enum class DebugHaltReason {
     FRAME_LIMIT,
     CPU_STOPPED,
     INVALID_REQUEST,
+    STEP_OVER,
+    STEP_OUT,
 }
 
 @Serializable

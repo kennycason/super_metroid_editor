@@ -1,5 +1,7 @@
 package com.supermetroid.editor.asm
 
+import kotlin.reflect.KClass
+
 internal enum class AsmIntegrationCapability(val displayName: String) {
     INSPECT("Inspect"),
     ASM_EDIT("ASM edit"),
@@ -39,6 +41,44 @@ internal data class AsmConformanceDecision(
     val detail: String,
 )
 
+internal enum class AsmIntegrationVisualEditor(val displayName: String) {
+    ROOM_INFO("Rooms · Room Info"),
+    ROOM_LAYOUT("Rooms · Layout canvas"),
+    ROOM_OBJECTS("Rooms · Objects"),
+    ROOM_CONNECTIONS("Rooms · Door connections"),
+    ROOM_FX("Rooms · FX"),
+    ROOM_ENEMIES("Rooms · Enemies"),
+    ROOM_SCROLLS("Rooms · Scrolls"),
+    MINIMAP("Minimap"),
+    TILESET_GRAPHICS("Tilesets · Graphics"),
+    TILESET_PALETTES("Tilesets · Palettes"),
+    SPRITE_GRAPHICS("Sprites · Graphics"),
+    SPRITE_PALETTES("Sprites · Palettes"),
+    CINEMATICS("Text / Scenes"),
+    TEXT("Text"),
+    ENEMY_TUNING("Enemy tuning"),
+    BOSS_TUNING("Boss tuning"),
+    PATCHES("Patches"),
+    SOUND("Sound tools · independent"),
+    NONE("No Visual Editor · intentional"),
+}
+
+internal data class AsmIntegrationLocation(
+    val visualEditors: List<AsmIntegrationVisualEditor>,
+    val sourceFiles: Set<String>,
+    val implementations: Set<AsmIntegrationImplementation>,
+) {
+    val implementationFiles: Set<String> get() = implementations.mapTo(linkedSetOf()) { it.sourceFile }
+}
+
+internal data class AsmIntegrationImplementation(
+    val type: KClass<*>,
+    val sourceFile: String,
+) {
+    val className: String get() = type.java.simpleName
+    val qualifiedClassName: String get() = type.java.name
+}
+
 internal data class AsmIntegrationContract(
     val id: String,
     val title: String,
@@ -46,6 +86,7 @@ internal data class AsmIntegrationContract(
     val supportedShape: String,
     val unsupportedBoundary: String,
     val reciprocal: Boolean,
+    val location: AsmIntegrationLocation,
     val capabilities: Map<AsmIntegrationCapability, AsmCapabilityDecision>,
     val conformance: Map<AsmConformanceScenario, AsmConformanceDecision>,
     val fastProofSuites: Set<String>,
@@ -66,6 +107,9 @@ internal object AsmIntegrationContracts {
             authority = "Typed declarations in bank_8F.asm",
             shape = "Supported symbolic room/state declarations and bounded predicates",
             boundary = "Arbitrary state code and untagged predicates remain ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_INFO, setOf("bank_8F.asm"),
+                implementation(AsmRoomPropertiesBridge::class), implementation(AsmRoomPropertiesSource::class),
+                implementation(AsmRoomSelectorsBridge::class), implementation(AsmRoomSelectorsSource::class)),
             aliases = true,
             relocation = true,
             fast = setOf(
@@ -80,6 +124,9 @@ internal object AsmIntegrationContracts {
             authority = "Typed room layout asset plus bank_8F declarations",
             shape = "Decoded room grids with stable room/state identity",
             boundary = "Unknown compression/source declarations remain ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_LAYOUT, setOf("bank_8F.asm"),
+                implementation(AsmRoomLayoutBridge::class), implementation(AsmRoomLayoutSource::class),
+                implementation(AsmRoomThemePlan::class, "AsmRoomThemeSource.kt")),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmRoomLayoutSourceTest", "${ASM_TEST}AsmRoomThemeSourceTest"),
@@ -90,6 +137,8 @@ internal object AsmIntegrationContracts {
             authority = "Typed bank_8F PLM records and managed object macros",
             shape = "Six-byte entries, state aliases, and supported relocatable macro envelopes",
             boundary = "Custom handwritten population shapes remain ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_OBJECTS, setOf("bank_8F.asm", "macros.asm"),
+                implementation(AsmPlmSourceBridge::class), implementation(AsmRoomObjectSource::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmPlmSourceBridgeTest", "${ASM_TEST}AsmRoomObjectSourceTest"),
@@ -100,6 +149,8 @@ internal object AsmIntegrationContracts {
             authority = "Symbolic DoorDef/arrival/save declarations",
             shape = "Stable door identities with supported arrival adapters and ordinary save rows",
             boundary = "Indexed/special loads and arbitrary arrival code remain ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_CONNECTIONS, setOf("bank_83.asm", "bank_8F.asm"),
+                implementation(AsmDoorSourceBridge::class), implementation(AsmDoorArrivalsSource::class)),
             aliases = true,
             relocation = true,
             fast = setOf(
@@ -114,6 +165,8 @@ internal object AsmIntegrationContracts {
             authority = "Typed bank_83 FX declarations",
             shape = "Ordinary fixed FX rows and state copy-on-write aliases",
             boundary = "Custom indexed FX programs remain ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_FX, setOf("bank_83.asm"),
+                implementation(AsmFxBridge::class), implementation(AsmFxSource::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmFxSourceTest"),
@@ -124,6 +177,8 @@ internal object AsmIntegrationContracts {
             authority = "Typed bank_A1/B4 population and graphics declarations",
             shape = "Supported population records, terminators, parameters, and shared graphics sets",
             boundary = "Custom record shapes and runtime AI code remain ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_ENEMIES, setOf("bank_A1.asm", "bank_B4.asm"),
+                implementation(AsmEnemyBridge::class), implementation(AsmEnemySource::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmEnemySourceTest"),
@@ -134,6 +189,8 @@ internal object AsmIntegrationContracts {
             authority = "Typed bank_8F scroll declarations and command records",
             shape = "Room-sized grids and supported command argument forms",
             boundary = "Arbitrary scroll PLM code remains ASM only",
+            location = location(AsmIntegrationVisualEditor.ROOM_SCROLLS, setOf("bank_8F.asm"),
+                implementation(AsmInitialScrollBridge::class), implementation(AsmScrollCommandSource::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmInitialScrollSourceTest", "${ASM_TEST}AsmScrollCommandSourceTest"),
@@ -144,6 +201,8 @@ internal object AsmIntegrationContracts {
             authority = "Exact bank_B5 map/reveal source arrays",
             shape = "Native area tilemaps and map-station reveal records",
             boundary = "Pause-map graphics tiles remain inspect-only",
+            location = location(AsmIntegrationVisualEditor.MINIMAP, setOf("bank_B5.asm", "bank_82.asm"),
+                implementation(AsmMinimapSourceBridge::class)),
             aliases = false,
             relocation = false,
             fast = setOf("${ASM_TEST}AsmMinimapSourceBridgeTest", "${UI_TEST}MinimapEditorStateTest"),
@@ -154,6 +213,8 @@ internal object AsmIntegrationContracts {
             authority = "Exact incbin asset or managed source asset",
             shape = "Area/CRE graphics and metatiles with proven pointer consumers",
             boundary = "Animated-tile programs and unknown asset declarations remain ASM only",
+            location = location(AsmIntegrationVisualEditor.TILESET_GRAPHICS, setOf("bank_8F.asm", "bank_B9..CE.asm"),
+                implementation(AsmTilesetGraphicsBridge::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmTilesetGraphicsBridgeTest", "${UI_TEST}AsmTilesetGraphicsEditorStateTest"),
@@ -165,6 +226,8 @@ internal object AsmIntegrationContracts {
             authority = "Exact incbin palette asset or managed source asset",
             shape = "SNES palette rows with shared-alias identity",
             boundary = "Runtime palette effects remain ASM only",
+            location = location(AsmIntegrationVisualEditor.TILESET_PALETTES, setOf("bank_8F.asm", "bank_B9..CE.asm"),
+                implementation(AsmTilesetPaletteBridge::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmTilesetPaletteBridgeTest", "${UI_TEST}AsmTilesetPaletteEditorStateTest"),
@@ -176,6 +239,8 @@ internal object AsmIntegrationContracts {
             authority = "Pinned incbin asset or managed compressed asset",
             shape = "Exact native pixel sheets with proven graphics consumers",
             boundary = "OAM composition, animation, and DMA programs remain read-only",
+            location = location(AsmIntegrationVisualEditor.SPRITE_GRAPHICS, setOf("bank_95.asm", "bank_A0.asm"),
+                implementation(AsmNativeSpriteAssetBridge::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmNativeSpriteAssetBridgeTest", "${UI_TEST}AsmNativeSpriteEditorStateTest"),
@@ -187,6 +252,8 @@ internal object AsmIntegrationContracts {
             authority = "Strict contiguous literal-dw palette lens",
             shape = "Exact 16-colour native rows",
             boundary = "Expressions, macros, runtime effects, and ambiguous rows remain ASM only",
+            location = location(AsmIntegrationVisualEditor.SPRITE_PALETTES, setOf("bank_8C.asm"),
+                implementation(AsmNativeSpritePaletteBridge::class)),
             aliases = true,
             relocation = false,
             fast = setOf("${ASM_TEST}AsmNativeSpritePaletteBridgeTest", "${UI_TEST}AsmNativeSpriteEditorStateTest"),
@@ -198,6 +265,8 @@ internal object AsmIntegrationContracts {
             authority = "Frame-aware exact source map asset",
             shape = "Supported Mode 7 byte maps and SNES BG word maps",
             boundary = "Cinematic programs, regional branches, and flattened rendered pixels remain read-only",
+            location = location(AsmIntegrationVisualEditor.CINEMATICS, setOf("bank_8B.asm", "bank_94..99.asm"),
+                implementation(AsmCinematicMapAssetBridge::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmCinematicMapAssetBridgeTest", "${UI_TEST}AsmCinematicMapEditorStateTest"),
@@ -209,6 +278,8 @@ internal object AsmIntegrationContracts {
             authority = "Exact literal-dw source fields",
             shape = "Area labels, message rows, and item-name fields",
             boundary = "Custom expressions/macros and regional encodings remain ASM only",
+            location = location(AsmIntegrationVisualEditor.TEXT, setOf("bank_85.asm"),
+                implementation(AsmTextSourceBridge::class)),
             aliases = true,
             relocation = false,
             fast = setOf("${ASM_TEST}AsmTextSourceBridgeTest", "${UI_TEST}AsmTextEditorStateTest"),
@@ -220,6 +291,8 @@ internal object AsmIntegrationContracts {
             authority = "Typed text/control stream in bank_A6",
             shape = "Preserved timer, VRAM, end controls, and bank-local relocation",
             boundary = "Unknown controls and regional encodings remain ASM only",
+            location = location(AsmIntegrationVisualEditor.TEXT, setOf("bank_A6.asm"),
+                implementation(AsmTypewriterTextBridge::class)),
             aliases = true,
             relocation = true,
             fast = setOf("${ASM_TEST}AsmTypewriterTextBridgeTest"),
@@ -231,6 +304,8 @@ internal object AsmIntegrationContracts {
             authority = "Strict symbolic-glyph fixed-slot source lens",
             shape = "Six pages with preserved timing, position, wait, movie, and finish controls",
             boundary = "Structural changes and Japanese/regional paths remain ASM only",
+            location = location(AsmIntegrationVisualEditor.TEXT, setOf("bank_8B.asm"),
+                implementation(AsmIntroStoryTextBridge::class)),
             aliases = false,
             relocation = false,
             fast = setOf("${ASM_TEST}AsmIntroStoryTextBridgeTest"),
@@ -242,6 +317,15 @@ internal object AsmIntegrationContracts {
             authority = "Strict literal source lenses in their native banks",
             shape = "Recognized fixed fields, beam/projectile tables, and shared records with stable semantic keys",
             boundary = "Computed expressions and custom record shapes remain ASM only",
+            location = location(listOf(
+                AsmIntegrationVisualEditor.ENEMY_TUNING,
+                AsmIntegrationVisualEditor.BOSS_TUNING,
+                AsmIntegrationVisualEditor.PATCHES,
+            ),
+                setOf("bank_A0.asm", "bank_B4.asm", "bank_93.asm", "bank_8D.asm", "bank_90.asm"),
+                implementation(AsmEnemyTuningBridge::class), implementation(AsmBeamDamageBridge::class),
+                implementation(AsmBossStatsBridge::class), implementation(AsmEnvironmentalDamageBridge::class),
+                implementation(AsmDataPatchBridge::class), implementation(AsmPatchToggleController::class)),
             aliases = true,
             relocation = false,
             fast = setOf(
@@ -252,12 +336,28 @@ internal object AsmIntegrationContracts {
                 "${ASM_TEST}AsmDataPatchSourceTest",
             ),
         ),
+        reciprocal(
+            id = "fast-doors",
+            title = "Fast Doors curated code module",
+            authority = "Literal enable gate and authored helper code in project/fast_doors.asm",
+            shape = "The audited bundled patch, its single checked enable flag, native hook envelopes, and preserved helper body",
+            boundary = "Other code patches and arbitrary project modules do not become reciprocal based on their filename",
+            location = location(AsmIntegrationVisualEditor.PATCHES, setOf("project/fast_doors.asm"),
+                implementation(AsmFastDoorsModule::class),
+                implementation(AsmFastDoorsBridge::class, "AsmFastDoorsModule.kt")),
+            aliases = false,
+            relocation = false,
+            fast = setOf("${ASM_TEST}AsmFastDoorsModuleTest"),
+            cold = setOf("${ASM_TEST}AsmFastDoorsCompilerTest"),
+        ),
         asmOnly(
             id = "sound-music",
             title = "Sound and music source",
             authority = "Authored ASM/assets for build; visual tools are independent inspectors/exporters",
             shape = "Navigation and safe project-source compilation",
             boundary = "Reciprocal sound/music authoring is intentionally not supported",
+            location = location(AsmIntegrationVisualEditor.SOUND, setOf("bank_CF..DE.asm", "data/Music_*.bin"),
+                implementation(AsmSemanticBridge::class)),
             inspect = true,
             restore = true,
             build = true,
@@ -269,6 +369,9 @@ internal object AsmIntegrationContracts {
             authority = "Authored source",
             shape = "Normal source editing, diagnostics, modules, checked hooks, and compilation",
             boundary = "SMEDIT does not decompile arbitrary code into Visual Editor models or auto-relocate native routines",
+            location = location(AsmIntegrationVisualEditor.NONE, setOf("main.asm", "project/*.asm"),
+                implementation(AsmProjectWorkspaceRepository::class, "AsmProjectWorkspace.kt"),
+                implementation(AsmCheckedHookValidator::class, "AsmCheckedHook.kt")),
             inspect = true,
             restore = true,
             build = true,
@@ -293,6 +396,14 @@ internal object AsmIntegrationContracts {
             if (contract.authority.isBlank() || contract.supportedShape.isBlank() || contract.unsupportedBoundary.isBlank()) {
                 add("${contract.id}: authority, source shape, and unsupported boundary are required")
             }
+            if (contract.location.visualEditors.isEmpty() || contract.location.sourceFiles.isEmpty() ||
+                contract.location.implementations.isEmpty()
+            ) {
+                add("${contract.id}: visual, source, and implementation locations are required")
+            }
+            if (contract.location.sourceFiles.any(String::isBlank) || contract.location.implementationFiles.any(String::isBlank)) {
+                add("${contract.id}: source and implementation locations cannot be blank")
+            }
             contract.capabilities.forEach { (capability, decision) ->
                 if (decision.detail.isBlank()) add("${contract.id}: ${capability.name} needs an explanation")
             }
@@ -306,6 +417,9 @@ internal object AsmIntegrationContracts {
                 }
             }
             if (contract.reciprocal) {
+                if (contract.location.visualEditors.all { it == AsmIntegrationVisualEditor.NONE }) {
+                    add("${contract.id}: reciprocal bridge needs a Visual Editor destination")
+                }
                 for (capability in listOf(
                     AsmIntegrationCapability.INSPECT,
                     AsmIntegrationCapability.ASM_EDIT,
@@ -333,6 +447,7 @@ internal object AsmIntegrationContracts {
         authority: String,
         shape: String,
         boundary: String,
+        location: AsmIntegrationLocation,
         aliases: Boolean,
         relocation: Boolean,
         fast: Set<String>,
@@ -340,7 +455,7 @@ internal object AsmIntegrationContracts {
     ): AsmIntegrationContract {
         val evidence = fast + cold
         return AsmIntegrationContract(
-            id, title, authority, shape, boundary, reciprocal = true,
+            id, title, authority, shape, boundary, reciprocal = true, location = location,
             capabilities = AsmIntegrationCapability.entries.associateWith { capability ->
                 when (capability) {
                     AsmIntegrationCapability.ALIASES -> AsmCapabilityDecision(
@@ -393,12 +508,13 @@ internal object AsmIntegrationContracts {
         authority: String,
         shape: String,
         boundary: String,
+        location: AsmIntegrationLocation,
         inspect: Boolean,
         restore: Boolean,
         build: Boolean,
         fast: Set<String>,
     ): AsmIntegrationContract = AsmIntegrationContract(
-        id, title, authority, shape, boundary, reciprocal = false,
+        id, title, authority, shape, boundary, reciprocal = false, location = location,
         capabilities = AsmIntegrationCapability.entries.associateWith { capability ->
             val supported = when (capability) {
                 AsmIntegrationCapability.INSPECT -> inspect
@@ -428,4 +544,21 @@ internal object AsmIntegrationContracts {
         fastProofSuites = fast,
         coldBuildProofSuites = emptySet(),
     )
+
+    private fun location(
+        visualEditor: AsmIntegrationVisualEditor,
+        sourceFiles: Set<String>,
+        vararg implementations: AsmIntegrationImplementation,
+    ) = location(listOf(visualEditor), sourceFiles, *implementations)
+
+    private fun location(
+        visualEditors: List<AsmIntegrationVisualEditor>,
+        sourceFiles: Set<String>,
+        vararg implementations: AsmIntegrationImplementation,
+    ) = AsmIntegrationLocation(visualEditors, sourceFiles, implementations.toSet())
+
+    private fun implementation(
+        type: KClass<*>,
+        sourceFile: String = "${type.java.simpleName}.kt",
+    ) = AsmIntegrationImplementation(type, sourceFile)
 }

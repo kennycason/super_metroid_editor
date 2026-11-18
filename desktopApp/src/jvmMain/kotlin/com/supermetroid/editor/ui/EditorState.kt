@@ -593,6 +593,17 @@ class EditorState(
         _roomEditOrder[currentRoomId] = ++_editCounter
     }
 
+    internal fun updateAsmDebugWatches(watches: List<com.supermetroid.editor.data.ProjectAsmDebugWatch>): Boolean {
+        if (project.asmWorkspace.debugWatches == watches) return false
+        project.asmWorkspace.debugWatches.clear()
+        project.asmWorkspace.debugWatches.addAll(watches)
+        // Watches must participate in save-race detection without making ROM
+        // previews, symbols, or source builds stale: they cannot affect bytes.
+        projectDirtyRevision++
+        dirtyValue = true
+        return true
+    }
+
     private var asmModeRevision by mutableStateOf(0)
     private val asmVisualWorkspaceRepository = AsmProjectWorkspaceRepository()
     private val asmTilesetPaletteBridge = AsmTilesetPaletteBridge(asmVisualWorkspaceRepository)

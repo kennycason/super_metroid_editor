@@ -19,6 +19,12 @@ internal data class AsmRuntimeStackCandidate(
     val longReturn: Boolean,
 )
 
+internal data class AsmRuntimeWatchTarget(
+    val expression: String,
+    val displayName: String,
+    val address: Int,
+)
+
 internal data class AsmRuntimeInspection(
     val cpu: CpuDebugState,
     val currentSource: AsmRuntimeSourceLocation?,

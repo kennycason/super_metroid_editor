@@ -1048,6 +1048,17 @@ data class ProjectAsmWorkspaceSettings(
     /** Disabled native-data customizations, by config type, field identity, and exact word values.
      * Active values remain solely in ASM. These snapshots exist only while a patch is disabled. */
     val disabledPatchValues: MutableMap<String, Map<String, List<Int>>> = mutableMapOf(),
+    /** Project-owned debugger watch intent. Live values and read failures are deliberately not persisted. */
+    val debugWatches: MutableList<ProjectAsmDebugWatch> = mutableListOf(),
+)
+
+@Serializable
+data class ProjectAsmDebugWatch(
+    val name: String,
+    val expression: String,
+    /** Last verified 24-bit bus address; symbol expressions are re-resolved for each debugger build. */
+    val resolvedAddress: Int,
+    val widthBytes: Int,
 )
 
 @Serializable

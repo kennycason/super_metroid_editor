@@ -79,7 +79,7 @@ class LibretroCore(private val corePath: String) {
         lib = Native.load(corePath, LibretroLib::class.java, options)
         cpuDebugApiVersion = runCatching { lib.smedit_debug_api_version() }
             .getOrNull()
-            ?.takeIf { it == SUPPORTED_CPU_DEBUG_API_VERSION }
+            ?.takeIf { it in MIN_CPU_DEBUG_API_VERSION..SUPPORTED_CPU_DEBUG_API_VERSION }
 
         File(systemDir).mkdirs()
         File(saveDir).mkdirs()
@@ -158,6 +158,44 @@ class LibretroCore(private val corePath: String) {
         requireCpuDebugging()
         check(gameLoaded) { "No game loaded" }
         val reason = debugHaltReason(lib.smedit_debug_step_instruction())
+        return CpuDebugExecution(reason, readCpuDebugState())
+    }
+
+    fun stepOver(
+        addresses: List<Int>,
+        instructionLimit: Long,
+        frameLimit: Int,
+    ): CpuDebugExecution = structuredStep(addresses, instructionLimit, frameLimit, "over") { pointer, count ->
+        lib.smedit_debug_step_over(pointer, count, instructionLimit, frameLimit)
+    }
+
+    fun stepOut(
+        addresses: List<Int>,
+        instructionLimit: Long,
+        frameLimit: Int,
+    ): CpuDebugExecution = structuredStep(addresses, instructionLimit, frameLimit, "out") { pointer, count ->
+        lib.smedit_debug_step_out(pointer, count, instructionLimit, frameLimit)
+    }
+
+    private fun structuredStep(
+        addresses: List<Int>,
+        instructionLimit: Long,
+        frameLimit: Int,
+        operation: String,
+        execute: (Pointer?, Int) -> Int,
+    ): CpuDebugExecution {
+        requireCpuDebugging(STEP_CONTROL_CPU_DEBUG_API_VERSION)
+        check(gameLoaded) { "No game loaded" }
+        require(addresses.size <= MAX_CPU_BREAKPOINTS) { "At most $MAX_CPU_BREAKPOINTS execution addresses are supported" }
+        require(addresses.all { it in 0..0xFFFFFF }) { "Execution addresses must be 24-bit SNES addresses" }
+        require(instructionLimit > 0) { "Step $operation instruction limit must be positive" }
+        require(frameLimit > 0) { "Step $operation frame limit must be positive" }
+        val addressMemory = addresses.takeIf(List<Int>::isNotEmpty)?.let { values ->
+            Memory((values.size * Int.SIZE_BYTES).toLong()).also { memory ->
+                values.forEachIndexed { index, value -> memory.setInt((index * Int.SIZE_BYTES).toLong(), value) }
+            }
+        }
+        val reason = debugHaltReason(execute(addressMemory, addresses.size))
         return CpuDebugExecution(reason, readCpuDebugState())
     }
 
@@ -332,9 +370,9 @@ class LibretroCore(private val corePath: String) {
         cpuDebugApiVersion = null
     }
 
-    private fun requireCpuDebugging() {
-        check(supportsCpuDebugging()) {
-            "This core does not expose SMEDIT CPU debugging API v$SUPPORTED_CPU_DEBUG_API_VERSION"
+    private fun requireCpuDebugging(minimumVersion: Int = MIN_CPU_DEBUG_API_VERSION) {
+        check((cpuDebugApiVersion ?: 0) >= minimumVersion) {
+            "This operation requires SMEDIT CPU debugging API v$minimumVersion"
         }
     }
 
@@ -367,6 +405,8 @@ class LibretroCore(private val corePath: String) {
         4 -> DebugHaltReason.FRAME_LIMIT
         5 -> DebugHaltReason.CPU_STOPPED
         6 -> DebugHaltReason.INVALID_REQUEST
+        7 -> DebugHaltReason.STEP_OVER
+        8 -> DebugHaltReason.STEP_OUT
         else -> DebugHaltReason.INVALID_REQUEST
     }
 
@@ -534,7 +574,9 @@ class LibretroCore(private val corePath: String) {
     private var saveDirMem: Memory? = null
 
     companion object {
-        private const val SUPPORTED_CPU_DEBUG_API_VERSION = 1
+        private const val MIN_CPU_DEBUG_API_VERSION = 1
+        private const val STEP_CONTROL_CPU_DEBUG_API_VERSION = 2
+        private const val SUPPORTED_CPU_DEBUG_API_VERSION = 2
         private const val MAX_CPU_BREAKPOINTS = 256
         // ~1 second of stereo audio at 32040 Hz
         private const val AUDIO_BUFFER_SIZE = 32040 * 2 * 2

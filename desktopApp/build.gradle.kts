@@ -74,7 +74,7 @@ kotlin {
         jvmToolchain(17)
         withJava()
         testRuns["test"].executionTask.configure {
-            dependsOn("copyAsarToAppResources")
+            dependsOn("copyAsarToAppResources", "copyLibretroToAppResources")
             systemProperty("compose.application.resources.dir", platformAppResourcesDirectory.get().asFile.absolutePath)
             useJUnitPlatform {
                 excludeTags("community-samus-rom", "asm-reference-network", "asm-toolchain", "asm-symbol-coverage")
@@ -156,6 +156,7 @@ val asmFastProofSuites = listOf(
     "com.supermetroid.editor.asm.AsmBossStatsSourceTest",
     "com.supermetroid.editor.asm.AsmEnvironmentalDamageSourceTest",
     "com.supermetroid.editor.asm.AsmDataPatchSourceTest",
+    "com.supermetroid.editor.asm.AsmFastDoorsModuleTest",
     "com.supermetroid.editor.ui.MusicBankTransitionsTest",
     "com.supermetroid.editor.asm.AsmProjectWorkspaceTest",
     "com.supermetroid.editor.asm.AsmCheckedHookTest",
@@ -171,6 +172,7 @@ val asmColdBuildProofSuites = listOf(
     "com.supermetroid.editor.asm.AsmTextCompilerTest",
     "com.supermetroid.editor.asm.AsmTypewriterTextCompilerTest",
     "com.supermetroid.editor.asm.AsmIntroStoryTextCompilerTest",
+    "com.supermetroid.editor.asm.AsmFastDoorsCompilerTest",
 )
 
 tasks.register<org.gradle.api.tasks.testing.Test>("asmFastTest") {

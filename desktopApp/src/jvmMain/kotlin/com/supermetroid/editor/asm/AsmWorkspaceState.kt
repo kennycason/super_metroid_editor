@@ -596,6 +596,38 @@ internal class AsmWorkspaceState(
         )
     }
 
+    fun runtimeWatchTarget(
+        expression: String,
+        sessionBuildIdentity: String?,
+        fileId: String? = null,
+        lineIndex: Int? = null,
+    ): AsmRuntimeWatchTarget? {
+        if (!runtimeMappingFresh(sessionBuildIdentity)) return null
+        val report = buildReport?.takeIf { it.succeeded } ?: return null
+        val trimmed = expression.trim()
+        if (trimmed.isEmpty()) return null
+        val label = if (fileId != null && lineIndex != null) {
+            workspace?.index?.resolveUniqueLabel(fileId, lineIndex, trimmed)
+        } else null
+        val names = buildList {
+            add(trimmed)
+            add(trimmed.removePrefix("!"))
+            label?.let {
+                add(it.name)
+                add(it.name.removePrefix("!"))
+            }
+        }.distinct()
+        val exact = names.firstNotNullOfOrNull { name -> report.symbols.labels[name]?.let { name to it } }
+            ?: names.firstNotNullOfOrNull { name ->
+                report.symbols.labels.entries.singleOrNull { it.key.equals(name, ignoreCase = true) }
+                    ?.let { it.key to it.value }
+            }
+        val resolved = exact ?: label?.let { definition ->
+            report.symbols.addressAt(definition.fileId, definition.lineIndex)?.let { definition.name to it }
+        } ?: return null
+        return AsmRuntimeWatchTarget(trimmed, label?.name?.removePrefix("!") ?: resolved.first, resolved.second)
+    }
+
     fun runtimeMappingFresh(sessionBuildIdentity: String?): Boolean {
         val report = buildReport
         return isAsmRuntimeMappingFresh(

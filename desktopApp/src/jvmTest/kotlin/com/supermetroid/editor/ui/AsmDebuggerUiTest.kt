@@ -1,12 +1,20 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.asm.AsmRuntimeSourceLocation
+import com.supermetroid.editor.asm.AsmRuntimeWatchTarget
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AsmDebuggerUiTest {
+    @Test
+    fun `debugger gives watches most of wide layouts while retaining a usable cpu pane`() {
+        assertEquals(0.28f, asmDebuggerCpuPaneWeight(1200f))
+        assertEquals(0.34f, asmDebuggerCpuPaneWeight(1000f))
+        assertEquals(0.40f, asmDebuggerCpuPaneWeight(800f))
+    }
+
     @Test
     fun `source context actions expose exact fresh debugger operations`() {
         val invoked = mutableListOf<String>()
@@ -41,6 +49,43 @@ class AsmDebuggerUiTest {
             val items = asmDebuggerContextMenuItems(address, available, fresh, { false }, {}, {}, {})
             assertEquals(listOf("Open Debugger"), items.map { it.label })
         }
+    }
+
+    @Test
+    fun `fresh resolved source symbols share the canonical watch action`() {
+        val target = AsmRuntimeWatchTarget("Energy", "Energy", 0x7E09C2)
+        var selected: AsmRuntimeWatchTarget? = null
+        val items = asmDebuggerContextMenuItems(
+            address = null,
+            available = true,
+            mappingFresh = true,
+            hasBreakpoint = { false },
+            onToggleBreakpoint = {},
+            onRunToAddress = {},
+            onOpenDebugger = {},
+            watchTarget = target,
+            onAddWatch = { selected = it },
+        )
+
+        assertEquals(listOf("Add Energy to Watches…", "Open Debugger"), items.map { it.label })
+        items.first().onClick()
+        assertEquals(target, selected)
+        assertEquals(
+            listOf("Open Debugger"),
+            asmDebuggerContextMenuItems(null, true, false, { false }, {}, {}, {}, target).map { it.label },
+        )
+
+        val longTarget = AsmRuntimeWatchTarget(
+            "PauseMenu_MapScrollLeftArrowAnimationFrame",
+            "PauseMenu_MapScrollLeftArrowAnimationFrame",
+            0x7E0751,
+        )
+        assertEquals(
+            listOf("Add PauseMenu_MapScrollLeft… to Watches…", "Open Debugger"),
+            asmDebuggerContextMenuItems(
+                null, true, true, { false }, {}, {}, {}, longTarget,
+            ).map { it.label },
+        )
     }
 
     @Test

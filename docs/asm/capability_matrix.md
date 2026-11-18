@@ -5,6 +5,9 @@ This is the human-readable view of the checked registry in
 row is missing here, when a capability/scenario has no decision, or when a cited
 focused test suite no longer exists.
 
+Rows are integration families, not individual fields or assets. A family may
+own several focused bridges while sharing one authority and conformance boundary.
+
 Legend: **Y** is supported; **N** is an intentional unsupported boundary; **—**
 is structurally not applicable. “Live” means saved ASM refreshes the Visual
 Editor and visual source edits refresh ASM without reopening the project.
@@ -28,8 +31,39 @@ Editor and visual source edits refresh ASM without reopening the project.
 | `typewriter-text` | Ceres/Zebes typed streams | Y | Y | Y | Y | Y | Y | Y | Y |
 | `intro-story-text` | English NTSC intro pages | Y | Y | Y | Y | — | Y | — | Y |
 | `gameplay-tuning` | Enemy/projectile/boss/environment/patch fields | Y | Y | Y | Y | Y | Y | — | Y |
+| `fast-doors` | Fast Doors curated code module | Y | Y | Y | Y | — | Y | — | Y |
 | `sound-music` | Sound/music source and tools | Y | Y | N | N | — | Y | — | Y |
 | `custom-source` | Arbitrary source and project modules | Y | Y | N | N | — | Y | — | Y |
+
+## Where to work
+
+These locations come from the same checked registry as the capability decisions.
+The in-app **ASM Library → ASM / Visual Editor capability matrix** makes the
+same rows searchable and provides direct source/editor navigation when the
+current workspace contains that destination.
+
+| ID | Visual Editor | ASM source | Primary implementation |
+|---|---|---|---|
+| `room-records` | Rooms · Room Info | `bank_8F.asm` | `AsmRoomPropertiesBridge.kt`, `AsmRoomPropertiesSource.kt`, `AsmRoomSelectorsBridge.kt`, `AsmRoomSelectorsSource.kt` |
+| `room-layouts` | Rooms · Layout canvas | `bank_8F.asm` | `AsmRoomLayoutBridge.kt`, `AsmRoomLayoutSource.kt`, `AsmRoomThemeSource.kt` |
+| `placed-objects` | Rooms · Objects | `bank_8F.asm`, `macros.asm` | `AsmPlmSourceBridge.kt`, `AsmRoomObjectSource.kt` |
+| `doors-arrivals-saves` | Rooms · Door connections | `bank_83.asm`, `bank_8F.asm` | `AsmDoorSourceBridge.kt`, `AsmDoorArrivalsSource.kt` |
+| `room-fx` | Rooms · FX | `bank_83.asm` | `AsmFxBridge.kt`, `AsmFxSource.kt` |
+| `room-enemies` | Rooms · Enemies | `bank_A1.asm`, `bank_B4.asm` | `AsmEnemyBridge.kt`, `AsmEnemySource.kt` |
+| `room-scrolls` | Rooms · Scrolls | `bank_8F.asm` | `AsmInitialScrollBridge.kt`, `AsmScrollCommandSource.kt` |
+| `minimap` | Minimap | `bank_B5.asm`, `bank_82.asm` | `AsmMinimapSourceBridge.kt` |
+| `tileset-graphics` | Tilesets · Graphics | `bank_8F.asm`, `bank_B9..CE.asm` | `AsmTilesetGraphicsBridge.kt` |
+| `tileset-palettes` | Tilesets · Palettes | `bank_8F.asm`, `bank_B9..CE.asm` | `AsmTilesetPaletteBridge.kt` |
+| `native-sprite-graphics` | Sprites · Graphics | `bank_95.asm`, `bank_A0.asm` | `AsmNativeSpriteAssetBridge.kt` |
+| `native-sprite-palettes` | Sprites · Palettes | `bank_8C.asm` | `AsmNativeSpritePaletteBridge.kt` |
+| `cinematic-maps` | Text / Scenes | `bank_8B.asm`, `bank_94..99.asm` | `AsmCinematicMapAssetBridge.kt` |
+| `fixed-text` | Text | `bank_85.asm` | `AsmTextSourceBridge.kt` |
+| `typewriter-text` | Text | `bank_A6.asm` | `AsmTypewriterTextBridge.kt` |
+| `intro-story-text` | Text | `bank_8B.asm` | `AsmIntroStoryTextBridge.kt` |
+| `gameplay-tuning` | Enemy tuning · Boss tuning · Patches | `bank_A0.asm`, `bank_B4.asm`, `bank_93.asm`, `bank_8D.asm`, `bank_90.asm` | `AsmEnemyTuningBridge.kt`, `AsmBeamDamageBridge.kt`, `AsmBossStatsBridge.kt`, `AsmEnvironmentalDamageBridge.kt`, `AsmDataPatchBridge.kt`, `AsmPatchToggleController.kt` |
+| `fast-doors` | Patches | `project/fast_doors.asm` | `AsmFastDoorsModule.kt` |
+| `sound-music` | Sound tools · independent | `bank_CF..DE.asm`, `data/Music_*.bin` | `AsmSemanticBridge.kt` |
+| `custom-source` | No Visual Editor · intentional | `main.asm`, `project/*.asm` | `AsmProjectWorkspace.kt`, `AsmCheckedHook.kt` |
 
 ## Shared reciprocity gate
 

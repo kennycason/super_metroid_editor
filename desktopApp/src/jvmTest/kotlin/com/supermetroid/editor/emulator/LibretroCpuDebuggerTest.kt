@@ -22,11 +22,13 @@ class LibretroCpuDebuggerTest {
     fun `bundled core exposes deterministic instruction control and cpu state`() {
         val corePath = LibretroCoreDiscovery.findCore()
         assumeTrue(corePath != null, "Bundled Snes9x core is unavailable")
-        val rom = File(tempDir, "debugger.sfc").apply { writeBytes(TestRomHelper.requireRomBytes()) }
+        val rom = File(tempDir, "debugger.sfc").apply {
+            writeBytes(debuggerFixtureRom(TestRomHelper.requireRomBytes()))
+        }
         val core = LibretroCore(requireNotNull(corePath))
         core.init()
         try {
-            assertEquals(1, core.cpuDebugApiVersion())
+            assertEquals(2, core.cpuDebugApiVersion())
             assertTrue(core.supportsCpuDebugging())
             assertTrue(core.loadGame(rom.absolutePath))
 
@@ -89,8 +91,86 @@ class LibretroCpuDebuggerTest {
             val afterRead = core.readCpuDebugState()
             assertEquals(beforeRead.pc, afterRead.pc)
             assertEquals(beforeRead.cycles, afterRead.cycles, "Paused memory inspection must not advance CPU timing")
+
+            core.unserializeState(saved)
+            var callState: ByteArray? = null
+            var callPc = 0
+            var callLength = 0
+            repeat(64) {
+                if (callState == null) {
+                    val cpu = core.readCpuDebugState()
+                    val opcode = core.readBus(cpu.pc, 1).single().toInt() and 0xFF
+                    val length = when (opcode) {
+                        0x20, 0xFC -> 3 // JSR abs / JSR (abs,X)
+                        0x22 -> 4 // JSL long
+                        else -> 0
+                    }
+                    if (length > 0) {
+                        callState = core.serializeState()
+                        callPc = cpu.pc
+                        callLength = length
+                    } else {
+                        core.stepInstruction()
+                    }
+                }
+            }
+            val beforeCall = requireNotNull(callState) { "No JSR/JSL reached near the reset entry point" }
+            val fallthrough = (callPc and 0xFF0000) or ((callPc + callLength) and 0xFFFF)
+            val callee = (callPc and 0xFF0000) or 0x8010
+
+            val breakpointDuringOver = core.stepOver(
+                addresses = listOf(callPc, callee),
+                instructionLimit = 2_000_000,
+                frameLimit = 120,
+            )
+            assertEquals(DebugHaltReason.BREAKPOINT, breakpointDuringOver.haltReason)
+            assertEquals(callee, breakpointDuringOver.cpu.pc, "only the initial PC breakpoint is skipped")
+
+            core.unserializeState(beforeCall)
+            val over = core.stepOver(emptyList(), instructionLimit = 2_000_000, frameLimit = 120)
+            assertEquals(DebugHaltReason.STEP_OVER, over.haltReason)
+            assertEquals(fallthrough, over.cpu.pc)
+
+            core.unserializeState(beforeCall)
+            val into = core.stepInstruction()
+            assertEquals(DebugHaltReason.STEP, into.haltReason)
+            assertNotEquals(fallthrough, into.cpu.pc)
+            val out = core.stepOut(emptyList(), instructionLimit = 2_000_000, frameLimit = 120)
+            assertEquals(DebugHaltReason.STEP_OUT, out.haltReason)
+            assertEquals(fallthrough, out.cpu.pc)
         } finally {
             core.close()
         }
+    }
+
+    /** Deterministic LoROM reset program with one nested JSR. The real core
+     * executes it; only the test ROM's reset vectors and first bytes differ. */
+    private fun debuggerFixtureRom(vanilla: ByteArray): ByteArray = vanilla.copyOf().also { rom ->
+        val program = byteArrayOf(
+            0x78,                         // SEI
+            0x18,                         // CLC
+            0xFB.toByte(),                // XCE (native mode)
+            0xC2.toByte(), 0x30,          // REP #$30 (16-bit A/X)
+            0x20, 0x10, 0x80.toByte(),    // JSR $8010
+            0xEA.toByte(),                // fallthrough: NOP
+            0x80.toByte(), 0xFE.toByte(), // BRA *
+        )
+        program.copyInto(rom, destinationOffset = 0)
+        byteArrayOf(
+            0xA9.toByte(), 0x34, 0x12,    // $8010: LDA #$1234
+            0x20, 0x20, 0x80.toByte(),    // JSR $8020
+            0x60,                         // RTS
+        ).copyInto(rom, destinationOffset = 0x10)
+        byteArrayOf(
+            0xA2.toByte(), 0x78, 0x56,    // $8020: LDX #$5678
+            0x60,                         // RTS
+        ).copyInto(rom, destinationOffset = 0x20)
+        rom[0x30] = 0x40 // $8030: RTI for every interrupt vector
+        for (vector in listOf(0x7FE4, 0x7FE6, 0x7FE8, 0x7FEA, 0x7FEE, 0x7FF4, 0x7FFA, 0x7FFE)) {
+            rom[vector] = 0x30
+            rom[vector + 1] = 0x80.toByte()
+        }
+        rom[0x7FFC] = 0x00 // reset -> $8000
+        rom[0x7FFD] = 0x80.toByte()
     }
 }

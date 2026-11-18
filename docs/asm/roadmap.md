@@ -305,10 +305,28 @@ removable session breakpoint list with symbol, address and file/line evidence,
 and compact original debugger glyphs make the control row scannable without
 copying another IDE's assets.
 
-The next debugger increments, in order, are 65c816-aware Step Over and Step Out,
-named watches with typed memory formatting, then native data watchpoints once the
-Snes9x bridge can stop on proven reads/writes. Call-stack work must continue to
-separate proven frames from conservative return candidates.
+**Structured stepping and named watches complete (2026-11-17).** Debugger ABI
+v2 adds bounded 65c816-aware **Step Over** and **Step Out**. The native core
+tracks executed `JSR`, `JSL`, `JSR (abs,X)`, `RTS` and `RTL` instructions,
+including nested calls, while leaving user breakpoints armed; it deliberately
+does not infer a return frame from raw stack candidates or treat `RTI` as a
+routine return. NMI, IRQ, BRK and COP handlers have separate interrupt depth, so
+handler-local calls cannot contaminate the selected routine. ABI v1 cores retain
+the original debugger and disable these two controls with an explicit capability
+message.
+
+The Debugger tab is also the single owner of read-only, session-only named
+watches. A watch accepts a current compiled symbol or 24-bit SNES address plus
+8/16/24/32-bit width and always shows aligned decimal, hexadecimal and binary
+columns. Source right-click and the WRAM Hex inspector open the same watch
+editor; WRAM watches can navigate back to the exact highlighted Hex range.
+Running watches refresh between completed emulator calls using the same
+side-effect-free bus peek as memory inspection, so hardware/coprocessor ranges
+fail closed as unavailable and no project file acquires debug state.
+
+The next debugger increment is native data watchpoints once the Snes9x bridge
+can stop on proven reads/writes. Call-stack work must continue to separate
+proven frames from conservative return candidates.
 
 The implementation is pinned from the
 [`kennycason/snes9x` `smedit-debugger` branch](https://github.com/kennycason/snes9x/tree/smedit-debugger),
@@ -393,8 +411,8 @@ history, parser, baseline-transform and pinned-source tests cover this boundary.
 
 ## 8. Ongoing integration contract and fast verification
 
-**Status: complete (2026-11-13).** A checked Kotlin registry now inventories 19
-integrations: 17 reciprocal source/Visual Editor contracts plus the intentional
+**Status: complete (2026-11-17).** A checked Kotlin registry now inventories 20
+integration families: 18 reciprocal source/Visual Editor contracts plus the intentional
 sound/music and arbitrary-source boundaries. Every row has explicit decisions
 for inspect, ASM edit, Visual edit, live refresh, aliases, restore, relocation
 and cold build, together with the same ten conformance scenarios. Validation
@@ -403,9 +421,14 @@ documentation drift, missing/nested test suites and differences between the
 registry and Gradle task lists. `asmFastTest` runs the focused source/UI contract
 as the normal loop; `asmReciprocityTest` adds the declared cache-free compiler
 proofs. The human-readable capability matrix, ASM reference link and bundled ASM
-Library guide explain the supported shapes and intentional boundaries. The fast
-gate currently covers 497 tests with no failures (40 pinned-ROM skips when its
-optional fixture is unavailable).
+Library coverage view explain the supported shapes and intentional boundaries.
+Every checked row now also owns its Visual Editor destination, representative ASM
+source files and primary implementation files. The in-app view is searchable by
+data, bank, bridge or proof suite; expanded rows navigate to available source and
+the appropriate visual workspace. Documentation drift and missing implementation
+paths fail the same registry tests. A reverse bridge-declaration audit also fails
+when an implementation exists without a registry owner, preventing another
+Fast Doors-style omission.
 
 Build the shared contract alongside items 1–7 rather than postponing it.
 

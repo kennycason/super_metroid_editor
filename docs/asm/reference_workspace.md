@@ -1573,6 +1573,9 @@ under **Settings → Credits**.
 
 The checked [ASM / Visual Editor capability matrix](capability_matrix.md) is the
 current inventory of reciprocal integrations and intentional ASM-only boundaries.
+The same registry is browsable under **ASM Library → ASM / Visual Editor capability
+matrix**: search by data, bank, bridge class, or proof suite, then expand a row to
+see and navigate its Visual Editor, ASM source, implementation, and evidence.
 Every reciprocal row uses one shared ten-scenario completion gate, with a fast
 normal-development task and a focused cold-build task whose suite lists are
 checked against the registry.
@@ -4854,6 +4857,17 @@ emulator session, may be removed individually or cleared together, and are
 cleared on close/restart. The tab lists each one by symbol, SNES address and
 file/line, and an authored row navigates back to source.
 
+Debugger ABI v2 also provides **Step Over** and **Step Out**. These are native
+execution controls, not stack guesses: the core follows executed `JSR`, `JSL`,
+`JSR (abs,X)`, `RTS` and `RTL` instructions and their nested calls. `RTI` is not
+treated as a selected-routine return; NMI, IRQ, BRK and COP instead maintain a
+separate interrupt scope so handler-local calls cannot alter the selected call
+depth. Existing user breakpoints stay active and may stop either operation first;
+the current-PC breakpoint is skipped only for the first structured-step
+instruction. Both operations retain instruction and frame safety limits. An ABI
+v1 bundled core can still use Step, breakpoints and Run to Cursor, but the two
+structured controls remain disabled until its native core is rebuilt.
+
 When the core stops, SMEDIT opens the exact authored source statement and marks
 it with a yellow execution arrow plus a subtle full-line highlight when the
 current build maps that PC. Generated checked-hook helpers
@@ -4881,6 +4895,19 @@ or selected-memory range is shown inline as **unavailable** without discarding
 the CPU/register state. Every run also has instruction and frame limits. A
 missing target, WAI loop, stopped CPU or mismatched ROM therefore returns control
 with a distinct halt reason instead of locking the editor.
+
+The same safe peek powers named **Watches** in the Debugger tab. Each watch has
+a name, current compiled symbol or explicit 24-bit SNES address, 8/16/24/32-bit
+little-endian width. The watch table always shows aligned **DEC**, **HEX** and
+**BIN** columns instead of hiding representations behind a display setting.
+Right-click a resolved symbol in fresh project source or choose **Add Watch…**
+for the selected WRAM byte in Hex; both routes open the same editor and create
+the same session model. A WRAM watch offers **Hex** to open and highlight its
+exact byte range. While the emulator runs, watches refresh after each completed
+core call, when the bus is synchronously safe to inspect; unsafe ranges remain
+unavailable. Watches clear when the emulator session ends and are never
+persisted into ASM or the `.smedit` project; editing WRAM remains an explicit
+Hex action.
 
 ## Next layers
 
