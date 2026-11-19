@@ -188,6 +188,48 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
+### Snes9x Debugger Fork
+
+SMEDIT builds the exact `tools/snes9x` submodule commit from the
+[`kennycason/snes9x` `smedit-debugger` branch](https://github.com/kennycason/snes9x/tree/smedit-debugger),
+not a stock Snes9x checkout. The versioned CPU-debugger ABI used for stepping,
+breakpoints, watches, and data watchpoints lives in that fork. CI and releases
+build only the commit pinned by this repository.
+
+The submodule is a separate Git repository. Running `git add -A` or committing
+in the SMEDIT root does **not** include uncommitted files inside `tools/snes9x`.
+Native debugger changes must be committed and pushed first, followed by a
+second parent-repository commit that advances the submodule pointer:
+
+```bash
+cd tools/snes9x
+git status
+git add <changed-native-files>
+git commit -m "Describe the debugger change"
+git push origin smedit-debugger
+
+cd ../..
+git add tools/snes9x
+git commit -m "Update Snes9x debugger core"
+git push
+```
+
+Before advancing the pointer, build the native core and run its real-core
+debugger test against an explicit ROM fixture:
+
+```bash
+./gradlew --no-daemon :buildLibretroCore
+SMEDIT_TEST_ROM="$PWD/path/to/test-rom.smc" \
+  ./gradlew --no-daemon :desktopApp:jvmTest \
+  --tests com.supermetroid.editor.emulator.LibretroCpuDebuggerTest --rerun
+```
+
+Finally, `git -C tools/snes9x status --short` should be empty and
+`git submodule status tools/snes9x` should show the newly pushed commit without
+a leading `+` or `-`. Keep the fork's `upstream` remote pointed at
+`libretro/snes9x`; upstream updates should be deliberately rebased or merged
+into `smedit-debugger`, retested, and then pinned by SMEDIT.
+
 Source-backed regression tests use private ROM fixtures. See the [parity setup](parity/README.md)
 and [validation matrix](docs/validation/README.md) for setup, focused checks, and reports.
 
