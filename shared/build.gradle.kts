@@ -44,6 +44,14 @@ val libName = detectLibName()
 val nativeOutputDir = file("src/jvmMain/resources/$jnaPlatform")
 val spcMakefile = spcSourceDir.resolve("Makefile")
 val spcSourceFilesDir = spcSourceDir.resolve("snes_spc")
+val spcHostOs = System.getProperty("os.name").lowercase()
+val spcHostIsMac = spcHostOs.contains("mac") || spcHostOs.contains("darwin")
+val macSpcSdk = if (spcHostIsMac) providers.exec {
+    commandLine("/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path")
+}.standardOutput.asText.map { it.trim() } else null
+val macSpcToolchainIdentity = if (spcHostIsMac) providers.exec {
+    commandLine("/usr/bin/xcrun", "--sdk", "macosx", "clang++", "--version")
+}.standardOutput.asText.map { it.trim() } else null
 
 val buildNativeSpc = tasks.register("buildNativeSpc") {
     description = "Compile libspc shared library for the current platform"
@@ -54,8 +62,9 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
         inputs.file(spcMakefile)
     }
     // On macOS we output to both arch dirs (fat binary)
-    val osNameCfg = System.getProperty("os.name").lowercase()
-    if (osNameCfg.contains("mac") || osNameCfg.contains("darwin")) {
+    if (spcHostIsMac) {
+        inputs.property("macSpcSdk", macSpcSdk!!)
+        inputs.property("macSpcToolchainIdentity", macSpcToolchainIdentity!!)
         outputs.file(file("src/jvmMain/resources/darwin-aarch64/$libName"))
         outputs.file(file("src/jvmMain/resources/darwin-x86-64/$libName"))
     } else {
@@ -67,7 +76,7 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
             "Native SPC sources are missing. Run git submodule update --init tools/snes_spc before building."
         }
 
-        val osName = System.getProperty("os.name").lowercase()
+        val osName = spcHostOs
         val isMac = osName.contains("mac") || osName.contains("darwin")
         val dynlibExt = when {
             isMac -> ".dylib"
@@ -85,11 +94,15 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
             workingDir = spcSourceDir
             val args = mutableListOf("make", "DYNLIB_EXT=$dynlibExt")
             if (isMac) {
-                // Inject -arch flags by overriding CXX directly.  Make expands
-                // $(CXX) by simple text substitution so this injects the flags
-                // into both compile and link steps without any Makefile changes
-                // (the submodule Makefile is unmodified in CI).
-                args.add("CXX=c++ -arch arm64 -arch x86_64")
+                // Keep the compiler and SDK paired. A newer Command Line Tools
+                // SDK can contain linker metadata an older selected Xcode cannot
+                // parse, even when /usr/bin/c++ resolves to that Xcode compiler.
+                val sdk = macSpcSdk!!.get()
+                check(file(sdk).isDirectory) { "xcrun returned a missing macOS SDK: $sdk" }
+                environment("SDKROOT", sdk)
+                // Make expands CXX into both compile and link recipes. xcrun
+                // avoids embedding an Xcode path (which may contain spaces).
+                args.add("CXX=/usr/bin/xcrun --sdk macosx clang++ -arch arm64 -arch x86_64")
             }
             if (osName.contains("win")) {
                 args.add("DYNLIB_PREFIX=")
