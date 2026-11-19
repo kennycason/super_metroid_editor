@@ -68,13 +68,16 @@ internal class AsmIntroStoryTextBridge(
         val resolution = requireNotNull(resolve(mapOf(current.sourceFileId to current.sourceText), entry))
         val characters = encodeLines(newText, resolution)
         if (characters == resolution.records.map(GlyphRecord::character)) return current
+        val replacement = render(current.sourceText, resolution, characters)
+        val updated = requireNotNull(resolve(mapOf(current.sourceFileId to replacement), entry))
         repository.persistSource(
             projectFilePath,
             current.sourceFileId,
-            render(current.sourceText, resolution, characters),
+            replacement,
             current.sourceText,
         )
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = updated.rawData.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     fun restore(
@@ -95,7 +98,8 @@ internal class AsmIntroStoryTextBridge(
             current.sourceText.replaceRange(direct.pageRange, baseline.pageText),
             current.sourceText,
         )
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = baseline.rawData.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     fun applySnapshot(
@@ -116,7 +120,8 @@ internal class AsmIntroStoryTextBridge(
             "Saved intro-story history does not match its symbolic glyph records"
         }
         repository.persistSource(projectFilePath, target.sourceFileId, target.sourceText, expected.sourceText)
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = target.rawData.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     private fun access(
@@ -134,17 +139,17 @@ internal class AsmIntroStoryTextBridge(
                 entry.id,
                 "The frozen ${entry.label} source is not one exact native timing/position/glyph page.",
             )
-        if (!baseline.rawData.contentEquals(entry.rawBytes)) {
-            return AsmIntroStoryTextAccess.AsmOnly(
-                entry.id,
-                "The frozen ${entry.label} glyph records do not match the loaded English NTSC ROM.",
-            )
-        }
         val current = resolve(currentSources, entry)
             ?: return AsmIntroStoryTextAccess.AsmOnly(
                 entry.id,
                 "${entry.label} changed its native records, timing, positions, controls, glyph expressions, or location. Edit it in ASM.",
             )
+        if (!baseline.rawData.contentEquals(entry.rawBytes) && !current.rawData.contentEquals(entry.rawBytes)) {
+            return AsmIntroStoryTextAccess.AsmOnly(
+                entry.id,
+                "${entry.label} does not match either the frozen English NTSC ROM or current ASM source.",
+            )
+        }
         if (current.fileId != baseline.fileId || current.records.map(GlyphRecord::address) != baseline.records.map(GlyphRecord::address)) {
             return AsmIntroStoryTextAccess.AsmOnly(
                 entry.id,

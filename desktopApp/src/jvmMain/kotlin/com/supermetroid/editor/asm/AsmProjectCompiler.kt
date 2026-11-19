@@ -770,7 +770,11 @@ internal class AsmProjectCompiler(
                         materialization.claims.map { it.pcOffset until it.endExclusive } +
                         managedAssetClaims.map { it.pcOffset until it.endExclusive } +
                         roomMaterialization.claims.map { it.pcOffset until it.endExclusive } +
-                        patchMaterialization.claims.map { it.pcOffset until it.endExclusive },
+                        patchMaterialization.claims.map { it.pcOffset until it.endExclusive } +
+                        (managedHookPlacements + auditedModuleSegments).map { placement ->
+                            placement.allocation.pcOffset until
+                                placement.allocation.pcOffset + placement.allocation.size
+                        },
                 ),
                 symbols = project.symbols,
             ), auditedModuleClaims.filterNot { claim -> auditedModuleSegments.any { placement ->

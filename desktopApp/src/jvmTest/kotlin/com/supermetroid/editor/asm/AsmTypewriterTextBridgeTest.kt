@@ -47,10 +47,15 @@ class AsmTypewriterTextBridgeTest {
         assertTrue(originalControls.lines.map { it.vramAddress } == savedControls.lines.map { it.vramAddress })
         assertTrue(originalControls.lines.map { it.text.length } == savedControls.lines.map { it.text.length })
 
+        val sourceBackedEntry = entry.copy(text = saved.text, rawBytes = saved.rawData.copyOf())
         val reopened = assertIs<AsmTypewriterTextAccess.Editable>(
-            AsmTypewriterTextBridge().accessAll(fixture.projectFile.path, listOf(entry)).getValue(entry.id),
+            AsmTypewriterTextBridge().accessAll(fixture.projectFile.path, listOf(sourceBackedEntry)).getValue(entry.id),
         )
         assertContentEquals(saved.rawData, reopened.rawData)
+        val unrelatedBytes = saved.rawData.copyOf().also { it[0] = (it[0].toInt() xor 0x01).toByte() }
+        assertIs<AsmTypewriterTextAccess.AsmOnly>(
+            bridge.accessAll(fixture.projectFile.path, listOf(entry.copy(rawBytes = unrelatedBytes))).getValue(entry.id),
+        )
         val restored = bridge.restore(fixture.projectFile.path, entry, saved.snapshot())
         assertFalse(restored.modified)
         assertContentEquals(entry.rawBytes, restored.rawData)

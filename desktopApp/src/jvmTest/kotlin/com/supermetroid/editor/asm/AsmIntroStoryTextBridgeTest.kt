@@ -48,6 +48,17 @@ class AsmIntroStoryTextBridgeTest {
             controlBytes(after.rawData),
             "Timing, positions, and page controls must remain byte-identical",
         )
+        val sourceBackedPage = page.copy(text = after.text, rawBytes = after.rawData.copyOf())
+        assertIs<AsmIntroStoryTextAccess.Editable>(
+            bridge.accessAll(fixture.projectFile.path, listOf(sourceBackedPage)).getValue(page.id),
+        )
+        val glyphOffset = TextData.GREEN_TEXT_RECORD_SIZE + 4
+        val unrelatedBytes = after.rawData.copyOf().also {
+            it[glyphOffset] = (it[glyphOffset].toInt() xor 0x01).toByte()
+        }
+        assertIs<AsmIntroStoryTextAccess.AsmOnly>(
+            bridge.accessAll(fixture.projectFile.path, listOf(page.copy(rawBytes = unrelatedBytes))).getValue(page.id),
+        )
 
         val restored = bridge.restore(fixture.projectFile.path, page, after.snapshot())
         assertEquals(page.text, restored.text)
@@ -83,7 +94,14 @@ class AsmIntroStoryTextBridgeTest {
             bridge.save(fixture.projectFile.path, page, "CERES STATION WAS UNDER\nTHIS LINE IS TOO LONG", access.snapshot())
         }
 
-        val custom = access.sourceText.replaceFirst("dw \$0005*!FPS", "dw CUSTOM_INTRO_DELAY")
+        val pageStart = access.sourceText.indexOf("${access.sourceLabel}:")
+        val timingStart = access.sourceText.indexOf("dw \$0005*!FPS", startIndex = pageStart)
+        assertTrue(pageStart >= 0 && timingStart >= pageStart)
+        val custom = access.sourceText.replaceRange(
+            timingStart,
+            timingStart + "dw \$0005*!FPS".length,
+            "dw CUSTOM_INTRO_DELAY",
+        )
         repository.persistSource(fixture.projectFile.path, access.sourceFileId, custom, access.sourceText)
         val asmOnly = assertIs<AsmIntroStoryTextAccess.AsmOnly>(
             bridge.accessAll(fixture.projectFile.path, listOf(page)).getValue(page.id),

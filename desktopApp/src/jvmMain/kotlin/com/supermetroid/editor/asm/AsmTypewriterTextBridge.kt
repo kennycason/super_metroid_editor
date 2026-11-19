@@ -74,7 +74,8 @@ internal class AsmTypewriterTextBridge(
             if (!variable.contentEquals(current.rawData)) {
                 repository.saveManagedAsset(projectFilePath, current.managedAssetId, variable, current.rawData)
             }
-            return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+            return accessAll(projectFilePath, listOf(entry.copy(rawBytes = variable.copyOf())))
+                .getValue(entry.id).editableOrThrow()
         }
         val fixed = runCatching {
             TextData.encodeTypewriterText(newText, current.rawData, preserveLineSlots = true)
@@ -92,7 +93,8 @@ internal class AsmTypewriterTextBridge(
         val resolution = requireNotNull(resolveDirect(current.sourceFileId, current.sourceText, definition(entry)))
         val replacement = renderFixed(current.sourceText, resolution, fixed)
         repository.persistSource(projectFilePath, current.sourceFileId, replacement, current.sourceText)
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = fixed.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     fun relocate(
@@ -114,7 +116,8 @@ internal class AsmTypewriterTextBridge(
             rawData,
             current.sourceText,
         )
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = rawData.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     fun restore(
@@ -144,7 +147,8 @@ internal class AsmTypewriterTextBridge(
                 current.sourceText,
             )
         }
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = baseline.rawData.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     fun applySnapshot(
@@ -156,7 +160,10 @@ internal class AsmTypewriterTextBridge(
         require(target.entryId == expected.entryId && target.entryId == entry.id &&
             target.address == expected.address && target.sourceFileId == expected.sourceFileId
         ) { "Typewriter source history identity changed" }
-        val current = accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        val current = accessAll(
+            projectFilePath,
+            listOf(entry.copy(rawBytes = expected.rawData.copyOf())),
+        ).getValue(entry.id).editableOrThrow()
         requireMatches(current, expected, "Undo/Redo")
         requireNotNull(TextData.decodeTypewriterStream(target.rawData)) { "Saved typewriter history has invalid controls" }
         when {
@@ -188,7 +195,8 @@ internal class AsmTypewriterTextBridge(
                 )
             }
         }
-        return accessAll(projectFilePath, listOf(entry)).getValue(entry.id).editableOrThrow()
+        return accessAll(projectFilePath, listOf(entry.copy(rawBytes = target.rawData.copyOf())))
+            .getValue(entry.id).editableOrThrow()
     }
 
     private fun access(
@@ -201,9 +209,6 @@ internal class AsmTypewriterTextBridge(
         val definition = definition(entry)
         val baseline = resolveUnique(baselineSources, definition)
             ?: return AsmTypewriterTextAccess.AsmOnly(entry.id, "The frozen ${entry.label} stream is not one exact typed declaration.")
-        if (!baseline.rawData.contentEquals(entry.rawBytes)) {
-            return AsmTypewriterTextAccess.AsmOnly(entry.id, "The frozen ${entry.label} stream does not match the loaded ROM.")
-        }
         val record = managed.assets.singleOrNull { it.kind == KIND && it.sourceLabel == definition.label }
         if (record != null) {
             if (!record.inlineSource || record.sourceFileId != baseline.fileId || record.originalPcOffset != entry.pcOffset ||
@@ -211,6 +216,12 @@ internal class AsmTypewriterTextBridge(
             ) return AsmTypewriterTextAccess.AsmOnly(entry.id, "${entry.label} has an incompatible managed-source contract.")
             val data = AsmManagedAssets.assetFile(workspace.root, record).takeIf(File::isFile)?.readBytes()
                 ?: return AsmTypewriterTextAccess.AsmOnly(entry.id, "${entry.label}'s managed data is missing.")
+            if (!baseline.rawData.contentEquals(entry.rawBytes) && !data.contentEquals(entry.rawBytes)) {
+                return AsmTypewriterTextAccess.AsmOnly(
+                    entry.id,
+                    "${entry.label} does not match either the frozen ROM or current managed ASM data.",
+                )
+            }
             val stream = TextData.decodeTypewriterStream(data)
                 ?: return AsmTypewriterTextAccess.AsmOnly(entry.id, "${entry.label}'s managed controls are invalid.")
             return editable(entry, baseline, stream, data, currentSources.getValue(record.sourceFileId), record, null)
@@ -220,6 +231,12 @@ internal class AsmTypewriterTextBridge(
                 entry.id,
                 "${entry.label} is not one exact literal control-and-string stream. Edit it in ASM.",
             )
+        if (!baseline.rawData.contentEquals(entry.rawBytes) && !current.rawData.contentEquals(entry.rawBytes)) {
+            return AsmTypewriterTextAccess.AsmOnly(
+                entry.id,
+                "${entry.label} does not match either the frozen ROM or current ASM source.",
+            )
+        }
         if (current.fileId != baseline.fileId || current.rawData.size != baseline.rawData.size) {
             return AsmTypewriterTextAccess.AsmOnly(
                 entry.id,
