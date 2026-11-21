@@ -128,6 +128,7 @@ class SmeditBuildServiceTest {
                             EnvironmentalDamagePatch.HEAT_KEY to 0,
                             EnvironmentalDamagePatch.LAVA_KEY to 45,
                             EnvironmentalDamagePatch.ACID_KEY to 120,
+                            EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY to 1,
                         )
                     )
                 )
@@ -145,6 +146,14 @@ class SmeditBuildServiceTest {
         assertEquals(0x0000, addressSpace.readWord(lava.highWordPc))
         assertEquals(0x0000, addressSpace.readWord(acid.lowWordPc))
         assertEquals(0x0002, addressSpace.readWord(acid.highWordPc))
+        for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
+            assertEquals(
+                write.bytes,
+                addressSpace.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
+                    .map { it.toInt() and 0xFF },
+            )
+        }
+        assertTrue(result.report.warnings.any { it.contains("cannot verify the target ROM bytes") })
         assertTrue(result.report.applied.any { it.configType == EnvironmentalDamagePatch.CONFIG_TYPE })
     }
 
@@ -992,6 +1001,11 @@ class SmeditBuildServiceTest {
             90,
             environmentalDamage.fields.first { it.key == EnvironmentalDamagePatch.ACID_KEY }.defaultValue,
         )
+        val allRoomsHeated = environmentalDamage.fields.first {
+            it.key == EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY
+        }
+        assertEquals(0, allRoomsHeated.defaultValue)
+        assertEquals(listOf("Disabled", "Enabled"), allRoomsHeated.choices.map { it.label })
         assertTrue(environmentalDamage.supportsPatchOnly)
         assertEquals("config_zebes_escape_time", SmeditPatchCatalog.resolvePatchKey("end_game_escape_timer"))
         assertEquals("config_short_charge", SmeditPatchCatalog.resolvePatchKey("short_charge"))

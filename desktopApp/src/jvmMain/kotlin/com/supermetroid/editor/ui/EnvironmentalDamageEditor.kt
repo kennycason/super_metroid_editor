@@ -26,6 +26,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -103,6 +104,13 @@ fun EnvironmentalDamageEditor(
             ),
         )
     }
+    fun applyAllRoomsHeated(enabled: Boolean) {
+        editorState.setPatchConfigData(
+            patch.id,
+            EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
+            if (enabled) 1 else 0,
+        )
+    }
     fun openSource(key: String? = null) {
         if (editorState.openEnvironmentalDamageSource(key)) onNavigateToAsm?.invoke()
     }
@@ -136,6 +144,7 @@ fun EnvironmentalDamageEditor(
                     else EnvironmentalDamagePatch.FIELDS.forEach { field ->
                         apply(field.key, field.defaultEnergyPerSecond)
                     }
+                    if (!sourceMode) applyAllRoomsHeated(false)
                 },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp),
@@ -179,6 +188,36 @@ fun EnvironmentalDamageEditor(
                         Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
                     }
                 }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("All Rooms Heated", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (sourceMode) "Available in patched-ROM mode."
+                        else "Spawn the native heated-room effect in every room without replacing its existing FX.",
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = patch.configData?.get(EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY) == 1,
+                    onCheckedChange = ::applyAllRoomsHeated,
+                    enabled = !sourceMode,
+                    modifier = Modifier.testTag("environmental-all-rooms-heated"),
+                )
             }
         }
 

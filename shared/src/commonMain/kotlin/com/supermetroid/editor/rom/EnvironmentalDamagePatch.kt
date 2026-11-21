@@ -13,11 +13,63 @@ object EnvironmentalDamagePatch {
     const val HEAT_KEY = "heat_per_second"
     const val LAVA_KEY = "lava_per_second"
     const val ACID_KEY = "acid_per_second"
+    const val ALL_ROOMS_HEATED_KEY = "all_rooms_heated"
 
     const val MIN_ENERGY_PER_SECOND = 0
     const val MAX_ENERGY_PER_SECOND = 9999
     const val FRAMES_PER_SECOND = 60
     private const val FIXED_ONE = 0x10000L
+
+    data class CheckedWrite(
+        val pcOffset: Int,
+        val bytes: List<Int>,
+        val expectedBytes: List<Int>,
+    )
+
+    /**
+     * Makes heat a global semantic effect without repurposing the area-specific
+     * palette-FX bits. Both room-load paths call a checked helper in vanilla
+     * bank $DF. The helper runs the native FX loader first, then adds the native
+     * heat object only when the room did not already spawn it.
+     */
+    val ALL_ROOMS_HEATED_WRITES: List<CheckedWrite> = listOf(
+        CheckedWrite(
+            pcOffset = 0x0020E5,
+            bytes = listOf(0x22, 0x00, 0xFF, 0xDF), // JSL $DF:FF00
+            expectedBytes = listOf(0x22, 0x82, 0xAB, 0x89), // JSL $89:AB82
+        ),
+        CheckedWrite(
+            pcOffset = 0x0164C5,
+            bytes = listOf(0x22, 0x00, 0xFF, 0xDF), // JSL $DF:FF00
+            expectedBytes = listOf(0x22, 0x82, 0xAB, 0x89), // JSL $89:AB82
+        ),
+        CheckedWrite(
+            pcOffset = 0x2FFF00,
+            bytes = listOf(
+                0x22, 0x82, 0xAB, 0x89, // JSL $89:AB82 (native FX loader)
+                0x08,                   // PHP
+                0xC2, 0x30,             // REP #$30
+                0x48,                   // PHA
+                0xDA,                   // PHX
+                0x5A,                   // PHY
+                0xA2, 0x0E, 0x00,       // LDX #$000E
+                0xBD, 0x7D, 0x1E,       // LDA $1E7D,X (palette FX object IDs)
+                0xC9, 0x61, 0xF7,       // CMP #$F761 (native heat object)
+                0xF0, 0x0B,             // BEQ done
+                0xCA,                   // DEX
+                0xCA,                   // DEX
+                0x10, 0xF4,             // BPL loop
+                0xA0, 0x61, 0xF7,       // LDY #$F761
+                0x22, 0xE9, 0xC4, 0x8D, // JSL $8D:C4E9 (spawn palette FX)
+                0x7A,                   // PLY
+                0xFA,                   // PLX
+                0x68,                   // PLA
+                0x28,                   // PLP
+                0x6B,                   // RTL
+            ),
+            expectedBytes = List(37) { 0xFF },
+        ),
+    )
 
     data class Field(
         val key: String,

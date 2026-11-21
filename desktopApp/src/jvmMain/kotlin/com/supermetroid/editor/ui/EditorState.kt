@@ -593,6 +593,19 @@ class EditorState(
         _roomEditOrder[currentRoomId] = ++_editCounter
     }
 
+    /** Notify Compose and save-race tracking after an approved external semantic edit. */
+    internal fun recordExternalRoomMutation(roomIds: Collection<Int>) {
+        dirty = true
+        editVersion++
+        roomIds.forEach { roomId -> _roomEditOrder[roomId] = ++_editCounter }
+    }
+
+    /** Notify patch UI and save-race tracking after an approved external semantic edit. */
+    internal fun recordExternalPatchMutation() {
+        dirty = true
+        patchVersion++
+    }
+
     internal fun updateAsmDebugWatches(watches: List<com.supermetroid.editor.data.ProjectAsmDebugWatch>): Boolean {
         if (project.asmWorkspace.debugWatches == watches) return false
         project.asmWorkspace.debugWatches.clear()

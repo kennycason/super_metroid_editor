@@ -128,6 +128,12 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`code/compare_doors.py`](code/compare_doors.py)               | Compare door data between vanilla and edited ROMs.                                                                          |
 | [`code/scan_state_selectors.py`](code/scan_state_selectors.py) | Scan all room state selectors across the ROM.                                                                               |
 
+### AI Integration (`docs/ai/`)
+
+| File | Contents |
+|------|----------|
+| [`ai/semantic_safety.md`](ai/semantic_safety.md) | Semantic tool boundaries, state-sensitive room music protection, approval requirements, context retrieval, and the rule for turning incidents into deterministic safeguards. |
+
 ### Images (`docs/images/`)
 
 Screenshots and reference images for SMILE editors (BTS, enemy, FX, PLM).

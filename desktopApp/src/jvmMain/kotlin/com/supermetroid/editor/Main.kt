@@ -79,6 +79,10 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.ai.AiCredentialStore
+import com.supermetroid.editor.api.DesktopSmeditWorkspaceAccess
+import com.supermetroid.editor.api.DesktopSmeditMutationController
+import com.supermetroid.editor.api.SmeditToolRegistry
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.ProjectAsmDebugWatch
 import com.supermetroid.editor.data.RomPreferences
@@ -103,6 +107,9 @@ import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmPlmPlacementTarget
 import com.supermetroid.editor.ui.AsmWorkspaceCanvas
 import com.supermetroid.editor.ui.AsmWorkspaceSidebar
+import com.supermetroid.editor.ui.AiWorkspaceCanvas
+import com.supermetroid.editor.ui.AiWorkspaceSidebar
+import com.supermetroid.editor.ui.AiWorkspaceState
 import com.supermetroid.editor.ui.BossTabCanvas
 import com.supermetroid.editor.ui.BossTabSidebar
 import com.supermetroid.editor.ui.DraggableDividerVertical
@@ -176,6 +183,30 @@ private const val TAB_TEXT = 7
 private const val TAB_ENEMY = 8
 private const val TAB_BOSS = 9
 private const val TAB_ASM = 10
+private const val TAB_AI = 11
+
+internal fun mainTabLabels(aiConfigured: Boolean): List<String> = buildList {
+    if (aiConfigured) add("AI")
+    addAll(listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss", "ASM"))
+}
+
+private fun mainTabs(aiConfigured: Boolean): List<Pair<Int, String>> {
+    val ids = listOf(
+        TAB_ROOMS,
+        TAB_ITEMS,
+        TAB_TILES,
+        TAB_PATCHES,
+        TAB_SOUND,
+        TAB_SPRITES,
+        TAB_MAP,
+        TAB_TEXT,
+        TAB_ENEMY,
+        TAB_BOSS,
+        TAB_ASM,
+    )
+    val editorTabs = ids.zip(mainTabLabels(aiConfigured = false))
+    return if (aiConfigured) listOf(TAB_AI to "AI") + editorTabs else editorTabs
+}
 
 private val READ_ONLY_INSPECTABLE_TABS = setOf(
     TAB_ROOMS,
@@ -189,6 +220,7 @@ private val READ_ONLY_INSPECTABLE_TABS = setOf(
     TAB_ENEMY,
     TAB_BOSS,
     TAB_ASM,
+    TAB_AI,
 )
 
 private fun isTabAvailableForRom(tab: Int, romReadOnly: Boolean): Boolean =
@@ -406,6 +438,28 @@ fun main() = application {
         ) {
             var emulatorEnabled by remember { mutableStateOf(false) }
             val emulatorWorkspaceState = remember { EmulatorWorkspaceState() }
+            val aiCredentialStore = remember { AiCredentialStore() }
+            val aiWorkspaceState = remember(editorState, asmWorkspaceState, aiCredentialStore) {
+                val workspaceAccess = DesktopSmeditWorkspaceAccess(
+                    editorState = editorState,
+                    asmWorkspaceState = asmWorkspaceState,
+                    parser = { romParser },
+                    roomInfos = { rooms },
+                    selectedRoom = { selectedRoom },
+                    credentialStore = aiCredentialStore,
+                )
+                AiWorkspaceState(
+                    credentialStore = aiCredentialStore,
+                    toolRegistry = SmeditToolRegistry(workspaceAccess),
+                    mutationController = DesktopSmeditMutationController(editorState, workspaceAccess),
+                )
+            }
+            val activeAiCredentialSource = aiWorkspaceState.credentialSource(aiWorkspaceState.selectedProvider)
+            LaunchedEffect(aiWorkspaceState.selectedProvider, activeAiCredentialSource) {
+                if (activeAiCredentialSource != null && aiWorkspaceState.models.isEmpty()) {
+                    aiWorkspaceState.refreshModels()
+                }
+            }
             var hexEditorEnabled by remember { mutableStateOf(false) }
             val hexEditorState = remember { HexEditorState() }
             var settingsOpen by remember { mutableStateOf(false) }
@@ -904,6 +958,9 @@ fun main() = application {
             LaunchedEffect(romReadOnly, leftTab) {
                 if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
             }
+            LaunchedEffect(aiWorkspaceState.hasAnyCredential, leftTab) {
+                if (leftTab == TAB_AI && !aiWorkspaceState.hasAnyCredential) leftTab = TAB_ROOMS
+            }
             LaunchedEffect(leftTab, soundEditorState.isPianoRollOpen) {
                 if (leftTab == TAB_ROOMS || leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
                     requestVerticalSelectionFocus(mainContentFocusRequester)
@@ -1213,6 +1270,7 @@ fun main() = application {
                                 SettingsPopup(
                                     onDismiss = { settingsOpen = false },
                                     emulatorWorkspaceState = emulatorWorkspaceState,
+                                    aiWorkspaceState = aiWorkspaceState,
                                     editorState = editorState,
                                     showRoomItemNames = showRoomItemNames,
                                     showRoomMetaNames = showRoomMetaNames,
@@ -1422,10 +1480,10 @@ fun main() = application {
                                 horizontalArrangement = Arrangement.spacedBy(1.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss", "ASM")
-                                tabNames.forEachIndexed { idx, name ->
-                                    val selected = leftTab == idx
-                                    val tabEnabled = isTabAvailableForRom(idx, romReadOnly)
+                                val tabs = mainTabs(aiWorkspaceState.hasAnyCredential)
+                                tabs.forEach { (tabId, name) ->
+                                    val selected = leftTab == tabId
+                                    val tabEnabled = isTabAvailableForRom(tabId, romReadOnly)
                                     Text(
                                         text = name,
                                         fontSize = fs.tabLabel,
@@ -1437,8 +1495,8 @@ fun main() = application {
                                         fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
                                         modifier = Modifier
                                             .clickable(enabled = tabEnabled) {
-                                                if (leftTab != idx) navigate { leftTab = idx }
-                                                if (!romReadOnly && (idx == TAB_PATCHES || idx == TAB_ITEMS)) {
+                                                if (leftTab != tabId) navigate { leftTab = tabId }
+                                                if (!romReadOnly && (tabId == TAB_PATCHES || tabId == TAB_ITEMS)) {
                                                     editorState.seedDefaultPatches()
                                                 }
                                             }
@@ -1621,6 +1679,10 @@ fun main() = application {
                                         onOpenInEditor = ::openAsmEditorTarget,
                                         modifier = Modifier.fillMaxSize(),
                                     )
+                                    TAB_AI -> AiWorkspaceSidebar(
+                                        state = aiWorkspaceState,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
                                 }
                                 }
                             }
@@ -1773,6 +1835,10 @@ fun main() = application {
                                         onOpenRomSpaceBank = ::openAsmRomSpaceBank,
                                         problemsPaneHeightDp = asmProblemsPaneHeightDp,
                                         onProblemsPaneHeightChange = { asmProblemsPaneHeightDp = it },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                    TAB_AI -> AiWorkspaceCanvas(
+                                        state = aiWorkspaceState,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }

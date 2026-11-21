@@ -70,6 +70,12 @@ data class AppSettings(
     val hexEditorWindowWidth: Float = -1f,
     val hexEditorWindowHeight: Float = -1f,
     val hexEditorNavWidth: Float = -1f,
+    /** AI preferences only. Provider credentials are stored separately from config.json. */
+    val aiSelectedProvider: String? = null,
+    /** Last provider-returned model selected by the user, keyed by stable provider id. */
+    val aiSelectedModels: Map<String, String> = emptyMap(),
+    /** Preferred credential source per provider. Secrets remain outside config.json. */
+    val aiCredentialSources: Map<String, String> = emptyMap(),
 )
 
 object AppConfig {

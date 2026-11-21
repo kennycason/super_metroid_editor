@@ -63,6 +63,35 @@ The config type is `environmental_damage` and supports patch-only IPS builds.
 
 Accepted values are `0`–`9999` energy per second for each field.
 
+### All rooms heated
+
+The optional `all_rooms_heated` field accepts `0` or `1`. When enabled, SMEDIT
+uses checked vanilla room-load hooks to spawn the native heated-room palette FX
+object after every room load. Existing room FX still load first, and rooms that
+already spawned the heat object are detected so their damage is not doubled.
+
+This is intentionally a global hook rather than a bulk edit of each room's
+palette-FX bitset. Those bits are area-specific: the same bit that means heat in
+Norfair can mean lightning, spores, or another effect elsewhere.
+
+```json
+{
+  "schemaVersion": 1,
+  "patches": {
+    "environmental_damage": {
+      "enabled": true,
+      "config": {
+        "heat_per_second": 1,
+        "all_rooms_heated": 1
+      }
+    }
+  }
+}
+```
+
+The global hook is currently supported in patched-ROM and patch-only builds.
+ASM-source projects fail closed rather than receiving fixed-address hooks.
+
 ## ASM ↔ visual editing
 
 In Project ASM mode, the section and per-hazard **ASM** links open the native source

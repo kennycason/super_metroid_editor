@@ -1601,6 +1601,23 @@ class SmeditBuildService(
                 "Environmental damage ${field.key} whole",
             )
         }
+        val allRoomsHeated = data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY]
+            ?.coerceIn(0, 1) == 1
+        if (allRoomsHeated) {
+            if (context.outputRom == null) {
+                context.warnings += "All Rooms Heated uses checked vanilla room-load hooks; patch-only mode cannot verify the target ROM bytes."
+            }
+            for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
+                val wrote = writeBytes(
+                    context = context,
+                    offset = write.pcOffset,
+                    bytes = write.bytes,
+                    label = "Environmental damage all-rooms heat hook",
+                    expectedBefore = write.expectedBytes,
+                )
+                if (wrote) context.appliedWriteCount++
+            }
+        }
     }
 
     private fun applyBossBehaviorPatch(

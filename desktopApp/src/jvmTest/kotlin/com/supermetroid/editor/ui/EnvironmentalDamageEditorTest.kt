@@ -66,6 +66,7 @@ class EnvironmentalDamageEditorTest {
                         EnvironmentalDamagePatch.HEAT_KEY to 0,
                         EnvironmentalDamagePatch.LAVA_KEY to 45,
                         EnvironmentalDamagePatch.ACID_KEY to 120,
+                        EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY to 1,
                     ),
                 )
             )
@@ -84,6 +85,13 @@ class EnvironmentalDamageEditorTest {
         assertEquals(0x0000, exported.readWord(lava.highWordPc))
         assertEquals(0x0000, exported.readWord(acid.lowWordPc))
         assertEquals(0x0002, exported.readWord(acid.highWordPc))
+        EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES.forEach { write ->
+            assertEquals(
+                write.bytes,
+                exported.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
+                    .map { it.toInt() and 0xFF },
+            )
+        }
     }
 
     private fun ByteArray.readWord(offset: Int): Int =

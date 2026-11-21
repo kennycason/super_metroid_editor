@@ -48,6 +48,7 @@ internal const val STREAMING_WINDOW_HEIGHT = 1080
 fun SettingsPopup(
     onDismiss: () -> Unit,
     emulatorWorkspaceState: EmulatorWorkspaceState,
+    aiWorkspaceState: AiWorkspaceState,
     editorState: EditorState? = null,
     showRoomItemNames: Boolean = true,
     showRoomMetaNames: Boolean = true,
@@ -70,14 +71,14 @@ fun SettingsPopup(
         var currentTheme by themeState.theme
         var currentFontSize by themeState.fontSize
         var selectedTab by remember { mutableStateOf(0) }
-        val tabs = listOf("General", "Emulator", "Credits")
+        val tabs = listOf("General", "Emulator", "AI", "Credits")
 
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 8.dp,
             tonalElevation = 2.dp,
-            modifier = Modifier.width(380.dp).padding(top = 4.dp, end = 8.dp)
+            modifier = Modifier.width(460.dp).padding(top = 4.dp, end = 8.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -139,7 +140,8 @@ fun SettingsPopup(
                         onShowRoomFlatSlopeSurfacesChange = onShowRoomFlatSlopeSurfacesChange,
                     )
                     1 -> EmulatorSettingsTab(emulatorWorkspaceState, currentFontSize)
-                    2 -> CreditsSettingsTab(currentFontSize)
+                    2 -> AiSettingsTab(aiWorkspaceState, currentFontSize)
+                    3 -> CreditsSettingsTab(currentFontSize)
                 }
             }
         }

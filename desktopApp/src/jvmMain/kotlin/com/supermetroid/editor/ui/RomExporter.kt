@@ -1333,7 +1333,9 @@ internal class RomExporter(
                 val data = patch.configData ?: continue
                 validateConfigKeys(
                     data,
-                    EnvironmentalDamagePatch.FIELDS.mapTo(mutableSetOf()) { it.key },
+                    EnvironmentalDamagePatch.FIELDS.mapTo(mutableSetOf()) { it.key }.apply {
+                        add(EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY)
+                    },
                     patch,
                 )
                 var modCount = 0
@@ -1354,6 +1356,29 @@ internal class RomExporter(
                     patchWord(writePlan.headerSize + locations.lowPc, fixedRate.lowWord, "${patch.name} · ${field.key} fraction")
                     patchWord(writePlan.headerSize + locations.highPc, fixedRate.highWord, "${patch.name} · ${field.key} whole")
                     modCount++
+                }
+                val allRoomsHeated = requireConfigRange(
+                    patch,
+                    EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
+                    data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY] ?: 0,
+                    0..1,
+                ) == 1
+                if (allRoomsHeated) {
+                    require(compiledAsmBase == null) {
+                        "All Rooms Heated currently requires patched-ROM mode; no ASM-source hooks were applied."
+                    }
+                    for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
+                        writePlan.add(
+                            owner = "patch:${patch.id}",
+                            label = "${patch.name} · all rooms heated",
+                            offset = write.pcOffset,
+                            bytes = write.bytes,
+                            kind = RomWriteKind.CONFIG,
+                            expectedBefore = write.expectedBytes,
+                            overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
+                        )
+                    }
+                    onLog("[EXPORT]   Environmental damage: native heat effect enabled in all rooms")
                 }
                 onLog("[EXPORT]   Environmental damage: $modCount rates modified")
             } else if (patch.configType == BOMB_CONFIG_TYPE) {

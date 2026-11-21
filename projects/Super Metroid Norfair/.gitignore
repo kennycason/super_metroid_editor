@@ -1,0 +1,6 @@
+# Local ROMs, emulator saves and generated artifacts. Authored asm/ and data/ are shareable.
+*.[sS][mM][cC]
+*.[sS][fF][cC]
+/smedit/
+/states/
+/exports/

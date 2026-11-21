@@ -897,7 +897,20 @@ object SmeditPatchCatalog {
                     defaultValue = field.defaultEnergyPerSecond,
                     description = field.suitBehavior,
                 )
-            },
+            } + SmeditConfigFieldSchema(
+                key = EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
+                label = "All Rooms Heated",
+                type = "enum",
+                min = 0,
+                max = 1,
+                defaultValue = 0,
+                description = "Spawn the native heated-room effect after every room load while preserving existing room FX.",
+                category = "Scope",
+                choices = listOf(
+                    SmeditConfigChoiceSchema("Disabled", 0),
+                    SmeditConfigChoiceSchema("Enabled", 1),
+                ),
+            ),
         )
 
     private fun bossBehaviorSchema(definition: HeadlessBossBehaviorDefinition): SmeditConfigSchema =
