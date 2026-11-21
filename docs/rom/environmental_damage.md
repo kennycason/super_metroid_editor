@@ -20,6 +20,8 @@ above.
 The separate **Gravity Suit No Heat Protection** patch changes the heated-room
 check from Varia-or-Gravity to Varia only. When both patches are enabled,
 Gravity therefore takes one quarter of the configured heat rate.
+This is the Map Rando-style split: Gravity's native movement behavior in water,
+lava, and acid is unchanged; only its heated-room immunity is removed.
 
 ## ROM representation
 

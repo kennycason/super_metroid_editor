@@ -220,7 +220,7 @@ val HARDCODED_PATCHES: List<SmPatch> = listOf(
         description = "Crystal flash can no longer be used (0x40B5F: NOP×4).",
         enabled = false, writes = mutableListOf(PatchWrite(0x40B5F, listOf(0xEA, 0xEA, 0xEA, 0xEA)))),
     SmPatch(id = "hex_gravity_no_heat_protect", name = "Gravity Suit No Heat Protection",
-        description = "Removes Gravity suit's protection against heated rooms, making Varia always useful (0x6E37D: 21 → 01).",
+        description = "Map Rando-style Gravity Suit: keeps full movement in water, lava, and acid, but only Varia prevents heated-room damage (0x6E37D: 21 → 01).",
         enabled = false, writes = mutableListOf(PatchWrite(0x6E37D, listOf(0x01)))),
     SmPatch(id = "hex_supers_dont_open_reds", name = "Supers Don't Open Red Doors",
         description = "Super missiles no longer open red/missile doors or eye doors (0x23D58: NOP×5).",

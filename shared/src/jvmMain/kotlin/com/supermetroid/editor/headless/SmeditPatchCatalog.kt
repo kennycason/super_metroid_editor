@@ -424,7 +424,7 @@ object SmeditPatchCatalog {
         SmPatch(
             id = "hex_gravity_no_heat_protect",
             name = "Gravity Suit No Heat Protection",
-            description = "Removes Gravity suit heat protection.",
+            description = "Map Rando-style Gravity Suit: keeps full movement in water, lava, and acid, but only Varia prevents heated-room damage.",
             enabled = false,
             writes = mutableListOf(PatchWrite(0x6E37D, listOf(0x01))),
         ),

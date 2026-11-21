@@ -118,6 +118,25 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `map rando style gravity patch changes only heated room immunity`() {
+        val patch = SmeditPatchCatalog.defaultPatches().single { it.id == "hex_gravity_no_heat_protect" }
+        assertEquals(1, patch.writes.size)
+        assertEquals(0x06E37D, patch.writes.single().offset)
+        assertEquals(listOf(0x01), patch.writes.single().bytes)
+        assertEquals(listOf(0x21), patch.writes.single().expectedBytes)
+
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val result = SmeditBuildService().build(
+            original,
+            SmeditBuildRequest(patches = mapOf("gravity_no_heat_protect" to SmeditPatchRequest())),
+        )
+        val changedOffsets = original.indices.filter { original[it] != result.romBytes[it] }
+
+        assertEquals(listOf(0x06E37D), changedOffsets)
+        assertEquals(0x01, result.romBytes[0x06E37D].toInt() and 0xFF)
+    }
+
+    @Test
     fun `environmental damage config produces standalone fixed point writes`() {
         val addressSpace = ByteArray(0x300000)
         val result = SmeditBuildService().buildPatch(
