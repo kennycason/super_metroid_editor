@@ -516,6 +516,36 @@ class ProjectRoomStatesTest {
     }
 
     @Test
+    fun `state FX export appends a default to a door-only table`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val candidate = RoomRepository().getAllRooms().asSequence().flatMap { info ->
+            val roomId = info.getRoomIdAsInt()
+            parser.parseRoomStatesWithData(roomId).asSequence().mapIndexedNotNull { stateIndex, state ->
+                val entries = parser.parseFxEntries(state.fxPtr)
+                Triple(roomId, stateIndex, entries).takeIf {
+                    state.fxPtr !in setOf(0, 0xFFFF) && entries.isNotEmpty() && entries.none(RomParser.FxEntry::isDefault)
+                }
+            }
+        }.firstOrNull() ?: return
+        val (roomId, sourceIndex, originalEntries) = candidate
+        val originalPointer = parser.parseRoomStatesWithData(roomId)[sourceIndex].fxPtr
+        val project = SmEditProject("base.smc")
+        project.getOrCreateRoom(roomId).ensureStateManifest(parser)[sourceIndex].fxChange =
+            FxChange(fxType = 2, liquidSurfaceStart = 0xFFFF, liquidSurfaceNew = 0xFFFF, fxBitC = 2)
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exportedState = RomParser(rom).parseRoomStatesWithData(roomId)[sourceIndex]
+        val exportedEntries = RomParser(rom).parseFxEntries(exportedState.fxPtr)
+        assertNotEquals(originalPointer, exportedState.fxPtr)
+        assertEquals(originalEntries, exportedEntries.dropLast(1))
+        assertTrue(exportedEntries.last().isDefault)
+        assertEquals(2, exportedEntries.last().fxType)
+        assertEquals(2, exportedEntries.last().fxBitC)
+    }
+
+    @Test
     fun `door-specific FX export patches only the selected door entry`() {
         val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
         val parser = RomParser(rom)

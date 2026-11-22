@@ -1,13 +1,18 @@
 package com.supermetroid.editor.api
 
 import com.supermetroid.editor.data.ProjectRomBuildMode
+import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.RoomStateResourceLinks
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.NativeLiquidOptions
+import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.projectRoomStateCondition
+import com.supermetroid.editor.asm.objectSourceTestRom
 import com.supermetroid.editor.ui.EditorState
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -72,6 +77,42 @@ class SmeditMutationControllerTest {
         assertTrue(overridePlan.warnings.single().contains("flatten distinct boss/event/state music"))
         overrideController.approve(overridePlan.id)
         assertEquals(0x18, overrideEditor.project.rooms["91F8"]?.stateDataChange?.musicData)
+    }
+
+    @Test
+    fun `bulk music independently protects Tourian song dependent audio`() {
+        val protectedEditor = editor()
+        val protectedController = DesktopSmeditMutationController(
+            protectedEditor,
+            FakeWorkspace(includeTourianRoom = true),
+        )
+
+        val protectedPlan = protectedController.plan(
+            "set_room_music",
+            musicArguments(overwriteSpecialStateMusic = true),
+        ).plan!!
+
+        assertEquals(3, protectedPlan.affectedRoomCount)
+        assertEquals(listOf("0xDCB1"), protectedPlan.protectedRoomIds)
+        assertEquals(listOf("Baby Metroid Room (0xDCB1)"), protectedPlan.protectedRoomPreview)
+        protectedController.approve(protectedPlan.id)
+        assertFalse(protectedEditor.project.rooms.containsKey("DCB1"))
+
+        val overrideEditor = editor()
+        val overrideController = DesktopSmeditMutationController(
+            overrideEditor,
+            FakeWorkspace(includeTourianRoom = true),
+        )
+        val overridePlan = overrideController.plan(
+            "set_room_music",
+            musicArguments(overwriteAudioSensitiveMusic = true),
+        ).plan!!
+
+        assertEquals(4, overridePlan.affectedRoomCount)
+        assertTrue(overridePlan.protectedRoomIds.isEmpty())
+        assertTrue(overridePlan.warnings.single().contains("deadlock door transitions"))
+        overrideController.approve(overridePlan.id)
+        assertEquals(0x18, overrideEditor.project.rooms["DCB1"]?.stateDataChange?.musicData)
     }
 
     @Test
@@ -272,6 +313,103 @@ class SmeditMutationControllerTest {
         assertFalse(editor.project.patches.single().enabled)
     }
 
+    @Test
+    fun `room FX plans preserve door variants and round trip all selected states`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val room = editor.project.getOrCreateRoom(0x91F8).also { it.ensureStateManifest(parser) }
+        room.states.first().doorFxChanges["8000"] = FxChange(fxType = 4, liquidSurfaceStart = 0x120)
+        val before = kotlinx.serialization.json.Json.encodeToString(
+            com.supermetroid.editor.data.SmEditProject.serializer(),
+            editor.project,
+        )
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+
+        val defaultOnly = controller.plan(
+            "set_room_fx",
+            fxArguments(includeConditionalStates = false),
+        )
+        assertFalse(defaultOnly.result.isError, defaultOnly.result.output.toString())
+        assertEquals(1, defaultOnly.plan?.affectedStateCount)
+        assertEquals(SmeditMutationPlanKind.ROOM_FX, defaultOnly.plan?.kind)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(com.supermetroid.editor.data.SmEditProject.serializer(), editor.project))
+        controller.reject(defaultOnly.plan!!.id)
+
+        val exactState = controller.plan(
+            "set_room_fx",
+            fxArguments(includeConditionalStates = true, stateTargets = listOf("0x91F8:state-1")),
+        )
+        assertFalse(exactState.result.isError, exactState.result.output.toString())
+        assertEquals(1, exactState.plan?.affectedStateCount)
+        controller.reject(exactState.plan!!.id)
+
+        val planning = controller.plan(
+            "set_room_fx",
+            fxArguments(includeConditionalStates = true),
+        )
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(2, planning.plan?.affectedStateCount)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(com.supermetroid.editor.data.SmEditProject.serializer(), editor.project))
+
+        controller.approve(planning.plan!!.id)
+        val applied = editor.project.rooms.getValue("91F8")
+        assertTrue(applied.states.all { it.fxChange?.fxType == 2 })
+        assertTrue(applied.states.all { it.fxChange?.fxBitC == NativeLiquidOptions.BG_ANIMATE })
+        assertEquals(FxChange(fxType = 4, liquidSurfaceStart = 0x120), applied.states.first().doorFxChanges["8000"])
+
+        controller.undo()
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(com.supermetroid.editor.data.SmEditProject.serializer(), editor.project))
+
+        controller.redo()
+        assertTrue(editor.project.rooms.getValue("91F8").states.all { it.fxChange?.fxType == 2 })
+    }
+
+    @Test
+    fun `room FX blocks hidden liquid tides and stale approval atomically`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+
+        val unsafe = controller.plan(
+            "set_room_fx",
+            fxArguments(liquidOptions = listOf("small_tide"), includeConditionalStates = true),
+        )
+        assertEquals("unsafe_hidden_liquid_tide", unsafe.errorCode())
+        assertTrue(editor.project.rooms.isEmpty())
+
+        val plan = controller.plan("set_room_fx", fxArguments(includeConditionalStates = true)).plan!!
+        editor.project.getOrCreateRoom(0x91F8).fxChange = FxChange(fxBitA = 7)
+        assertFailsWith<IllegalStateException> { controller.approve(plan.id) }
+        assertEquals(FxChange(fxBitA = 7), editor.project.rooms.getValue("91F8").fxChange)
+        assertTrue(editor.project.rooms.getValue("91F8").states.isEmpty())
+    }
+
+    @Test
+    fun `semantic liquid options take precedence over generated raw byte defaults`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val arguments = JsonObject(
+            fxArguments(includeConditionalStates = true) + mapOf(
+                "fx_bit_c" to JsonPrimitive(0),
+                "fx_bit_a" to JsonPrimitive(0),
+                "palette_blend" to JsonPrimitive(0),
+            ),
+        )
+
+        val planning = controller.plan("set_room_fx", arguments)
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        controller.approve(planning.plan!!.id)
+        assertTrue(
+            editor.project.rooms.getValue("91F8").states.all {
+                it.fxChange?.fxBitC == NativeLiquidOptions.BG_ANIMATE
+            },
+        )
+        assertTrue(editor.project.rooms.getValue("91F8").states.all { it.fxChange?.fxBitA == null })
+        assertTrue(editor.project.rooms.getValue("91F8").states.all { it.fxChange?.paletteBlend == null })
+    }
+
     private fun editor() = EditorState()
 
     private fun state(id: String, change: StateDataChange) = RoomStateEdits(
@@ -287,12 +425,14 @@ class SmeditMutationControllerTest {
         roomIds: List<String> = emptyList(),
         excludeAreas: List<String> = emptyList(),
         overwriteSpecialStateMusic: Boolean? = null,
+        overwriteAudioSensitiveMusic: Boolean? = null,
     ) = buildJsonObject {
         put("music_data", data)
         put("music_track", track)
         if (roomIds.isNotEmpty()) put("room_ids", JsonArray(roomIds.map(::JsonPrimitive)))
         if (excludeAreas.isNotEmpty()) put("exclude_areas", JsonArray(excludeAreas.map(::JsonPrimitive)))
         overwriteSpecialStateMusic?.let { put("overwrite_special_state_music", it) }
+        overwriteAudioSensitiveMusic?.let { put("overwrite_audio_sensitive_music", it) }
     }
 
     private fun patchArguments(
@@ -303,6 +443,28 @@ class SmeditMutationControllerTest {
         put("patch", patch)
         enabled?.let { put("enabled", it) }
         if (values.isNotEmpty()) put("values", JsonObject(values.mapValues { JsonPrimitive(it.value) }))
+    }
+
+    private fun fxArguments(
+        liquidOptions: List<String> = listOf("bg_animate"),
+        includeConditionalStates: Boolean,
+        stateTargets: List<String> = emptyList(),
+    ) = buildJsonObject {
+        put(
+            "update_fields",
+            JsonArray(
+                listOf("fx_type", "liquid_surface_start", "liquid_surface_new", "liquid_options")
+                    .map(::JsonPrimitive),
+            ),
+        )
+        put("room_ids", JsonArray(listOf(JsonPrimitive("91F8"))))
+        put("only_if_fx_types", JsonArray(listOf(JsonPrimitive(0))))
+        put("include_conditional_states", includeConditionalStates)
+        put("fx_type", 2)
+        put("liquid_surface_start", 0xFFFF)
+        put("liquid_surface_new", 0xFFFF)
+        put("liquid_options", JsonArray(liquidOptions.map(::JsonPrimitive)))
+        if (stateTargets.isNotEmpty()) put("state_targets", JsonArray(stateTargets.map(::JsonPrimitive)))
     }
 
     private fun environmentalPatch() = SmPatch(
@@ -318,13 +480,20 @@ class SmeditMutationControllerTest {
 
     private class FakeWorkspace(
         private val distinctMusicRoomIds: Set<Int> = emptySet(),
+        includeTourianRoom: Boolean = false,
     ) : SmeditWorkspaceAccess {
-        private val roomList = listOf(
-            SmeditRoomSummary("0x91F8", "Landing Site", area = "Crateria"),
-            SmeditRoomSummary("0x9AD9", "Green Brinstar", area = "Brinstar"),
-            SmeditRoomSummary("0xDF45", "Ceres Elevator", area = "Ceres"),
-        )
-        private val stateCounts = mapOf(0x91F8 to 2, 0x9AD9 to 3, 0xDF45 to 4)
+        private val roomList = buildList {
+            add(SmeditRoomSummary("0x91F8", "Landing Site", area = "Crateria"))
+            add(SmeditRoomSummary("0x9AD9", "Green Brinstar", area = "Brinstar"))
+            add(SmeditRoomSummary("0xDF45", "Ceres Elevator", area = "Ceres"))
+            if (includeTourianRoom) add(SmeditRoomSummary("0xDCB1", "Baby Metroid Room", area = "Tourian"))
+        }
+        private val stateCounts = buildMap {
+            put(0x91F8, 2)
+            put(0x9AD9, 3)
+            put(0xDF45, 4)
+            if (includeTourianRoom) put(0xDCB1, 2)
+        }
 
         override fun workspaceSummary() = SmeditWorkspaceSummary(projectLoaded = true, roomCount = roomList.size)
         override fun rooms() = roomList
@@ -355,6 +524,20 @@ class SmeditMutationControllerTest {
                     )
                 },
                 hasDistinctSourceMusic = roomId in distinctMusicRoomIds,
+                states = List(count) { index ->
+                    SmeditRoomStateDetails(
+                        id = "state-${index + 1}",
+                        index = index,
+                        sourceIndex = index,
+                        condition = if (index == count - 1) "Standard (default)" else "State $index",
+                        conditionKind = if (index == count - 1) "DEFAULT" else "EVENT_SET",
+                        defaultState = index == count - 1,
+                        readable = true,
+                        projectEdited = false,
+                        projectFxEdited = false,
+                        fxSourceManaged = false,
+                    )
+                },
             )
         }
         override fun patches() = emptyList<SmeditPatchSummary>()

@@ -451,7 +451,7 @@ fun main() = application {
                 AiWorkspaceState(
                     credentialStore = aiCredentialStore,
                     toolRegistry = SmeditToolRegistry(workspaceAccess),
-                    mutationController = DesktopSmeditMutationController(editorState, workspaceAccess),
+                    mutationController = DesktopSmeditMutationController(editorState, workspaceAccess) { romParser },
                 )
             }
             val activeAiCredentialSource = aiWorkspaceState.credentialSource(aiWorkspaceState.selectedProvider)

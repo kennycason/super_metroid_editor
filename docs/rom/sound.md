@@ -155,6 +155,14 @@ CPU-side queue functions in bank `$80`:
 
 Sound effects can be **song-independent** (use their own BRR data) or **song-dependent**
 (borrow a BGM instrument — these sound different depending on which song set is loaded).
+Metroid-family and many boss/cutscene sounds are song-dependent. In particular,
+Tourian's Metroids, Baby Metroid, Mother Brain, and escape sequence must retain a
+compatible native song bank. Tourian room headers frequently use music `$00:$00`
+to inherit the preceding room's bank, so changing even an apparently ordinary
+Tourian corridor can break a later encounter. A failed SPC acknowledgement can
+strand the CPU at door-transition wait routine `$82:E29E` with non-empty sound
+queues. The semantic `set_room_music` mutation therefore protects all Tourian
+rooms unless `overwrite_audio_sensitive_music=true` is explicitly requested.
 
 The Sound workspace's **Effects** tab lists all 240 identities (66 / 127 / 47) with search
 and library filters. **Play** runs the native engine; **Samples** chooses the music

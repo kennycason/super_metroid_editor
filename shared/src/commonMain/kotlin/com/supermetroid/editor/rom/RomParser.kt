@@ -264,14 +264,7 @@ class RomParser(
         companion object {
             val FX_TYPE_NAMES = NativeFxTypes.names
 
-            // C byte bitfield (from SMILE SmileMod1.bas)
-            val LIQUID_OPTION_NAMES = mapOf(
-                0x01 to "Small Tide",
-                0x02 to "Large Tide",
-                0x20 to "BG Warp-Line Shift",
-                0x40 to "BG Warp-Cascade Heat",
-                0x80 to "Flow Left",
-            )
+            val LIQUID_OPTION_NAMES = NativeLiquidOptions.labels
         }
     }
 

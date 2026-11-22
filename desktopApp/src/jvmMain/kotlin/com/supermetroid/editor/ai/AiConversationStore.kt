@@ -28,6 +28,12 @@ data class StoredAiPatchMutationPlan(
 )
 
 @Serializable
+data class StoredAiRoomFxMutationPlan(
+    val requestedChanges: List<String> = emptyList(),
+    val affectedStatePreview: List<String> = emptyList(),
+)
+
+@Serializable
 data class StoredAiMutationPlan(
     val id: String,
     val toolName: String,
@@ -44,6 +50,7 @@ data class StoredAiMutationPlan(
     val protectedRoomPreview: List<String> = emptyList(),
     val kind: String = "ROOM_MUSIC",
     val patch: StoredAiPatchMutationPlan? = null,
+    val fx: StoredAiRoomFxMutationPlan? = null,
 )
 
 @Serializable

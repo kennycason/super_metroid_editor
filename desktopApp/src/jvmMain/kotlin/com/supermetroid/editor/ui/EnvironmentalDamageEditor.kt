@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
@@ -90,6 +91,11 @@ fun EnvironmentalDamageEditor(
     @Suppress("UNUSED_VARIABLE") val sourceRevision = bridge?.revision
     val romRates = remember(romParser) { readEnvironmentalDamageRomRates(romParser) }
     @Suppress("UNUSED_VARIABLE") val patchVersion = editorState.patchVersion
+    val perAreaRates = patch.configData?.get(EnvironmentalDamagePatch.PER_AREA_RATES_KEY) == 1
+    val sourceViews = if (sourceMode) EnvironmentalDamagePatch.FIELDS.associate { field ->
+        field.key to (bridge?.value(patch, field.key)
+            ?: com.supermetroid.editor.asm.AsmEnvironmentalDamageView(null, "—", "Wait for environmental source indexing."))
+    } else emptyMap()
 
     fun currentValue(key: String): Int =
         patch.configData?.get(key) ?: romRates.getValue(key)
@@ -110,6 +116,22 @@ fun EnvironmentalDamageEditor(
             EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
             if (enabled) 1 else 0,
         )
+    }
+    fun applyPerAreaRates(enabled: Boolean) {
+        editorState.setPatchConfigData(
+            patch.id,
+            EnvironmentalDamagePatch.PER_AREA_RATES_KEY,
+            if (enabled) 1 else 0,
+        )
+    }
+    fun scalarValue(field: EnvironmentalDamagePatch.Field): Int? =
+        if (sourceMode) sourceViews[field.key]?.value else currentValue(field.key)
+    fun scalarDisplay(field: EnvironmentalDamagePatch.Field): String =
+        if (sourceMode) sourceViews[field.key]?.display ?: "—" else currentValue(field.key).toString()
+    fun areaDisplay(area: EnvironmentalDamagePatch.Area, field: EnvironmentalDamagePatch.Field): String =
+        patch.configData?.get(EnvironmentalDamagePatch.areaRateKey(area, field))?.toString() ?: scalarDisplay(field)
+    fun applyArea(area: EnvironmentalDamagePatch.Area, field: EnvironmentalDamagePatch.Field, value: Int) {
+        apply(EnvironmentalDamagePatch.areaRateKey(area, field), value)
     }
     fun openSource(key: String? = null) {
         if (editorState.openEnvironmentalDamageSource(key)) onNavigateToAsm?.invoke()
@@ -144,6 +166,7 @@ fun EnvironmentalDamageEditor(
                     else EnvironmentalDamagePatch.FIELDS.forEach { field ->
                         apply(field.key, field.defaultEnergyPerSecond)
                     }
+                    applyPerAreaRates(false)
                     if (!sourceMode) applyAllRoomsHeated(false)
                 },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -161,31 +184,119 @@ fun EnvironmentalDamageEditor(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                EnvironmentalDamagePatch.FIELDS.forEachIndexed { index, field ->
-                    val view = if (sourceMode) bridge?.value(patch, field.key)
-                        ?: com.supermetroid.editor.asm.AsmEnvironmentalDamageView(null, "—", "Wait for environmental source indexing.") else null
-                    EnvironmentalDamageRateRow(
-                        key = field.key,
-                        label = field.label,
-                        suitBehavior = field.suitBehavior,
-                        value = if (sourceMode) view?.value else currentValue(field.key),
-                        display = if (sourceMode) view!!.display else currentValue(field.key).toString(),
-                        enabled = view?.problem == null,
-                        vanillaValue = field.defaultEnergyPerSecond,
-                        onChange = { apply(field.key, it) },
-                        onAsm = if (sourceMode) ({ openSource(field.key) }) else null,
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Per-Area Rates", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Give each game area its own heat, lava, and acid rate. Room FX still decide which hazards are present.",
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    view?.problem?.let { problem ->
-                        Text(if (view.managedInAsm) "Managed in ASM: $problem" else "Read-only: $problem",
-                            color = if (view.managedInAsm) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                            fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                }
+                Switch(
+                    checked = perAreaRates,
+                    onCheckedChange = ::applyPerAreaRates,
+                    modifier = Modifier.testTag("environmental-per-area-rates"),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        if (!perAreaRates) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    EnvironmentalDamagePatch.FIELDS.forEachIndexed { index, field ->
+                        val view = sourceViews[field.key]
+                        EnvironmentalDamageRateRow(
+                            key = field.key,
+                            label = field.label,
+                            suitBehavior = field.suitBehavior,
+                            value = if (sourceMode) view?.value else currentValue(field.key),
+                            display = if (sourceMode) view!!.display else currentValue(field.key).toString(),
+                            enabled = view?.problem == null,
+                            vanillaValue = field.defaultEnergyPerSecond,
+                            onChange = { apply(field.key, it) },
+                            onAsm = if (sourceMode) ({ openSource(field.key) }) else null,
+                        )
+                        view?.problem?.let { problem ->
+                            Text(if (view.managedInAsm) "Managed in ASM: $problem" else "Read-only: $problem",
+                                color = if (view.managedInAsm) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                                fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                        }
+                        if (view?.conflict == true) TextButton(onClick = {
+                            runCatching { bridge?.useSourceValue(field.key) }.onFailure { editorState.postStatus(it.message ?: "Cannot use ASM values.") }
+                        }, modifier = Modifier.testTag("environmental-use-asm-${field.key}")) { Text("Use ASM values") }
+                        if (index != EnvironmentalDamagePatch.FIELDS.lastIndex) {
+                            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                        }
                     }
-                    if (view?.conflict == true) TextButton(onClick = {
-                        runCatching { bridge?.useSourceValue(field.key) }.onFailure { editorState.postStatus(it.message ?: "Cannot use ASM values.") }
-                    }, modifier = Modifier.testTag("environmental-use-asm-${field.key}")) { Text("Use ASM values") }
-                    if (index != EnvironmentalDamagePatch.FIELDS.lastIndex) {
-                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                }
+            }
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Area", modifier = Modifier.width(116.dp), fontWeight = FontWeight.SemiBold)
+                        EnvironmentalDamagePatch.FIELDS.forEach { field ->
+                            Text(
+                                field.label,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center,
+                                fontSize = LocalEditorTheme.current.fontSize.value.body,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    EnvironmentalDamagePatch.AREAS.forEach { area ->
+                        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("environmental-area-${area.key}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(area.label, modifier = Modifier.width(116.dp), fontSize = LocalEditorTheme.current.fontSize.value.body)
+                            EnvironmentalDamagePatch.FIELDS.forEach { field ->
+                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                    DamageRateInput(
+                                        display = areaDisplay(area, field),
+                                        enabled = true,
+                                        onChange = { applyArea(area, field, it) },
+                                        modifier = Modifier.testTag("environmental-area-${area.key}-${field.key}"),
+                                        fieldWidth = 82.dp,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        OutlinedButton(
+                            enabled = EnvironmentalDamagePatch.FIELDS.all { scalarValue(it) != null },
+                            onClick = {
+                                EnvironmentalDamagePatch.AREAS.forEach { area ->
+                                    EnvironmentalDamagePatch.FIELDS.forEach { field ->
+                                        scalarValue(field)?.let { applyArea(area, field, it) }
+                                    }
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(30.dp).testTag("environmental-copy-defaults"),
+                        ) {
+                            Text("Copy current defaults to all areas", fontSize = LocalEditorTheme.current.fontSize.value.body)
+                        }
                     }
                 }
             }
@@ -204,10 +315,10 @@ fun EnvironmentalDamageEditor(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("All Rooms Heated", fontWeight = FontWeight.SemiBold)
+                    Text("All Non-Tourian Rooms Heated", fontWeight = FontWeight.SemiBold)
                     Text(
                         if (sourceMode) "Available in patched-ROM mode."
-                        else "Spawn the native heated-room effect in every room without replacing its existing FX.",
+                        else "Spawn the native heated-room effect without replacing existing FX. Tourian is always excluded to protect Mother Brain and the escape.",
                         fontSize = LocalEditorTheme.current.fontSize.value.body,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -223,8 +334,11 @@ fun EnvironmentalDamageEditor(
 
         Spacer(Modifier.height(10.dp))
         Text(
-            if (sourceMode) "Rates accumulate every frame. Edits enable this patch automatically; disabling keeps custom values for later. Both words of each rate edit together."
-            else "Rates are accumulated every frame, so low values still drain smoothly.",
+            when {
+                sourceMode && perAreaRates -> "Area overrides stay in project settings; inherited entries preserve both exact ASM source words."
+                sourceMode -> "Rates accumulate every frame. Edits enable this patch automatically; disabling keeps custom values for later. Both words of each rate edit together."
+                else -> "Rates are accumulated every frame, so low values still drain smoothly."
+            },
             fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
         )
@@ -294,7 +408,13 @@ private fun EnvironmentalDamageRateRow(
 }
 
 @Composable
-private fun DamageRateInput(display: String, enabled: Boolean, onChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+private fun DamageRateInput(
+    display: String,
+    enabled: Boolean,
+    onChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    fieldWidth: Dp = 96.dp,
+) {
     var text by remember(display, enabled) { mutableStateOf(display) }
     BasicTextField(
         value = text,
@@ -311,7 +431,7 @@ private fun DamageRateInput(display: String, enabled: Boolean, onChange: (Int) -
             textAlign = TextAlign.Center,
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        modifier = modifier.width(96.dp),
+        modifier = modifier.width(fieldWidth),
         decorationBox = { inner ->
             Box(
                 modifier = Modifier

@@ -11,6 +11,7 @@ import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.enabledPatchIncompatibilities
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.SuitPatches
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.ProjectRoomExportException
@@ -395,6 +396,7 @@ class SmeditBuildService(
     }
 
     private fun hydrateSafetyMetadata(target: SmPatch, catalogPatch: SmPatch) {
+        SuitPatches.upgradeLegacyWrites(target, catalogPatch)
         if (target.compatibleRomHashes.isEmpty()) {
             target.compatibleRomHashes.addAll(catalogPatch.compatibleRomHashes)
         }
@@ -1582,37 +1584,98 @@ class SmeditBuildService(
         context: ApplyContext,
     ) {
         val data = patch.configData ?: return
-        for (field in EnvironmentalDamagePatch.FIELDS) {
-            val energyPerSecond = data[field.key]?.coerceIn(
-                EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
-                EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
-            ) ?: continue
-            val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
-            writeWord(
-                context,
-                field.lowWordPc,
-                fixedRate.lowWord,
-                "Environmental damage ${field.key} fraction",
-            )
-            writeWord(
-                context,
-                field.highWordPc,
-                fixedRate.highWord,
-                "Environmental damage ${field.key} whole",
-            )
+        val perAreaRates = data[EnvironmentalDamagePatch.PER_AREA_RATES_KEY]
+            ?.coerceIn(0, 1) == 1
+        if (perAreaRates) {
+            val normalizedData = data.toMutableMap().apply {
+                this[EnvironmentalDamagePatch.PER_AREA_RATES_KEY] = 1
+                EnvironmentalDamagePatch.FIELDS.map { it.key }
+                    .plus(EnvironmentalDamagePatch.AREA_RATE_FIELDS.map { it.key })
+                    .forEach { key ->
+                        val value = this[key] ?: return@forEach
+                        this[key] = value.coerceIn(
+                            EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
+                            EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+                        )
+                    }
+            }
+            val fallbackFixedRates = EnvironmentalDamagePatch.FIELDS.associate { field ->
+                val low = context.readWordOrNull(field.lowWordPc)
+                val high = context.readWordOrNull(field.highWordPc)
+                field.key to if (low != null && high != null) {
+                    EnvironmentalDamagePatch.FixedRate(low, high)
+                } else {
+                    EnvironmentalDamagePatch.encodeEnergyPerSecond(field.defaultEnergyPerSecond)
+                }
+            }
+            val fallbackRates = fallbackFixedRates.mapValues { (_, fixed) ->
+                EnvironmentalDamagePatch.decodeEnergyPerSecond(fixed.lowWord, fixed.highWord)
+            }
+            val hooks = if (context.outputRom == null) {
+                context.warnings += "Per-area environmental rates use checked native damage hooks; patch-only mode cannot verify the target ROM bytes."
+                EnvironmentalDamagePatch.NATIVE_DAMAGE_HOOKS
+            } else {
+                EnvironmentalDamagePatch.NATIVE_DAMAGE_HOOKS.map { native ->
+                    val actual = List(native.expectedBytes.size) { index ->
+                        requireNotNull(context.readByteOrNull(native.pcOffset + index)) {
+                            "Environmental damage ${native.key} hook is outside the ROM."
+                        }
+                    }
+                    require(EnvironmentalDamagePatch.isNativeDamageHookCompatible(native.key, actual)) {
+                        "Environmental damage ${native.key} hook does not match the supported native instruction shape."
+                    }
+                    native.copy(expectedBytes = actual)
+                }
+            }
+            for (write in EnvironmentalDamagePatch.perAreaCheckedWrites(
+                    config = normalizedData,
+                    fallbackRates = fallbackRates,
+                    hooks = hooks,
+                    fallbackFixedRates = fallbackFixedRates,
+                )) {
+                if (writeBytes(
+                        context = context,
+                        offset = write.pcOffset,
+                        bytes = write.bytes,
+                        label = "Environmental damage per-area rates",
+                        expectedBefore = write.expectedBytes,
+                    )) {
+                    context.appliedWriteCount++
+                }
+            }
+        } else {
+            for (field in EnvironmentalDamagePatch.FIELDS) {
+                val energyPerSecond = data[field.key]?.coerceIn(
+                    EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
+                    EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+                ) ?: continue
+                val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
+                writeWord(
+                    context,
+                    field.lowWordPc,
+                    fixedRate.lowWord,
+                    "Environmental damage ${field.key} fraction",
+                )
+                writeWord(
+                    context,
+                    field.highWordPc,
+                    fixedRate.highWord,
+                    "Environmental damage ${field.key} whole",
+                )
+            }
         }
         val allRoomsHeated = data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY]
             ?.coerceIn(0, 1) == 1
         if (allRoomsHeated) {
             if (context.outputRom == null) {
-                context.warnings += "All Rooms Heated uses checked vanilla room-load hooks; patch-only mode cannot verify the target ROM bytes."
+                context.warnings += "All Non-Tourian Rooms Heated uses checked vanilla room-load hooks; patch-only mode cannot verify the target ROM bytes."
             }
             for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
                 val wrote = writeBytes(
                     context = context,
                     offset = write.pcOffset,
                     bytes = write.bytes,
-                    label = "Environmental damage all-rooms heat hook",
+                    label = "Environmental damage non-Tourian heat hook",
                     expectedBefore = write.expectedBytes,
                 )
                 if (wrote) context.appliedWriteCount++

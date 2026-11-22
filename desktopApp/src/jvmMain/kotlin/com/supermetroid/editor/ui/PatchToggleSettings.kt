@@ -56,11 +56,20 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
         val rom = parser.getRomData()
         val header = if (rom.size % 0x8000 == 512) 512 else 0
         fun pcWord(pc: Int) = if (pc + header + 1 < rom.size) (rom[pc + header].toInt() and 255) or ((rom[pc + header + 1].toInt() and 255) shl 8) else null
-        return data.any { (key, value) ->
-            val field = EnvironmentalDamagePatch.FIELDS.singleOrNull { it.key == key } ?: return@any true
+        if (data[EnvironmentalDamagePatch.PER_AREA_RATES_KEY] == 1 ||
+            data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY] == 1) return true
+        val scalarDiffers = EnvironmentalDamagePatch.FIELDS.any { field ->
+            val value = data[field.key] ?: return@any false
             if (value !in EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND..EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND) return@any true
             val fixed = EnvironmentalDamagePatch.encodeEnergyPerSecond(value)
             fixed.lowWord != pcWord(field.lowWordPc) || fixed.highWord != pcWord(field.highWordPc)
+        }
+        if (scalarDiffers) return true
+        return data.keys.any { key ->
+            key !in EnvironmentalDamagePatch.FIELDS.map { it.key } &&
+                key != EnvironmentalDamagePatch.PER_AREA_RATES_KEY &&
+                key != EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY &&
+                key !in EnvironmentalDamagePatch.AREA_RATE_FIELDS.map { it.key }
         }
     }
     if (patch.configType == "boss_stats") return data.any { (key, value) ->

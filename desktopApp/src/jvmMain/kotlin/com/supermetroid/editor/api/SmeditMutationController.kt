@@ -1,7 +1,10 @@
 package com.supermetroid.editor.api
 
 import com.supermetroid.editor.data.ProjectRomBuildMode
+import com.supermetroid.editor.data.FxChange
+import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomEdits
+import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.headless.BOMB_CONFIG_TYPE
@@ -16,6 +19,13 @@ import com.supermetroid.editor.headless.SHORT_CHARGE_TAPS_KEY
 import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.headless.ZEBES_ESCAPE_CONFIG_TYPE
 import com.supermetroid.editor.rom.RomValidator
+import com.supermetroid.editor.rom.NativeLiquidOptions
+import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.baseSourceStateIndex
+import com.supermetroid.editor.rom.emptyDefaultFxEntry
+import com.supermetroid.editor.rom.ensureStateManifest
+import com.supermetroid.editor.rom.withFxChange
+import com.supermetroid.editor.asm.snapshotRoomForResize
 import com.supermetroid.editor.ui.EditorState
 import java.util.UUID
 import kotlinx.serialization.json.JsonArray
@@ -27,7 +37,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
-enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH }
+enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH, ROOM_FX }
 
 data class SmeditPatchValueChange(
     val key: String,
@@ -46,6 +56,11 @@ data class SmeditPatchMutationPlan(
     val automaticallyDisabledPatches: List<String>,
 )
 
+data class SmeditRoomFxMutationPlan(
+    val requestedChanges: List<String>,
+    val affectedStatePreview: List<String>,
+)
+
 data class SmeditMutationPlan(
     val id: String,
     val toolName: String,
@@ -62,6 +77,7 @@ data class SmeditMutationPlan(
     val protectedRoomPreview: List<String> = emptyList(),
     val kind: SmeditMutationPlanKind = SmeditMutationPlanKind.ROOM_MUSIC,
     val patch: SmeditPatchMutationPlan? = null,
+    val fx: SmeditRoomFxMutationPlan? = null,
 )
 
 data class SmeditMutationPlanningResult(
@@ -91,6 +107,7 @@ interface SmeditMutationController {
 internal class DesktopSmeditMutationController(
     private val editorState: EditorState,
     private val workspace: SmeditWorkspaceAccess,
+    private val parser: () -> RomParser? = { editorState.roomSourceParser },
 ) : SmeditMutationController {
     private sealed interface PendingPlan {
         val presentation: SmeditMutationPlan
@@ -151,6 +168,25 @@ internal class DesktopSmeditMutationController(
         override val projectId: String get() = plan.projectId
     }
 
+    private data class RoomModelSnapshot(
+        val roomId: Int,
+        val room: RoomEdits?,
+    )
+
+    private data class RoomFxPlan(
+        override val presentation: SmeditMutationPlan,
+        override val projectId: String,
+        val before: List<RoomModelSnapshot>,
+        val after: List<RoomModelSnapshot>,
+    ) : PendingPlan
+
+    private data class AppliedRoomFxAction(
+        val plan: RoomFxPlan,
+    ) : AppliedAction {
+        override val presentation: SmeditMutationPlan get() = plan.presentation
+        override val projectId: String get() = plan.projectId
+    }
+
     private var pending: PendingPlan? = null
     private val undoStack = mutableListOf<AppliedAction>()
     private val redoStack = mutableListOf<AppliedAction>()
@@ -163,6 +199,7 @@ internal class DesktopSmeditMutationController(
         return when (toolName) {
             SET_ROOM_MUSIC -> planRoomMusic(arguments)
             CONFIGURE_PATCH -> planPatch(arguments)
+            SET_ROOM_FX -> planRoomFx(arguments)
             else -> failure("unknown_mutation", "SMEDIT does not expose a mutation named '$toolName'.")
         }
     }
@@ -193,6 +230,10 @@ internal class DesktopSmeditMutationController(
             ?: if ("overwrite_special_state_music" in arguments) {
                 return failure("invalid_arguments", "overwrite_special_state_music must be true or false.")
             } else false
+        val overwriteAudioSensitiveMusic = arguments.optionalBoolean("overwrite_audio_sensitive_music")
+            ?: if ("overwrite_audio_sensitive_music" in arguments) {
+                return failure("invalid_arguments", "overwrite_audio_sensitive_music must be true or false.")
+            } else false
 
         val catalog = workspace.rooms().distinctBy { parseRoomId(it.id) }.mapNotNull { room ->
             parseRoomId(room.id)?.let { it to room }
@@ -219,17 +260,29 @@ internal class DesktopSmeditMutationController(
         val stateSensitiveRooms = candidateRooms.filter { (roomId, _) ->
             roomDetails[roomId]?.let { it.hasDistinctSourceMusic || it.hasStateMusicEdits } == true
         }
+        // Tourian's Metroid, Baby Metroid, Mother Brain, and escape sounds depend on
+        // the native Tourian song's instruments. Protect the whole area because many
+        // room headers use 00:00 to inherit music from the preceding room; protecting
+        // only the enemy room would still allow an unsafe song to flow into it.
+        val audioSensitiveRooms = candidateRooms.filter { (_, room) ->
+            room.area?.equals(TOURIAN_AREA, ignoreCase = true) == true
+        }
         val uninspectableRooms = candidateRooms.filter { (roomId, _) -> roomDetails[roomId] == null }
-        val protectedRooms = (uninspectableRooms + if (overwriteSpecialStateMusic) emptyList() else stateSensitiveRooms)
+        val protectedRooms = (
+            uninspectableRooms +
+                (if (overwriteSpecialStateMusic) emptyList() else stateSensitiveRooms) +
+                (if (overwriteAudioSensitiveMusic) emptyList() else audioSensitiveRooms)
+            )
             .distinctBy(Pair<Int, SmeditRoomSummary>::first)
         val protectedIds = protectedRooms.map(Pair<Int, SmeditRoomSummary>::first).toSet()
         val targetRooms = candidateRooms.filterNot { (roomId, _) -> roomId in protectedIds }
         if (targetRooms.isEmpty()) {
             val protected = protectedRooms.joinToString { (roomId, room) -> "${room.name} (${formatRoomId(roomId)})" }
             return failure(
-                "state_sensitive_music",
-                "Every requested room was protected from a state-flattening music write: $protected. " +
-                    "Set overwrite_special_state_music=true only when the user explicitly wants to replace those distinct state values.",
+                "protected_music",
+                "Every requested room was protected from an unsafe music write: $protected. " +
+                    "Distinct state music requires overwrite_special_state_music=true; Tourian's song-dependent audio " +
+                    "requires the separate overwrite_audio_sensitive_music=true opt-in.",
             )
         }
         val managed = targetRooms.map(Pair<Int, SmeditRoomSummary>::first).filter { roomId ->
@@ -256,6 +309,13 @@ internal class DesktopSmeditMutationController(
                     "Explicit override will flatten distinct boss/event/state music in ${stateSensitiveRooms.size} room(s): " +
                         stateSensitiveRooms.take(8).joinToString { (id, room) -> "${room.name} (${formatRoomId(id)})" } +
                         if (stateSensitiveRooms.size > 8) " …" else "",
+                )
+            }
+            if (overwriteAudioSensitiveMusic && audioSensitiveRooms.isNotEmpty()) {
+                add(
+                    "Explicit override will replace native Tourian music in ${audioSensitiveRooms.size} room(s). " +
+                        "Metroid, Baby Metroid, Mother Brain, and escape sounds depend on Tourian's song instruments " +
+                        "and may glitch or deadlock door transitions.",
                 )
             }
         }
@@ -498,6 +558,316 @@ internal class DesktopSmeditMutationController(
         )
     }
 
+    private fun planRoomFx(arguments: JsonObject): SmeditMutationPlanningResult = try {
+        planRoomFxChecked(arguments)
+    } catch (problem: Exception) {
+        failure("fx_plan_failed", problem.message ?: "The room FX plan could not be created.")
+    }
+
+    private fun planRoomFxChecked(arguments: JsonObject): SmeditMutationPlanningResult {
+        val summary = workspace.workspaceSummary()
+        if (!summary.projectLoaded) return failure("workspace_unavailable", "Open a project or editable ROM before changing room FX.")
+        if (summary.readOnly) return failure("workspace_read_only", "The current room catalog is read-only.")
+        val project = editorState.project
+        if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+            return failure(
+                "asm_source_unsupported",
+                "Approval-backed room FX writes in ASM-source mode are not yet supported. No project data was changed.",
+            )
+        }
+        val currentParser = parser()
+            ?: return failure("workspace_unavailable", "The current ROM parser is unavailable. Reopen the project before changing room FX.")
+
+        val numericRanges = linkedMapOf(
+            "fx_type" to 0..0x2C,
+            "liquid_surface_start" to 0..0xFFFF,
+            "liquid_surface_new" to 0..0xFFFF,
+            "liquid_speed" to 0..0xFFFF,
+            "liquid_delay" to 0..0xFF,
+            "fx_bit_a" to 0..0xFF,
+            "fx_bit_b" to 0..0xFF,
+            "fx_bit_c" to 0..0xFF,
+            "palette_fx_bitflags" to 0..0xFF,
+            "tile_anim_bitflags" to 0..0xFF,
+            "palette_blend" to 0..0xFF,
+        )
+        val numeric = linkedMapOf<String, Int>()
+        numericRanges.forEach { (name, range) ->
+            val element = arguments[name] ?: return@forEach
+            val value = (element as? JsonPrimitive)?.intOrNull
+                ?: return failure("invalid_arguments", "$name must be an integer from ${range.first} through ${range.last}.")
+            if (value !in range) return failure("invalid_arguments", "$name must be an integer from ${range.first} through ${range.last}.")
+            numeric[name] = value
+        }
+        numeric["fx_type"]?.let { type ->
+            if (type % 2 != 0) return failure("invalid_arguments", "fx_type must be an even native dispatch offset from 0 through 44.")
+        }
+        val requestedUpdateFields = arguments.stringList("update_fields")
+            ?: return failure("invalid_arguments", "update_fields must be an array of canonical FX field names.")
+        val updateFieldsProvided = "update_fields" in arguments
+        val allowedUpdateFields = numericRanges.keys + "liquid_options"
+        val updateFields = if (updateFieldsProvided) {
+            requestedUpdateFields.toSet()
+        } else {
+            buildSet {
+                addAll(numeric.keys)
+                if ("liquid_options" in arguments) add("liquid_options")
+            }
+        }
+        if (updateFields.isEmpty()) {
+            return failure("invalid_arguments", "update_fields must name at least one FX field to change.")
+        }
+        val unknownUpdateFields = updateFields - allowedUpdateFields
+        if (unknownUpdateFields.isNotEmpty()) {
+            return failure(
+                "invalid_arguments",
+                "Unknown update_fields value(s): ${unknownUpdateFields.sorted().joinToString()}.",
+            )
+        }
+        val missingUpdateValues = updateFields.filter { field ->
+            field !in arguments
+        }
+        if (missingUpdateValues.isNotEmpty()) {
+            return failure(
+                "invalid_arguments",
+                "update_fields requires a value for: ${missingUpdateValues.sorted().joinToString()}.",
+            )
+        }
+        val liquidOptions = arguments.stringListOrNull("liquid_options")
+            ?: return failure("invalid_arguments", "liquid_options must be an array of canonical option names.")
+        val semanticOptionsProvided = "liquid_options" in updateFields
+        val unknownOptions = liquidOptions - NativeLiquidOptions.semanticNames.keys
+        if (unknownOptions.isNotEmpty()) {
+            return failure(
+                "invalid_liquid_option",
+                "Unknown liquid option(s): ${unknownOptions.joinToString()}. Use ${NativeLiquidOptions.semanticNames.keys.joinToString()}.",
+            )
+        }
+        val semanticBitC = liquidOptions.distinct().fold(0) { value, name ->
+            value or NativeLiquidOptions.semanticNames.getValue(name)
+        }
+        val requested = FxChange(
+            fxType = numeric["fx_type"].takeIf { "fx_type" in updateFields },
+            liquidSurfaceStart = numeric["liquid_surface_start"].takeIf { "liquid_surface_start" in updateFields },
+            liquidSurfaceNew = numeric["liquid_surface_new"].takeIf { "liquid_surface_new" in updateFields },
+            liquidSpeed = numeric["liquid_speed"].takeIf { "liquid_speed" in updateFields },
+            liquidDelay = numeric["liquid_delay"].takeIf { "liquid_delay" in updateFields },
+            fxBitA = numeric["fx_bit_a"].takeIf { "fx_bit_a" in updateFields },
+            fxBitB = numeric["fx_bit_b"].takeIf { "fx_bit_b" in updateFields },
+            fxBitC = when {
+                semanticOptionsProvided -> semanticBitC
+                "fx_bit_c" in updateFields -> numeric["fx_bit_c"]
+                else -> null
+            },
+            paletteFxBitflags = numeric["palette_fx_bitflags"].takeIf { "palette_fx_bitflags" in updateFields },
+            tileAnimBitflags = numeric["tile_anim_bitflags"].takeIf { "tile_anim_bitflags" in updateFields },
+            paletteBlend = numeric["palette_blend"].takeIf { "palette_blend" in updateFields },
+        )
+        if (requested == FxChange()) {
+            return failure("invalid_arguments", "Provide at least one FX field or liquid_options value to change.")
+        }
+        val requestedBitC = requested.fxBitC
+        if (requestedBitC != null && requestedBitC and NativeLiquidOptions.LARGE_TIDE != 0 &&
+            requestedBitC and NativeLiquidOptions.SMALL_TIDE != 0
+        ) {
+            return failure("conflicting_tides", "Choose Large Tide or Small Tide, not both. Native Small Tide silently wins when both bits are set.")
+        }
+
+        val requestedIds = arguments.stringList("room_ids")
+            ?: return failure("invalid_arguments", "room_ids must be an array of hexadecimal room ids.")
+        val includedAreas = arguments.stringList("areas")
+            ?: return failure("invalid_arguments", "areas must be an array of area names.")
+        val excludedIds = arguments.stringList("exclude_room_ids")
+            ?: return failure("invalid_arguments", "exclude_room_ids must be an array of hexadecimal room ids.")
+        val excludedAreas = arguments.stringList("exclude_areas")
+            ?: return failure("invalid_arguments", "exclude_areas must be an array of area names.")
+        val requestedStateIds = arguments.stringList("state_ids")
+            ?: return failure("invalid_arguments", "state_ids must be an array of stable state ids.")
+        val rawStateTargets = arguments.stringList("state_targets")
+            ?: return failure("invalid_arguments", "state_targets must be an array of room-id:state-id values.")
+        if (requestedStateIds.isNotEmpty() && rawStateTargets.isNotEmpty()) {
+            return failure("invalid_arguments", "Use state_ids or state_targets, not both.")
+        }
+        val stateTargets = rawStateTargets.map { raw ->
+            val parts = raw.split(':', limit = 2)
+            val roomId = parts.getOrNull(0)?.let(::parseRoomId)
+            val stateId = parts.getOrNull(1)?.trim()?.takeIf(String::isNotEmpty)
+            if (roomId == null || stateId == null) {
+                return failure("invalid_arguments", "state_targets contains '$raw'; expected a value such as 0x91F8:state-2.")
+            }
+            roomId to stateId
+        }.toSet()
+        val onlyIfTypes = arguments.intList("only_if_fx_types")
+            ?: return failure("invalid_arguments", "only_if_fx_types must contain even native FX types from 0 through 44.")
+        if (onlyIfTypes.any { it !in 0..0x2C || it % 2 != 0 }) {
+            return failure("invalid_arguments", "only_if_fx_types must contain even native FX types from 0 through 44.")
+        }
+        val includeConditional = arguments.optionalBoolean("include_conditional_states")
+            ?: if ("include_conditional_states" in arguments) {
+                return failure("invalid_arguments", "include_conditional_states must be true or false.")
+            } else false
+
+        val catalog = workspace.rooms().distinctBy { parseRoomId(it.id) }.mapNotNull { room ->
+            parseRoomId(room.id)?.let { it to room }
+        }
+        val catalogById = catalog.toMap()
+        if (catalogById.isEmpty()) return failure("no_rooms", "The current workspace has no writable rooms.")
+        val selected = parseIds(requestedIds) ?: return invalidRoomIds("room_ids")
+        val excluded = parseIds(excludedIds) ?: return invalidRoomIds("exclude_room_ids")
+        val unknown = (selected + excluded + stateTargets.map(Pair<Int, String>::first)).filterNot(catalogById::containsKey).distinct()
+        if (unknown.isNotEmpty()) {
+            return failure("room_not_found", "Unknown room id(s): ${unknown.joinToString { formatRoomId(it) }}.")
+        }
+        val normalizedIncludedAreas = includedAreas.map(String::trim).filter(String::isNotEmpty).distinctBy(String::lowercase)
+        val normalizedExcludedAreas = excludedAreas.map(String::trim).filter(String::isNotEmpty).distinctBy(String::lowercase)
+        val unmatchedAreas = (normalizedIncludedAreas + normalizedExcludedAreas).filter { requestedArea ->
+            catalog.none { (_, room) -> room.area?.equals(requestedArea, ignoreCase = true) == true }
+        }.distinctBy(String::lowercase)
+        val candidateIds = when {
+            selected.isNotEmpty() -> selected.toSet()
+            stateTargets.isNotEmpty() -> stateTargets.map(Pair<Int, String>::first).toSet()
+            else -> catalog.map(Pair<Int, SmeditRoomSummary>::first).toSet()
+        }
+        val candidates = catalog.filter { (roomId, room) ->
+            roomId in candidateIds && roomId !in excluded &&
+                (normalizedIncludedAreas.isEmpty() || normalizedIncludedAreas.any { it.equals(room.area, ignoreCase = true) }) &&
+                normalizedExcludedAreas.none { it.equals(room.area, ignoreCase = true) }
+        }
+        if (candidates.isEmpty()) return failure("empty_scope", "The requested room and area filters leave no rooms to change.")
+        if (requestedStateIds.isNotEmpty() || stateTargets.isNotEmpty()) {
+            val knownTargets = candidates.flatMap { (roomId, _) ->
+                workspace.room(roomId)?.states.orEmpty().map { state -> roomId to state.id }
+            }.toSet()
+            val missingStateIds = requestedStateIds.toSet() - knownTargets.map(Pair<Int, String>::second).toSet()
+            if (missingStateIds.isNotEmpty()) {
+                return failure("state_not_found", "No selected room contains state id(s): ${missingStateIds.sorted().joinToString()}.")
+            }
+            val missing = stateTargets - knownTargets
+            if (missing.isNotEmpty()) {
+                return failure(
+                    "state_not_found",
+                    "No selected room contains state target(s): ${missing.sortedWith(compareBy({ it.first }, { it.second })).joinToString { (id, state) -> "${formatRoomId(id)}:$state" }}.",
+                )
+            }
+        }
+
+        val before = mutableListOf<RoomModelSnapshot>()
+        val after = mutableListOf<RoomModelSnapshot>()
+        val affectedStatePreview = mutableListOf<String>()
+        val protectedRooms = mutableListOf<Pair<Int, SmeditRoomSummary>>()
+        var protectedConditionalStateCount = 0
+        for ((roomId, summaryRoom) in candidates) {
+            val live = project.rooms[project.roomKey(roomId)]
+            val inspection = currentParser.inspectRoomStates(roomId)
+            if ((live?.asmFxSourceVersion ?: 0) != 0 || !inspection.isComplete) {
+                protectedRooms += roomId to summaryRoom
+                continue
+            }
+            val staged = snapshotRoomForResize(live ?: RoomEdits(roomId))
+            staged.ensureStateManifest(currentParser)
+            if (staged.states.any { state -> sourceFxPointer(staged, state, currentParser) == MOTHER_BRAIN_RUNTIME_FX_POINTER }) {
+                protectedRooms += roomId to summaryRoom
+                continue
+            }
+            var changedStates = 0
+            for (state in staged.effectiveStates) {
+                if (requestedStateIds.isNotEmpty() && state.id !in requestedStateIds) continue
+                if (stateTargets.isNotEmpty() && (roomId to state.id) !in stateTargets) continue
+                if (!includeConditional && state.effectiveCondition.kind != ProjectRoomStateConditionKind.DEFAULT) {
+                    protectedConditionalStateCount++
+                    continue
+                }
+                val current = effectiveDefaultFx(staged, state, currentParser) ?: continue
+                if (onlyIfTypes.isNotEmpty() && current.fxType !in onlyIfTypes) continue
+                val originalChange = state.fxChange
+                state.fxChange = originalChange.merge(requested)
+                val updated = effectiveDefaultFx(staged, state, currentParser) ?: current
+                val tideMask = NativeLiquidOptions.LARGE_TIDE or NativeLiquidOptions.SMALL_TIDE
+                if (updated.fxBitC and NativeLiquidOptions.LARGE_TIDE != 0 &&
+                    updated.fxBitC and NativeLiquidOptions.SMALL_TIDE != 0
+                ) {
+                    return failure(
+                        "conflicting_tides",
+                        "${summaryRoom.name} (${formatRoomId(roomId)}) state ${state.id} would enable both tide modes. Choose one.",
+                    )
+                }
+                if (updated.fxBitC and tideMask != 0 && updated.liquidSurfaceStart == 0xFFFF && updated.liquidSurfaceNew == 0xFFFF) {
+                    return failure(
+                        "unsafe_hidden_liquid_tide",
+                        "${summaryRoom.name} (${formatRoomId(roomId)}) state ${state.id} would combine a tide with \$FFFF/\$FFFF liquid heights, which can wrap liquid across the room. Set explicit heights or disable tides.",
+                    )
+                }
+                if (updated == current) {
+                    state.fxChange = originalChange
+                    continue
+                }
+                changedStates++
+                affectedStatePreview += "${summaryRoom.name} (${formatRoomId(roomId)}) · ${state.id} · ${state.effectiveCondition.kind.name.lowercase()}"
+            }
+            if (changedStates > 0) {
+                before += modelSnapshot(roomId)
+                after += RoomModelSnapshot(roomId, staged)
+            }
+        }
+        if (after.isEmpty()) {
+            val reason = if (protectedRooms.isNotEmpty()) {
+                "All matching states are protected, filtered out, or already have the requested values."
+            } else "All matching states already have the requested values or were excluded by the state/FX-type filters."
+            return failure("no_changes", reason)
+        }
+
+        val changedRoomIds = after.map(RoomModelSnapshot::roomId)
+        val requestedChanges = describeFxChange(requested, liquidOptions.takeIf { semanticOptionsProvided })
+        val warnings = buildList {
+            if (unmatchedAreas.isNotEmpty()) add("No rooms matched area filter(s): ${unmatchedAreas.joinToString()}.")
+            if (protectedRooms.isNotEmpty()) {
+                add("Protected ${protectedRooms.size} room(s) with ASM-managed FX, unreadable state graphs, or runtime-indexed Mother Brain FX.")
+            }
+            if (protectedConditionalStateCount > 0) {
+                add("Protected $protectedConditionalStateCount conditional boss/event/door state(s). Set include_conditional_states=true only after reviewing them with list_room_fx.")
+            }
+            if (includeConditional) add("Explicit override includes conditional boss/event/door states.")
+        }
+        val presentation = SmeditMutationPlan(
+            id = UUID.randomUUID().toString(),
+            toolName = SET_ROOM_FX,
+            title = "Configure room FX",
+            musicData = 0,
+            musicTrack = 0,
+            affectedRoomCount = changedRoomIds.size,
+            affectedStateCount = affectedStatePreview.size,
+            affectedRoomPreview = affectedStatePreview.take(12),
+            excludedRoomIds = excluded.distinct().map(::formatRoomId),
+            excludedAreas = normalizedExcludedAreas,
+            warnings = warnings,
+            protectedRoomIds = protectedRooms.map { (id, _) -> formatRoomId(id) },
+            protectedRoomPreview = protectedRooms.take(12).map { (id, room) -> "${room.name} (${formatRoomId(id)})" },
+            kind = SmeditMutationPlanKind.ROOM_FX,
+            fx = SmeditRoomFxMutationPlan(requestedChanges, affectedStatePreview.take(20)),
+        )
+        val plan = RoomFxPlan(presentation, project.projectId, before, after)
+        pending = plan
+        return SmeditMutationPlanningResult(
+            plan = presentation,
+            result = SmeditToolResult(
+                output = buildJsonObject {
+                    put("ok", true)
+                    put("status", "approval_required")
+                    put("plan_id", presentation.id)
+                    put("tool", SET_ROOM_FX)
+                    put("affected_room_count", presentation.affectedRoomCount)
+                    put("affected_state_count", presentation.affectedStateCount)
+                    put("requested_changes", JsonArray(requestedChanges.map(::JsonPrimitive)))
+                    put("affected_state_preview", JsonArray(affectedStatePreview.take(25).map(::JsonPrimitive)))
+                    put("protected_room_ids", JsonArray(presentation.protectedRoomIds.map(::JsonPrimitive)))
+                    put("warnings", JsonArray(warnings.map(::JsonPrimitive)))
+                    put("message", "The exact SMEDIT FX plan is waiting for user approval. No project data has changed.")
+                },
+                isError = false,
+            ),
+        )
+    }
+
     override fun approve(planId: String): SmeditMutationTransition {
         val plan = pending?.takeIf { it.presentation.id == planId }
             ?: error("The pending AI plan is no longer available.")
@@ -539,6 +909,22 @@ internal class DesktopSmeditMutationController(
                 editorState.recordExternalPatchMutation()
                 transition(plan.presentation, "Applied")
             }
+            is RoomFxPlan -> {
+                requireProject(plan.projectId)
+                requireRoomModels(plan.before, "approval")
+                val rollback = plan.before.map { modelSnapshot(it.roomId) }
+                try {
+                    restoreRoomModels(plan.after)
+                } catch (problem: Throwable) {
+                    restoreRoomModels(rollback)
+                    throw problem
+                }
+                undoStack += AppliedRoomFxAction(plan)
+                redoStack.clear()
+                pending = null
+                editorState.recordExternalRoomMutation(plan.after.map(RoomModelSnapshot::roomId))
+                transition(plan.presentation, "Applied")
+            }
         }
     }
 
@@ -578,6 +964,18 @@ internal class DesktopSmeditMutationController(
                 }
                 editorState.recordExternalPatchMutation()
             }
+            is AppliedRoomFxAction -> {
+                requireProject(action.projectId)
+                requireRoomModels(action.plan.after, "undo")
+                val rollback = action.plan.after.map { modelSnapshot(it.roomId) }
+                try {
+                    restoreRoomModels(action.plan.before)
+                } catch (problem: Throwable) {
+                    restoreRoomModels(rollback)
+                    throw problem
+                }
+                editorState.recordExternalRoomMutation(action.plan.before.map(RoomModelSnapshot::roomId))
+            }
         }
         undoStack.removeAt(undoStack.lastIndex)
         redoStack += action
@@ -613,6 +1011,18 @@ internal class DesktopSmeditMutationController(
                 }
                 editorState.recordExternalPatchMutation()
             }
+            is AppliedRoomFxAction -> {
+                requireProject(action.projectId)
+                requireRoomModels(action.plan.before, "redo")
+                val rollback = action.plan.before.map { modelSnapshot(it.roomId) }
+                try {
+                    restoreRoomModels(action.plan.after)
+                } catch (problem: Throwable) {
+                    restoreRoomModels(rollback)
+                    throw problem
+                }
+                editorState.recordExternalRoomMutation(action.plan.after.map(RoomModelSnapshot::roomId))
+            }
         }
         redoStack.removeAt(redoStack.lastIndex)
         undoStack += action
@@ -634,6 +1044,27 @@ internal class DesktopSmeditMutationController(
 
     private fun RoomMusicSnapshot.relevantEquals(other: RoomMusicSnapshot): Boolean =
         roomId == other.roomId && common == other.common && states == other.states
+
+    private fun modelSnapshot(roomId: Int): RoomModelSnapshot = RoomModelSnapshot(
+        roomId,
+        editorState.project.rooms[editorState.project.roomKey(roomId)]?.let(::snapshotRoomForResize),
+    )
+
+    private fun requireRoomModels(expected: List<RoomModelSnapshot>, operation: String) {
+        val stale = expected.filter { it != modelSnapshot(it.roomId) }
+        check(stale.isEmpty()) {
+            "AI $operation was blocked because newer room edits affect ${stale.joinToString { formatRoomId(it.roomId) }}. Nothing was changed."
+        }
+    }
+
+    private fun restoreRoomModels(snapshots: List<RoomModelSnapshot>) {
+        val project = editorState.project
+        snapshots.forEach { snapshot ->
+            val key = project.roomKey(snapshot.roomId)
+            if (snapshot.room == null) project.rooms.remove(key)
+            else project.rooms[key] = snapshotRoomForResize(snapshot.room)
+        }
+    }
 
     private fun snapshot(roomId: Int): RoomMusicSnapshot {
         val room = editorState.project.rooms[editorState.project.roomKey(roomId)]
@@ -738,6 +1169,8 @@ internal class DesktopSmeditMutationController(
             SmeditMutationPlanKind.ROOM_MUSIC ->
                 "$verb ${plan.title.lowercase()} for ${plan.affectedRoomCount} room(s) and ${plan.affectedStateCount} state(s)."
             SmeditMutationPlanKind.PATCH -> "$verb ${plan.title.lowercase()}."
+            SmeditMutationPlanKind.ROOM_FX ->
+                "$verb room FX for ${plan.affectedRoomCount} room(s) and ${plan.affectedStateCount} state(s)."
         },
     )
 
@@ -750,6 +1183,15 @@ internal class DesktopSmeditMutationController(
         val value = get(name) ?: return emptyList()
         return (value as? JsonArray)?.map { element ->
             (element as? JsonPrimitive)?.contentOrNull ?: return null
+        }
+    }
+
+    private fun JsonObject.stringListOrNull(name: String): List<String>? = stringList(name)
+
+    private fun JsonObject.intList(name: String): List<Int>? {
+        val value = get(name) ?: return emptyList()
+        return (value as? JsonArray)?.map { element ->
+            (element as? JsonPrimitive)?.intOrNull ?: return null
         }
     }
 
@@ -791,9 +1233,59 @@ internal class DesktopSmeditMutationController(
     private fun formatRoomId(roomId: Int): String = "0x" + roomId.toString(16).uppercase().padStart(4, '0')
     private fun formatByte(value: Int): String = "0x" + value.toString(16).uppercase().padStart(2, '0')
 
+    private fun sourceFxPointer(room: RoomEdits, state: RoomStateEdits, parser: RomParser): Int? {
+        val sourceIndex = state.baseSourceStateIndex() ?: return null
+        val inspected = parser.inspectRoomStates(room.roomId).states.getOrNull(sourceIndex) ?: return null
+        return inspected.stateDataPcOffset?.let(parser::readStateData)?.get("fxPtr")
+    }
+
+    private fun effectiveDefaultFx(room: RoomEdits, state: RoomStateEdits, parser: RomParser): RomParser.FxEntry? {
+        val sourceIndex = state.baseSourceStateIndex() ?: return null
+        val inspected = parser.inspectRoomStates(room.roomId).states.getOrNull(sourceIndex) ?: return null
+        val fields = inspected.stateDataPcOffset?.let(parser::readStateData).orEmpty()
+        val pointer = fields["fxPtr"] ?: return null
+        val base = parser.parseFxEntries(pointer).lastOrNull(RomParser.FxEntry::isDefault) ?: emptyDefaultFxEntry()
+        return base.withFxChange(room.fxChange).withFxChange(state.fxChange)
+    }
+
+    private fun FxChange?.merge(requested: FxChange): FxChange = FxChange(
+        fxType = requested.fxType ?: this?.fxType,
+        liquidSurfaceStart = requested.liquidSurfaceStart ?: this?.liquidSurfaceStart,
+        liquidSurfaceNew = requested.liquidSurfaceNew ?: this?.liquidSurfaceNew,
+        liquidSpeed = requested.liquidSpeed ?: this?.liquidSpeed,
+        liquidDelay = requested.liquidDelay ?: this?.liquidDelay,
+        fxBitA = requested.fxBitA ?: this?.fxBitA,
+        fxBitB = requested.fxBitB ?: this?.fxBitB,
+        fxBitC = requested.fxBitC ?: this?.fxBitC,
+        paletteFxBitflags = requested.paletteFxBitflags ?: this?.paletteFxBitflags,
+        tileAnimBitflags = requested.tileAnimBitflags ?: this?.tileAnimBitflags,
+        paletteBlend = requested.paletteBlend ?: this?.paletteBlend,
+    )
+
+    private fun describeFxChange(change: FxChange, semanticOptions: List<String>?): List<String> = buildList {
+        change.fxType?.let { add("FX type = $it") }
+        change.liquidSurfaceStart?.let { add("Liquid start = ${formatWord(it)}") }
+        change.liquidSurfaceNew?.let { add("Liquid target = ${formatWord(it)}") }
+        change.liquidSpeed?.let { add("Liquid speed = ${formatWord(it)}") }
+        change.liquidDelay?.let { add("Liquid delay = $it") }
+        change.fxBitA?.let { add("FX bit A = ${formatByte(it)}") }
+        change.fxBitB?.let { add("FX bit B = ${formatByte(it)}") }
+        change.fxBitC?.let {
+            add("Liquid options = ${semanticOptions?.joinToString()?.ifBlank { "none" } ?: formatByte(it)}")
+        }
+        change.paletteFxBitflags?.let { add("Palette FX flags = ${formatByte(it)}") }
+        change.tileAnimBitflags?.let { add("Tile animation flags = ${formatByte(it)}") }
+        change.paletteBlend?.let { add("Palette blend = ${formatByte(it)}") }
+    }
+
+    private fun formatWord(value: Int): String = "0x" + value.toString(16).uppercase().padStart(4, '0')
+
     private companion object {
         const val SET_ROOM_MUSIC = "set_room_music"
         const val CONFIGURE_PATCH = "configure_patch"
+        const val SET_ROOM_FX = "set_room_fx"
+        const val TOURIAN_AREA = "Tourian"
+        const val MOTHER_BRAIN_RUNTIME_FX_POINTER = 0xA0A4
         val CONFIG_VALUE_ALIASES = setOf("seconds", "total_seconds", "totalSeconds")
     }
 }

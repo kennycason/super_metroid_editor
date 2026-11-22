@@ -157,11 +157,16 @@ Default; they are guarded from the initial reciprocal FX migration.
 
 | Bit | Mask | Name |
 |-----|------|------|
-| 0 | `0x01` | Small Tide |
-| 1 | `0x02` | Large Tide |
-| 5 | `0x20` | BG Warp-Line Shift |
-| 6 | `0x40` | BG Warp-Cascade Heat |
-| 7 | `0x80` | Flow Left |
+| 0 | `0x01` | Flow Left |
+| 1 | `0x02` | BG Animate (vertical BG2 shimmer) |
+| 2 | `0x04` | BG Liquid (horizontal BG2 shimmer) |
+| 3–5 | `0x08`–`0x20` | Unused / unknown |
+| 6 | `0x40` | Large Tide (approximately ±16 px) |
+| 7 | `0x80` | Small Tide (approximately ±4 px; wins if both tide bits are set) |
+
+These meanings come from the native bank `$88` handlers, not the historical
+SMILE labels. See [lava_acid_fx_rendering.md](lava_acid_fx_rendering.md) for the
+rendering and tide behavior.
 
 ### Layer 3 Replacement GFX (from SMILE Layer3Editor.frm)
 

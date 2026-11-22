@@ -7,11 +7,19 @@ import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.findAsmSourceText
 import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.NativeLiquidOptions
+import com.supermetroid.editor.rom.baseSourceStateIndex
+import com.supermetroid.editor.rom.displaySummary
+import com.supermetroid.editor.rom.emptyDefaultFxEntry
+import com.supermetroid.editor.rom.ensureStateManifest
+import com.supermetroid.editor.rom.withFxChange
+import com.supermetroid.editor.asm.snapshotRoomForResize
 import com.supermetroid.editor.ui.EditorState
 import java.io.File
 
@@ -90,6 +98,7 @@ internal class DesktopSmeditWorkspaceAccess(
         val hasStateMusicEdits = edits?.effectiveStates.orEmpty().any { state ->
             state.effectiveStateDataChange?.let { it.musicData != null || it.musicTrack != null } == true
         }
+        val states = effectiveRoomStates(roomId, currentParser, edits)
         return SmeditRoomDetails(
             id = formatRoomId(roomId),
             name = info?.name ?: room.name,
@@ -111,8 +120,120 @@ internal class DesktopSmeditWorkspaceAccess(
             sourceStateMusic = sourceStateMusic,
             hasDistinctSourceMusic = sourceStateMusic.map { it.musicData to it.musicTrack }.distinct().size > 1,
             hasStateMusicEdits = hasStateMusicEdits,
+            states = states,
         )
     }
+
+    private fun effectiveRoomStates(
+        roomId: Int,
+        currentParser: RomParser,
+        liveEdits: RoomEdits?,
+    ): List<SmeditRoomStateDetails> {
+        val inspection = currentParser.inspectRoomStates(roomId)
+        val room = snapshotRoomForResize(liveEdits ?: RoomEdits(roomId))
+        if (room.states.isEmpty()) {
+            if (!inspection.isComplete) return inspection.states.mapIndexed { index, inspected ->
+                SmeditRoomStateDetails(
+                    id = "source-state-${index + 1}",
+                    index = index,
+                    sourceIndex = index,
+                    condition = inspected.condition.shortSummary(inspection.area ?: 0),
+                    conditionKind = inspected.condition.kind.name,
+                    defaultState = inspected.condition.isDefault,
+                    readable = false,
+                    projectEdited = false,
+                    projectFxEdited = false,
+                    fxSourceManaged = false,
+                    fxReadable = false,
+                )
+            }
+            room.ensureStateManifest(currentParser)
+        }
+        val sourceManaged = room.asmFxSourceVersion != 0
+        return room.effectiveStates.mapIndexed { index, state ->
+            val sourceIndex = state.baseSourceStateIndex()
+            val inspected = sourceIndex?.let(inspection.states::getOrNull)
+            val sourceFields = inspected?.stateDataPcOffset?.let(currentParser::readStateData).orEmpty()
+            val commonChange = room.effectiveStateDataChange
+            val stateChange = state.effectiveStateDataChange
+            fun effectiveField(name: String, common: Int?, specific: Int?): Int? =
+                specific ?: common ?: sourceFields[name]
+            val managedFxResource = if (sourceManaged) {
+                editorState.asmPlmSourceBridge?.fx?.view(roomId, state.id)?.resource
+            } else null
+            val nativeEntries = if (sourceManaged) {
+                managedFxResource?.entries.orEmpty()
+            } else {
+                sourceFields["fxPtr"]?.let(currentParser::parseFxEntries).orEmpty()
+            }
+            var effectiveEntries = nativeEntries
+            val synthesizedDefault = effectiveEntries.none(RomParser.FxEntry::isDefault)
+            if (synthesizedDefault) {
+                effectiveEntries = effectiveEntries + emptyDefaultFxEntry()
+            }
+            if (!sourceManaged) {
+                effectiveEntries = effectiveEntries.map { entry ->
+                    if (entry.isDefault) {
+                        entry.withFxChange(room.fxChange).withFxChange(state.fxChange)
+                    } else {
+                        val key = entry.doorSelect.toString(16).uppercase().padStart(4, '0')
+                        entry.withFxChange(state.doorFxChanges[key])
+                    }
+                }
+            }
+            SmeditRoomStateDetails(
+                id = state.id,
+                index = index,
+                sourceIndex = sourceIndex,
+                condition = state.effectiveCondition.displaySummary(inspection.area ?: 0),
+                conditionKind = state.effectiveCondition.kind.name,
+                defaultState = state.effectiveCondition.kind.name == "DEFAULT",
+                readable = sourceFields.isNotEmpty() || state.templateSourceStateIndex != null,
+                projectEdited = state.hasEdits,
+                projectFxEdited = state.fxChange != null || state.doorFxChanges.isNotEmpty() || room.fxChange != null,
+                fxSourceManaged = sourceManaged,
+                fxReadable = !sourceManaged || managedFxResource != null,
+                runtimeIndexedFx = sourceFields["fxPtr"] == 0xA0A4,
+                tileset = effectiveField("tileset", commonChange?.tileset, stateChange?.tileset),
+                musicData = effectiveField("musicData", commonChange?.musicData, stateChange?.musicData),
+                musicTrack = effectiveField("musicTrack", commonChange?.musicTrack, stateChange?.musicTrack),
+                bgScrolling = effectiveField("bgScrolling", commonChange?.bgScrolling, stateChange?.bgScrolling),
+                levelDataPointer = sourceFields["levelDataPtr"],
+                fxPointer = sourceFields["fxPtr"],
+                enemySetPointer = sourceFields["enemySetPtr"],
+                enemyGraphicsPointer = sourceFields["enemyGfxPtr"],
+                roomScrollsPointer = sourceFields["roomScrollsPtr"],
+                xraySpecialCasingPointer = sourceFields["xraySpecialCasingPtr"],
+                mainAsmPointer = sourceFields["mainAsmPtr"],
+                plmSetPointer = sourceFields["plmSetPtr"],
+                backgroundPointer = sourceFields["bgDataPtr"],
+                setupAsmPointer = sourceFields["setupAsmPtr"],
+                fxEntries = effectiveEntries.map { entry -> fxDetails(entry, synthesizedDefault && entry.isDefault) },
+            )
+        }
+    }
+
+    private fun fxDetails(entry: RomParser.FxEntry, synthesized: Boolean): SmeditFxEntryDetails = SmeditFxEntryDetails(
+        selector = if (entry.isDefault) "default" else "door_specific",
+        synthesized = synthesized,
+        doorSelect = entry.doorSelect,
+        doorSelectHex = formatWord(entry.doorSelect),
+        sourceDoor = entry.sourceDoor?.caption,
+        liquidSurfaceStart = entry.liquidSurfaceStart,
+        liquidSurfaceNew = entry.liquidSurfaceNew,
+        liquidSpeed = entry.liquidSpeed,
+        liquidDelay = entry.liquidDelay,
+        fxType = entry.fxType,
+        fxTypeName = entry.fxTypeName,
+        fxBitA = entry.fxBitA,
+        fxBitB = entry.fxBitB,
+        fxBitC = entry.fxBitC,
+        liquidOptions = NativeLiquidOptions.decodedNames(entry.fxBitC),
+        unknownLiquidOptionMask = entry.fxBitC and NativeLiquidOptions.knownMask.inv() and 0xFF,
+        paletteFxBitflags = entry.paletteFxBitflags,
+        tileAnimBitflags = entry.tileAnimBitflags,
+        paletteBlend = entry.paletteBlend,
+    )
 
     override fun patches(): List<SmeditPatchSummary> = editorState.project.patches.map { patch ->
         SmeditPatchSummary(
@@ -295,6 +416,7 @@ internal class DesktopSmeditWorkspaceAccess(
     }
 
     private fun formatRoomId(roomId: Int): String = "0x" + roomId.toString(16).uppercase().padStart(4, '0')
+    private fun formatWord(value: Int): String = "0x" + value.toString(16).uppercase().padStart(4, '0')
 
     private companion object {
         val CONFIG_VALUE_ALIASES = setOf("seconds", "total_seconds", "totalSeconds")

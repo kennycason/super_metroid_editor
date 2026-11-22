@@ -15,6 +15,7 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
+import com.supermetroid.editor.rom.SuitPatches
 import com.supermetroid.editor.rom.TestRomHelper
 import com.supermetroid.editor.rom.TileGraphics
 import java.util.Base64
@@ -118,22 +119,106 @@ class SmeditBuildServiceTest {
     }
 
     @Test
-    fun `map rando style gravity patch changes only heated room immunity`() {
-        val patch = SmeditPatchCatalog.defaultPatches().single { it.id == "hex_gravity_no_heat_protect" }
-        assertEquals(1, patch.writes.size)
-        assertEquals(0x06E37D, patch.writes.single().offset)
-        assertEquals(listOf(0x01), patch.writes.single().bytes)
-        assertEquals(listOf(0x21), patch.writes.single().expectedBytes)
+    fun `map rando style gravity patch removes heat immunity and synchronizes suit palettes`() {
+        val patch = SmeditPatchCatalog.defaultPatches().single { it.id == SuitPatches.GRAVITY_NO_HEAT_ID }
+        val writes = patch.writes.associateBy { it.offset.toInt() }
+        assertEquals(setOf(0x06E37D, 0x06E3AB, 0x2FFD80), writes.keys)
+        assertEquals(listOf(0x01), writes.getValue(0x06E37D).bytes)
+        assertEquals(listOf(0x21), writes.getValue(0x06E37D).expectedBytes)
+        assertEquals(listOf(0x22, 0x80, 0xFD, 0xDF, 0x60), writes.getValue(0x06E3AB).bytes.take(5))
+        assertEquals(53, writes.getValue(0x06E3AB).bytes.size)
+        assertEquals(63, writes.getValue(0x2FFD80).bytes.size)
+        assertTrue(writes.getValue(0x2FFD80).expectedBytes.orEmpty().all { it == 0xFF })
 
         val original = TestRomHelper.loadRomBytes() ?: return
+        for (write in patch.writes) {
+            val offset = write.offset.toInt()
+            assertEquals(
+                write.expectedBytes,
+                original.copyOfRange(offset, offset + write.bytes.size).map { it.toInt() and 0xFF },
+            )
+        }
         val result = SmeditBuildService().build(
             original,
             SmeditBuildRequest(patches = mapOf("gravity_no_heat_protect" to SmeditPatchRequest())),
         )
         val changedOffsets = original.indices.filter { original[it] != result.romBytes[it] }
+        val expectedChangedOffsets = patch.writes.flatMap { write ->
+            write.bytes.indices.mapNotNull { index ->
+                (write.offset.toInt() + index).takeIf { write.expectedBytes?.get(index) != write.bytes[index] }
+            }
+        }.sorted()
 
-        assertEquals(listOf(0x06E37D), changedOffsets)
+        assertEquals(expectedChangedOffsets, changedOffsets)
         assertEquals(0x01, result.romBytes[0x06E37D].toInt() and 0xFF)
+        assertEquals(listOf(0x22, 0x80, 0xFD, 0xDF, 0x60), result.romBytes.copyOfRange(0x06E3AB, 0x06E3B0).map { it.toInt() and 0xFF })
+    }
+
+    @Test
+    fun `suit damage reduction patches are independent and composable`() {
+        val catalog = SmeditPatchCatalog.defaultPatches()
+        val gravity = catalog.single { it.id == SuitPatches.GRAVITY_NO_DAMAGE_REDUCTION_ID }
+        val varia = catalog.single { it.id == SuitPatches.VARIA_NO_DAMAGE_REDUCTION_ID }
+        assertEquals(
+            mapOf(0x0801DC to 0x00, 0x0869DD to 0x00, 0x102464 to 0x00),
+            gravity.writes.associate { it.offset.toInt() to it.bytes.single() },
+        )
+        assertEquals(
+            mapOf(0x0869E2 to 0x00, 0x102468 to 0x18),
+            varia.writes.associate { it.offset.toInt() to it.bytes.single() },
+        )
+        assertEquals(listOf(0x20, 0x20, 0x20), gravity.writes.map { it.expectedBytes?.single() })
+        assertEquals(listOf(0x01, 0x4A), varia.writes.map { it.expectedBytes?.single() })
+
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val result = SmeditBuildService().build(
+            original,
+            SmeditBuildRequest(
+                patches = mapOf(
+                    "gravity_no_heat_protect" to SmeditPatchRequest(),
+                    "gravity_no_damage_reduction" to SmeditPatchRequest(),
+                    "varia_no_damage_reduction" to SmeditPatchRequest(),
+                )
+            ),
+        )
+        (gravity.writes + varia.writes).forEach { write ->
+            assertEquals(write.bytes.single(), result.romBytes[write.offset.toInt()].toInt() and 0xFF)
+        }
+        assertEquals(0x01, result.romBytes[0x06E37D].toInt() and 0xFF)
+        assertEquals(0x22, result.romBytes[0x06E3AB].toInt() and 0xFF)
+        assertEquals(0xAD, result.romBytes[0x2FFD80].toInt() and 0xFF)
+
+        val incompatible = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().build(
+                original,
+                SmeditBuildRequest(
+                    patches = mapOf(
+                        "gravity_no_damage_reduction" to SmeditPatchRequest(),
+                        "complementary_suits" to SmeditPatchRequest(),
+                    )
+                ),
+            )
+        }
+        assertTrue(incompatible.message.orEmpty().contains("incompatible"))
+    }
+
+    @Test
+    fun `saved one-write gravity heat patch upgrades to palette-safe definition`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val project = SmEditProject("source.sfc").apply {
+            patches += SmPatch(
+                id = SuitPatches.GRAVITY_NO_HEAT_ID,
+                name = "Gravity Suit No Heat Protection",
+                enabled = true,
+                writes = mutableListOf(PatchWrite(0x06E37D, listOf(0x01), listOf(0x21))),
+            )
+        }
+
+        val result = SmeditBuildService().build(original, SmeditBuildRequest(), project)
+
+        assertEquals(0x01, result.romBytes[0x06E37D].toInt() and 0xFF)
+        assertEquals(0x22, result.romBytes[0x06E3AB].toInt() and 0xFF)
+        assertEquals(0xAD, result.romBytes[0x2FFD80].toInt() and 0xFF)
     }
 
     @Test
@@ -174,6 +259,89 @@ class SmeditBuildServiceTest {
         }
         assertTrue(result.report.warnings.any { it.contains("cannot verify the target ROM bytes") })
         assertTrue(result.report.applied.any { it.configType == EnvironmentalDamagePatch.CONFIG_TYPE })
+    }
+
+    @Test
+    fun `per-area environmental config produces standalone checked hooks and tables`() {
+        val addressSpace = ByteArray(0x300000) { 0xFF.toByte() }
+        EnvironmentalDamagePatch.NATIVE_DAMAGE_HOOKS.forEach { hook ->
+            hook.expectedBytes.forEachIndexed { index, byte -> addressSpace[hook.pcOffset + index] = byte.toByte() }
+        }
+        val config = mapOf(
+            EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1,
+            EnvironmentalDamagePatch.areaRateKey("norfair", EnvironmentalDamagePatch.HEAT_KEY) to 60,
+            EnvironmentalDamagePatch.areaRateKey("maridia", EnvironmentalDamagePatch.LAVA_KEY) to 12,
+        )
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(patches = mapOf(
+                EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(config = config),
+            )),
+        )
+
+        applyIps(addressSpace, result.ipsPatchBytes)
+
+        EnvironmentalDamagePatch.perAreaCheckedWrites(config).forEach { write ->
+            assertEquals(
+                write.bytes,
+                addressSpace.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
+                    .map { it.toInt() and 0xFF },
+            )
+        }
+        assertTrue(result.report.warnings.any { it.contains("cannot verify the target ROM bytes") })
+    }
+
+    @Test
+    fun `disabled per-area mode retains simple scalar writes and ignores saved area values`() {
+        val addressSpace = ByteArray(0x300000)
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(patches = mapOf(
+                EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(config = mapOf(
+                    EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 0,
+                    EnvironmentalDamagePatch.HEAT_KEY to 5,
+                    EnvironmentalDamagePatch.areaRateKey("norfair", EnvironmentalDamagePatch.HEAT_KEY) to 60,
+                )),
+            )),
+        )
+
+        applyIps(addressSpace, result.ipsPatchBytes)
+
+        val heat = EnvironmentalDamagePatch.FIELDS.first { it.key == EnvironmentalDamagePatch.HEAT_KEY }
+        val fixed = EnvironmentalDamagePatch.encodeEnergyPerSecond(5)
+        assertEquals(fixed.lowWord, addressSpace.readWord(heat.lowWordPc))
+        assertEquals(fixed.highWord, addressSpace.readWord(heat.highWordPc))
+        assertTrue(EnvironmentalDamagePatch.NATIVE_DAMAGE_HOOKS.all { hook ->
+            addressSpace[hook.pcOffset] == 0.toByte()
+        }, "Simple mode must not install JSL damage hooks")
+        assertTrue(addressSpace.copyOfRange(
+            EnvironmentalDamagePatch.PER_AREA_CODE_PC,
+            EnvironmentalDamagePatch.PER_AREA_CODE_PC + 210,
+        ).all { it == 0.toByte() })
+    }
+
+    @Test
+    fun `per-area rates remain compatible with map rando gravity heat behavior`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val config = mapOf(
+            EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1,
+            EnvironmentalDamagePatch.areaRateKey("norfair", EnvironmentalDamagePatch.HEAT_KEY) to 60,
+        )
+
+        val result = SmeditBuildService().build(
+            original,
+            SmeditBuildRequest(patches = mapOf(
+                EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(config = config),
+                "gravity_no_heat_protect" to SmeditPatchRequest(),
+            )),
+        )
+
+        assertEquals(0x01, result.romBytes[0x06E37D].toInt() and 0xFF)
+        EnvironmentalDamagePatch.perAreaCheckedWrites(config).forEach { write ->
+            assertEquals(
+                write.bytes,
+                result.romBytes.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
+                    .map { it.toInt() and 0xFF },
+            )
+        }
     }
 
     @Test
@@ -1025,6 +1193,19 @@ class SmeditBuildServiceTest {
         }
         assertEquals(0, allRoomsHeated.defaultValue)
         assertEquals(listOf("Disabled", "Enabled"), allRoomsHeated.choices.map { it.label })
+        assertTrue(allRoomsHeated.label.contains("Non-Tourian"))
+        assertTrue(allRoomsHeated.description.contains("Mother Brain"))
+        val perAreaRates = environmentalDamage.fields.first {
+            it.key == EnvironmentalDamagePatch.PER_AREA_RATES_KEY
+        }
+        assertEquals(0, perAreaRates.defaultValue)
+        assertEquals(listOf("Disabled", "Enabled"), perAreaRates.choices.map { it.label })
+        assertEquals(
+            24,
+            environmentalDamage.fields.count { field ->
+                EnvironmentalDamagePatch.AREA_RATE_FIELDS.any { it.key == field.key }
+            },
+        )
         assertTrue(environmentalDamage.supportsPatchOnly)
         assertEquals("config_zebes_escape_time", SmeditPatchCatalog.resolvePatchKey("end_game_escape_timer"))
         assertEquals("config_short_charge", SmeditPatchCatalog.resolvePatchKey("short_charge"))

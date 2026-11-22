@@ -13,6 +13,22 @@ import kotlin.test.assertTrue
 
 class PatchRepositoryTest {
     @Test
+    fun `intro skip patches do not unlock Tourian on a new game`() {
+        val patches = PatchRepository.loadBundledPatches().associateBy { it.id }
+
+        for (id in listOf("bundled_skip_intro", "bundled_skip_intro_ceres")) {
+            val patch = assertNotNull(patches[id])
+            val newGameRoutine = patch.writes.single { it.offset == 0x10F210L }
+
+            assertContentEquals(
+                listOf(0x9C, 0x5B, 0x1F) + List(7) { 0xEA } + listOf(0xA9, 0x06, 0x00),
+                newGameRoutine.bytes.slice(19 until 32),
+                "$id must preserve the startup routine without setting event 0x0A",
+            )
+        }
+    }
+
+    @Test
     fun `classpath resources remain readable after their backing jar is replaced`() {
         val tempDir = Files.createTempDirectory("smedit-resource-cache-test")
         val jarPath = tempDir.resolve("resources.jar")

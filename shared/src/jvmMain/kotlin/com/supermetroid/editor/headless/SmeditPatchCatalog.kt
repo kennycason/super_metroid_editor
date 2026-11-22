@@ -6,6 +6,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
+import com.supermetroid.editor.rom.SuitPatches
 
 const val CERES_ESCAPE_CONFIG_TYPE = "ceres_escape_seconds"
 const val CERES_TIMER_OPERAND_SNES = 0x809E0E
@@ -422,20 +423,13 @@ object SmeditPatchCatalog {
             writes = mutableListOf(PatchWrite(0x40B5F, listOf(0xEA, 0xEA, 0xEA, 0xEA))),
         ),
         SmPatch(
-            id = "hex_gravity_no_heat_protect",
-            name = "Gravity Suit No Heat Protection",
-            description = "Map Rando-style Gravity Suit: keeps full movement in water, lava, and acid, but only Varia prevents heated-room damage.",
-            enabled = false,
-            writes = mutableListOf(PatchWrite(0x6E37D, listOf(0x01))),
-        ),
-        SmPatch(
             id = "hex_supers_dont_open_reds",
             name = "Supers Don't Open Red Doors",
             description = "Super missiles no longer open red or missile doors.",
             enabled = false,
             writes = mutableListOf(PatchWrite(0x23D58, listOf(0xEA, 0xEA, 0xEA, 0xEA, 0xEA))),
         ),
-    )
+    ) + SuitPatches.definitions()
 
     private fun configPatches(): List<SmPatch> = listOf(
         SmPatch(
@@ -542,7 +536,7 @@ object SmeditPatchCatalog {
         SmPatch(
             id = "config_environmental_damage",
             name = "Environmental Damage",
-            description = "Set heated-room, lava, and acid damage rates in energy per second.",
+            description = "Set global or per-area heated-room, lava, and acid damage rates in energy per second.",
             enabled = false,
             configType = EnvironmentalDamagePatch.CONFIG_TYPE,
         ),
@@ -884,7 +878,7 @@ object SmeditPatchCatalog {
             configType = EnvironmentalDamagePatch.CONFIG_TYPE,
             patchId = "config_environmental_damage",
             name = "Environmental Damage",
-            description = "Sets base heated-room, lava, and acid damage in energy per second.",
+            description = "Sets heated-room, lava, and acid damage globally or independently for each game area.",
             headlessSupported = true,
             supportsPatchOnly = true,
             requiresRom = false,
@@ -898,19 +892,43 @@ object SmeditPatchCatalog {
                     description = field.suitBehavior,
                 )
             } + SmeditConfigFieldSchema(
-                key = EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
-                label = "All Rooms Heated",
+                key = EnvironmentalDamagePatch.PER_AREA_RATES_KEY,
+                label = "Per-Area Rates",
                 type = "enum",
                 min = 0,
                 max = 1,
                 defaultValue = 0,
-                description = "Spawn the native heated-room effect after every room load while preserving existing room FX.",
+                description = "Use the area-specific heat, lava, and acid table instead of the three global rates.",
                 category = "Scope",
                 choices = listOf(
                     SmeditConfigChoiceSchema("Disabled", 0),
                     SmeditConfigChoiceSchema("Enabled", 1),
                 ),
-            ),
+            ) + SmeditConfigFieldSchema(
+                key = EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
+                label = "All Non-Tourian Rooms Heated",
+                type = "enum",
+                min = 0,
+                max = 1,
+                defaultValue = 0,
+                description = "Spawn the native heated-room effect after non-Tourian room loads while preserving existing room FX. Tourian is excluded for Mother Brain and escape safety.",
+                category = "Scope",
+                choices = listOf(
+                    SmeditConfigChoiceSchema("Disabled", 0),
+                    SmeditConfigChoiceSchema("Enabled", 1),
+                ),
+            ) + EnvironmentalDamagePatch.AREA_RATE_FIELDS.map { areaField ->
+                intField(
+                    key = areaField.key,
+                    label = areaField.hazard.label,
+                    min = EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
+                    max = EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+                    defaultValue = areaField.hazard.defaultEnergyPerSecond,
+                    category = areaField.area.label,
+                    description = "${areaField.hazard.suitBehavior}. Used when Per-Area Rates is enabled.",
+                    unit = "energy/sec",
+                )
+            },
         )
 
     private fun bossBehaviorSchema(definition: HeadlessBossBehaviorDefinition): SmeditConfigSchema =

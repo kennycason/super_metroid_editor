@@ -84,6 +84,7 @@ class OpenAiProvider internal constructor(
         modelId: String,
         prompt: String,
         previousResponseId: String?,
+        runtimeContext: String?,
         toolDefinitions: List<SmeditToolDefinition>,
         executeTool: (suspend (AiToolCall) -> SmeditToolResult)?,
     ): AiChatReply {
@@ -93,6 +94,7 @@ class OpenAiProvider internal constructor(
             modelId = modelId,
             input = JsonPrimitive(prompt),
             previousResponseId = previousResponseId,
+            runtimeContext = runtimeContext,
             toolDefinitions = toolDefinitions,
         )
         val collectedText = mutableListOf<String>()
@@ -135,6 +137,7 @@ class OpenAiProvider internal constructor(
                 modelId = modelId,
                 input = JsonArray(outputs),
                 previousResponseId = responseId,
+                runtimeContext = runtimeContext,
                 toolDefinitions = toolDefinitions,
             )
         }
@@ -144,13 +147,20 @@ class OpenAiProvider internal constructor(
         modelId: String,
         input: kotlinx.serialization.json.JsonElement,
         previousResponseId: String?,
+        runtimeContext: String?,
         toolDefinitions: List<SmeditToolDefinition>,
     ): JsonObject = buildJsonObject {
         put("model", modelId)
         put("input", input)
         put(
             "instructions",
-            "You are the SMEDIT assistant. Be precise, evidence-driven, and transparent. Use the provided SMEDIT tools for the current workspace. Use search_docs/read_doc for ROM and editor constraints, and search_asm for live ASM source when relevant; do not guess when those tools can answer. Preserve state-specific boss, event, and escape behavior unless the user explicitly asks to replace it. Read tools may inspect data. Mutation tools only stage an exact plan for explicit user approval; never claim a staged plan was applied. Tell the user when approval is required.",
+            buildString {
+                append("You are the SMEDIT assistant. Be precise, evidence-driven, and transparent. Use the provided SMEDIT tools for the current workspace. Use search_docs/read_doc for ROM and editor constraints, and search_asm for live ASM source when relevant; do not guess when those tools can answer. Preserve state-specific boss, event, and escape behavior unless the user explicitly asks to replace it. Read tools may inspect data. Mutation tools only stage an exact plan for explicit user approval; never claim a staged plan was applied. Tell the user when approval is required.")
+                runtimeContext?.trim()?.takeIf(String::isNotEmpty)?.let { context ->
+                    append("\n\nAuthoritative live SMEDIT state:\n")
+                    append(context)
+                }
+            },
         )
         previousResponseId?.takeIf(String::isNotBlank)?.let { put("previous_response_id", it) }
         if (toolDefinitions.isNotEmpty()) {

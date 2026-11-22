@@ -124,6 +124,7 @@ import com.supermetroid.editor.rom.RomRoomCatalog
 import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.ProjectNewRoomMaterializer
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
+import com.supermetroid.editor.rom.SuitPatches
 import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.embeddedLayer2StartOffset
 import com.supermetroid.editor.rom.displaySummary
@@ -4796,7 +4797,8 @@ class EditorState(
         if (patch.configType in com.supermetroid.editor.asm.DATA_PATCH_TYPES) {
             setNativePatchValues(id, mapOf(key to value)); return
         }
-        if (usesRoomAsmAuthoring && patch.configType == com.supermetroid.editor.rom.EnvironmentalDamagePatch.CONFIG_TYPE) {
+        if (usesRoomAsmAuthoring && patch.configType == com.supermetroid.editor.rom.EnvironmentalDamagePatch.CONFIG_TYPE &&
+            com.supermetroid.editor.rom.EnvironmentalDamagePatch.FIELDS.any { it.key == key }) {
             runCatching { requireNotNull(environmentalDamageBridge) { "Wait for environmental source indexing." }.edit(key, value) }
                 .onFailure { postStatus("Environmental edit blocked: ${it.message}") }
             return
@@ -5531,8 +5533,16 @@ class EditorState(
                 project.patches.find { it.id == def.id }?.let { existing ->
                     existing.name = def.name
                     existing.description = def.description
+                    if (SuitPatches.upgradeLegacyWrites(existing, def)) {
+                        refreshed++
+                    }
                     if (existing.exclusiveGroup != def.exclusiveGroup) {
                         existing.exclusiveGroup = def.exclusiveGroup
+                        refreshed++
+                    }
+                    if (existing.incompatiblePatchIds != def.incompatiblePatchIds) {
+                        existing.incompatiblePatchIds.clear()
+                        existing.incompatiblePatchIds.addAll(def.incompatiblePatchIds)
                         refreshed++
                     }
                     val expectedByWrite = def.writes.associateBy { it.offset to it.bytes }

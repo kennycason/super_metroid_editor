@@ -2846,9 +2846,9 @@ class ProjectRoomExporter(
             failExport("Room 0x$roomKey state '$stateId' FX field ${invalid.first}=${invalid.second} is invalid")
         }
 
-        val fxPtr = readU16(romData, stateOffset + 6)
-        val entries: List<RomParser.FxEntry>
-        val entryIndex: Int
+        var fxPtr = readU16(romData, stateOffset + 6)
+        var entries: List<RomParser.FxEntry>
+        var entryIndex: Int
         var fxPc: Int
         if (fxPtr == 0 || fxPtr == 0xFFFF) {
             if (doorSelect != 0) {
@@ -2880,16 +2880,41 @@ class ProjectRoomExporter(
             onLog("Room 0x$roomKey: created FX table for state '$stateId'")
         } else {
             entries = romParser.parseFxEntries(fxPtr)
-            entryIndex = entries.indexOfFirst { it.doorSelect == doorSelect }
-            if (entryIndex < 0) {
+            val existingIndex = entries.indexOfFirst { it.doorSelect == doorSelect }
+            if (existingIndex < 0 && doorSelect == 0) {
+                if (entries.size >= 16) {
+                    failExport("Room 0x$roomKey state '$stateId' FX table has no room for a default entry")
+                }
+                val extended = entries + emptyDefaultFxEntry()
+                val bytes = SourceFxResource(
+                    identity = "room 0x$roomKey state '$stateId' FX table",
+                    entries = extended,
+                ).bytes()
+                val allocation = roomDataAllocator.allocate(
+                    bytes = bytes,
+                    banks = listOf(0x83),
+                    label = "room 0x$roomKey state '$stateId' FX table",
+                ) ?: failExport(
+                    "Room 0x$roomKey state '$stateId' needs a ${bytes.size}-byte FX allocation, but bank \$83 " +
+                        "has no contiguous free space"
+                )
+                fxPtr = allocation.snesAddress and 0xFFFF
+                writeU16(romData, stateOffset + 6, fxPtr)
+                fxPc = allocation.pcOffset
+                entries = extended
+                entryIndex = extended.lastIndex
+                onLog("Room 0x$roomKey: added default FX entry for state '$stateId'")
+            } else if (existingIndex < 0) {
                 val target = if (doorSelect == 0) {
                     "default entry"
                 } else {
                     "entry for door \$${doorSelect.toString(16).uppercase().padStart(4, '0')}"
                 }
                 failExport("Room 0x$roomKey state '$stateId' FX table has no $target")
+            } else {
+                entryIndex = existingIndex
+                fxPc = romParser.snesToPc(RomConstants.BANK_FX or fxPtr)
             }
-            fxPc = romParser.snesToPc(RomConstants.BANK_FX or fxPtr)
         }
 
         if (fxChangeIsNoOp(entries[entryIndex], change)) return

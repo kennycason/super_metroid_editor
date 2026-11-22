@@ -36,6 +36,7 @@ interface AiProvider {
         modelId: String,
         prompt: String,
         previousResponseId: String? = null,
+        runtimeContext: String? = null,
         toolDefinitions: List<SmeditToolDefinition> = emptyList(),
         executeTool: (suspend (AiToolCall) -> SmeditToolResult)? = null,
     ): AiChatReply

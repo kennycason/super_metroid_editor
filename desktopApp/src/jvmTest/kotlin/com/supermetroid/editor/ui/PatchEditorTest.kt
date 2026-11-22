@@ -2,7 +2,9 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.AppSettings
 import com.supermetroid.editor.data.PatchSortOrder
+import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.rom.SuitPatches
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -10,6 +12,26 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class PatchEditorTest {
+    @Test
+    fun `saved gravity heat patch upgrades and new suit controls are seeded`() {
+        val editor = EditorState().apply { testMode = true }
+        val existing = SmPatch(
+            id = SuitPatches.GRAVITY_NO_HEAT_ID,
+            name = "Gravity Suit No Heat Protection",
+            enabled = true,
+            writes = mutableListOf(PatchWrite(0x06E37D, listOf(0x01), listOf(0x21))),
+        )
+        editor.project.patches += existing
+
+        editor.seedDefaultPatches()
+
+        assertTrue(existing.enabled)
+        assertEquals(setOf(0x06E37DL, 0x06E3ABL, 0x2FFD80L), existing.writes.map { it.offset }.toSet())
+        assertTrue(existing.incompatiblePatchIds.contains("bundled_complementary_suits"))
+        assertTrue(editor.project.patches.any { it.id == SuitPatches.GRAVITY_NO_DAMAGE_REDUCTION_ID })
+        assertTrue(editor.project.patches.any { it.id == SuitPatches.VARIA_NO_DAMAGE_REDUCTION_ID })
+    }
+
     @Test
     fun `existing beam patch metadata upgrades to the projectile editor label without changing settings`() {
         val editor = EditorState().apply { testMode = true }

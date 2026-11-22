@@ -61,6 +61,7 @@ class OpenAiProviderTest {
             modelId = "provider-returned-model",
             prompt = "What changed?",
             previousResponseId = "resp_1",
+            runtimeContext = "NO mutation plan is awaiting approval.",
         )
 
         assertEquals("resp_2", reply.responseId)
@@ -72,6 +73,10 @@ class OpenAiProviderTest {
         assertEquals("provider-returned-model", payload.getValue("model").jsonPrimitive.content)
         assertEquals("What changed?", payload.getValue("input").jsonPrimitive.content)
         assertEquals("resp_1", payload.getValue("previous_response_id").jsonPrimitive.content)
+        assertTrue(
+            payload.getValue("instructions").jsonPrimitive.content
+                .contains("Authoritative live SMEDIT state:\nNO mutation plan is awaiting approval."),
+        )
         assertFalse(request.body.contains("top-secret"))
     }
 

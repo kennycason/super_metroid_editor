@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.SuitPatches
 
 // ─── Tileset defaults: metatile → (block type, BTS) ─────────────
 
@@ -219,13 +220,10 @@ val HARDCODED_PATCHES: List<SmPatch> = listOf(
     SmPatch(id = "hex_no_crystal_flash", name = "Disable Crystal Flash",
         description = "Crystal flash can no longer be used (0x40B5F: NOP×4).",
         enabled = false, writes = mutableListOf(PatchWrite(0x40B5F, listOf(0xEA, 0xEA, 0xEA, 0xEA)))),
-    SmPatch(id = "hex_gravity_no_heat_protect", name = "Gravity Suit No Heat Protection",
-        description = "Map Rando-style Gravity Suit: keeps full movement in water, lava, and acid, but only Varia prevents heated-room damage (0x6E37D: 21 → 01).",
-        enabled = false, writes = mutableListOf(PatchWrite(0x6E37D, listOf(0x01)))),
     SmPatch(id = "hex_supers_dont_open_reds", name = "Supers Don't Open Red Doors",
         description = "Super missiles no longer open red/missile doors or eye doors (0x23D58: NOP×5).",
         enabled = false, writes = mutableListOf(PatchWrite(0x23D58, listOf(0xEA, 0xEA, 0xEA, 0xEA, 0xEA)))),
-)
+) + SuitPatches.definitions()
 
 /**
  * Ceres escape timer LDA operand at $80:9E0D.
@@ -454,11 +452,11 @@ val SAMUS_PHYSICS_PATCH = SmPatch(
     configType = "samus_physics"
 )
 
-/** Config patch: heated-room, lava, and acid base damage rates. */
+/** Config patch: global or per-area heated-room, lava, and acid base damage rates. */
 val ENVIRONMENTAL_DAMAGE_PATCH = SmPatch(
     id = "config_environmental_damage",
     name = "Environmental Damage",
-    description = "Set heated-room, lava, and acid damage rates in energy per second.",
+    description = "Set global or per-area heated-room, lava, and acid damage rates in energy per second.",
     enabled = false,
     writes = mutableListOf(),
     configType = EnvironmentalDamagePatch.CONFIG_TYPE,

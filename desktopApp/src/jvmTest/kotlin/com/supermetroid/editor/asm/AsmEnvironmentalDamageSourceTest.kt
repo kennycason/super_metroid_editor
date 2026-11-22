@@ -299,6 +299,36 @@ class AsmEnvironmentalDamageSourceTest {
         assertFails { protectEnvironmentalDamageSource(catalog, originals, project, compiled()) }
     }
 
+    @Test fun `per-area mode resolves compiler checked damage hooks and releases their source ownership`() {
+        val catalog = AsmEnvironmentalDamageSource(originals)
+        val project = SmEditProject("test.sfc").apply {
+            patches += SmPatch(
+                "areas",
+                "Areas",
+                enabled = true,
+                configType = Rates.CONFIG_TYPE,
+                configData = mutableMapOf(
+                    Rates.PER_AREA_RATES_KEY to 1,
+                    Rates.areaRateKey("norfair", Rates.HEAT_KEY) to 60,
+                ),
+            )
+        }
+        val heatCore = 0x6E381
+        val checked = protectEnvironmentalDamageSource(
+            catalog,
+            originals,
+            project,
+            compiled(ranges = listOf(AsmSourceOwnedRange(heatCore, 19))),
+        )
+
+        assertEquals(heatCore, checked.patchDataLocations[environmentalHookSourceKey(Rates.HEAT_KEY)]?.lowPc)
+        assertEquals(0x801F7, checked.patchDataLocations[environmentalHookSourceKey(Rates.LAVA_KEY)]?.lowPc)
+        assertEquals(0x80239, checked.patchDataLocations[environmentalHookSourceKey(Rates.ACID_KEY)]?.lowPc)
+        assertTrue(checked.sourceOwnedRanges.none { range ->
+            heatCore < range.pcOffset + range.length && range.pcOffset < heatCore + 19
+        })
+    }
+
     @Test fun `source routine movement is checked and raw exact non GUI pairs remain buildable`() {
         val catalog = AsmEnvironmentalDamageSource(originals); val project = SmEditProject("test.sfc")
         val acid = catalog.original(Rates.ACID_KEY)
@@ -389,6 +419,13 @@ class AsmEnvironmentalDamageSourceTest {
             render(); assertTrue(input(Rates.LAVA_KEY).config.contains(SemanticsProperties.Disabled))
             assertTrue(tag("environmental-use-asm-${Rates.LAVA_KEY}").config[SemanticsActions.OnClick].action!!.invoke()); render()
             assertNull(patch.configData); assertFalse(input(Rates.LAVA_KEY).config.contains(SemanticsProperties.Disabled))
+            val beforeAreaEdit = f.workspace.sourceBufferRevision
+            assertTrue(tag("environmental-per-area-rates").config[SemanticsActions.OnClick].action!!.invoke()); render()
+            assertEquals(1, patch.configData?.get(Rates.PER_AREA_RATES_KEY))
+            val norfairHeat = tag("environmental-area-norfair-${Rates.HEAT_KEY}")
+            assertTrue(norfairHeat.config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("60"))); render()
+            assertEquals(60, patch.configData?.get(Rates.areaRateKey("norfair", Rates.HEAT_KEY)))
+            assertEquals(beforeAreaEdit, f.workspace.sourceBufferRevision, "Area table edits stay in project config")
         } finally { scene.close(); surface.close(); selectEnvironmentalDamage(null) }
     }
 }

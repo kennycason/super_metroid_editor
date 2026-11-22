@@ -70,6 +70,69 @@ data class SmeditRoomMusicState(
 )
 
 @Serializable
+data class SmeditFxEntryDetails(
+    val selector: String,
+    /** True when no stored default record exists and this effective None record is synthesized for inspection. */
+    val synthesized: Boolean = false,
+    val doorSelect: Int,
+    val doorSelectHex: String,
+    val sourceDoor: String? = null,
+    val liquidSurfaceStart: Int,
+    val liquidSurfaceNew: Int,
+    val liquidSpeed: Int,
+    val liquidDelay: Int,
+    val fxType: Int,
+    val fxTypeName: String,
+    val fxBitA: Int,
+    val fxBitB: Int,
+    val fxBitC: Int,
+    val liquidOptions: List<String> = emptyList(),
+    val unknownLiquidOptionMask: Int = 0,
+    val paletteFxBitflags: Int,
+    val tileAnimBitflags: Int,
+    val paletteBlend: Int,
+)
+
+@Serializable
+data class SmeditRoomStateDetails(
+    val id: String,
+    val index: Int,
+    val sourceIndex: Int? = null,
+    val condition: String,
+    val conditionKind: String,
+    val defaultState: Boolean,
+    val readable: Boolean,
+    val projectEdited: Boolean,
+    val projectFxEdited: Boolean,
+    val fxSourceManaged: Boolean,
+    val fxReadable: Boolean = true,
+    val runtimeIndexedFx: Boolean = false,
+    val tileset: Int? = null,
+    val musicData: Int? = null,
+    val musicTrack: Int? = null,
+    val bgScrolling: Int? = null,
+    val levelDataPointer: Int? = null,
+    val fxPointer: Int? = null,
+    val enemySetPointer: Int? = null,
+    val enemyGraphicsPointer: Int? = null,
+    val roomScrollsPointer: Int? = null,
+    val xraySpecialCasingPointer: Int? = null,
+    val mainAsmPointer: Int? = null,
+    val plmSetPointer: Int? = null,
+    val backgroundPointer: Int? = null,
+    val setupAsmPointer: Int? = null,
+    val fxEntries: List<SmeditFxEntryDetails> = emptyList(),
+)
+
+@Serializable
+data class SmeditRoomFxDetails(
+    val id: String,
+    val name: String,
+    val area: String,
+    val states: List<SmeditRoomStateDetails>,
+)
+
+@Serializable
 data class SmeditRoomDetails(
     val id: String,
     val name: String,
@@ -94,6 +157,8 @@ data class SmeditRoomDetails(
     val hasDistinctSourceMusic: Boolean = false,
     /** True when this project already owns music fields on one or more individual states. */
     val hasStateMusicEdits: Boolean = false,
+    /** Ordered effective runtime states, including all default and door-specific FX records. */
+    val states: List<SmeditRoomStateDetails> = emptyList(),
 )
 
 @Serializable
@@ -218,10 +283,23 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
         ),
         SmeditToolDefinition(
             name = "get_room",
-            description = "Get effective metadata for one room, including dimensions, map position, tileset, effective music, source music for every runtime state, and edit state.",
+            description = "Get effective metadata for one room, including dimensions, map position, every runtime state's condition and state fields, and every effective default or door-specific FX record.",
             inputSchema = objectSchema(
                 properties = mapOf("room_id" to stringSchema("Room id in hexadecimal, such as 91F8, 0x91F8, or \$91F8.")),
                 required = listOf("room_id"),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "list_room_fx",
+            description = "Inspect effective FX for every state of matching rooms in one call. Results preserve ordered door-specific records. Native liquid options are flow_left=0x01, bg_animate=0x02 (vertical BG2 shimmer), bg_liquid=0x04 (horizontal BG2 shimmer), large_tide=0x40, and small_tide=0x80. Tides are not required for BG shimmer.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "query" to stringSchema("Optional case-insensitive room id, name, handle, or area filter."),
+                    "areas" to stringArraySchema("Optional case-insensitive area names, such as Crateria."),
+                    "room_ids" to stringArraySchema("Optional hexadecimal room ids."),
+                    "limit" to integerSchema("Maximum rooms to return, from 1 through 100."),
+                ),
             ),
             effect = SmeditToolEffect.READ_ONLY,
         ),
@@ -293,7 +371,7 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
         ),
         SmeditToolDefinition(
             name = "set_room_music",
-            description = "Stage a room-music change for explicit user approval. This never applies the change itself. Empty room_ids means every room. By default SMEDIT protects rooms whose runtime states use distinct music (boss/event/escape behavior) or have state-specific project music edits. Only set overwrite_special_state_music when the user explicitly asks to flatten those state-specific values.",
+            description = "Stage a room-music change for explicit user approval. This never applies the change itself. Empty room_ids means every room. By default SMEDIT protects rooms whose runtime states use distinct music, rooms with state-specific project music edits, and all of Tourian because its Metroid/boss/cutscene sounds depend on native song instruments. The two safety classes require separate explicit overrides.",
             inputSchema = objectSchema(
                 properties = mapOf(
                     "music_data" to integerSchema("Music data/song-set byte, from 0 through 255.", 0, 255),
@@ -303,6 +381,9 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                     "exclude_areas" to stringArraySchema("Optional case-insensitive area names to exclude, such as Ceres."),
                     "overwrite_special_state_music" to booleanSchema(
                         "Explicit opt-in to overwrite distinct boss/event/state-specific music. Defaults to false.",
+                    ),
+                    "overwrite_audio_sensitive_music" to booleanSchema(
+                        "Explicit opt-in to overwrite Tourian's song-dependent music. This can glitch Metroid/boss/cutscene sounds or deadlock door transitions. Defaults to false.",
                     ),
                 ),
                 required = listOf("music_data", "music_track"),
@@ -319,6 +400,47 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                     "values" to integerMapSchema("Optional configuration values keyed by canonical get_patch field keys."),
                 ),
                 required = listOf("patch"),
+            ),
+            effect = SmeditToolEffect.MUTATION,
+        ),
+        SmeditToolDefinition(
+            name = "set_room_fx",
+            description = "Stage partial default-FX changes for explicit approval, preserving door-specific variants and every field not named in update_fields. Empty room_ids and areas target all rooms. Conditional boss/event states, ASM-managed FX, unreadable graphs, and runtime-indexed Mother Brain FX are protected by default. Inspect with list_room_fx when selecting exact states. For an invisible lava heat shimmer set update_fields=[\"fx_type\",\"liquid_surface_start\",\"liquid_surface_new\",\"liquid_options\"], fx_type=2, both heights=65535, and liquid_options=[\"bg_animate\"]; do not add a tide.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "update_fields" to enumArraySchema(
+                        "Exact FX fields to modify. List only fields intentionally requested; supplied values for fields absent from this list are ignored.",
+                        listOf(
+                            "fx_type", "liquid_surface_start", "liquid_surface_new", "liquid_speed", "liquid_delay",
+                            "fx_bit_a", "fx_bit_b", "fx_bit_c", "liquid_options", "palette_fx_bitflags",
+                            "tile_anim_bitflags", "palette_blend",
+                        ),
+                    ),
+                    "room_ids" to stringArraySchema("Optional hexadecimal room ids."),
+                    "areas" to stringArraySchema("Optional case-insensitive area names."),
+                    "exclude_room_ids" to stringArraySchema("Optional hexadecimal room ids to exclude."),
+                    "exclude_areas" to stringArraySchema("Optional case-insensitive area names to exclude."),
+                    "state_ids" to stringArraySchema("Optional stable state ids from get_room/list_room_fx. State ids repeat by room and filter within every selected room."),
+                    "state_targets" to stringArraySchema("Optional exact room/state pairs such as 0x91F8:state-2. Use this instead of state_ids for a reviewed cross-room subset."),
+                    "only_if_fx_types" to integerArraySchema("Optional compare-and-set filter of current native FX types; 0 means None.", 0, 0x2C),
+                    "include_conditional_states" to booleanSchema("Explicit opt-in to edit non-default boss/event/door/equipment states. Defaults to false."),
+                    "fx_type" to integerSchema("Optional native FX dispatch offset: even values from 0 through 44; 2=Lava, 4=Acid, 6=Water.", 0, 0x2C),
+                    "liquid_surface_start" to integerSchema("Optional starting liquid height word; 65535 keeps the visible liquid off-screen.", 0, 0xFFFF),
+                    "liquid_surface_new" to integerSchema("Optional target liquid height word; 65535 keeps the visible liquid off-screen.", 0, 0xFFFF),
+                    "liquid_speed" to integerSchema("Optional signed 16-bit/8.8 speed stored as an unsigned word.", 0, 0xFFFF),
+                    "liquid_delay" to integerSchema("Optional movement delay byte.", 0, 0xFF),
+                    "fx_bit_a" to integerSchema("Optional native rendering-control byte.", 0, 0xFF),
+                    "fx_bit_b" to integerSchema("Optional native layer-priority byte.", 0, 0xFF),
+                    "fx_bit_c" to integerSchema("Optional raw liquid-options byte. If liquid_options is also provided, the semantic liquid_options list takes precedence.", 0, 0xFF),
+                    "liquid_options" to enumArraySchema(
+                        "Optional exact semantic liquid-options list. Takes precedence over fx_bit_c; unspecified options are cleared.",
+                        listOf("flow_left", "bg_animate", "bg_liquid", "large_tide", "small_tide"),
+                    ),
+                    "palette_fx_bitflags" to integerSchema("Optional palette-FX flags byte.", 0, 0xFF),
+                    "tile_anim_bitflags" to integerSchema("Optional animated-tile flags byte.", 0, 0xFF),
+                    "palette_blend" to integerSchema("Optional palette-blend byte.", 0, 0xFF),
+                ),
+                required = listOf("update_fields"),
             ),
             effect = SmeditToolEffect.MUTATION,
         ),
@@ -356,6 +478,29 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                     val room = access.room(roomId)
                         ?: return failure("room_not_found", "No readable room exists at ${formatRoomId(roomId)}.")
                     success(json.encodeToJsonElement(SmeditRoomDetails.serializer(), room))
+                }
+                "list_room_fx" -> {
+                    val query = arguments.string("query")?.trim().orEmpty()
+                    val areas = arguments.stringList("areas")
+                        ?: return failure("invalid_arguments", "areas must be an array of strings.")
+                    val requestedIds = arguments.stringList("room_ids")
+                        ?: return failure("invalid_arguments", "room_ids must be an array of hexadecimal room ids.")
+                    val ids = requestedIds.map { raw ->
+                        parseRoomId(raw) ?: return failure("invalid_room_id", "'$raw' is not a 16-bit hexadecimal room id.")
+                    }.toSet()
+                    val rooms = access.rooms().asSequence().filter { room ->
+                        val roomId = parseRoomId(room.id)
+                        (ids.isEmpty() || roomId in ids) &&
+                            (areas.isEmpty() || areas.any { it.equals(room.area, ignoreCase = true) }) &&
+                            (query.isEmpty() || listOf(room.id, room.name, room.handle.orEmpty(), room.area.orEmpty()).any {
+                                it.contains(query, ignoreCase = true)
+                            })
+                    }.mapNotNull { summary ->
+                        parseRoomId(summary.id)?.let(access::room)?.let { room ->
+                            SmeditRoomFxDetails(room.id, room.name, room.area, room.states)
+                        }
+                    }.take(arguments.limit(default = 100)).toList()
+                    success(json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(SmeditRoomFxDetails.serializer()), rooms))
                 }
                 "list_patches" -> {
                     val status = arguments.string("status")?.lowercase() ?: "all"
@@ -442,8 +587,15 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
     private fun JsonObject.string(name: String): String? =
         (get(name) as? JsonPrimitive)?.contentOrNull
 
-    private fun JsonObject.limit(): Int =
-        (get("limit") as? JsonPrimitive)?.intOrNull?.coerceIn(1, 100) ?: 25
+    private fun JsonObject.stringList(name: String): List<String>? {
+        val value = get(name) ?: return emptyList()
+        return (value as? JsonArray)?.map { element ->
+            (element as? JsonPrimitive)?.contentOrNull ?: return null
+        }
+    }
+
+    private fun JsonObject.limit(default: Int = 25): Int =
+        (get("limit") as? JsonPrimitive)?.intOrNull?.coerceIn(1, 100) ?: default
 
     private fun JsonObject.positiveInt(name: String, default: Int, maximum: Int): Int? {
         val value = get(name) ?: return default
@@ -484,6 +636,25 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             put("type", "array")
             put("description", description)
             put("items", buildJsonObject { put("type", "string") })
+        }
+
+        private fun integerArraySchema(description: String, minimum: Int, maximum: Int) = buildJsonObject {
+            put("type", "array")
+            put("description", description)
+            put("items", buildJsonObject {
+                put("type", "integer")
+                put("minimum", minimum)
+                put("maximum", maximum)
+            })
+        }
+
+        private fun enumArraySchema(description: String, values: List<String>) = buildJsonObject {
+            put("type", "array")
+            put("description", description)
+            put("items", buildJsonObject {
+                put("type", "string")
+                put("enum", JsonArray(values.map(::JsonPrimitive)))
+            })
         }
 
         private fun enumSchema(description: String, values: List<String>) = buildJsonObject {

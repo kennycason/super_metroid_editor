@@ -249,6 +249,12 @@ class AiWorkspaceMutationTest {
                     .filter { it.config.contains(SemanticsActions.OnClick) }
                     .joinToString { "text='${semanticsTextDeep(it)}' bounds=${it.boundsInRoot}" },
             )
+            assertFalse(
+                semanticsNodes(scene).any {
+                    semanticsText(it) == "Approve" && it.config.contains(SemanticsActions.SetSelection)
+                },
+                "Button labels must not join the selectable conversation text.",
+            )
             val clickPosition = Offset(approve.boundsInRoot.center.x, approve.boundsInRoot.center.y)
             scene.sendPointerEvent(PointerEventType.Press, clickPosition, button = PointerButton.Primary)
             scene.sendPointerEvent(PointerEventType.Release, clickPosition, button = PointerButton.Primary)

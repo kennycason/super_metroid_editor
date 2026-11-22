@@ -1474,7 +1474,7 @@ fun MapCanvas(
                                                     rowIdx++
                                                 }
                                             }
-                                        // TODO: Heat shimmer (fxBitC 0x20/0x40) = per-scanline HDMA warp of base image
+                                        // TODO: Native BG2 shimmer (fxBitC 0x02/0x04) = per-scanline HDMA warp of base image
                                         // This is a BG warp effect on L1/L2, not an L3 overlay — requires pixel-level displacement
                                     }
                                     // Liquid level overlay (water/lava/acid)

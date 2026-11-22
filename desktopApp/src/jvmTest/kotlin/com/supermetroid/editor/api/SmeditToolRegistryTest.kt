@@ -22,14 +22,25 @@ class SmeditToolRegistryTest {
         assertEquals(
             setOf(
                 "get_workspace_summary", "list_rooms", "get_room", "list_patches", "get_patch",
-                "get_editor_settings", "search_docs", "read_doc", "search_asm", "set_room_music", "configure_patch",
+                "list_room_fx", "get_editor_settings", "search_docs", "read_doc", "search_asm",
+                "set_room_music", "configure_patch", "set_room_fx",
             ),
             registry.definitions.mapTo(mutableSetOf(), SmeditToolDefinition::name),
         )
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_music")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("configure_patch")?.effect)
+        assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_fx")?.effect)
+        assertEquals(
+            listOf("update_fields"),
+            registry.definition("set_room_fx")!!.inputSchema.getValue("required").jsonArray
+                .map { it.jsonPrimitive.content },
+        )
         assertTrue(
-            registry.definitions.filterNot { it.name in setOf("set_room_music", "configure_patch") }
+            "overwrite_audio_sensitive_music" in registry.definition("set_room_music")!!
+                .inputSchema.getValue("properties").jsonObject,
+        )
+        assertTrue(
+            registry.definitions.filterNot { it.name in setOf("set_room_music", "configure_patch", "set_room_fx") }
                 .all { it.effect == SmeditToolEffect.READ_ONLY },
         )
         registry.definitions.forEach { definition ->
@@ -75,6 +86,17 @@ class SmeditToolRegistryTest {
         assertTrue(
             detail.output.getValue("data").jsonObject.getValue("hasDistinctSourceMusic").jsonPrimitive.content.toBoolean(),
         )
+        assertEquals(
+            "bg_animate",
+            detail.output.getValue("data").jsonObject.getValue("states").jsonArray.single().jsonObject
+                .getValue("fxEntries").jsonArray.single().jsonObject.getValue("liquidOptions").jsonArray.single().jsonPrimitive.content,
+        )
+
+        val fx = registry.execute("list_room_fx", buildJsonObject {
+            put("areas", kotlinx.serialization.json.buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive("Crateria")) })
+        })
+        assertFalse(fx.isError)
+        assertEquals(1, fx.output.getValue("data").jsonArray.size)
 
         val invalid = registry.execute("get_room", buildJsonObject { put("room_id", "not-a-room") })
         assertTrue(invalid.isError)
@@ -169,6 +191,40 @@ class SmeditToolRegistryTest {
                     SmeditRoomMusicState(1, "Standard (default)", 0x06, 0x05),
                 ),
                 hasDistinctSourceMusic = true,
+                states = listOf(
+                    SmeditRoomStateDetails(
+                        id = "state-1",
+                        index = 0,
+                        sourceIndex = 0,
+                        condition = "Standard (default)",
+                        conditionKind = "DEFAULT",
+                        defaultState = true,
+                        readable = true,
+                        projectEdited = false,
+                        projectFxEdited = false,
+                        fxSourceManaged = false,
+                        fxEntries = listOf(
+                            SmeditFxEntryDetails(
+                                selector = "default",
+                                doorSelect = 0,
+                                doorSelectHex = "0x0000",
+                                liquidSurfaceStart = 0xFFFF,
+                                liquidSurfaceNew = 0xFFFF,
+                                liquidSpeed = 0,
+                                liquidDelay = 0,
+                                fxType = 2,
+                                fxTypeName = "Lava",
+                                fxBitA = 2,
+                                fxBitB = 2,
+                                fxBitC = 2,
+                                liquidOptions = listOf("bg_animate"),
+                                paletteFxBitflags = 0,
+                                tileAnimBitflags = 0,
+                                paletteBlend = 0,
+                            ),
+                        ),
+                    ),
+                ),
             )
         } else null
 

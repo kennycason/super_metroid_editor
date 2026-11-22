@@ -9,6 +9,7 @@ internal const val ENVIRONMENT_HEAT_FILE = "bank_8D.asm"
 internal const val ENVIRONMENT_LIQUID_FILE = "bank_90.asm"
 internal val ENVIRONMENT_SOURCE_FILES = setOf(ENVIRONMENT_HEAT_FILE, ENVIRONMENT_LIQUID_FILE)
 internal fun environmentalSourceKey(key: String) = "${EnvironmentalDamagePatch.CONFIG_TYPE}:$key"
+internal fun environmentalHookSourceKey(key: String) = "${EnvironmentalDamagePatch.CONFIG_TYPE}:hook:$key"
 private fun environmentalOpcodes(heat: Boolean) = mapOf(0 to 0xAD, 3 to 0x18, 4 to if (heat) 0x69 else 0x6D,
     7 to 0x8D, 10 to 0xAD, 13 to if (heat) 0x69 else 0x6D, 16 to 0x8D)
 
@@ -209,9 +210,23 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
     val registered = EnvironmentalDamagePatch.FIELDS.map { environmentalSourceKey(it.key) }.toSet() + DATA_PATCH_DEFINITIONS.map { it.id } + AsmFastDoorsModule.SOURCE_KEY
     require(project.asmWorkspace.patchSourceKeys.all { it in registered }) { "Unknown authored patch-data identities." }
     val owned = project.asmWorkspace.patchSourceKeys.filter { it.startsWith(EnvironmentalDamagePatch.CONFIG_TYPE + ":") }.toSet()
-    val configs = project.patches.filter { it.enabled && it.configType == EnvironmentalDamagePatch.CONFIG_TYPE }
+    val allConfigs = project.patches.filter { it.enabled && it.configType == EnvironmentalDamagePatch.CONFIG_TYPE }
         .flatMap { it.configData.orEmpty().entries }.groupBy { it.key }
-    require(catalog != null || owned.isEmpty() && configs.isEmpty()) { "Environmental damage requires its native ASM sources." }
+    require(allConfigs.keys.all { it in EnvironmentalDamagePatch.CONFIG_KEYS }) { "Unknown environmental patch-data identities." }
+    require(allConfigs.values.all { group -> group.map { it.value }.distinct().size == 1 }) {
+        "Environmental patch values must agree across enabled patches."
+    }
+    val perAreaValues = allConfigs[EnvironmentalDamagePatch.PER_AREA_RATES_KEY].orEmpty().map { it.value }
+    require(perAreaValues.all { it in 0..1 }) { "Per-area environmental rates must be disabled (0) or enabled (1)." }
+    val perArea = perAreaValues.distinct().singleOrNull() == 1
+    val configs = if (perArea) emptyMap() else allConfigs.filterKeys { key ->
+        EnvironmentalDamagePatch.FIELDS.any { it.key == key }
+    }
+    val areaValues = allConfigs.filterKeys { key -> EnvironmentalDamagePatch.AREA_RATE_FIELDS.any { it.key == key } }
+    require(areaValues.values.flatten().all { it.value in 0..9999 }) {
+        "Per-area environmental damage must fit 0–9999 energy/sec."
+    }
+    require(catalog != null || owned.isEmpty() && configs.isEmpty() && !perArea) { "Environmental damage requires its native ASM sources." }
     if (catalog == null) return compiled
     require(owned.all { it in catalog.keys.map(::environmentalSourceKey) } && configs.keys.all { it in catalog.keys }) { "Unknown authored patch-data identities." }
     require(configs.values.all { group -> group.map { it.value }.distinct().size == 1 && group.all { it.value in 0..9999 } }) { "Environmental patch rates must agree and fit 0–9999 energy/sec." }
@@ -219,16 +234,18 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
     val parser = RomParser(compiled.romBytes)
     val header = if (compiled.romBytes.size % 0x8000 == 512) 512 else 0
     val claims = linkedMapOf<Pair<Int, Int>, String>()
+    val hookCores = linkedMapOf<Pair<Int, Int>, String>()
     val typed = mutableSetOf<Int>()
     val locations = mutableMapOf<String, AsmPatchWordLocations>()
     for (key in catalog.keys) {
         val authored = environmentalSourceKey(key) in owned || catalog.changed(key, texts)
         val pending = key in configs
+        val pendingHook = perArea
         val input = runCatching { catalog.field(key, texts) }
         val field = input.getOrNull()
-        if (!authored && !pending && field == null) continue
+        if (!authored && !pending && !pendingHook && field == null) continue
         require(field != null) { "$key: ${input.exceptionOrNull()?.message}" }
-        if (!authored && !pending && (field.coreSymbol !in labels || field.words.any { it.symbol !in labels })) continue
+        if (!authored && !pending && !pendingHook && (field.coreSymbol !in labels || field.words.any { it.symbol !in labels })) continue
         val bank = if (field.file == ENVIRONMENT_HEAT_FILE) 0x8D0000 else 0x900000
         fun address(symbol: String, offset: Int, size: Int): Int {
             val value = requireNotNull(labels[symbol]) { "$key: missing compiled symbol $symbol." } + offset
@@ -238,7 +255,7 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
         val pcs = field.words.map { parser.snesToPc(address(it.symbol, it.offset, 2)) }
         val native = EnvironmentalDamagePatch.FIELDS.single { it.key == key }
         val relocated = pcs.map { it - header } != listOf(native.lowWordPc, native.highWordPc)
-        if (!authored && !pending && !relocated) continue
+        if (!authored && !pending && !pendingHook && !relocated) continue
         require(!authored || !pending) { "$key has both authored ASM and a patch override. Use ASM values or remove the override." }
         val corePc = parser.snesToPc(address(field.coreSymbol, field.coreOffset, 19))
         val heat = key == EnvironmentalDamagePatch.HEAT_KEY
@@ -252,10 +269,14 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
             if (!heat) require(parser.readUInt16At(corePc + if (index == 0) 5 else 14) == (address(field.words[index].symbol, 0, 2) and 65535)) { "$key: damage table is no longer bound to its consumer." }
         }
         locations[environmentalSourceKey(key)] = AsmPatchWordLocations(pcs[0] - header, pcs[1] - header)
+        if (pendingHook) {
+            locations[environmentalHookSourceKey(key)] = AsmPatchWordLocations(corePc - header, corePc - header)
+            hookCores[(corePc - header) to 19] = field.file
+        }
         typed.addAll(pcs.map { it - header })
         if (authored || relocated && !pending) pcs.forEach { claims[(it - header) to 2] = field.file }
         // Do not claim the heat suit check: its independent no-heat-protection patch remains compatible.
-        if (authored || relocated || pending) {
+        if (!pendingHook && (authored || relocated || pending)) {
             if (heat) listOf(0 to 5, 7 to 7, 16 to 3).forEach { (offset, size) -> claims[(corePc + offset - header) to size] = field.file }
             else claims[(corePc - header) to 19] = field.file
         }
@@ -267,7 +288,7 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
     require(writes.all { (pc, values) -> values.map { it.second }.distinct().size == 1 && claims.keys.none { pc < it.first + it.second && pc + 2 > it.first } }) { "An environmental override competes with ASM-owned/shared words. Use ASM values or remove it." }
     val retained = compiled.sourceOwnedRanges.flatMap { range ->
         var spans = listOf(range.pcOffset until range.pcOffset + range.length)
-        for ((pc, size) in (typed.map { it to 2 } + claims.keys).distinct()) spans = spans.flatMap { span -> if (pc > span.last || pc + size <= span.first) listOf(span) else buildList {
+        for ((pc, size) in (typed.map { it to 2 } + claims.keys + hookCores.keys).distinct()) spans = spans.flatMap { span -> if (pc > span.last || pc + size <= span.first) listOf(span) else buildList {
             if (span.first < pc) add(span.first until pc)
             if (pc + size <= span.last) add(pc + size..span.last)
         } }

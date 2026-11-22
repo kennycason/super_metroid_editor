@@ -14,6 +14,7 @@ import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.CommunitySamusSourceCodec
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.SuitPatches
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.ProjectRoomExportException
 import com.supermetroid.editor.rom.ProjectRoomExporter
@@ -900,6 +901,7 @@ internal class RomExporter(
             ).associateBy { it.id }
         for (target in project.patches) {
             val source = catalog[target.id] ?: continue
+            SuitPatches.upgradeLegacyWrites(target, source)
             if (target.compatibleRomHashes.isEmpty()) {
                 target.compatibleRomHashes.addAll(source.compatibleRomHashes)
             }
@@ -911,6 +913,9 @@ internal class RomExporter(
             }
             if (target.exclusiveGroup == null) {
                 target.exclusiveGroup = source.exclusiveGroup
+            }
+            if (target.incompatiblePatchIds.isEmpty()) {
+                target.incompatiblePatchIds.addAll(source.incompatiblePatchIds)
             }
             val sourceWrites = source.writes.associateBy { it.offset to it.bytes }
             for (index in target.writes.indices) {
@@ -1333,29 +1338,101 @@ internal class RomExporter(
                 val data = patch.configData ?: continue
                 validateConfigKeys(
                     data,
-                    EnvironmentalDamagePatch.FIELDS.mapTo(mutableSetOf()) { it.key }.apply {
-                        add(EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY)
-                    },
+                    EnvironmentalDamagePatch.CONFIG_KEYS,
                     patch,
                 )
+                val perAreaRates = requireConfigRange(
+                    patch,
+                    EnvironmentalDamagePatch.PER_AREA_RATES_KEY,
+                    data[EnvironmentalDamagePatch.PER_AREA_RATES_KEY] ?: 0,
+                    0..1,
+                ) == 1
+                for ((key, value) in data) {
+                    if (key in EnvironmentalDamagePatch.FIELDS.map { it.key } ||
+                        key in EnvironmentalDamagePatch.AREA_RATE_FIELDS.map { it.key }) {
+                        requireConfigRange(
+                            patch,
+                            key,
+                            value,
+                            EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND..EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+                        )
+                    }
+                }
                 var modCount = 0
-                for (field in EnvironmentalDamagePatch.FIELDS) {
-                    val energyPerSecond = data[field.key] ?: continue
-                    requireConfigRange(
-                        patch,
-                        field.key,
-                        energyPerSecond,
-                        IntRange(
-                            EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
-                            EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
-                        ),
-                    )
-                    val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
-                    val locations = if (compiledAsmBase == null) com.supermetroid.editor.asm.AsmPatchWordLocations(field.lowWordPc, field.highWordPc)
-                        else requireNotNull(compiledAsmBase.patchDataLocations[com.supermetroid.editor.asm.environmentalSourceKey(field.key)]) { "${field.key}: no checked ASM destination; no fixed-address patch was applied." }
-                    patchWord(writePlan.headerSize + locations.lowPc, fixedRate.lowWord, "${patch.name} · ${field.key} fraction")
-                    patchWord(writePlan.headerSize + locations.highPc, fixedRate.highWord, "${patch.name} · ${field.key} whole")
-                    modCount++
+                if (perAreaRates) {
+                    fun wordAt(pc: Int): Int {
+                        val fileOffset = writePlan.headerSize + pc
+                        require(fileOffset >= 0 && fileOffset + 1 < romData.size) {
+                            "Environmental damage word at PC 0x${pc.toString(16)} is outside the ROM."
+                        }
+                        return (romData[fileOffset].toInt() and 0xFF) or
+                            ((romData[fileOffset + 1].toInt() and 0xFF) shl 8)
+                    }
+                    val fallbackFixedRates = EnvironmentalDamagePatch.FIELDS.associate { field ->
+                        val locations = if (compiledAsmBase == null) {
+                            com.supermetroid.editor.asm.AsmPatchWordLocations(field.lowWordPc, field.highWordPc)
+                        } else {
+                            requireNotNull(compiledAsmBase.patchDataLocations[com.supermetroid.editor.asm.environmentalSourceKey(field.key)]) {
+                                "${field.key}: no checked ASM damage words; no fixed-address fallback was used."
+                            }
+                        }
+                        field.key to EnvironmentalDamagePatch.FixedRate(
+                            lowWord = wordAt(locations.lowPc),
+                            highWord = wordAt(locations.highPc),
+                        )
+                    }
+                    val fallbackRates = fallbackFixedRates.mapValues { (_, fixed) ->
+                        EnvironmentalDamagePatch.decodeEnergyPerSecond(fixed.lowWord, fixed.highWord)
+                    }
+                    val hooks = EnvironmentalDamagePatch.NATIVE_DAMAGE_HOOKS.map { native ->
+                        val pc = if (compiledAsmBase == null) {
+                            native.pcOffset
+                        } else {
+                            requireNotNull(compiledAsmBase.patchDataLocations[
+                                com.supermetroid.editor.asm.environmentalHookSourceKey(native.key)
+                            ]) { "${native.key}: no checked ASM damage hook; no fixed-address fallback was used." }.lowPc
+                        }
+                        val fileOffset = writePlan.headerSize + pc
+                        require(fileOffset >= 0 && fileOffset + native.expectedBytes.size <= romData.size) {
+                            "Environmental damage ${native.key} hook is outside the ROM."
+                        }
+                        val actual = (fileOffset until fileOffset + native.expectedBytes.size).map {
+                            romData[it].toInt() and 0xFF
+                        }
+                        if (compiledAsmBase == null) {
+                            require(EnvironmentalDamagePatch.isNativeDamageHookCompatible(native.key, actual)) {
+                                "Environmental damage ${native.key} hook does not match the supported native instruction shape."
+                            }
+                        }
+                        EnvironmentalDamagePatch.DamageHook(native.key, pc, actual)
+                    }
+                    for (write in EnvironmentalDamagePatch.perAreaCheckedWrites(
+                            config = data,
+                            fallbackRates = fallbackRates,
+                            hooks = hooks,
+                            fallbackFixedRates = fallbackFixedRates,
+                        )) {
+                        writePlan.add(
+                            owner = "patch:${patch.id}",
+                            label = "${patch.name} · per-area rates",
+                            offset = write.pcOffset,
+                            bytes = write.bytes,
+                            kind = RomWriteKind.CONFIG,
+                            expectedBefore = write.expectedBytes,
+                            overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
+                        )
+                    }
+                    modCount = EnvironmentalDamagePatch.AREA_RATE_FIELDS.size
+                } else {
+                    for (field in EnvironmentalDamagePatch.FIELDS) {
+                        val energyPerSecond = data[field.key] ?: continue
+                        val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
+                        val locations = if (compiledAsmBase == null) com.supermetroid.editor.asm.AsmPatchWordLocations(field.lowWordPc, field.highWordPc)
+                            else requireNotNull(compiledAsmBase.patchDataLocations[com.supermetroid.editor.asm.environmentalSourceKey(field.key)]) { "${field.key}: no checked ASM destination; no fixed-address patch was applied." }
+                        patchWord(writePlan.headerSize + locations.lowPc, fixedRate.lowWord, "${patch.name} · ${field.key} fraction")
+                        patchWord(writePlan.headerSize + locations.highPc, fixedRate.highWord, "${patch.name} · ${field.key} whole")
+                        modCount++
+                    }
                 }
                 val allRoomsHeated = requireConfigRange(
                     patch,
@@ -1365,12 +1442,12 @@ internal class RomExporter(
                 ) == 1
                 if (allRoomsHeated) {
                     require(compiledAsmBase == null) {
-                        "All Rooms Heated currently requires patched-ROM mode; no ASM-source hooks were applied."
+                        "All Non-Tourian Rooms Heated currently requires patched-ROM mode; no ASM-source hooks were applied."
                     }
                     for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
                         writePlan.add(
                             owner = "patch:${patch.id}",
-                            label = "${patch.name} · all rooms heated",
+                            label = "${patch.name} · all non-Tourian rooms heated",
                             offset = write.pcOffset,
                             bytes = write.bytes,
                             kind = RomWriteKind.CONFIG,
@@ -1378,9 +1455,9 @@ internal class RomExporter(
                             overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
                         )
                     }
-                    onLog("[EXPORT]   Environmental damage: native heat effect enabled in all rooms")
+                    onLog("[EXPORT]   Environmental damage: native heat effect enabled outside Tourian")
                 }
-                onLog("[EXPORT]   Environmental damage: $modCount rates modified")
+                onLog("[EXPORT]   Environmental damage: $modCount ${if (perAreaRates) "area rates generated" else "rates modified"}")
             } else if (patch.configType == BOMB_CONFIG_TYPE) {
                 val data = patch.configData
                 if (data.isNullOrEmpty()) continue

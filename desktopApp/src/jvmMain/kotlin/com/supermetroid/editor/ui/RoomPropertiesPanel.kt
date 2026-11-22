@@ -1082,13 +1082,11 @@ internal fun RoomPropertiesPanel(
         EditableHexRow("FX Trans. A", editFxBitA, 1) { editFxBitA = it; syncFxToState() }
         EditableHexRow("FX Trans. B", editFxBitB, 1) { editFxBitB = it; syncFxToState() }
 
-        BitfieldRow("Liquid Options", editFxBitC, listOf(
-            0x01 to "Small Tide",
-            0x02 to "Large Tide",
-            0x20 to "BG Warp-Line Shift",
-            0x40 to "BG Warp-Cascade Heat",
-            0x80 to "Flow Left",
-        )) { editFxBitC = it; syncFxToState() }
+        BitfieldRow(
+            "Liquid Options",
+            editFxBitC,
+            com.supermetroid.editor.rom.NativeLiquidOptions.labels.toList(),
+        ) { editFxBitC = it; syncFxToState() }
 
         BitfieldRow("Tile Anim", editTileAnimBits, listOf(
             0x01 to "Spikes (H)",
@@ -1449,13 +1447,7 @@ private fun DoorFxEditorDialog(
                 BitfieldRow(
                     "Liquid Options",
                     fxBitC,
-                    listOf(
-                        0x01 to "Small Tide",
-                        0x02 to "Large Tide",
-                        0x20 to "BG Warp-Line Shift",
-                        0x40 to "BG Warp-Cascade Heat",
-                        0x80 to "Flow Left",
-                    ),
+                    com.supermetroid.editor.rom.NativeLiquidOptions.labels.toList(),
                 ) { fxBitC = it }
                 BitfieldRow(
                     "Tile Anim",

@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,6 +61,7 @@ import com.supermetroid.editor.ai.StoredAiConversationItem
 import com.supermetroid.editor.ai.StoredAiMutationPlan
 import com.supermetroid.editor.ai.StoredAiPatchMutationPlan
 import com.supermetroid.editor.ai.StoredAiPatchValueChange
+import com.supermetroid.editor.ai.StoredAiRoomFxMutationPlan
 import com.supermetroid.editor.api.SmeditToolRegistry
 import com.supermetroid.editor.api.SmeditToolEffect
 import com.supermetroid.editor.api.SmeditToolResult
@@ -68,6 +70,7 @@ import com.supermetroid.editor.api.SmeditMutationPlanKind
 import com.supermetroid.editor.api.SmeditMutationPlan
 import com.supermetroid.editor.api.SmeditPatchMutationPlan
 import com.supermetroid.editor.api.SmeditPatchValueChange
+import com.supermetroid.editor.api.SmeditRoomFxMutationPlan
 import com.supermetroid.editor.data.AppConfig
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -335,6 +338,9 @@ class AiWorkspaceState(
                 automaticallyDisabledPatches = patch.automaticallyDisabledPatches,
             )
         },
+        fx = fx?.let { fx ->
+            StoredAiRoomFxMutationPlan(fx.requestedChanges, fx.affectedStatePreview)
+        },
     )
 
     private fun StoredAiMutationPlan.toRuntime() = SmeditMutationPlan(
@@ -365,6 +371,9 @@ class AiWorkspaceState(
                 },
                 automaticallyDisabledPatches = patch.automaticallyDisabledPatches,
             )
+        },
+        fx = fx?.let { fx ->
+            SmeditRoomFxMutationPlan(fx.requestedChanges, fx.affectedStatePreview)
         },
     )
 
@@ -578,6 +587,7 @@ class AiWorkspaceState(
                 modelId = modelId,
                 prompt = normalized,
                 previousResponseId = previousResponseId,
+                runtimeContext = approvalRuntimeContext(),
                 toolDefinitions = toolRegistry?.definitions.orEmpty(),
                 executeTool = toolRegistry?.let { registry ->
                     { call -> executeToolCall(registry, call) }
@@ -598,6 +608,14 @@ class AiWorkspaceState(
         requestInFlight = false
         errorMessage = "Request cancelled."
     }
+
+    private fun approvalRuntimeContext(): String = pendingMutation?.let { plan ->
+        "At the start of this user request, mutation plan '${plan.title}' (${plan.id}) is awaiting " +
+            "approval in the SMEDIT UI. Do not stage another mutation until the user approves or rejects it."
+    } ?: "At the start of this user request, NO mutation plan is awaiting approval in SMEDIT. " +
+        "Any approval_required or pending-plan statement in an earlier provider response is historical and stale; " +
+        "it must not block a new mutation tool call. A mutation tool successfully called during this request may " +
+        "create a new pending plan."
 
     fun newConversation() {
         abandonPendingPlan("The unapproved plan was closed when a new conversation started. No project data changed.")
@@ -1198,7 +1216,8 @@ private fun AiMutationApprovalCard(
         color = if (awaitingApproval) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(10.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        SelectionContainer {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(statusLabel, fontSize = fs.body, fontWeight = FontWeight.Bold)
             Text(plan.title, fontSize = fs.body)
             when (plan.kind) {
@@ -1230,7 +1249,7 @@ private fun AiMutationApprovalCard(
                     }
                     if (plan.protectedRoomIds.isNotEmpty()) {
                         Text(
-                            "Protected state-sensitive rooms: " +
+                            "Protected music-sensitive rooms: " +
                                 plan.protectedRoomPreview.joinToString() +
                                 if (plan.protectedRoomIds.size > plan.protectedRoomPreview.size) " …" else "",
                             fontSize = fs.detail,
@@ -1259,43 +1278,70 @@ private fun AiMutationApprovalCard(
                         )
                     }
                 }
+                SmeditMutationPlanKind.ROOM_FX -> plan.fx?.let { fx ->
+                    Text(
+                        "${plan.affectedRoomCount} room(s) · ${plan.affectedStateCount} state(s)",
+                        fontSize = fs.detail,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    fx.requestedChanges.forEach { change -> Text(change, fontSize = fs.detail) }
+                    if (fx.affectedStatePreview.isNotEmpty()) {
+                        Text(
+                            fx.affectedStatePreview.joinToString() +
+                                if (plan.affectedStateCount > fx.affectedStatePreview.size) " …" else "",
+                            fontSize = fs.detail,
+                            maxLines = 4,
+                        )
+                    }
+                    if (plan.protectedRoomIds.isNotEmpty()) {
+                        Text(
+                            "Protected rooms: ${plan.protectedRoomPreview.joinToString()}" +
+                                if (plan.protectedRoomIds.size > plan.protectedRoomPreview.size) " …" else "",
+                            fontSize = fs.detail,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
             plan.warnings.forEach { warning ->
                 Text("Warning: $warning", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
             }
             if (awaitingApproval) {
                 Text(
-                    "Approve applies this frozen plan atomically. Newer music edits block approval.",
+                    "Approve applies this frozen plan atomically. Newer overlapping edits block approval.",
                     fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onApprove,
-                        enabled = !state.requestInFlight && mutationAction == null,
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        if (mutationAction == AiMutationAction.APPLYING) {
-                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.size(6.dp))
+                DisableSelection {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onApprove,
+                            enabled = !state.requestInFlight && mutationAction == null,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            if (mutationAction == AiMutationAction.APPLYING) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(6.dp))
+                            }
+                            Text(if (mutationAction == AiMutationAction.APPLYING) "Applying…" else "Approve")
                         }
-                        Text(if (mutationAction == AiMutationAction.APPLYING) "Applying…" else "Approve")
-                    }
-                    OutlinedButton(
-                        onClick = onReject,
-                        enabled = !state.requestInFlight && mutationAction == null,
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        if (mutationAction == AiMutationAction.REJECTING) {
-                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.size(6.dp))
+                        OutlinedButton(
+                            onClick = onReject,
+                            enabled = !state.requestInFlight && mutationAction == null,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            if (mutationAction == AiMutationAction.REJECTING) {
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(6.dp))
+                            }
+                            Text(if (mutationAction == AiMutationAction.REJECTING) "Rejecting…" else "Reject")
                         }
-                        Text(if (mutationAction == AiMutationAction.REJECTING) "Rejecting…" else "Reject")
                     }
                 }
             }
         }
     }
+}
 }
 
 @Composable
@@ -1305,18 +1351,20 @@ private fun AiMutationNoticeCard(notice: AiMutationNotice) {
         color = if (notice.isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
         shape = RoundedCornerShape(8.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                if (notice.isError) "SMEDIT action blocked" else "SMEDIT",
-                fontSize = fs.detail,
-                fontWeight = FontWeight.Bold,
-                color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-            Text(
-                notice.text,
-                fontSize = fs.detail,
-                color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-            )
+        SelectionContainer {
+            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    if (notice.isError) "SMEDIT action blocked" else "SMEDIT",
+                    fontSize = fs.detail,
+                    fontWeight = FontWeight.Bold,
+                    color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    notice.text,
+                    fontSize = fs.detail,
+                    color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
         }
     }
 }

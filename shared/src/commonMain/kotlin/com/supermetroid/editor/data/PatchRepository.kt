@@ -72,6 +72,39 @@ object PatchRepository {
     private val json = Json { ignoreUnknownKeys = true }
     private val warnedLegacyAssets = mutableSetOf<String>()
 
+    private val introSkipFiles = setOf("skip_intro.ips", "skip_intro_ceres.ips")
+    private val unlockTourianInstruction = listOf(0xA9, 0x04, 0x00, 0x8F, 0x21, 0xD8, 0x7E)
+
+    /**
+     * The upstream intro-skip payloads write $0004 to $7E:D821 while setting up a
+     * new game. That is event $0A (the unlocked Tourian entrance), not intro state.
+     * Preserve every address and branch displacement in the legacy routines while
+     * neutralising only that unrelated side effect.
+     */
+    private fun removeIntroSkipTourianUnlock(file: String, writes: List<PatchWrite>): List<PatchWrite> {
+        if (file !in introSkipFiles) return writes
+
+        var matches = 0
+        val sanitized = writes.map { write ->
+            val bytes = write.bytes.toMutableList()
+            if (bytes.size >= unlockTourianInstruction.size) {
+                for (start in 0..bytes.size - unlockTourianInstruction.size) {
+                    if (unlockTourianInstruction.indices.all { index ->
+                            bytes[start + index] == unlockTourianInstruction[index]
+                        }) {
+                        unlockTourianInstruction.indices.forEach { index -> bytes[start + index] = 0xEA }
+                        matches++
+                    }
+                }
+            }
+            write.copy(bytes = bytes)
+        }
+        require(matches == 1) {
+            "Bundled intro-skip patch $file no longer has its single known Tourian-unlock instruction"
+        }
+        return sanitized
+    }
+
     fun loadBundledPatches(): List<SmPatch> {
         val metaStream = loadResource("patches/patches.json") ?: return emptyList()
 
@@ -94,7 +127,10 @@ object PatchRepository {
                             "accepting this trusted legacy asset at a complete record boundary"
                     )
                 }
-                val writes = parseIps(ipsData, allowLegacyMissingEof = true)
+                val writes = removeIntroSkipTourianUnlock(
+                    meta.file,
+                    parseIps(ipsData, allowLegacyMissingEof = true),
+                )
                 val id = "bundled_" + meta.file.removeSuffix(".ips")
                 SmPatch(
                     id = id,

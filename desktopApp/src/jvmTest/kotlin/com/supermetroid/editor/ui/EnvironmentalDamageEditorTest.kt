@@ -6,6 +6,7 @@ import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -23,6 +24,71 @@ class EnvironmentalDamageEditorTest {
         assertEquals(15, EnvironmentalDamagePatch.decodeEnergyPerSecond(0x4000, 0x0000))
         assertEquals(30, EnvironmentalDamagePatch.decodeEnergyPerSecond(0x8000, 0x0000))
         assertEquals(90, EnvironmentalDamagePatch.decodeEnergyPerSecond(0x8000, 0x0001))
+    }
+
+    @Test
+    fun `per-area payload installs three checked hooks and encodes area tables`() {
+        val config = mutableMapOf(
+            EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1,
+            EnvironmentalDamagePatch.areaRateKey("norfair", EnvironmentalDamagePatch.HEAT_KEY) to 60,
+            EnvironmentalDamagePatch.areaRateKey("maridia", EnvironmentalDamagePatch.LAVA_KEY) to 12,
+            EnvironmentalDamagePatch.areaRateKey("tourian", EnvironmentalDamagePatch.ACID_KEY) to 0,
+        )
+
+        val writes = EnvironmentalDamagePatch.perAreaCheckedWrites(config)
+
+        assertEquals(4, writes.size)
+        assertEquals(listOf(0x22, 0x00, 0xFE, 0xDF), writes[0].bytes.take(4))
+        assertEquals(listOf(0x22, 0x26, 0xFE, 0xDF), writes[1].bytes.take(4))
+        assertEquals(listOf(0x22, 0x4C, 0xFE, 0xDF), writes[2].bytes.take(4))
+        assertTrue(writes.take(3).all { it.bytes.size == 19 && it.bytes.drop(4).all { byte -> byte == 0xEA } })
+        val payload = writes.last()
+        assertEquals(EnvironmentalDamagePatch.PER_AREA_CODE_PC, payload.pcOffset)
+        assertEquals(210, payload.bytes.size)
+        assertEquals(List(210) { 0xFF }, payload.expectedBytes)
+
+        val tableStart = 38 * 3
+        val norfairHeat = tableStart + 2 * 4
+        assertEquals(listOf(0x00, 0x00, 0x01, 0x00), payload.bytes.subList(norfairHeat, norfairHeat + 4))
+        val maridiaLava = tableStart + 32 + 4 * 4
+        assertEquals(listOf(0x33, 0x33, 0x00, 0x00), payload.bytes.subList(maridiaLava, maridiaLava + 4))
+        val tourianAcid = tableStart + 64 + 5 * 4
+        assertEquals(listOf(0, 0, 0, 0), payload.bytes.subList(tourianAcid, tourianAcid + 4))
+        assertEquals(24, EnvironmentalDamagePatch.AREA_RATE_FIELDS.map { it.key }.distinct().size)
+
+        val exactFallback = EnvironmentalDamagePatch.perAreaCheckedWrites(
+            config = mapOf(EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1),
+            fallbackFixedRates = mapOf(
+                EnvironmentalDamagePatch.HEAT_KEY to EnvironmentalDamagePatch.FixedRate(0x1234, 0x0002),
+            ),
+        ).last().bytes
+        EnvironmentalDamagePatch.AREAS.indices.forEach { areaIndex ->
+            val at = tableStart + areaIndex * 4
+            assertEquals(listOf(0x34, 0x12, 0x02, 0x00), exactFallback.subList(at, at + 4))
+        }
+    }
+
+    @Test
+    fun `global heat helper preserves native Tourian palette effects`() {
+        val helper = EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES.last()
+
+        assertEquals(EnvironmentalDamagePatch.TOURIAN_AREA_INDEX,
+            EnvironmentalDamagePatch.AREAS.single { it.key == "tourian" }.index)
+        assertEquals(45, helper.bytes.size)
+        assertEquals(listOf(0x22, 0x82, 0xAB, 0x89), helper.bytes.take(4),
+            "The native FX loader must run before any filtering")
+        assertEquals(
+            listOf(0xAD, 0x9F, 0x07, 0xC9, 0x05, 0x00, 0xF0, 0x16),
+            helper.bytes.subList(10, 18),
+            "Tourian must branch around the palette-FX scan and heat-object spawn",
+        )
+        val tourianBranchTarget = 18 + helper.bytes[17].toByte()
+        assertEquals(40, tourianBranchTarget)
+        assertEquals(listOf(0x7A, 0xFA, 0x68, 0x28, 0x6B), helper.bytes.drop(tourianBranchTarget),
+            "The Tourian path must only restore native state and return")
+        assertEquals(listOf(0x22, 0xE9, 0xC4, 0x8D), helper.bytes.subList(36, 40),
+            "Only non-Tourian rooms may reach the native heat-object spawn")
+        assertEquals(List(helper.bytes.size) { 0xFF }, helper.expectedBytes)
     }
 
     @Test
@@ -92,6 +158,31 @@ class EnvironmentalDamageEditorTest {
                     .map { it.toInt() and 0xFF },
             )
         }
+    }
+
+    @Test
+    fun `desktop export installs per-area damage tables without replacing suit checks`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "environmental-damage-areas.smc").apply { writeBytes(original!!) }
+        val config = mutableMapOf(
+            EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1,
+            EnvironmentalDamagePatch.areaRateKey("norfair", EnvironmentalDamagePatch.HEAT_KEY) to 60,
+        )
+        val project = SmEditProject(input.absolutePath).apply {
+            patches += ENVIRONMENTAL_DAMAGE_PATCH.copy(enabled = true, configData = config)
+        }
+
+        val built = kotlin.test.assertNotNull(RomExporter(project, RomParser(original!!)).build()).resultRom
+        val expected = EnvironmentalDamagePatch.perAreaCheckedWrites(config)
+
+        expected.forEach { write ->
+            assertEquals(
+                write.bytes,
+                built.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size).map { it.toInt() and 0xFF },
+            )
+        }
+        assertEquals(0x21, built[0x06E37D].toInt() and 0xFF, "The native Varia/Gravity heat check remains outside the hook")
     }
 
     private fun ByteArray.readWord(offset: Int): Int =
