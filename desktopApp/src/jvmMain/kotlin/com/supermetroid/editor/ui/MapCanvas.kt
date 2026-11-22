@@ -1035,22 +1035,23 @@ fun MapCanvas(
                                     }
                             }
 
+                            val defaultFx = remember(roomHeader, editVersion) {
+                                if (roomHeader == null) null
+                                else (editorState?.effectiveFxEntries(roomHeader.roomId, romParser)
+                                    ?: romParser.parseFxEntries(roomHeader.fxPtr))
+                                    .lastOrNull { it.isDefault }
+                            }
+
                             // Layer 3 FX overlay data + fxType for animation
-                            val layer3Info = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER3), editVersion) {
-                                if (!activeOverlays.contains(TileOverlay.LAYER3) || roomHeader == null) null
+                            val layer3Info = remember(defaultFx, activeOverlays.contains(TileOverlay.LAYER3)) {
+                                if (!activeOverlays.contains(TileOverlay.LAYER3)) null
                                 else {
-                                    val fxEntries = editorState?.effectiveFxEntries(roomHeader.roomId, romParser) ?: romParser.parseFxEntries(roomHeader.fxPtr)
-                                    val defaultFx = fxEntries.lastOrNull { it.isDefault }
                                     val fxType = defaultFx?.fxType ?: 0
                                     if (fxType == 0) null
-                                    else {
-                                        val pixels = romParser.renderLayer3Image(fxType, layer3Palette(fxType))
-                                        if (pixels != null) Triple(pixels, fxType, defaultFx) else null
-                                    }
+                                    else romParser.renderLayer3Image(fxType, layer3Palette(fxType))
+                                        ?.let { pixels -> Triple(pixels, fxType, defaultFx) }
                                 }
                             }
-                            val layer3Data = layer3Info?.first
-
                             // Layer 2 BG overlay data
                             val layer2Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER2), editVersion) {
                                 if (!activeOverlays.contains(TileOverlay.LAYER2) || roomHeader == null || romParser == null) null
@@ -1060,10 +1061,55 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, showMetaNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
-                                buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                    layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
-                                    highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces, roomId = room?.getRoomIdAsInt())
+                            val liquidBg2ShimmerMode = if (layer2Data == null) null else nativeLiquidBg2ShimmerMode(
+                                defaultFx?.fxType ?: 0,
+                                defaultFx?.fxBitC ?: 0,
+                            )
+                            var liquidBg2ShimmerPhase by remember(currentRoomId, liquidBg2ShimmerMode) {
+                                mutableStateOf(0)
+                            }
+                            LaunchedEffect(currentRoomId, liquidBg2ShimmerMode) {
+                                liquidBg2ShimmerPhase = 0
+                                val mode = liquidBg2ShimmerMode ?: return@LaunchedEffect
+                                val phaseDelayMillis = (mode.framesPerPhase * 1_000L + 30L) / 60L
+                                while (true) {
+                                    kotlinx.coroutines.delay(phaseDelayMillis)
+                                    liquidBg2ShimmerPhase = Math.floorMod(
+                                        liquidBg2ShimmerPhase - 1,
+                                        mode.phaseCount,
+                                    )
+                                }
+                            }
+                            val displayedLayer2Data = remember(
+                                layer2Data,
+                                data.width,
+                                data.height,
+                                liquidBg2ShimmerMode,
+                                liquidBg2ShimmerPhase,
+                            ) {
+                                val mode = liquidBg2ShimmerMode
+                                if (mode != null && layer2Data != null && layer2Data.size == data.width * data.height) {
+                                    warpNativeLiquidBg2(
+                                        layer2Data,
+                                        data.width,
+                                        data.height,
+                                        mode,
+                                        liquidBg2ShimmerPhase,
+                                    )
+                                } else layer2Data
+                            }
+
+                            val effectiveRenderData = remember(data, editVersion, roomHeader) {
+                                val es = editorState
+                                val rh = roomHeader
+                                if (es?.workingLevelData != null && rh != null) {
+                                    MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(
+                                        rh,
+                                        es.workingLevelData!!,
+                                        es.workingPlms,
+                                        es.workingEnemies,
+                                    ) ?: data
+                                } else data
                             }
 
                             val hScrollState = rememberScrollState()
@@ -1178,19 +1224,23 @@ fun MapCanvas(
                                 return true
                             }
 
-                            // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showMetaNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
-                                val es = editorState
-                                if (es != null && es.workingLevelData != null) {
-                                    val rh = roomHeader
-                                    if (rh != null) {
-                                        val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                            layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
-                                            highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces, roomId = room?.getRoomIdAsInt())
-                                    }
-                                }
-                                compositeImage
+                            val compositeForEdit = remember(effectiveRenderData, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, displayedLayer2Data, liquidBg2ShimmerPhase, customItems, showItemNames, showMetaNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
+                                buildCompositeImage(
+                                    effectiveRenderData,
+                                    activeOverlays,
+                                    showGrid,
+                                    scrollDataForOverlay,
+                                    rWidthScreens,
+                                    rHeightScreens,
+                                    layer2Pixels = displayedLayer2Data,
+                                    customItems = customItems,
+                                    showItemNames = showItemNames,
+                                    showMetaNames = showMetaNames,
+                                    highlightItems = highlightItems,
+                                    showEnemyNames = showEnemyNames,
+                                    showFlatSlopeSurfaces = showFlatSlopeSurfaces,
+                                    roomId = room?.getRoomIdAsInt(),
+                                )
                             }
                             val editBitmap = remember(compositeForEdit) { compositeForEdit.toComposeImageBitmap() }
 
@@ -1384,7 +1434,7 @@ fun MapCanvas(
                                             .requiredHeight((data.height * zoomLevel).dp),
                                         contentScale = ContentScale.FillBounds
                                     )
-                                    // Animated Layer 3 overlay (fog, rain, spores, heat shimmer)
+                                    // Animated Layer 3 overlay (fog, rain, spores, liquid surface)
                                     if (layer3Info != null) {
                                         val l3Pixels = layer3Info.first
                                         val l3FxType = layer3Info.second
@@ -1474,15 +1524,9 @@ fun MapCanvas(
                                                     rowIdx++
                                                 }
                                             }
-                                        // TODO: Native BG2 shimmer (fxBitC 0x02/0x04) = per-scanline HDMA warp of base image
-                                        // This is a BG warp effect on L1/L2, not an L3 overlay — requires pixel-level displacement
                                     }
                                     // Liquid level overlay (water/lava/acid)
                                     if (roomHeader != null && overlayToggles[TileOverlay.LIQUID] == true) {
-                                        val fxEntries = remember(roomHeader.fxPtr, editVersion) {
-                                            editorState?.effectiveFxEntries(roomHeader.roomId, romParser) ?: romParser.parseFxEntries(roomHeader.fxPtr)
-                                        }
-                                        val defaultFx = fxEntries.lastOrNull { it.isDefault }
                                         val effectiveFxType = defaultFx?.fxType ?: 0
                                         val effectiveLiquidStart = defaultFx?.liquidSurfaceStart ?: 0xFFFF
                                         if (effectiveLiquidStart != 0xFFFF) {

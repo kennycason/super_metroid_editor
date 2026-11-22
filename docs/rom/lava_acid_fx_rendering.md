@@ -81,28 +81,38 @@ can wrap the computed liquid position through the room, periodically covering
 and uncovering the screen. Semantic mutation tools should reject that
 combination unless a future expert-only operation makes the wrap explicit.
 
-## SMEDIT preview work to resume
+## SMEDIT preview implementation
 
-The room canvas should render the native effect in this order:
+The room canvas now emulates the native BG2 shimmer in this order:
 
-1. Render BG1/BG2 to an off-screen image using the existing tileset and room
+1. Render BG2 independently using the existing tileset and effective room
    state.
 2. For lava or acid with `BG Animate`, copy BG2 scanlines with the vertical
    displacement table and the native four-frame phase cadence.
 3. For `BG Liquid`, apply the horizontal displacement table and six-frame phase
    cadence.
-4. Composite the warped BG2 with BG1, sprites, and the existing Layer 3 liquid.
-5. Animate lava and acid Layer 3 tiles with their native 13- and 10-frame holds.
-6. Derive tide position from `0x40`/`0x80`; if both are present, emulate the
-   native small-tide precedence.
+4. Composite the warped BG2 behind the unchanged BG1 and the existing overlays.
 
-Keep the preview deterministic when animation is paused so screenshots and
-tests can select a known phase.
+This runs only while Layer 2 is visible and only for FX types Lava (`0x02`) and
+Acid (`0x04`). When both shimmer flags are set, `BG Animate` takes precedence,
+matching the branch order in bank `$88`. Pixel lookup wraps at room boundaries
+so the one-pixel displacement does not expose an empty seam.
+
+Remaining native-fidelity work is separate from the BG2 shimmer:
+
+- Animate lava and acid Layer 3 tiles with their native 13- and 10-frame holds.
+- Derive tide position from `0x40`/`0x80`; if both are present, emulate the
+  native small-tide precedence.
+- Add a preview animation pause/control so screenshots can select a known
+  phase.
+
+The pixel warp and mode selection are isolated in `NativeLiquidBg2Shimmer.kt`
+and covered by deterministic phase-zero tests.
 
 ## Native source references
 
 The local disassembly used for this research is
-`/Users/kenny/code/sm/sm_disassembly`:
+`~/.smedit/asm/sm_disassembly`:
 
 - `src/bank_88.asm`, approximately lines 5482–5515: lava/acid setup.
 - `src/bank_88.asm`, around line 5519: tide selection and surface math.
