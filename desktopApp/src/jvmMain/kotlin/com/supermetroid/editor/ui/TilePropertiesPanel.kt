@@ -150,14 +150,17 @@ internal fun TilePropertiesPanel(
         }
         var connectionDropExpanded by remember(roomId, blockX, blockY) { mutableStateOf(false) }
         val connectionIndex = propsBts and 0x7F
-        val canChooseConnection = doorConnections.isNotEmpty() && editorState.doorPreviewProblem == null
+        val canChooseConnection = doorConnections.any { it.isConnection } && editorState.doorPreviewProblem == null
         val connectionLabel = if (propsBtsMixed) {
             "Mixed connections — choose one"
         } else doorConnections.getOrNull(connectionIndex)?.let { door ->
-            val destination = rooms.firstOrNull {
-                it.getRoomIdAsInt() == door.destRoomPtr
-            }?.name ?: "Unknown destination"
-            "Connection ${connectionIndex + 1} → $destination"
+            if (door.isElevatorPlaceholder) "Slot ${connectionIndex + 1} · native elevator routing"
+            else {
+                val destination = rooms.firstOrNull {
+                    it.getRoomIdAsInt() == door.destRoomPtr
+                }?.name ?: "Unknown destination"
+                "Connection ${connectionIndex + 1} → $destination"
+            }
         } ?: "Unlinked doorway"
         Box {
             Surface(
@@ -182,6 +185,7 @@ internal fun TilePropertiesPanel(
                 modifier = Modifier.width(panelWidth + 120.dp).heightIn(max = 420.dp),
             ) {
                 doorConnections.forEachIndexed { index, door ->
+                    if (!door.isConnection) return@forEachIndexed
                     val identity = editorState.doorSourceIdentities[index]
                     val destination = rooms.firstOrNull {
                         it.getRoomIdAsInt() == door.destRoomPtr
@@ -486,11 +490,12 @@ internal fun TilePropertiesPanel(
                 }
                 val arrivalBinding = editorState.doorArrivalBindings[connectionIndex]
                 val declarationIdentity = editorState.doorSourceIdentities[connectionIndex]
-                val doorDefinitionAddress = currentDoor?.let { semanticAsmAddress(RomConstants.BANK_FX, it.doorDefPtr) }
+                val doorDefinitionAddress = currentDoor?.takeIf { it.isConnection }
+                    ?.let { semanticAsmAddress(RomConstants.BANK_FX, it.doorDefPtr) }
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Door Connection", fontSize = LocalEditorTheme.current.fontSize.value.body,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    if (currentDoor != null && onNavigateToDoorSource != null && editorState.asmNavigationEnabled) {
+                    if (currentDoor?.isConnection == true && onNavigateToDoorSource != null && editorState.asmNavigationEnabled) {
                         TextButton(onClick = { onNavigateToDoorSource(connectionIndex) },
                             contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                             modifier = Modifier.height(24.dp)) {
@@ -584,23 +589,25 @@ internal fun TilePropertiesPanel(
                 }
 
                 val sharedRooms = currentDoor?.let { editorState.sharedDoorRooms(it.doorDefPtr) }.orEmpty()
-                val connectionFieldsEditable = editorState.doorPreviewProblem == null &&
+                val connectionFieldsEditable = currentDoor?.isConnection != false && editorState.doorPreviewProblem == null &&
                     (sharedRooms.size < 2 || !editorState.asmNavigationEnabled ||
                         currentDoor?.let { editorState.canEditSharedDoor(it.doorDefPtr) } == true)
-                DoorDestinationPicker(
-                    currentDoor = currentDoor,
-                    sourceRoomId = roomId,
-                    requiredDirection = pickerDirection,
-                    rooms = rooms.filter { it.getRoomIdAsInt() != roomId },
-                    romParser = romParser,
-                    editorState = editorState,
-                    enabled = connectionFieldsEditable && (currentDoor != null || (canGrowConnections && roomHeader != null)) &&
-                        ((currentDoor != null && !connectionSharedOutsideDoorway) || !canGrowConnections || allDoors.size < 16),
-                    selectionKey = Triple(blockX, blockY, declarationIdentity ?: connectionIndex),
-                    onDoorwaySelected = { opening ->
-                        doorConnectionError = runCatching { selectDoorway(opening) }.exceptionOrNull()?.message
-                    },
-                )
+                if (currentDoor?.isConnection != false) {
+                    DoorDestinationPicker(
+                        currentDoor = currentDoor,
+                        sourceRoomId = roomId,
+                        requiredDirection = pickerDirection,
+                        rooms = rooms.filter { it.getRoomIdAsInt() != roomId },
+                        romParser = romParser,
+                        editorState = editorState,
+                        enabled = connectionFieldsEditable && (currentDoor != null || (canGrowConnections && roomHeader != null)) &&
+                            ((currentDoor != null && !connectionSharedOutsideDoorway) || !canGrowConnections || allDoors.size < 16),
+                        selectionKey = Triple(blockX, blockY, declarationIdentity ?: connectionIndex),
+                        onDoorwaySelected = { opening ->
+                            doorConnectionError = runCatching { selectDoorway(opening) }.exceptionOrNull()?.message
+                        },
+                    )
+                }
                 doorConnectionError?.let {
                     Text(it, fontSize = uiFont.statusBar, color = MaterialTheme.colorScheme.error)
                 }
@@ -618,6 +625,12 @@ internal fun TilePropertiesPanel(
                     }
                     AdvancedToggle()
                     if (advancedDoorFields) StoredConnectionPicker()
+                } else if (!currentDoor.isConnection) {
+                    Text(
+                        "This doorway uses vanilla's native elevator-routing slot. It is intentionally read-only; later BTS slots remain aligned with the ROM.",
+                        fontSize = uiFont.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 } else {
                     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                     if (sharedRooms.size > 1 && editorState.asmNavigationEnabled) {

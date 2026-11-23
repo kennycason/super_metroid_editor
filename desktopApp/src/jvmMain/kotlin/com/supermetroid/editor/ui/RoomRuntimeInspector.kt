@@ -167,7 +167,7 @@ internal fun buildRoomRuntimeSnapshot(
 
     val objectCount = runCatching { editorState.effectivePlmsForRoom(room.roomId, romParser).size }
         .getOrDefault(editorState.workingPlms.size)
-    val doorCount = runCatching { editorState.effectiveDoorsForRoom(room.roomId, romParser).size }
+    val doorCount = runCatching { editorState.effectiveDoorsForRoom(room.roomId, romParser).count { it.isConnection } }
         .getOrDefault(editorState.doorEntries.size)
     val fxCount = runCatching { editorState.effectiveFxEntries(room.roomId, romParser, editorState.currentStateId).size }
         .getOrDefault(0)

@@ -1220,6 +1220,11 @@ class ProjectRoomExporter(
         val byIndex = roomEdits.doorChanges.groupBy { it.doorIndex }
         for ((doorIndex, changes) in byIndex) {
             val change = changes.last()
+            val nativeSlot = romParser.parseDoorEntry(room.doorOut, doorIndex)
+                ?: failExport("Room 0x$roomKey door $doorIndex has no native door-list slot")
+            if (!nativeSlot.isConnection) {
+                failExport("Room 0x$roomKey door-list slot $doorIndex is a native elevator placeholder and cannot be edited as a DoorDef")
+            }
             if (change.destRoomPtr !in 0..0xFFFF || change.bitflag !in 0..0xFFFF ||
                 change.doorCapCode !in 0..0xFFFF || change.screenX !in 0..0xFF ||
                 change.screenY !in 0..0xFF || change.distFromDoor !in 0..0xFFFF ||

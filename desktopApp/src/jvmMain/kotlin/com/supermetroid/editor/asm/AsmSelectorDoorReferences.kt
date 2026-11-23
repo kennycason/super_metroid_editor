@@ -39,7 +39,9 @@ internal fun liveSourceDoors(
     if (shared.isNotEmpty()) {
         for (id in shared.keys.flatMap { sharedConsumers.getValue(it).map { pair -> pair.first } }.distinct().filter { it !in result }) {
             val header = requireNotNull(catalog.parser.readRoomHeader(id))
-            result[id] = SourceRoomDoors(header.doorOut, catalog.parser.parseDoorList(header.doorOut).mapIndexed { index, door ->
+            val native = catalog.parser.parseDoorList(header.doorOut)
+            if (native.any { !it.isConnection }) continue
+            result[id] = SourceRoomDoors(header.doorOut, native.mapIndexed { index, door ->
                 shared[door.doorDefPtr]?.let { it.copy(change = it.change.copy(doorIndex = index), identity = index) }
                     ?: SourceRoomDoor(door.doorDefPtr, com.supermetroid.editor.data.DoorChange(index, door.destRoomPtr, door.bitflag,
                         door.doorCapCode, door.screenX, door.screenY, door.distFromDoor, door.entryCode))

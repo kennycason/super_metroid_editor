@@ -578,6 +578,9 @@ object RomValidator {
         for ((roomId, room) in rooms) {
             val doors = parser.parseDoorList(room.doorOut)
             for ((idx, door) in doors.withIndex()) {
+                // Some vanilla lists contain an engine sentinel rather than a DoorDef.
+                // It occupies a BTS index but has no destination or arrival geometry.
+                if (!door.isConnection) continue
                 val destRoom = rooms[door.destRoomPtr]
                 val label = "Door #$idx (${door.directionName})"
                 val knownVanillaOrphan = roomId == 0xA0D2 && idx == 1 &&

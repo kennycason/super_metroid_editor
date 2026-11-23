@@ -1205,11 +1205,16 @@ class AsmDoorSourceTest {
     @Test fun `native writable room door tables fit the literal codec without imposing reciprocal topology`() {
         val parser = RomParser(TestRomHelper.requireRomBytes())
         var covered = 0
+        var protectedSpecialLists = 0
         for (info in parser.roomCatalog.rooms) {
             val header = parser.readRoomHeader(info.getRoomIdAsInt()) ?: continue
             if (header.area !in 0..6) continue
             val native = parser.parseDoorList(header.doorOut)
             if (native.isEmpty()) continue
+            if (native.any { !it.isConnection }) {
+                protectedSpecialLists++
+                continue
+            }
             val resource = runCatching { SourceRoomDoors(header.doorOut, native.mapIndexed { index, door -> SourceRoomDoor(door.doorDefPtr,
                 DoorChange(index, door.destRoomPtr, door.bitflag, door.doorCapCode, door.screenX, door.screenY, door.distFromDoor, door.entryCode)) }) }
                 .getOrElse { throw AssertionError("Native room ${info.id}: $native", it) }
@@ -1222,6 +1227,7 @@ class AsmDoorSourceTest {
             covered++
         }
         assertTrue(covered > 200, "The fixture must cover the native room population, not an empty catalog")
+        assertTrue(protectedSpecialLists > 0, "Native special door-list slots must remain outside the 12-byte DoorDef codec")
     }
 
     @Test fun `managed arrivals create one cross bank source transaction without guessed addresses or duplicate model values`() = runBlocking {

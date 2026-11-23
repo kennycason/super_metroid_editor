@@ -2028,6 +2028,7 @@ class EditorState(
         val changes = edits?.effectiveDoorChanges.orEmpty()
         for (change in changes) {
             val original = doors.getOrNull(change.doorIndex) ?: continue
+            if (!original.isConnection) continue
             doors[change.doorIndex] = RomParser.DoorEntry(
                 destRoomPtr = change.destRoomPtr,
                 bitflag = change.bitflag,
@@ -9638,8 +9639,13 @@ class EditorState(
         !usesRoomAsmAuthoring || project.newRoomForPreviewId(currentRoomId) == null || hasManagedPlms() ||
             ensureCurrentPlmSource(currentRomParser?.readRoomHeader(currentRoomId)?.name ?: "Room")
 
-    internal fun canEditDoorStructure(roomId: Int = currentRoomId): Boolean =
-        project.newRoomForPreviewId(roomId) != null || usesRoomAsmAuthoring
+    internal fun canEditDoorStructure(roomId: Int = currentRoomId): Boolean {
+        if (project.newRoomForPreviewId(roomId) != null) return true
+        if (!usesRoomAsmAuthoring) return false
+        val parser = currentRomParser ?: return false
+        val header = parser.readRoomHeader(roomId) ?: return false
+        return parser.parseDoorList(header.doorOut).all { it.isConnection }
+    }
 
     /** Existing layout-scope choices still apply; the connection and doorway publish in one step. */
     internal fun addSourceDoorwayConnection(roomId: Int, opening: DoorwayOpening, x: Int, y: Int, onCreated: (Int) -> Unit) {
@@ -9704,6 +9710,10 @@ class EditorState(
 
     fun updateDoor(index: Int, entry: RomParser.DoorEntry, expectedIdentity: Int? = null) {
         if (index < 0 || index >= _workingDoors.size) return
+        if (!_workingDoors[index].isConnection || !entry.isConnection) {
+            postStatus("This BTS slot is reserved for native elevator routing and cannot be edited as a door connection.")
+            return
+        }
         if (_workingDoors[index] == entry) return
         if (asmNavigationEnabled && sharedDoorRooms(entry.doorDefPtr).size > 1 && !canEditSharedDoor(entry.doorDefPtr)) {
             postStatus("This native DoorDef is shared. Choose Edit shared record after reviewing the affected rooms.")

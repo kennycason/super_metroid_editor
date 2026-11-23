@@ -1280,7 +1280,9 @@ private fun FloatingDevToolsPanel(
                         shape = RoundedCornerShape(6.dp),
                     ) {
                         val door = doors.getOrNull(selectedDoorIndex)
-                        val destName = if (door != null) {
+                        val destName = if (door?.isElevatorPlaceholder == true) {
+                            "Slot ${selectedDoorIndex + 1} · native elevator routing"
+                        } else if (door != null) {
                             val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
                             "Connection ${selectedDoorIndex + 1} · travels ${door.directionName.lowercase()} → " +
                                 (destRoom?.name ?: "0x${door.destRoomPtr.toString(16)}")
@@ -1298,6 +1300,7 @@ private fun FloatingDevToolsPanel(
                         onDismissRequest = { doorExpanded = false },
                     ) {
                         doors.forEachIndexed { index, door ->
+                            if (!door.isConnection) return@forEachIndexed
                             val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
                             DropdownMenuItem(
                                 text = {
@@ -1321,7 +1324,7 @@ private fun FloatingDevToolsPanel(
                         val dp = doors.getOrNull(selectedDoorIndex)?.doorDefPtr ?: return@Button
                         scope.launch { workspaceState.warpToDoor(dp) }
                     },
-                    enabled = workspaceState.session.active && doors.getOrNull(selectedDoorIndex) != null,
+                    enabled = workspaceState.session.active && doors.getOrNull(selectedDoorIndex)?.isConnection == true,
                 ) {
                     Text("Warp", fontSize = 11.sp)
                 }

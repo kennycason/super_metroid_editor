@@ -45,7 +45,7 @@ internal fun RoomDoorsSection(
         .clickable(role = Role.Button) { expanded = !expanded }
         .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }) {
         SectionHeader("Doors", trailingContent = {
-            val count = editorState.doorEntries.size
+            val count = editorState.doorEntries.count { it.isConnection }
             Text("$count ${if (count == 1) "connection" else "connections"} · ${if (expanded) "Hide ▴" else "Show ▾"}",
                 fontSize = ROOM_INFO_COMPACT_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
         })
@@ -79,7 +79,7 @@ internal fun RoomDoorsSection(
             }.exceptionOrNull()?.message
         }
     }
-    if (editorState.doorEntries.isEmpty()) {
+    if (editorState.doorEntries.none { it.isConnection }) {
         Text("No door connections.", fontSize = ROOM_INFO_BODY_FONT_SIZE,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     } else {
@@ -88,8 +88,9 @@ internal fun RoomDoorsSection(
     }
     editorState.doorEntries.forEachIndexed { index, door ->
         val identity = editorState.doorSourceIdentities[index]
-        val destinationName = roomInfos.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name
-            ?: "Room 0x${door.destRoomPtr.toString(16).uppercase()}"
+        val destinationName = if (door.isElevatorPlaceholder) "Native elevator routing placeholder" else
+            roomInfos.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name
+                ?: "Room 0x${door.destRoomPtr.toString(16).uppercase()}"
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
             shape = MaterialTheme.shapes.extraSmall,
@@ -101,19 +102,23 @@ internal fun RoomDoorsSection(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("${index + 1}. $destinationName", fontSize = ROOM_INFO_BODY_FONT_SIZE)
-                    Text("Travels ${door.directionName.lowercase()} · destination screen " +
-                        oneBasedRoomCoordinate(door.screenX, door.screenY),
+                    Text(if (door.isElevatorPlaceholder) {
+                        "Reserved vanilla list slot · preserves later BTS connection indices"
+                    } else {
+                        "Travels ${door.directionName.lowercase()} · destination screen " +
+                            oneBasedRoomCoordinate(door.screenX, door.screenY)
+                    },
                         fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (editorState.asmNavigationEnabled && editorState.sharedDoorRooms(door.doorDefPtr).size > 1) {
+                    if (door.isConnection && editorState.asmNavigationEnabled && editorState.sharedDoorRooms(door.doorDefPtr).size > 1) {
                         TextButton(enabled = editorState.doorPreviewProblem == null, onClick = {
                             if (!editorState.makeDoorIndependent(index, identity)) doorManagerError = editorState.statusMessage
                         }) { Text("Make independent", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
                     }
                 }
-                if (onNavigateToDoors != null && editorState.asmNavigationEnabled) TextButton(onClick = { onNavigateToDoors(index) }) {
+                if (door.isConnection && onNavigateToDoors != null && editorState.asmNavigationEnabled) TextButton(onClick = { onNavigateToDoors(index) }) {
                     Text("ASM", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
                 }
-                if (canEditStructure) TextButton(onClick = {
+                if (door.isConnection && canEditStructure) TextButton(onClick = {
                     doorManagerError = runCatching {
                         editorState.removeProjectRoomDoor(roomId, index, identity)
                         if (projectRoom != null) onWorkspaceChanged?.invoke()

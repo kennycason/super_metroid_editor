@@ -96,6 +96,7 @@ internal object AsmSemanticBridge {
             room?.doorOut?.let { doorOut ->
                 addRoomPointer(RomConstants.BANK_ROOM_DATA, doorOut, "Door list")
                 runCatching { romParser.parseDoorList(doorOut) }.getOrDefault(emptyList()).forEachIndexed { index, door ->
+                    if (!door.isConnection) return@forEachIndexed
                     addRoomPointer(RomConstants.BANK_FX, door.doorDefPtr, "Door definition")
                     roomSources.getOrPut(RomConstants.BANK_FX or door.doorDefPtr) { mutableListOf() }
                         .add(AsmRoomSourceLink(roomId, roomInfo.name, RoomAsmSourceKind.DOORS,

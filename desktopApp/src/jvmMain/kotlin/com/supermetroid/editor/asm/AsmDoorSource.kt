@@ -89,6 +89,9 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
         val seed = projectId?.let { id -> requireNotNull(projectRooms.singleOrNull { it.id == id }) { "Missing project room seed $id." } }
         val header = if (seed == null) requireNotNull(parser.readRoomHeader(room.roomId)) else null
         val native = if (seed == null) parser.parseDoorList(header!!.doorOut) else emptyList()
+        require(native.all { it.isConnection }) {
+            "This room contains a native elevator-routing placeholder. Its door list must remain ROM-owned so the raw BTS slot is preserved."
+        }
         val declared = Regex("(?m)^macro (${prefix(room.roomId)}Door_[0-9]+)\\(").findAll(text).map { it.groupValues[1] }.toList()
         require(declared.distinct().size == declared.size) { "Duplicate door declarations." }
         val order = order(room.roomId)

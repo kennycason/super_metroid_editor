@@ -233,21 +233,27 @@ class RoomSourceParityTest {
 
         root.getValue("doors").jsonArray.map { it.jsonObject }.forEach { record ->
             val sourceEntries = record.getValue("entries").jsonArray.map { it.jsonObject }
-            val expected = sourceEntries.takeWhile { it.int("destRoomPtr") != 0 }
+            // Door_VariousRooms_Elevator ($83:88FC) is a real indexed list slot whose
+            // two-byte body is zero; only a null list pointer terminates the list.
+            val expected = sourceEntries.takeWhile { it.int("doorDefPtr") != 0 }
             val actual = parser.parseDoorList(record.int("snesAddress") and 0xFFFF)
             assertEquals(expected.size, actual.size, record.string("sourceLabel"))
             expected.zip(actual).forEach { (source, parsed) ->
                 assertEquals(source.int("doorDefPtr"), parsed.doorDefPtr)
-                assertEquals(source.int("destRoomPtr"), parsed.destRoomPtr)
-                assertEquals(
-                    source.int("elevatorProperties") or (source.int("direction") shl 8),
-                    parsed.bitflag,
-                )
-                assertEquals(source.int("doorCapX") or (source.int("doorCapY") shl 8), parsed.doorCapCode)
-                assertEquals(source.int("screenX"), parsed.screenX)
-                assertEquals(source.int("screenY"), parsed.screenY)
-                assertEquals(source.int("spawnDistance"), parsed.distFromDoor)
-                assertEquals(source.int("entryCode"), parsed.entryCode)
+                if (source.int("doorDefPtr") == RomParser.ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR) {
+                    assertTrue(parsed.isElevatorPlaceholder)
+                } else {
+                    assertEquals(source.int("destRoomPtr"), parsed.destRoomPtr)
+                    assertEquals(
+                        source.int("elevatorProperties") or (source.int("direction") shl 8),
+                        parsed.bitflag,
+                    )
+                    assertEquals(source.int("doorCapX") or (source.int("doorCapY") shl 8), parsed.doorCapCode)
+                    assertEquals(source.int("screenX"), parsed.screenX)
+                    assertEquals(source.int("screenY"), parsed.screenY)
+                    assertEquals(source.int("spawnDistance"), parsed.distFromDoor)
+                    assertEquals(source.int("entryCode"), parsed.entryCode)
+                }
             }
         }
     }

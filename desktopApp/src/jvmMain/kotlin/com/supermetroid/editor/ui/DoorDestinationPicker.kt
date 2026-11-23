@@ -112,16 +112,18 @@ internal fun DoorDestinationPicker(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                 for (opening in openings) {
                     val linkedDoor = destinationDoors.getOrNull(opening.connectionIndex)
-                    val returnTarget = linkedDoor?.let { linked ->
+                    val returnTarget = linkedDoor?.takeIf { it.isConnection }?.let { linked ->
                         if (linked.destRoomPtr == sourceRoomId) "this room"
                         else roomOptions.firstOrNull { it.first.getRoomIdAsInt() == linked.destRoomPtr }?.first?.name ?: "another room"
                     }
+                    val nativeElevatorRouting = linkedDoor?.isElevatorPlaceholder == true
                     DropdownMenuItem(text = {
                         Column(Modifier.padding(vertical = 4.dp)) {
                             Text(doorDestinationLabel(opening.direction, opening.screenX, opening.screenY),
                                 fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Bold)
                             Text("Door tile ${oneBasedRoomCoordinate(opening.blockX, opening.blockY)}" +
-                                if (returnTarget != null) " · returns to $returnTarget" else " · unlinked opening",
+                                if (nativeElevatorRouting) " · native elevator routing"
+                                else if (returnTarget != null) " · returns to $returnTarget" else " · unlinked opening",
                                 fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }

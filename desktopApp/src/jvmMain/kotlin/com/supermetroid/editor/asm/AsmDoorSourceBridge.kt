@@ -43,14 +43,22 @@ internal class AsmDoorSourceBridge(private val catalog: AsmPlmSourceCatalog, pri
         val view = try {
             val records = document().sharedResources(context.parser)
             records.keys.forEach { pointer ->
-                val (roomId, _) = consumers.getValue(pointer).first()
-                val native = requireNotNull(context.parser.readRoomHeader(roomId))
-                val doors = context.parser.parseDoorList(native.doorOut).mapIndexed { index, door ->
-                    records[door.doorDefPtr]?.let { it.copy(change = it.change.copy(doorIndex = index), identity = index) }
-                        ?: SourceRoomDoor(door.doorDefPtr, DoorChange(index, door.destRoomPtr, door.bitflag, door.doorCapCode,
-                            door.screenX, door.screenY, door.distFromDoor, door.entryCode))
+                // Shared DoorDefs remain independently source-editable even if one consumer's
+                // list also contains an unowned engine sentinel. Prefer a fully ordinary list
+                // for whole-room validation; pointer-level build guards still cover every user.
+                val roomId = consumers.getValue(pointer).asSequence().map { it.first }.distinct().firstOrNull { candidate ->
+                    val header = context.parser.readRoomHeader(candidate) ?: return@firstOrNull false
+                    context.parser.parseDoorList(header.doorOut).all { it.isConnection }
                 }
-                validateSourceRoomDoors(RoomEdits(roomId, asmDoorSourceVersion = 1), SourceRoomDoors(native.doorOut, doors), context.parser, ::dimensions)
+                if (roomId != null) {
+                    val native = requireNotNull(context.parser.readRoomHeader(roomId))
+                    val doors = context.parser.parseDoorList(native.doorOut).mapIndexed { index, door ->
+                        records[door.doorDefPtr]?.let { it.copy(change = it.change.copy(doorIndex = index), identity = index) }
+                            ?: SourceRoomDoor(door.doorDefPtr, DoorChange(index, door.destRoomPtr, door.bitflag, door.doorCapCode,
+                                door.screenX, door.screenY, door.distFromDoor, door.entryCode))
+                    }
+                    validateSourceRoomDoors(RoomEdits(roomId, asmDoorSourceVersion = 1), SourceRoomDoors(native.doorOut, doors), context.parser, ::dimensions)
+                }
             }
             lastShared = records
             AsmSharedDoorView(records, null)
@@ -91,6 +99,9 @@ internal class AsmDoorSourceBridge(private val catalog: AsmPlmSourceCatalog, pri
         val header = requireNotNull(context.parser.readRoomHeader(room.roomId))
         val changes = room.doorChanges.associateBy { it.doorIndex }
         val native = context.parser.parseDoorList(header.doorOut)
+        require(native.all { it.isConnection }) {
+            "This room contains a native elevator-routing placeholder. Its door list must remain ROM-owned so the raw BTS slot is preserved."
+        }
         require(changes.keys.all { it in native.indices }) { "A GUI door override has no native connection." }
         val shared = sharedEntries(requireValid = native.any { sharedConsumers(it.doorDefPtr).isNotEmpty() })
         val projectId = context.identities()[room.roomId]

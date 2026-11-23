@@ -926,6 +926,12 @@ class RomParser(
      *   +8  distFromDoor (2) Samus distance from door edge (0x8000 = default)
      *   +10 entryCode    (2) ASM pointer ($8F) to run on arrival
      */
+    enum class DoorEntryKind {
+        CONNECTION,
+        /** Native door-list slot that points at Door_VariousRooms_Elevator ($83:88FC), not a 12-byte DoorDef. */
+        ELEVATOR_PLACEHOLDER,
+    }
+
     data class DoorEntry(
         val destRoomPtr: Int,
         val bitflag: Int,
@@ -935,17 +941,20 @@ class RomParser(
         val distFromDoor: Int,
         val entryCode: Int,
         /** Raw 16-bit pointer into bank $83 — this is the DoorDef address for WRAM 0x078D. */
-        val doorDefPtr: Int = 0
+        val doorDefPtr: Int = 0,
+        val kind: DoorEntryKind = DoorEntryKind.CONNECTION,
     ) {
+        val isConnection: Boolean get() = kind == DoorEntryKind.CONNECTION
+        val isElevatorPlaceholder: Boolean get() = kind == DoorEntryKind.ELEVATOR_PLACEHOLDER
         val direction: Int get() = (bitflag shr 8) and 0xFF
-        val directionName: String get() = when (direction and 0x03) {
+        val directionName: String get() = if (isElevatorPlaceholder) "Elevator routing" else when (direction and 0x03) {
             0 -> "Right"
             1 -> "Left"
             2 -> "Down"
             3 -> "Up"
             else -> "?"
         }
-        val isElevator: Boolean get() = (bitflag and 0x80) != 0
+        val isElevator: Boolean get() = isConnection && (bitflag and 0x80) != 0
     }
 
     /**
@@ -959,6 +968,19 @@ class RomParser(
         if (ptrOff + 1 >= romData.size) return null
         val entryPtr = readUInt16At(ptrOff)
         if (entryPtr < 0x8000) return null
+        if (entryPtr == ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR) {
+            return DoorEntry(
+                destRoomPtr = 0,
+                bitflag = 0,
+                doorCapCode = 0,
+                screenX = 0,
+                screenY = 0,
+                distFromDoor = 0,
+                entryCode = 0,
+                doorDefPtr = entryPtr,
+                kind = DoorEntryKind.ELEVATOR_PLACEHOLDER,
+            )
+        }
         val entryPc = snesToPc(BANK_FX or entryPtr)
         if (entryPc + 11 >= romData.size) return null
         val destRoom = readUInt16At(entryPc)
@@ -976,8 +998,8 @@ class RomParser(
     }
 
     /**
-     * Parse all door entries for a room. Reads the door-out list until an
-     * invalid pointer is encountered, up to [maxDoors].
+     * Parse all door-list slots for a room. Reads until an invalid pointer,
+     * retaining native special slots so list indices remain doorway BTS values.
      */
     // ─── Space utilization ───────────────────────────────────────
     data class RoomSpaceUsage(
@@ -1002,7 +1024,7 @@ class RomParser(
         val plms = parsePlmSet(plmSetPtr)
         val enemies = parseEnemyPopulation(enemySetPtr)
         val scrollSize = room.width * room.height
-        val doors = parseDoorList(room.doorOut)
+        val doors = parseDoorList(room.doorOut).filter { it.isConnection }
         return RoomSpaceUsage(
             levelDataCompressed = compSize,
             levelDataDecompressed = decompData.size,
@@ -1085,6 +1107,7 @@ class RomParser(
             if (srcRoom.doorOut == 0) continue
             val doors = parseDoorList(srcRoom.doorOut)
             for (door in doors) {
+                if (!door.isConnection) continue
                 if (door.destRoomPtr == targetRoomId) {
                     result.add(door)
                 }
@@ -1209,7 +1232,7 @@ class RomParser(
         val ptrOff = listPc + doorIndex * 2
         if (ptrOff + 1 >= romData.size) return null
         val entryPtr = readUInt16At(ptrOff)
-        if (entryPtr < 0x8000) return null
+        if (entryPtr < 0x8000 || entryPtr == ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR) return null
         val entryPc = snesToPc(BANK_FX or entryPtr)
         if (entryPc + 11 >= romData.size) return null
         return entryPc
@@ -1235,6 +1258,7 @@ class RomParser(
                 if (room.width !in 1..16 || room.height !in 1..16) continue
                 val doors = parseDoorList(room.doorOut)
                 for (door in doors) {
+                    if (!door.isConnection) continue
                     if (door.destRoomPtr == destRoomId && (door.direction and 0x03) == (direction and 0x03)) {
                         candidates.add(Candidate(door, roomId))
                     }
@@ -1725,6 +1749,8 @@ class RomParser(
     }
 
     companion object {
+        /** Shared native sentinel used inside door lists; its target contains only `dw $0000`. */
+        const val ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR = 0x88FC
         private const val PAUSE_MAP_GFX_PC = 0x1B0000
         // Structurally detected read-only layout observed in expanded ROMs.
         private const val EXPANDED_MINIMAP_BASE_PC = 0x3F9000

@@ -237,7 +237,8 @@ internal fun doorDiagnosticsForRoom(
     val destinationDoors = mutableMapOf<Int, List<RomParser.DoorEntry>>()
     val destinationOpenings = mutableMapOf<List<Int>, DoorwayOpening?>()
     return editorState.effectiveDoorsForRoom(sourceRoomId, parser)
-        .mapIndexed { index, door ->
+        .mapIndexedNotNull { index, door ->
+            if (!door.isConnection) return@mapIndexedNotNull null
             val roomPair = destinationRooms.getOrPut(door.destRoomPtr) {
                 parser.readRoomHeader(door.destRoomPtr)?.let { it to editorState.applyHeaderChanges(it) }
             }

@@ -61,6 +61,9 @@ fun validateSourceRoomDoors(room: RoomEdits, source: SourceRoomDoors, parser: Ro
         "Door-list relocation is not supported by the fixed DoorDef source format."
     }
     val native = parser.parseDoorList(header.doorOut)
+    require(native.all { it.isConnection }) {
+        "Rooms with native special door-list slots cannot transfer door ownership to ASM; the raw slot order must remain ROM-owned."
+    }
     require(if (source.structural) source.entries.all { door ->
         if (source.projectRoomId != null) door.doorDefPtr == 0
         else door.doorDefPtr == 0 || door.doorDefPtr == (native.getOrNull(door.identity)?.doorDefPtr ?: 0)
@@ -96,7 +99,9 @@ fun nativeDoorConsumers(parser: RomParser): Map<Int, List<Pair<Int, Int>>> = bui
     for (info in parser.roomCatalog.rooms) {
         val id = info.getRoomIdAsInt()
         val header = parser.readRoomHeader(id) ?: continue
-        parser.parseDoorList(header.doorOut).forEachIndexed { index, door -> getOrPut(door.doorDefPtr) { mutableListOf() }.add(id to index) }
+        parser.parseDoorList(header.doorOut).forEachIndexed { index, door ->
+            if (door.isConnection) getOrPut(door.doorDefPtr) { mutableListOf() }.add(id to index)
+        }
     }
 }
 
