@@ -119,6 +119,42 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `heated room blue suit fix matches Map Rando and preserves environmental damage`() {
+        val patch = SmeditPatchCatalog.defaultPatches().single {
+            it.id == "hex_heated_room_blue_suit_fix"
+        }
+        val write = patch.writes.single()
+        assertEquals(0x08B629L, write.offset)
+        assertEquals(listOf(0x01), write.bytes)
+        assertEquals(listOf(0x00), write.expectedBytes)
+        assertEquals("heated_room_blue_suit_fix", SmeditPatchCatalog.publicPatchId(patch))
+
+        val original = TestRomHelper.loadRomBytes() ?: return
+        assertEquals(0x00, original[write.offset.toInt()].toInt() and 0xFF)
+        val result = SmeditBuildService().build(
+            original,
+            SmeditBuildRequest(
+                patches = mapOf(
+                    "heated_room_blue_suit_fix" to SmeditPatchRequest(),
+                    EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf(EnvironmentalDamagePatch.HEAT_KEY to 30),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(0x01, result.romBytes[write.offset.toInt()].toInt() and 0xFF)
+        val heat = EnvironmentalDamagePatch.FIELDS.single { it.key == EnvironmentalDamagePatch.HEAT_KEY }
+        assertEquals(
+            30,
+            EnvironmentalDamagePatch.decodeEnergyPerSecond(
+                result.romBytes.readWord(heat.lowWordPc),
+                result.romBytes.readWord(heat.highWordPc),
+            ),
+        )
+    }
+
+    @Test
     fun `map rando style gravity patch removes heat immunity and synchronizes suit palettes`() {
         val patch = SmeditPatchCatalog.defaultPatches().single { it.id == SuitPatches.GRAVITY_NO_HEAT_ID }
         val writes = patch.writes.associateBy { it.offset.toInt() }

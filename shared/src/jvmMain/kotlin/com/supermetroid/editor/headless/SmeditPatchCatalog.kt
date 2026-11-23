@@ -255,6 +255,13 @@ object SmeditPatchCatalog {
             writes = mutableListOf(PatchWrite(0x85396, listOf(0x80, 0x27))),
         ),
         SmPatch(
+            id = "hex_heated_room_blue_suit_fix",
+            name = "Heated-Room Blue Suit Fix",
+            description = "Prevents heat-damage sounds from corrupting the speed-boost timer and intermittently cancelling blue speed. Heat damage still applies.",
+            enabled = false,
+            writes = mutableListOf(PatchWrite(0x8B629, listOf(0x01))),
+        ),
+        SmPatch(
             id = "hex_keep_blue_speed_air",
             name = "Keep Blue Speed in Air",
             description = "Moving left/right during spin jump no longer cancels speed booster blue effect.",

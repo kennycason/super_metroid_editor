@@ -42,6 +42,23 @@ enemy, projectile, acid, spike, or other periodic damage. These curated suit
 patches are intentionally incompatible with **Complementary Suits**, which replaces
 the same native suit-check routines with different semantics.
 
+### Heated-room blue suit fix
+
+The separate **Heated-Room Blue Suit Fix** preserves blue speed while Samus is
+taking heated-room damage without Varia. It does not grant heat immunity, change
+the configured damage rate, suppress damage sounds, or preserve blue speed from
+ordinary actions that cancel it.
+
+Vanilla's speed-booster animation routine calls the library-3 sound queue when a
+new speed stage begins, then accidentally uses the sound routine's return value as
+an index into the five-word speed-timer table at `$91:B61F`. Heat-damage sounds can
+fill enough queue slots for that index to select the following zero byte at
+`$91:B629`, producing a zero timer and the intermittent blue-suit failure noted in
+the disassembly. Matching Map Rando's `vanilla_bugfixes.asm`, this patch changes
+PC `$08B629` (`$91:B629`) from `$00` to `$01`, providing a valid one-frame fallback
+timer. The write is guarded by its vanilla expected byte and composes with
+**Environmental Damage**, **Keep Blue Speed in Air**, and **Infinite Blue Suit**.
+
 ## ROM representation
 
 The engine adds an unsigned 16.16 fixed-point amount every frame. SMEDIT converts

@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.AppSettings
 import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.rom.SuitPatches
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -12,6 +13,19 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class PatchEditorTest {
+    @Test
+    fun `heated room blue suit fix is seeded identically in desktop and headless catalogs`() {
+        val editor = EditorState().apply { testMode = true }
+        editor.seedDefaultPatches()
+
+        val desktop = editor.project.patches.single { it.id == "hex_heated_room_blue_suit_fix" }
+        val headless = SmeditPatchCatalog.defaultPatches().single { it.id == desktop.id }
+        assertEquals(headless.name, desktop.name)
+        assertEquals(headless.description, desktop.description)
+        assertEquals(headless.writes, desktop.writes)
+        assertEquals(listOf(0x00), desktop.writes.single().expectedBytes)
+    }
+
     @Test
     fun `saved gravity heat patch upgrades and new suit controls are seeded`() {
         val editor = EditorState().apply { testMode = true }
