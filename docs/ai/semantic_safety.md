@@ -71,6 +71,15 @@ changes only; an index is `row * 16 + column`, and every unmentioned color is
 preserved. RGB inputs are quantized to the SNES five-bit channels before the
 approval plan is frozen.
 
+The provider-facing mutation schema has one canonical shape: `palette_edits`
+contains one or more palette entries, and each unique palette ID should appear
+once with changes from every relevant row combined into that entry. The desktop
+boundary defensively coalesces repeated entries for the same palette when their
+indices are disjoint (or request the same quantized color). It rejects only a
+true conflict where one index is assigned two different SNES colors. This keeps
+model formatting mistakes from blocking safe plans without making ambiguous
+writes possible.
+
 Some tilesets share one source palette asset. The read API and approval plan
 list every affected tileset, and optimistic source-byte checks prevent approval,
 undo, or redo from replacing a newer edit. In ASM-source mode, an unsaved draft
@@ -83,7 +92,12 @@ Changing one region never implies changing the others. The default assembled
 Kraid preview uses full-health row 8 (indices 128–143) from both health-stage
 tables; editing only the base `sprite:boss_kraid` palette will not recolor that
 view. `set_palette_colors.palette_edits` can freeze the related base, BG, and OAM
-diffs into one atomic approval. After approval, SMEDIT
+diffs into one atomic approval.
+
+Phantoon likewise has two initial/base rows in `sprite:boss_phantoon` and eight
+fight-time rows in `sprite:boss_phantoon_health`. Its assembled editor preview
+uses the full-health runtime row 7 (indices 112–127), so a visible whole-boss
+recolor must inspect and normally edit both related resources atomically. After approval, SMEDIT
 invalidates the relevant palette and boss preview caches so the editor reflects
 the approved colors before export or in-game testing.
 

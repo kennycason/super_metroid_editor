@@ -36,9 +36,9 @@ class SpritePalettesTest {
     fun `region catalog includes colorizer boss and enemy categories`() {
         assertEquals(4, SpritePalettes.SAMUS_REGIONS.size)
         assertEquals(1, SpritePalettes.BEAM_REGIONS.size)
-        assertEquals(18, SpritePalettes.BOSSES_REGIONS.size)
+        assertEquals(19, SpritePalettes.BOSSES_REGIONS.size)
         assertEquals(71, SpritePalettes.ENEMIES_REGIONS.size)
-        assertEquals(94, SpritePalettes.REGIONS.size)
+        assertEquals(95, SpritePalettes.REGIONS.size)
     }
 
     @Test

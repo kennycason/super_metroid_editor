@@ -307,6 +307,8 @@ internal class DesktopSmeditWorkspaceAccess(
                 "boss_kraid" -> listOf("boss_kraid_health_bg", "boss_kraid_health_oam")
                 "boss_kraid_health_bg" -> listOf("boss_kraid", "boss_kraid_health_oam")
                 "boss_kraid_health_oam" -> listOf("boss_kraid", "boss_kraid_health_bg")
+                "boss_phantoon" -> listOf("boss_phantoon_health")
+                "boss_phantoon_health" -> listOf("boss_phantoon")
                 else -> emptyList()
             }.map { "sprite:$it" }
             val usage = when (region.id) {
@@ -314,6 +316,8 @@ internal class DesktopSmeditWorkspaceAccess(
                 "boss_kraid_bg" -> "Kraid room background environment colors; this is not Kraid's body palette."
                 "boss_kraid_health_bg" -> "Kraid BG2 body runtime stages. Row 8 (indices 128–143) drives the default full-health assembled preview."
                 "boss_kraid_health_oam" -> "Kraid arm, foot, lint, and nail runtime stages. Row 8 (indices 128–143) drives the default full-health assembled preview."
+                "boss_phantoon" -> "Phantoon's initial/base rows. The fight's health handler replaces these with the separate runtime health-stage table."
+                "boss_phantoon_health" -> "Phantoon's eight runtime health stages. Row 7 (indices 112–127) drives the default full-health assembled preview."
                 else -> null
             }
             SmeditPaletteSummary(

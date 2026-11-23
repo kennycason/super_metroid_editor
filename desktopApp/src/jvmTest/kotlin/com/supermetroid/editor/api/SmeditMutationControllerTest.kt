@@ -487,6 +487,47 @@ class SmeditMutationControllerTest {
     }
 
     @Test
+    fun `Phantoon base and runtime health palettes apply atomically and round trip`() {
+        val editor = editor()
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_phantoon")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 1)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_phantoon_health")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 113)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                )))
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(1, planning.plan?.palette?.additionalTargets?.size)
+        assertTrue(editor.project.customGfx.spritePalettes.isEmpty())
+        controller.approve(planning.plan!!.id)
+        assertTrue(editor.project.customGfx.spritePalettes.keys.containsAll(
+            listOf("boss_phantoon", "boss_phantoon_health"),
+        ))
+        controller.undo()
+        assertTrue(editor.project.customGfx.spritePalettes.isEmpty())
+        controller.redo()
+        assertTrue(editor.project.customGfx.spritePalettes.keys.containsAll(
+            listOf("boss_phantoon", "boss_phantoon_health"),
+        ))
+    }
+
+    @Test
     fun `non-empty atomic palette batch takes precedence over redundant single fields`() {
         val editor = editor()
         val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
@@ -523,6 +564,66 @@ class SmeditMutationControllerTest {
         assertTrue(editor.project.customGfx.spritePalettes.keys.containsAll(
             listOf("boss_kraid_health_bg", "boss_kraid_health_oam"),
         ))
+    }
+
+    @Test
+    fun `duplicate palette rows merge when their color indices do not conflict`() {
+        val editor = editor()
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 17)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                )))
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals("sprite:boss_kraid_health_bg", planning.plan?.palette?.paletteId)
+        assertEquals(2, planning.plan?.palette?.colorChanges?.size)
+        assertTrue(planning.plan?.palette?.additionalTargets?.isEmpty() == true)
+    }
+
+    @Test
+    fun `duplicate palette rows reject only a conflicting color assignment`() {
+        val controller = DesktopSmeditMutationController(editor(), FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 17)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 17)
+                            put("color", "#00FF00")
+                        })))
+                    },
+                )))
+            },
+        )
+
+        assertEquals("conflicting_palette_index", planning.errorCode())
     }
 
     @Test
@@ -813,6 +914,32 @@ class SmeditMutationControllerTest {
                 sourceManaged = false,
                 modified = false,
             ),
+            SmeditPaletteSummary(
+                id = "sprite:boss_phantoon",
+                name = "Phantoon",
+                kind = "sprite",
+                category = "bosses",
+                description = "Phantoon base palettes",
+                colorCount = 32,
+                rowCount = 2,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+                relatedPaletteIds = listOf("sprite:boss_phantoon_health"),
+            ),
+            SmeditPaletteSummary(
+                id = "sprite:boss_phantoon_health",
+                name = "Phantoon (health stages)",
+                kind = "sprite",
+                category = "bosses",
+                description = "Phantoon runtime health palettes",
+                colorCount = 128,
+                rowCount = 8,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+                relatedPaletteIds = listOf("sprite:boss_phantoon"),
+            ),
         )
         override fun palette(identifier: String): SmeditPaletteDetails? = palettes().singleOrNull {
             it.id == identifier
@@ -828,6 +955,7 @@ class SmeditMutationControllerTest {
                 editable = true,
                 sourceManaged = false,
                 modified = false,
+                relatedPaletteIds = summary.relatedPaletteIds,
                 colorsBgr555 = List(summary.colorCount) { 0 },
                 colorsRgbHex = List(summary.colorCount) { "#000000" },
             )

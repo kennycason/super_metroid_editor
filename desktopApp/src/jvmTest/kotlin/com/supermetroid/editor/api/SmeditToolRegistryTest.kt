@@ -42,9 +42,15 @@ class SmeditToolRegistryTest {
             "overwrite_audio_sensitive_music" in registry.definition("set_room_music")!!
                 .inputSchema.getValue("properties").jsonObject,
         )
-        assertTrue(
-            "palette_edits" in registry.definition("set_palette_colors")!!
-                .inputSchema.getValue("properties").jsonObject,
+        assertEquals(
+            setOf("palette_edits"),
+            registry.definition("set_palette_colors")!!.inputSchema
+                .getValue("properties").jsonObject.keys,
+        )
+        assertEquals(
+            listOf("palette_edits"),
+            registry.definition("set_palette_colors")!!.inputSchema
+                .getValue("required").jsonArray.map { it.jsonPrimitive.content },
         )
         assertTrue(
             registry.definitions.filterNot {

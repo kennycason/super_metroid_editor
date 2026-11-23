@@ -5,6 +5,7 @@ import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.PhantoonSpritemap
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpriteAnimation
+import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 
 /**
@@ -25,6 +26,13 @@ class PhantoonSpriteEditorState(
         val sm = PhantoonSpritemap(romParser)
         if (!sm.load()) return null
         applyCustomGfx(sm.getTileGraphics(), sm.getTilesetId())
+        sm.applyPaletteRegionOverrides(
+            customGfx().spritePalettes.mapNotNull { (regionId, encoded) ->
+                runCatching {
+                    regionId to SpritePalettes.bytesToColors(java.util.Base64.getDecoder().decode(encoded))
+                }.getOrNull()
+            }.toMap(),
+        )
         spritemap = sm
         return sm
     }

@@ -88,4 +88,23 @@ class PhantoonSpriteTest {
             assertTrue(rendered.frames.all { frame -> frame.pixels.count { (it ushr 24) != 0 } > 1000 }, definition.name)
         }
     }
+
+    @Test
+    fun `project health palette overrides drive the full health runtime row`() {
+        val phantoon = PhantoonSpritemap(RomParser(ByteArray(0x300000)))
+        val health = IntArray(128) { index -> (index * 193) and 0x7FFF }
+
+        phantoon.applyPaletteRegionOverrides(mapOf("boss_phantoon_health" to health))
+
+        val fullHealth = assertNotNull(phantoon.readPalette(PhantoonSpritemap.PALETTE_STAGES.last()))
+        assertEquals(0x00000000, fullHealth[0])
+        for (column in 1 until 16) {
+            assertEquals(
+                EnemySpriteGraphics.snesColorToArgb(health[112 + column]),
+                fullHealth[column],
+                "full-health column $column",
+            )
+        }
+        assertEquals(fullHealth.toList(), phantoon.getPalette()?.toList())
+    }
 }

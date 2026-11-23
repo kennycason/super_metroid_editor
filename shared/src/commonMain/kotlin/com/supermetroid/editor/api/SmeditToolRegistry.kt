@@ -570,13 +570,12 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
         ),
         SmeditToolDefinition(
             name = "set_palette_colors",
-            description = "Stage exact partial color changes to one or more tileset or sprite palettes in one atomic approval. Use get_palette first. For one palette requiring changes send palette + changes; for two or more related targets requiring changes send palette_edits. Omit an already-correct target, or include its current requested colors in a batch and SMEDIT will treat it as satisfied without writing it. Each index is row * 16 + column; unchanged indices are preserved. Sprite and boss preview caches refresh after approval.",
+            description = "Stage exact partial color changes to one or more tileset or sprite palettes in one atomic approval. Use get_palette first. Always send palette_edits, including for one palette. Include exactly one entry per unique palette id and combine every row/index for that palette in its changes array. SMEDIT defensively merges repeated entries when their indices do not conflict. Omit an already-correct target, or include its current requested colors and SMEDIT will treat it as satisfied without writing it. Each index is row * 16 + column; unchanged indices are preserved. Sprite and boss preview caches refresh after approval.",
             inputSchema = objectSchema(
                 properties = mapOf(
-                    "palette" to stringSchema("Stable palette id for a single edit. Ignored when a non-empty palette_edits batch is present."),
-                    "changes" to paletteChangesSchema("Exact entries for a single palette. Ignored when a non-empty palette_edits batch is present."),
                     "palette_edits" to paletteEditsSchema(),
                 ),
+                required = listOf("palette_edits"),
             ),
             effect = SmeditToolEffect.MUTATION,
         ),
@@ -830,11 +829,9 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             put("items", buildJsonObject { put("type", "string") })
         }
 
-        private fun paletteChangesSchema(
-            description: String = "One or more exact palette entries. color must be #RRGGBB.",
-        ) = buildJsonObject {
+        private fun paletteChangesSchema() = buildJsonObject {
             put("type", "array")
-            put("description", description)
+            put("description", "One or more exact palette entries. Include changes from every relevant row in this one array. color must be #RRGGBB.")
             put("minItems", 1)
             put("items", buildJsonObject {
                 put("type", "object")
@@ -849,8 +846,8 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
 
         private fun paletteEditsSchema() = buildJsonObject {
             put("type", "array")
-            put("description", "Two or more related palette edits to stage atomically in one approval. A non-empty batch takes precedence over redundant top-level palette and changes fields.")
-            put("minItems", 2)
+            put("description", "One or more palette edits to stage atomically. Use exactly one entry per unique palette id; SMEDIT merges non-conflicting duplicates defensively.")
+            put("minItems", 1)
             put("items", buildJsonObject {
                 put("type", "object")
                 put("properties", buildJsonObject {

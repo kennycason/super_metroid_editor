@@ -954,7 +954,6 @@ internal class DesktopSmeditMutationController(
             return failure("invalid_arguments", "palette_edits must be an array.")
         }
         val requestedEdits: List<Pair<String, JsonArray>> = if (!batch.isNullOrEmpty()) {
-            if (batch.size < 2) return failure("invalid_arguments", "palette_edits must contain at least two palettes.")
             batch.map { element ->
                 val edit = element as? JsonObject
                     ?: return failure("invalid_arguments", "Every palette_edits entry must be an object.")
@@ -973,6 +972,10 @@ internal class DesktopSmeditMutationController(
         }
 
         data class RequestedColor(val index: Int, val rgb: String, val bgr555: Int)
+        data class ResolvedPaletteRequest(
+            val details: SmeditPaletteDetails,
+            val changes: LinkedHashMap<Int, RequestedColor> = linkedMapOf(),
+        )
         data class PlannedPalette(
             val details: SmeditPaletteDetails,
             val mutation: AiPaletteMutation,
@@ -982,16 +985,18 @@ internal class DesktopSmeditMutationController(
         val requestedDetails = mutableListOf<SmeditPaletteDetails>()
         val requestedTargetIds = linkedSetOf<String>()
         val alreadyMatching = mutableListOf<SmeditPaletteDetails>()
+        val resolvedRequests = linkedMapOf<String, ResolvedPaletteRequest>()
         for ((identifier, requested) in requestedEdits) {
             val details = workspace.palette(identifier)
                 ?: return failure("palette_not_found", "No palette uniquely matches '$identifier'.")
-            if (!requestedTargetIds.add(details.id)) {
-                return failure("duplicate_palettes", "Each palette may appear once: ${details.id}.")
+            val resolved = resolvedRequests.getOrPut(details.id) {
+                requestedTargetIds += details.id
+                requestedDetails += details
+                ResolvedPaletteRequest(details)
             }
-            requestedDetails += details
             if (!details.editable) return failure("palette_read_only", details.message ?: "${details.name} is not editable.")
             if (requested.isEmpty()) return failure("invalid_arguments", "Changes for ${details.name} must not be empty.")
-            val changes = requested.map { element ->
+            requested.forEach { element ->
                 val value = element as? JsonObject
                     ?: return failure("invalid_arguments", "Every palette change must be an object.")
                 val index = (value["index"] as? JsonPrimitive)?.intOrNull
@@ -1003,15 +1008,22 @@ internal class DesktopSmeditMutationController(
                 val rgb = (value["color"] as? JsonPrimitive)?.contentOrNull
                     ?.uppercase()?.takeIf { it.matches(Regex("#[0-9A-F]{6}")) }
                     ?: return failure("invalid_arguments", "Palette colors must use #RRGGBB.")
-                RequestedColor(index, rgb, rgbHexToBgr555(rgb))
+                val change = RequestedColor(index, rgb, rgbHexToBgr555(rgb))
+                val previous = resolved.changes[index]
+                if (previous != null && previous.bgr555 != change.bgr555) {
+                    return failure(
+                        "conflicting_palette_index",
+                        "${details.name} palette index $index was assigned conflicting colors " +
+                            "${previous.rgb} and ${change.rgb}.",
+                    )
+                }
+                if (previous == null) resolved.changes[index] = change
             }
-            val duplicateIndices = changes.groupingBy { it.index }.eachCount().filterValues { it > 1 }.keys
-            if (duplicateIndices.isNotEmpty()) {
-                return failure(
-                    "duplicate_palette_indices",
-                    "Each ${details.name} palette index may be changed once: ${duplicateIndices.sorted().joinToString()}.",
-                )
-            }
+        }
+
+        for (resolved in resolvedRequests.values) {
+            val details = resolved.details
+            val changes = resolved.changes.values.toList()
             if (details.colorsBgr555.size != details.colorCount) {
                 return failure("palette_unreadable", "${details.name} did not return its complete current color table.")
             }
@@ -1019,7 +1031,7 @@ internal class DesktopSmeditMutationController(
             changes.forEach { afterColors[it.index] = it.bgr555 }
             val effectiveChanges = changes.filter { details.colorsBgr555[it.index] != it.bgr555 }
             if (effectiveChanges.isEmpty()) {
-                if (requestedEdits.size == 1) {
+                if (resolvedRequests.size == 1) {
                     return failure("no_changes", "${details.name} already has the requested colors.")
                 }
                 alreadyMatching += details

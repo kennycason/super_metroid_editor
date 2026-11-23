@@ -3318,6 +3318,7 @@ class EditorState(
         require(colors.size == region.colorCount)
         val bytes = com.supermetroid.editor.rom.SpritePalettes.colorsToBytes(colors)
         project.customGfx.spritePalettes[regionId] = java.util.Base64.getEncoder().encodeToString(bytes)
+        phantoonSprite.invalidate()
         kraidSprite.invalidate()
         dirty = true
         paletteVersion++
@@ -3328,6 +3329,7 @@ class EditorState(
         val removedPalette = project.customGfx.spritePalettes.remove(regionId) != null
         val removedEffect = project.customGfx.paletteEffects.remove(regionId) != null
         if (removedPalette || removedEffect) {
+            phantoonSprite.invalidate()
             kraidSprite.invalidate()
             dirty = true
             paletteVersion++
@@ -3548,6 +3550,7 @@ class EditorState(
         else palettes[target.overrideKey] = target.overrideValue
         if (target.effectValue == null) project.customGfx.paletteEffects.remove(target.effectKey)
         else project.customGfx.paletteEffects[target.effectKey] = target.effectValue
+        phantoonSprite.invalidate()
         kraidSprite.invalidate()
         target.affectedTilesetIds.takeIf { it.isNotEmpty() }?.let { affected ->
             if (parser != null && currentTilesetId in affected) reloadCurrentRoomTileGraphics(parser)

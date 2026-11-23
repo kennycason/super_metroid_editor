@@ -168,6 +168,7 @@ class PhantoonSpritemap(private val romParser: RomParser) {
     }
 
     private var palette: IntArray? = null
+    private val paletteOverrides = mutableMapOf<Int, IntArray>()
     private var tilesetId: Int = -1
     private var cachedTileGfx: TileGraphics? = null
 
@@ -242,7 +243,24 @@ class PhantoonSpritemap(private val romParser: RomParser) {
 
     fun getPalette(): IntArray? = palette?.copyOf()
 
+    /** Apply project palette overrides to the exact runtime health rows used by this preview. */
+    fun applyPaletteRegionOverrides(overrides: Map<String, IntArray>) {
+        paletteOverrides.clear()
+        val health = overrides["boss_phantoon_health"]
+        if (health != null && health.size >= PALETTE_STAGES.size * 16) {
+            PALETTE_STAGES.forEachIndexed { row, stage ->
+                paletteOverrides[stage.snesAddr] = health.copyOfRange(row * 16, row * 16 + 16)
+            }
+        }
+        palette = readPalette(PALETTE_STAGES.last())
+    }
+
     fun readPalette(stage: PaletteStageDef): IntArray? {
+        paletteOverrides[stage.snesAddr]?.let { row ->
+            return IntArray(16) { index ->
+                if (index == 0) 0x00000000 else EnemySpriteGraphics.snesColorToArgb(row[index])
+            }
+        }
         val rom = romParser.getRomData()
         val pc = romParser.snesToPc(stage.snesAddr)
         if (pc < 0 || pc + 32 > rom.size) return null
