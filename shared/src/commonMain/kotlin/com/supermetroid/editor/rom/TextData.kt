@@ -42,6 +42,7 @@ enum class TextCategory(val displayName: String) {
     ESCAPE_TEXT("Escape Messages"),
     UI_MESSAGE("In-Game Messages"),
     ITEM_NAME("Item Pickups"),
+    CREDITS("Credits"),
 }
 
 object TextData {
@@ -291,6 +292,7 @@ object TextData {
             TextCategory.ESCAPE_TEXT -> encodeEscapeText(text, originalBytes)
             TextCategory.UI_MESSAGE, TextCategory.ITEM_NAME -> encodeUiMessage(text, originalBytes)
             TextCategory.INTRO_STORY -> encodeGreenText(text, originalBytes)
+            TextCategory.CREDITS -> error("Credits are managed by CreditsData, not encodeEntry")
         }
 
     /** Decode categories whose visual fields own one fixed byte range. */
@@ -303,6 +305,7 @@ object TextData {
         )
         TextCategory.ESCAPE_TEXT -> decodeEscapeText(rawBytes, 0, rawBytes.size)
         TextCategory.INTRO_STORY -> error("Intro story pages require their control-stream decoder")
+        TextCategory.CREDITS -> error("Credits are managed by CreditsData, not decodeFixedEntry")
     }
 
     /** Decode escape text from ROM bytes. Control bytes are stripped. */

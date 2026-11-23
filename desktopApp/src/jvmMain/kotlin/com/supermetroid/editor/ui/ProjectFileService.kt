@@ -228,6 +228,7 @@ internal object ProjectFileService {
             require(project.asmWorkspace.bossStatsSourceKeys.isEmpty()) { "Authored boss stats require ASM source mode." }
             require(project.asmWorkspace.patchSourceKeys.isEmpty()) { "Authored patch data requires ASM source mode." }
             require(project.asmWorkspace.disabledPatchValues.isEmpty()) { "Saved disabled ASM customizations require ASM source mode." }
+            require(project.asmWorkspace.creditsSourceVersion == 0) { "Source-authored credits require ASM source mode." }
             require(project.rooms.values.none { it.asmDoorSourceVersion != 0 || it.asmStateSelectorsSourceVersion != 0 || it.asmRoomPropertiesSourceVersion != 0 || it.asmLayoutSourceVersion != 0 || it.asmPlmSourceVersion != 0 || it.asmInitialScrollSourceVersion != 0 || it.asmFxSourceVersion != 0 || it.asmEnemySourceVersion != 0 }) { "Authored room data requires ASM source mode." }
             require(project.asmWorkspace.plmSourceBindings.isEmpty()) { "Linked room objects require ASM source mode." }
             val repository = AsmProjectWorkspaceRepository()
@@ -261,6 +262,7 @@ internal object ProjectFileService {
         }
         val expandedFillByte = if (communityExpanded) 0x00 else 0xFF
         com.supermetroid.editor.asm.AsmFastDoorsModule.prepare(project, projectFilePath)
+        com.supermetroid.editor.asm.AsmCreditsSourceModule.validateForBuild(project, projectFilePath, romParser)
         val sourceInputs = compiler.sourceInputsFingerprint(
             projectFilePath,
             loadedRom,

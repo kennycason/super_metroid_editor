@@ -71,6 +71,23 @@ class SmEditProjectFormatTest {
         assertTrue(SmEditProjectFormat.decode(minimal().toString()).asmWorkspace.debugWatches.isEmpty())
     }
 
+    @Test fun `credits groups and ASM source ownership round trip deeply`() {
+        val project = SmEditProject("base.smc")
+        project.creditsGroups += ProjectCreditsGroup(
+            header = "SMEDIT TEAM",
+            names = mutableListOf("SAMUS ARAN", "BABY METROID"),
+        )
+        project.asmWorkspace.creditsSourceVersion = 1
+
+        val reopened = SmEditProjectFormat.decode(SmEditProjectFormat.encode(project))
+
+        assertEquals(project.creditsGroups, reopened.creditsGroups)
+        assertEquals(1, reopened.asmWorkspace.creditsSourceVersion)
+        reopened.creditsGroups.single().names += "RIDLEY"
+        assertEquals(2, project.creditsGroups.single().names.size, "Nested names must not alias after decoding")
+        assertEquals(0, SmEditProjectFormat.decode(minimal().toString()).asmWorkspace.creditsSourceVersion)
+    }
+
     @Test fun `missing old future malformed and wrong format headers are rejected before their contents`() {
         val header = minimal()
         val bad = listOf(JsonPrimitive(0), JsonPrimitive(2), JsonPrimitive(21), JsonPrimitive("1"), JsonNull, JsonPrimitive(true), JsonPrimitive(1.5))

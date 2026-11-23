@@ -8,6 +8,7 @@ import com.supermetroid.editor.ui.AsmTilesetGraphicsEditorStateTest
 import com.supermetroid.editor.ui.AsmTilesetPaletteEditorStateTest
 import com.supermetroid.editor.ui.MinimapEditorStateTest
 import com.supermetroid.editor.ui.MusicBankTransitionsTest
+import com.supermetroid.editor.ui.CreditsEditorStateTest
 import com.supermetroid.editor.ui.asmIntegrationCoverageRows
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -18,8 +19,8 @@ class AsmIntegrationContractTest {
     @Test
     fun `every integration has complete capability and conformance decisions`() {
         assertEquals(emptyList(), AsmIntegrationContracts.validationErrors())
-        assertEquals(20, AsmIntegrationContracts.all.size)
-        assertEquals(18, AsmIntegrationContracts.all.count { it.reciprocal })
+        assertEquals(21, AsmIntegrationContracts.all.size)
+        assertEquals(19, AsmIntegrationContracts.all.count { it.reciprocal })
     }
 
     @Test
@@ -112,7 +113,7 @@ class AsmIntegrationContractTest {
             setOf("sound-music", "custom-source"),
             asmIntegrationCoverageRows("", AsmIntegrationCoverageFilter.ASM_ONLY).map { it.id }.toSet(),
         )
-        assertEquals(18, asmIntegrationCoverageRows("", AsmIntegrationCoverageFilter.RECIPROCAL).size)
+        assertEquals(19, asmIntegrationCoverageRows("", AsmIntegrationCoverageFilter.RECIPROCAL).size)
     }
 
     @Test
@@ -177,6 +178,8 @@ class AsmIntegrationContractTest {
             AsmTextEditorStateTest::class.java,
             AsmTypewriterTextBridgeTest::class.java,
             AsmIntroStoryTextBridgeTest::class.java,
+            AsmCreditsSourceBridgeTest::class.java,
+            CreditsEditorStateTest::class.java,
             AsmEnemyTuningSourceTest::class.java,
             AsmBeamDamageSourceTest::class.java,
             AsmBossStatsSourceTest::class.java,
@@ -195,6 +198,7 @@ class AsmIntegrationContractTest {
             AsmTextCompilerTest::class.java,
             AsmTypewriterTextCompilerTest::class.java,
             AsmIntroStoryTextCompilerTest::class.java,
+            AsmCreditsSourceCompilerTest::class.java,
             AsmFastDoorsCompilerTest::class.java,
         )
     }

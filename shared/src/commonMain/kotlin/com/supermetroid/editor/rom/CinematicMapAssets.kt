@@ -121,7 +121,7 @@ object CinematicMapAssets {
         RegionalInventory("Special settings", "GameOptionsMenu_SpecialSettings_English_Tilemap", "English", "No menu-layout visual selection yet"),
         RegionalInventory("Special settings", "GameOptionsMenu_SpecialSettings_Japanese_Tilemap", "Japanese", "Japanese font and encoding must stay paired"),
         RegionalInventory("Intro text/font path", "Tiles_Font2_BG3", "Japanese / regional", "Text controls and font encoding belong to 2C"),
-        RegionalInventory("Credits map/font path", "Credits_Tilemap", "NTSC/PAL conditional branch", "Active branch and credits text model are not yet reciprocal"),
+        RegionalInventory("Credits map/font path", "Credits_Tilemap", "NTSC/PAL conditional branch", "English NTSC custom groups are reciprocal; PAL/regional branches remain ASM only"),
     )
 
     fun source(key: String): Asset = requireNotNull(SUPPORTED.singleOrNull { it.key == key }) {

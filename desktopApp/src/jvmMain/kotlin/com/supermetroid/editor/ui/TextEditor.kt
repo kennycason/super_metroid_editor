@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.rom.CreditsData
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TextCategory
 import com.supermetroid.editor.rom.TextData
@@ -117,6 +118,7 @@ fun TextEditorSidebar(
 
         for (category in TextCategory.entries) {
             if (managedIntro && category == TextCategory.INTRO_STORY) continue
+            if (category == TextCategory.CREDITS) continue // handled separately below
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
 
@@ -192,6 +194,31 @@ fun TextEditorSidebar(
 
             Spacer(Modifier.height(12.dp))
         }
+
+        // Credits sidebar summary
+        val creditsGroups = remember(editVersion) { editorState.project.creditsGroups.toList() }
+        Text("End Credits", fontWeight = FontWeight.Bold, fontSize = fs.body,
+            color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(4.dp))
+        if (creditsGroups.isEmpty()) {
+            Text("No custom credits", fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            for ((idx, group) in creditsGroups.withIndex()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Column(Modifier.padding(6.dp)) {
+                        Text(group.header.ifBlank { "Group ${idx + 1}" }, fontSize = fs.body,
+                            fontWeight = FontWeight.Bold, color = Color(0xFFFFCC00))
+                        Text("${group.names.size} name${if (group.names.size != 1) "s" else ""}",
+                            fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -255,7 +282,7 @@ fun TextEditorPreview(
             Spacer(Modifier.height(12.dp))
         }
 
-        for (category in TextCategory.entries.filterNot { it == TextCategory.ITEM_NAME || managedIntro && it == TextCategory.INTRO_STORY }) {
+        for (category in TextCategory.entries.filterNot { it == TextCategory.ITEM_NAME || it == TextCategory.CREDITS || managedIntro && it == TextCategory.INTRO_STORY }) {
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
 
@@ -295,6 +322,243 @@ fun TextEditorPreview(
                 )
                 Spacer(Modifier.height(4.dp))
             }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        CreditsGroupsEditor(
+            romParser = parser,
+            editorState = editorState,
+        )
+    }
+}
+
+@Composable
+private fun CreditsGroupsEditor(
+    romParser: RomParser,
+    editorState: EditorState,
+) {
+    val editVersion = editorState.editVersion
+    val groups = remember(editVersion) { editorState.project.creditsGroups.toList() }
+    val parsed = remember(romParser) { CreditsData.parseCredits(romParser) }
+    val freeRows = parsed?.freeRowIndices?.size ?: 0
+    val usedRows = groups.sumOf { 1 + it.names.size * 2 }
+    val remainingRows = (freeRows - usedRows).coerceAtLeast(0)
+
+    Text("End Credits", fontWeight = FontWeight.Bold, fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.primary)
+    Text(
+        "Custom credit groups appended after the original ending credits scroll. " +
+            "A-Z and spaces only. $remainingRows of $freeRows tilemap rows remain.",
+        fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    editorState.creditsSourceProblem?.let { problem ->
+        Text(
+            "ASM credits draft is invalid; the last valid visual model is retained. $problem",
+            fontSize = 9.sp,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    if (parsed != null) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "${parsed.sections.size} original sections in ROM",
+            fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (usedRows > freeRows) {
+            Text(
+                "Credits exceed the ROM row budget by ${usedRows - freeRows}; remove names or groups before export.",
+                fontSize = 9.sp, color = MaterialTheme.colorScheme.error,
+            )
+        }
+    } else {
+        Text(
+            "Credits data is unsupported or unreadable; export is blocked.",
+            fontSize = 9.sp, color = MaterialTheme.colorScheme.error,
+        )
+    }
+
+    Spacer(Modifier.height(8.dp))
+
+    for ((groupIdx, group) in groups.withIndex()) {
+        CreditsGroupEditor(
+            group = group,
+            groupIndex = groupIdx,
+            editorState = editorState,
+            availableRows = freeRows,
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+
+    if (groups.size < CreditsData.MAX_CUSTOM_GROUPS && remainingRows >= 3) {
+        Surface(
+            modifier = Modifier.fillMaxWidth()
+                .clickable { editorState.addCreditsGroup(freeRows) },
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            shape = RoundedCornerShape(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "+ Add Credit Group",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "(${groups.size}/${CreditsData.MAX_CUSTOM_GROUPS})",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreditsGroupEditor(
+    group: com.supermetroid.editor.data.ProjectCreditsGroup,
+    groupIndex: Int,
+    editorState: EditorState,
+    availableRows: Int,
+) {
+    val editVersion = editorState.editVersion
+    var headerText by remember(editVersion, groupIndex) { mutableStateOf(group.header) }
+    val names = remember(editVersion, groupIndex) { group.names.toList() }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            // Header row
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Group ${groupIndex + 1}", fontWeight = FontWeight.Bold, fontSize = 11.sp,
+                    modifier = Modifier.width(60.dp))
+                TextField(
+                    value = headerText,
+                    onValueChange = { newVal ->
+                        val cleaned = newVal.uppercase().filter { it in 'A'..'Z' || it == ' ' }
+                            .take(CreditsData.MAX_HEADER_LENGTH)
+                        if (editorState.updateCreditsGroupHeader(groupIndex, cleaned)) {
+                            headerText = cleaned
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold,
+                    ),
+                    singleLine = true,
+                    placeholder = { Text("SECTION HEADER", fontSize = 12.sp, fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
+                    shape = RoundedCornerShape(4.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Remove", fontSize = 9.sp, color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.clickable { editorState.removeCreditsGroup(groupIndex) })
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text("Names (centered, large font):", fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+
+            // Name rows
+            for ((nameIdx, name) in names.withIndex()) {
+                CreditsNameRow(
+                    name = name,
+                    groupIndex = groupIndex,
+                    nameIndex = nameIdx,
+                    canRemove = names.size > 1,
+                    editorState = editorState,
+                )
+                Spacer(Modifier.height(2.dp))
+            }
+
+            // Add name button
+            val rowsUsed = editorState.project.creditsGroups.sumOf { 1 + it.names.size * 2 }
+            if (names.size < CreditsData.MAX_NAMES_PER_GROUP && rowsUsed + 2 <= availableRows) {
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                    Text(
+                        "+ Add Name",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { editorState.addCreditsName(groupIndex, availableRows) },
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "${names.size}/${CreditsData.MAX_NAMES_PER_GROUP}",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Footer info
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                Text(
+                    "${CreditsData.MAX_HEADER_LENGTH} max header · ${CreditsData.MAX_NAME_LENGTH} max name · A-Z + space",
+                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreditsNameRow(
+    name: String,
+    groupIndex: Int,
+    nameIndex: Int,
+    canRemove: Boolean,
+    editorState: EditorState,
+) {
+    val editVersion = editorState.editVersion
+    var nameText by remember(editVersion, groupIndex, nameIndex) { mutableStateOf(name) }
+
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("${nameIndex + 1}.", fontSize = 10.sp, modifier = Modifier.width(20.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextField(
+            value = nameText,
+            onValueChange = { newVal ->
+                val cleaned = newVal.uppercase().filter { it in 'A'..'Z' || it == ' ' }
+                    .take(CreditsData.MAX_NAME_LENGTH)
+                if (editorState.updateCreditsGroupName(groupIndex, nameIndex, cleaned)) {
+                    nameText = cleaned
+                }
+            },
+            modifier = Modifier.weight(1f),
+            textStyle = androidx.compose.ui.text.TextStyle(
+                fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            singleLine = true,
+            placeholder = { Text("PERSON NAME", fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+            ),
+            shape = RoundedCornerShape(4.dp),
+        )
+        if (canRemove) {
+            Spacer(Modifier.width(4.dp))
+            Text("x", fontSize = 9.sp, color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.clickable { editorState.removeCreditsName(groupIndex, nameIndex) })
         }
     }
 }
@@ -350,6 +614,7 @@ private fun TextEntryEditor(
                             allowed.takeWhile { character -> character == '\n' || visible++ < entry.maxLength }
                         }
                     }
+                    TextCategory.CREDITS -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' }.take(entry.maxLength)
                 }
                 if (managedIntroIndex != null) {
                     if (editorState.setIntroSceneText(managedIntroIndex, cleaned)) currentText = cleaned

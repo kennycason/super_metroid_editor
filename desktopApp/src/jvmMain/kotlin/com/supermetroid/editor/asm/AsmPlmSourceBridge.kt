@@ -36,6 +36,14 @@ internal class AsmPlmSourceBridge(
     private val project: () -> SmEditProject,
 ) : AsmSourceSaveParticipant {
     var onMetadataChanged: () -> Unit = {}
+    var onCreditsProblem: (String?) -> Unit = {}
+    val credits = AsmCreditsSourceBridge(
+        workspace = workspace,
+        parser = catalog.parser,
+        project = project,
+        onChanged = { onMetadataChanged() },
+        onProblem = { onCreditsProblem(it) },
+    )
     val context = AsmRoomSourceContext(catalog, project)
     val initialScrolls = AsmInitialScrollBridge(catalog, workspace, project, context) { onMetadataChanged() }
     val fx = AsmFxBridge(catalog, workspace, project, context) { onMetadataChanged() }
@@ -106,9 +114,11 @@ internal class AsmPlmSourceBridge(
         if (project().rooms.values.any { it.asmDoorSourceVersion != 0 || it.asmStateSelectorsSourceVersion != 0 || it.asmRoomPropertiesSourceVersion != 0 || it.asmPlmSourceVersion != 0 || it.asmInitialScrollSourceVersion != 0 || it.asmLayoutSourceVersion != 0 }) add(PLM_SOURCE_FILE)
         if (project().rooms.values.any { it.asmDoorSourceVersion != 0 || it.asmFxSourceVersion != 0 }) add(FX_SOURCE_FILE)
         if (project().rooms.values.any { it.asmEnemySourceVersion != 0 }) add(ENEMY_SOURCE_FILE)
+        addAll(credits.sourceFileIds)
     }
 
     override fun prepare(fileId: String, text: String): () -> String {
+        if (fileId == AsmCreditsSourceModule.FILE) return credits.prepare(fileId, text)
         if (fileId == FX_SOURCE_FILE && project().rooms.values.any { it.asmFxSourceVersion != 0 }) return fx.prepare(text)
         if (fileId == ENEMY_SOURCE_FILE && fileId in sourceFileIds) return enemies.prepare(text)
         if (fileId != PLM_SOURCE_FILE || fileId !in sourceFileIds) return { text }

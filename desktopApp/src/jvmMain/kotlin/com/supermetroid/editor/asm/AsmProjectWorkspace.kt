@@ -548,8 +548,10 @@ internal class AsmProjectWorkspaceRepository(
         require(authoritativeSource.readText() == expectedSourceText) {
             "${record.sourceFileId}'s authored override changed outside SMEDIT. No source was overwritten."
         }
-        require(expectedSourceText.windowed(record.originalDeclaration.length, 1)
-            .count { it == record.originalDeclaration } == 1) {
+        val declarationIndex = expectedSourceText.indexOf(record.originalDeclaration)
+        require(declarationIndex >= 0 &&
+            expectedSourceText.indexOf(record.originalDeclaration, declarationIndex + 1) < 0
+        ) {
             "${record.sourceLabel}'s direct incbin declaration is no longer unique"
         }
         require(AsmManagedAssets.markerRegex(record).find(expectedSourceText) == null) {

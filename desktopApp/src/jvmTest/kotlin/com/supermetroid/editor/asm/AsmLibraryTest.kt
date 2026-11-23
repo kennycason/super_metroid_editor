@@ -21,7 +21,7 @@ class AsmLibraryTest {
 
     @Test
     fun `guide and instruction page ids round trip`() {
-        assertEquals(24, AsmLibrary.guides.size)
+        assertEquals(25, AsmLibrary.guides.size)
         assertEquals(AsmLibrary.guides.size, AsmLibrary.guides.map { it.id }.toSet().size)
         AsmLibrary.guides.forEach { guide ->
             assertNotNull(AsmLibrary.guide(guide.id))
@@ -140,6 +140,15 @@ class AsmLibraryTest {
         assertTrue("\$0005*!FPS" in introStoryText)
         assertTrue("Timing expressions" in introStoryText)
         assertTrue("Japanese font/text path" in introStoryText)
+        val creditsGuide = AsmLibrary.guide("end-credit-groups")!!
+        val creditsText = creditsGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()
+        }
+        assertTrue("project/smedit_credits.asm" in creditsText)
+        assertTrue("CREDIT GROUP" in creditsText)
+        assertTrue("last valid model" in creditsText)
+        assertTrue("Save and Build fail closed" in creditsText)
+        assertTrue("PAL or other regional branches remain ASM only" in creditsText)
         val demoGuide = AsmLibrary.guide("checked-hook-demo")!!
         val demoText = demoGuide.sections.joinToString("\n") { section ->
             section.paragraphs.joinToString("\n") + "\n" + section.example?.code.orEmpty()

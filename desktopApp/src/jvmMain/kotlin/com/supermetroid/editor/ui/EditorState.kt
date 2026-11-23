@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.supermetroid.editor.asm.AsmPlmSourceBridge
 import com.supermetroid.editor.asm.AsmPlmStamp
 import com.supermetroid.editor.asm.AsmSourceTextChange
+import com.supermetroid.editor.asm.AsmCreditsVisualEdit
 import com.supermetroid.editor.asm.PLM_SOURCE_FILE
 import com.supermetroid.editor.asm.FX_SOURCE_FILE
 import com.supermetroid.editor.asm.ENEMY_SOURCE_FILE
@@ -46,6 +47,7 @@ import com.supermetroid.editor.asm.publishSourceModelChanges
 import com.supermetroid.editor.rom.withFxChange
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
 import com.supermetroid.editor.rom.CinematicMapAssets
+import com.supermetroid.editor.rom.CreditsData
 import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.CommunitySamusSpriteSource
 import com.supermetroid.editor.data.DoorChange
@@ -91,6 +93,7 @@ import com.supermetroid.editor.data.ProjectNewRoomHeader
 import com.supermetroid.editor.data.ProjectNewRoomOrigin
 import com.supermetroid.editor.data.ProjectNewRoomState
 import com.supermetroid.editor.data.ProjectPlmEntry
+import com.supermetroid.editor.data.ProjectCreditsGroup
 import com.supermetroid.editor.data.IntroImageSource
 import com.supermetroid.editor.data.IntroScene
 import com.supermetroid.editor.data.IntroSceneLayout
@@ -985,6 +988,8 @@ class EditorState(
     private val _workingPlms = mutableListOf<RomParser.PlmEntry>()
     val workingPlms: List<RomParser.PlmEntry> get() = _workingPlms
     internal var asmPlmSourceBridge by mutableStateOf<AsmPlmSourceBridge?>(null)
+    internal var creditsSourceProblem by mutableStateOf<String?>(null)
+        private set
     private data class ManagedSourceUndo(val fileId: String, val before: String, val after: String,
                                          val change: AsmSourceTextChange? = null)
     private val managedPlmUndo = java.util.IdentityHashMap<EditOperation, ManagedSourceUndo>()
@@ -1571,6 +1576,9 @@ class EditorState(
             owner
         }
         bridge.onMetadataChanged = { if (project === owner) notifyPlmSourceLinked() }
+        bridge.onCreditsProblem = { problem ->
+            if (project === owner) creditsSourceProblem = problem
+        }
         bridge.describePlm = { entry -> customItemNameForPlm(entry.id) ?: RomParser.plmDisplayName(entry.id, entry.param) }
         bridge.properties.projectRoomParser = {
             require(currentRomParser == null || matchesRoomSourceContext(catalog.parser)) { "The room ROM changed; wait for the source workspace." }
@@ -1589,6 +1597,11 @@ class EditorState(
         }
         asmPlmSourceBridge = bridge
         workspace.sourceSaveParticipant = bridge
+        workspace.sourceTextObserver = { fileId, text ->
+            if (project === owner && workspace.projectWorkspace?.root == root) {
+                bridge.credits.sourceChanged(fileId, text)
+            }
+        }
         enemyTuningBridge = root?.let { com.supermetroid.editor.asm.AsmEnemyTuningSource.load(workspace.projectWorkspace!!.originalDirectory) }?.let { tuning ->
             com.supermetroid.editor.asm.AsmEnemyTuningBridge(tuning, workspace, {
                 check(project === owner && workspace.projectWorkspace?.root == root &&
@@ -1672,6 +1685,11 @@ class EditorState(
         if (project.patches.any { it.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID }) {
             runCatching { codePatchBridge.reconcile() }.onFailure { postStatus("Fast Doors synchronization blocked: ${it.message}") }
         }
+        runCatching { bridge.credits.reconcile() }
+            .onFailure {
+                creditsSourceProblem = it.message ?: "Credits source synchronization failed"
+                postStatus("Credits synchronization blocked: ${creditsSourceProblem}")
+            }
         return bridge
     }
 
@@ -2872,6 +2890,155 @@ class EditorState(
         } catch (problem: Exception) {
             postStatus("Text restore blocked: ${problem.message ?: problem::class.simpleName}")
             false
+        }
+    }
+
+    // ─── Credits group management ──────────────────────────────
+
+    private data class CreditsHistory(
+        val before: List<ProjectCreditsGroup>,
+        val after: List<ProjectCreditsGroup>,
+        val source: AsmCreditsVisualEdit? = null,
+    )
+
+    private val creditsHistory = java.util.IdentityHashMap<EditOperation, CreditsHistory>()
+
+    private fun creditsSnapshot(): List<ProjectCreditsGroup> = project.creditsGroups.map { group ->
+        group.copy(names = group.names.toMutableList())
+    }
+
+    private fun restoreCreditsSnapshot(snapshot: List<ProjectCreditsGroup>) {
+        project.creditsGroups.clear()
+        project.creditsGroups.addAll(snapshot.map { it.copy(names = it.names.toMutableList()) })
+        dirty = true
+        editVersion++
+    }
+
+    private fun editCreditsGroups(
+        description: String,
+        availableRows: Int? = null,
+        edit: (MutableList<ProjectCreditsGroup>) -> Boolean,
+    ): Boolean {
+        val before = creditsSnapshot()
+        val after = before.map { it.copy(names = it.names.toMutableList()) }.toMutableList()
+        if (!edit(after) || before == after) return false
+        if (after.size > CreditsData.MAX_CUSTOM_GROUPS || after.any { it.names.size !in 1..CreditsData.MAX_NAMES_PER_GROUP }) {
+            postStatus("Credits edit exceeds the supported group or name limits")
+            return false
+        }
+        val rowsNeeded = after.sumOf { 1 + it.names.size * 2 }
+        if (availableRows != null && rowsNeeded > availableRows) {
+            postStatus("Credits need $rowsNeeded tilemap rows, but only $availableRows are available")
+            return false
+        }
+        val sourceEdit = if (
+            project.asmWorkspace.enabled &&
+            project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE
+        ) {
+            val bridge = asmPlmSourceBridge?.credits
+            if (bridge == null) {
+                postStatus("Credits edit blocked: wait for the Project ASM workspace.")
+                return false
+            }
+            runCatching { bridge.applyVisualEdit(before, after) }.getOrElse { problem ->
+                postStatus("Credits edit blocked: ${problem.message ?: "invalid credits source"}")
+                return false
+            }
+        } else null
+        project.creditsGroups.clear()
+        project.creditsGroups.addAll(after.map { it.copy(names = it.names.toMutableList()) })
+        val operation = EditOperation(description)
+        creditsHistory.keys.retainAll(undoStack + redoStack)
+        creditsHistory[operation] = CreditsHistory(before, creditsSnapshot(), sourceEdit)
+        undoStack.add(operation)
+        redoStack.clear()
+        undoVersion++
+        markDirty()
+        editVersion++
+        return true
+    }
+
+    private fun restoreCredits(operation: EditOperation, undo: Boolean): Boolean {
+        val history = creditsHistory.getValue(operation)
+        return runCatching {
+            history.source?.let { source ->
+                val bridge = requireNotNull(asmPlmSourceBridge?.credits) {
+                    "Wait for the Project ASM workspace before restoring source-authored credits."
+                }
+                if (undo) bridge.undo(source.afterSource, source.sourceChange)
+                else bridge.redo(source.beforeSource, source.sourceChange)
+            }
+            restoreCreditsSnapshot(if (undo) history.before else history.after)
+            if (undo) {
+                check(undoStack.lastOrNull() === operation)
+                undoStack.removeAt(undoStack.lastIndex)
+                redoStack.add(operation)
+            } else {
+                check(redoStack.lastOrNull() === operation)
+                redoStack.removeAt(redoStack.lastIndex)
+                undoStack.add(operation)
+            }
+            undoVersion++
+            true
+        }.getOrElse { problem ->
+            postStatus("Credits Undo/Redo blocked: ${problem.message ?: problem::class.simpleName}")
+            false
+        }
+    }
+
+    internal fun addCreditsGroup(availableRows: Int? = null): Boolean {
+        if (project.creditsGroups.size >= CreditsData.MAX_CUSTOM_GROUPS) {
+            postStatus("Maximum of ${CreditsData.MAX_CUSTOM_GROUPS} custom credit groups reached")
+            return false
+        }
+        return editCreditsGroups("Add credit group", availableRows) { groups ->
+            groups.add(ProjectCreditsGroup(header = "NEW SECTION", names = mutableListOf("NAME HERE")))
+        }
+    }
+
+    internal fun removeCreditsGroup(index: Int): Boolean = editCreditsGroups("Remove credit group") { groups ->
+        if (index !in groups.indices) false else groups.removeAt(index).let { true }
+    }
+
+    internal fun updateCreditsGroupHeader(index: Int, header: String): Boolean {
+        val cleaned = header.uppercase().filter { it in CreditsData.ALLOWED_CHARS }.take(CreditsData.MAX_HEADER_LENGTH)
+        return editCreditsGroups("Edit credit group header") { groups ->
+            groups.getOrNull(index)?.let { it.header = cleaned; true } ?: false
+        }
+    }
+
+    internal fun updateCreditsGroupName(groupIndex: Int, nameIndex: Int, name: String): Boolean {
+        val cleaned = name.uppercase().filter { it in CreditsData.ALLOWED_CHARS }.take(CreditsData.MAX_NAME_LENGTH)
+        return editCreditsGroups("Edit credit name") { groups ->
+            val group = groups.getOrNull(groupIndex) ?: return@editCreditsGroups false
+            if (nameIndex !in group.names.indices) false else {
+                group.names[nameIndex] = cleaned
+                true
+            }
+        }
+    }
+
+    internal fun addCreditsName(groupIndex: Int, availableRows: Int? = null): Boolean {
+        val group = project.creditsGroups.getOrNull(groupIndex) ?: return false
+        if (group.names.size >= CreditsData.MAX_NAMES_PER_GROUP) {
+            postStatus("Maximum of ${CreditsData.MAX_NAMES_PER_GROUP} names per group reached")
+            return false
+        }
+        return editCreditsGroups("Add credit name", availableRows) { groups ->
+            groups.getOrNull(groupIndex)?.names?.add("NAME HERE") ?: false
+        }
+    }
+
+    internal fun removeCreditsName(groupIndex: Int, nameIndex: Int): Boolean {
+        val group = project.creditsGroups.getOrNull(groupIndex) ?: return false
+        if (nameIndex !in group.names.indices) return false
+        if (group.names.size <= 1) {
+            postStatus("A credit group must have at least one name")
+            return false
+        }
+        return editCreditsGroups("Remove credit name") { groups ->
+            groups[groupIndex].names.removeAt(nameIndex)
+            true
         }
     }
 
@@ -12946,6 +13113,7 @@ class EditorState(
         val pending = undoStack.last()
         if (pending in nativeSpriteSourceUndo) return restoreNativeSpriteSourceHistory(pending, true)
         if (pending in introSequenceHistory) return restoreIntroSequence(pending, true)
+        if (pending in creditsHistory) return restoreCredits(pending, true)
         if (pending in musicCreationHistory) return restoreMusicCreation(pending, true)
         if (hasManagedLayouts() && pending.edits.isNotEmpty() && pending !in managedPlmUndo) {
             postStatus("Undo the layout source adoption in ASM before undoing older GUI tile edits."); return false
@@ -13044,6 +13212,7 @@ class EditorState(
         val pending = redoStack.last()
         if (pending in nativeSpriteSourceUndo) return restoreNativeSpriteSourceHistory(pending, false)
         if (pending in introSequenceHistory) return restoreIntroSequence(pending, false)
+        if (pending in creditsHistory) return restoreCredits(pending, false)
         if (pending in musicCreationHistory) return restoreMusicCreation(pending, false)
         if (hasManagedEnemies() && (pending.enemyAdds.isNotEmpty() || pending.enemyRemoves.isNotEmpty() || pending.enemyUpdates.isNotEmpty())) {
             postStatus("Enemy edit blocked: older ROM enemy edits cannot overwrite authored population source."); return false

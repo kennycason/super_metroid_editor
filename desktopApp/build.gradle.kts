@@ -151,6 +151,8 @@ val asmFastProofSuites = listOf(
     "com.supermetroid.editor.ui.AsmTextEditorStateTest",
     "com.supermetroid.editor.asm.AsmTypewriterTextBridgeTest",
     "com.supermetroid.editor.asm.AsmIntroStoryTextBridgeTest",
+    "com.supermetroid.editor.asm.AsmCreditsSourceBridgeTest",
+    "com.supermetroid.editor.ui.CreditsEditorStateTest",
     "com.supermetroid.editor.asm.AsmEnemyTuningSourceTest",
     "com.supermetroid.editor.asm.AsmBeamDamageSourceTest",
     "com.supermetroid.editor.asm.AsmBossStatsSourceTest",
@@ -172,6 +174,7 @@ val asmColdBuildProofSuites = listOf(
     "com.supermetroid.editor.asm.AsmTextCompilerTest",
     "com.supermetroid.editor.asm.AsmTypewriterTextCompilerTest",
     "com.supermetroid.editor.asm.AsmIntroStoryTextCompilerTest",
+    "com.supermetroid.editor.asm.AsmCreditsSourceCompilerTest",
     "com.supermetroid.editor.asm.AsmFastDoorsCompilerTest",
 )
 

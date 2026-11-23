@@ -424,8 +424,8 @@ history, parser, baseline-transform and pinned-source tests cover this boundary.
 
 ## 8. Ongoing integration contract and fast verification
 
-**Status: complete (2026-11-17).** A checked Kotlin registry now inventories 20
-integration families: 18 reciprocal source/Visual Editor contracts plus the intentional
+**Status: complete (updated 2026-11-23).** A checked Kotlin registry now inventories 21
+integration families: 19 reciprocal source/Visual Editor contracts plus the intentional
 sound/music and arbitrary-source boundaries. Every row has explicit decisions
 for inspect, ASM edit, Visual edit, live refresh, aliases, restore, relocation
 and cold build, together with the same ten conformance scenarios. Validation
@@ -442,6 +442,11 @@ the appropriate visual workspace. Documentation drift and missing implementation
 paths fail the same registry tests. A reverse bridge-declaration audit also fails
 when an implementation exists without a registry owner, preventing another
 Fast Doors-style omission.
+
+The end-credits family now uses `project/smedit_credits.asm` as its managed
+authority. Its declaration-only source lens, visual editor, guarded shared
+history, fixed native compression envelope, module collision audit, and
+cache-free build proof participate in the same completion gate.
 
 Build the shared contract alongside items 1–7 rather than postponing it.
 

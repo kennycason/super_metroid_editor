@@ -53,9 +53,11 @@ internal class AsmTextSourceBridge(
             ?: return supported.associate { entry ->
                 entry.id to AsmTextSourceAccess.AsmOnly(entry.id, "Project ASM workspace is unavailable.")
             }
-        val current = readAsmSourceTree(File(workspace.workingDirectory, "src"))
-        val baseline = readAsmSourceTree(File(workspace.originalDirectory, "src"))
-        return supported.associate { entry -> entry.id to access(current, baseline, entry) }
+        val currentIndex = indexSourceTree(File(workspace.workingDirectory, "src"), supported)
+        val baselineIndex = indexSourceTree(File(workspace.originalDirectory, "src"), supported)
+        return supported.associate { entry ->
+            entry.id to access(currentIndex, baselineIndex, entry)
+        }
     }
 
     fun save(
@@ -128,16 +130,16 @@ internal class AsmTextSourceBridge(
     }
 
     private fun access(
-        currentSources: Map<String, String>,
-        baselineSources: Map<String, String>,
+        currentIndex: List<IndexedSource>,
+        baselineIndex: List<IndexedSource>,
         entry: TextEntry,
     ): AsmTextSourceAccess {
-        val current = resolve(currentSources, entry)
+        val current = resolve(currentIndex, entry)
             ?: return AsmTextSourceAccess.AsmOnly(
                 entry.id,
                 "${entry.label} is not one exact fixed literal-word ASM field. Edit it in ASM.",
             )
-        val baseline = resolve(baselineSources, entry)
+        val baseline = resolve(baselineIndex, entry)
             ?: return AsmTextSourceAccess.AsmOnly(
                 entry.id,
                 "The frozen ${entry.label} field is not one exact literal-word table. Edit it in ASM.",
@@ -156,7 +158,7 @@ internal class AsmTextSourceBridge(
             baselineRawData = baseline.bytes,
             text = TextData.decodeFixedEntry(entry, current.bytes),
             baselineText = TextData.decodeFixedEntry(entry, baseline.bytes),
-            sourceText = currentSources.getValue(current.fileId),
+            sourceText = currentIndex.single { it.fileId == current.fileId }.text,
             modified = !current.bytes.contentEquals(baseline.bytes),
         )
     }
@@ -174,31 +176,94 @@ internal class AsmTextSourceBridge(
         val bytes: ByteArray,
     )
 
+    private data class IndexedSource(
+        val fileId: String,
+        val text: String,
+        val tokensByAddress: Map<Int, List<WordToken>>,
+    )
+
     private fun resolve(sources: Map<String, String>, entry: TextEntry): Resolution? {
         if (entry.snesAddress !in 0x800000..0xFFFFFF || entry.rawBytes.isEmpty() || entry.rawBytes.size % 2 != 0) {
             return null
         }
-        return sources.mapNotNull { (fileId, text) -> resolve(fileId, text, entry) }.singleOrNull()
+        return resolve(indexSources(sources, listOf(entry)), entry)
     }
 
-    private fun resolve(fileId: String, text: String, entry: TextEntry): Resolution? {
-        val tokens = text.split('\n').flatMapIndexed { lineIndex, rawLine ->
-            parseDirective(lineIndex, rawLine.removeSuffix("\r"))
+    private fun indexSources(
+        sources: Map<String, String>,
+        entries: Collection<TextEntry>,
+    ): List<IndexedSource> {
+        val relevantAddresses = relevantAddresses(entries)
+        return sources.mapNotNull { (fileId, text) ->
+            val tokens = indexLines(text.lineSequence(), relevantAddresses)
+            if (tokens.isEmpty()) null else IndexedSource(fileId, text, tokens)
         }
+    }
+
+    private fun indexSourceTree(
+        root: File,
+        entries: Collection<TextEntry>,
+    ): List<IndexedSource> {
+        val relevantAddresses = relevantAddresses(entries)
+        return root.walkTopDown()
+            .filter { it.isFile && it.extension.equals("asm", true) }
+            .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
+            .mapNotNull { file ->
+                val tokens = file.useLines { lines -> indexLines(lines, relevantAddresses) }
+                if (tokens.isEmpty()) null else IndexedSource(
+                    file.relativeTo(root).invariantSeparatorsPath,
+                    file.readText(),
+                    tokens,
+                )
+            }
+            .toList()
+    }
+
+    private fun relevantAddresses(entries: Collection<TextEntry>): Set<Int> =
+        entries.flatMapTo(mutableSetOf()) { entry ->
+            if (entry.snesAddress !in 0x800000..0xFFFFFF || entry.rawBytes.isEmpty() || entry.rawBytes.size % 2 != 0) {
+                emptyList()
+            } else {
+                (entry.rawBytes.indices step 2).map { entry.snesAddress + it }
+            }
+        }
+
+    private fun indexLines(
+        lines: Sequence<String>,
+        relevantAddresses: Set<Int>,
+    ): Map<Int, List<WordToken>> {
+        val tokens = mutableMapOf<Int, MutableList<WordToken>>()
+        lines.forEachIndexed { lineIndex, rawLine ->
+            parseDirective(lineIndex, rawLine.removeSuffix("\r"), relevantAddresses).forEach { token ->
+                tokens.getOrPut(token.address, ::mutableListOf).add(token)
+            }
+        }
+        return tokens
+    }
+
+    private fun resolve(sources: List<IndexedSource>, entry: TextEntry): Resolution? {
         val expected = (entry.rawBytes.indices step 2).map { entry.snesAddress + it }
-        val selected = expected.map { address -> tokens.singleOrNull { it.address == address } ?: return null }
-        if (selected.map(WordToken::address) != expected || selected.map(WordToken::lineIndex).zipWithNext().any { (a, b) -> b < a }) {
-            return null
-        }
-        val bytes = ByteArray(entry.rawBytes.size)
-        selected.forEachIndexed { index, token ->
-            bytes[index * 2] = token.value.toByte()
-            bytes[index * 2 + 1] = (token.value ushr 8).toByte()
-        }
-        return Resolution(fileId, selected, bytes)
+        return sources.mapNotNull { source ->
+            val selected = expected.map { address ->
+                source.tokensByAddress[address]?.singleOrNull() ?: return@mapNotNull null
+            }
+            if (selected.map(WordToken::address) != expected ||
+                selected.map(WordToken::lineIndex).zipWithNext().any { (a, b) -> b < a }
+            ) return@mapNotNull null
+            val bytes = ByteArray(entry.rawBytes.size)
+            selected.forEachIndexed { index, token ->
+                bytes[index * 2] = token.value.toByte()
+                bytes[index * 2 + 1] = (token.value ushr 8).toByte()
+            }
+            Resolution(source.fileId, selected, bytes)
+        }.singleOrNull()
     }
 
-    private fun parseDirective(lineIndex: Int, line: String): List<WordToken> {
+    private fun parseDirective(
+        lineIndex: Int,
+        line: String,
+        relevantAddresses: Set<Int>,
+    ): List<WordToken> {
         val match = DIRECTIVE.matchEntire(line) ?: return emptyList()
         val operands = match.groups[1] ?: return emptyList()
         val words = WORD.findAll(operands.value).toList()
@@ -206,12 +271,14 @@ internal class AsmTextSourceBridge(
         val separators = WORD.replace(operands.value, "").replace(",", "").trim()
         if (separators.isNotEmpty() || operands.value.count { it == ',' } != words.size - 1) return emptyList()
         val address = match.groupValues[2].toInt(16)
-        return words.mapIndexed { index, word ->
+        return words.mapIndexedNotNull { index, word ->
+            val wordAddress = address + index * 2
+            if (wordAddress !in relevantAddresses) return@mapIndexedNotNull null
             val start = operands.range.first + word.range.first
             WordToken(
                 lineIndex,
                 start..(start + word.value.length - 1),
-                address + index * 2,
+                wordAddress,
                 word.value.drop(1).toInt(16),
             )
         }

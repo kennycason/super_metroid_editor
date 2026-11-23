@@ -52,8 +52,8 @@ internal class AsmIntroStoryTextBridge(
             ?: return supported.associate { entry ->
                 entry.id to AsmIntroStoryTextAccess.AsmOnly(entry.id, "Project ASM workspace is unavailable.")
             }
-        val current = readAsmSourceTree(File(workspace.workingDirectory, "src"))
-        val baseline = readAsmSourceTree(File(workspace.originalDirectory, "src"))
+        val current = readRelevantSourceTree(File(workspace.workingDirectory, "src"), supported)
+        val baseline = readRelevantSourceTree(File(workspace.originalDirectory, "src"), supported)
         return supported.associate { entry -> entry.id to access(current, baseline, entry) }
     }
 
@@ -210,10 +210,8 @@ internal class AsmIntroStoryTextBridge(
         entry: TextEntry,
         definition: Definition,
     ): Resolution? {
-        val lines = sourceLines(text)
-        val labelIndexes = lines.indices.filter { lines[it].text.trim() == "${definition.label}:" }
-        if (labelIndexes.size != 1) return null
-        val labelIndex = labelIndexes.single()
+        val lines = pageSourceLines(text, definition.label) ?: return null
+        val labelIndex = 0
         val meaningful = mutableListOf<SourceLine>()
         val summaries = mutableListOf<SourceLine>()
         var index = labelIndex + 1
@@ -384,13 +382,37 @@ internal class AsmIntroStoryTextBridge(
         entry.writable && entry.category == TextCategory.INTRO_STORY &&
             entry.id in DEFINITIONS.indices.map { "intro_$it" }
 
-    private fun sourceLines(text: String): List<SourceLine> {
-        val result = mutableListOf<SourceLine>()
+    private fun readRelevantSourceTree(
+        root: File,
+        entries: Collection<TextEntry>,
+    ): Map<String, String> {
+        val labels = entries.mapNotNull(::definition).mapTo(mutableSetOf()) { "${it.label}:" }
+        return root.walkTopDown()
+            .filter { it.isFile && it.extension.equals("asm", true) }
+            .mapNotNull { file ->
+                val relevant = file.useLines { lines -> lines.any { it.trim() in labels } }
+                if (!relevant) null else file.relativeTo(root).invariantSeparatorsPath to file.readText()
+            }
+            .toMap()
+    }
+
+    private fun pageSourceLines(text: String, label: String): List<SourceLine>? {
+        var result: MutableList<SourceLine>? = null
+        var collecting = false
         var start = 0
         while (start <= text.length) {
             val newline = text.indexOf('\n', start).takeIf { it >= 0 } ?: text.length
             val end = if (newline > start && text[newline - 1] == '\r') newline - 1 else newline
-            result += SourceLine(start, end, text.substring(start, end))
+            val sourceLine = SourceLine(start, end, text.substring(start, end))
+            val trimmed = sourceLine.text.trim()
+            if (trimmed == "$label:") {
+                if (result != null) return null
+                result = mutableListOf(sourceLine)
+                collecting = true
+            } else if (collecting) {
+                if (GLOBAL_LABEL.matches(trimmed)) collecting = false
+                else result!!.add(sourceLine)
+            }
             if (newline == text.length) break
             start = newline + 1
         }

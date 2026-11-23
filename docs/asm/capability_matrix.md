@@ -30,6 +30,7 @@ Editor and visual source edits refresh ASM without reopening the project.
 | `fixed-text` | Fixed tilemap text | Y | Y | Y | Y | Y | Y | — | Y |
 | `typewriter-text` | Ceres/Zebes typed streams | Y | Y | Y | Y | Y | Y | Y | Y |
 | `intro-story-text` | English NTSC intro pages | Y | Y | Y | Y | — | Y | — | Y |
+| `end-credits` | English NTSC end-credit groups | Y | Y | Y | Y | — | Y | — | Y |
 | `gameplay-tuning` | Enemy/projectile/boss/environment/patch fields | Y | Y | Y | Y | Y | Y | — | Y |
 | `fast-doors` | Fast Doors curated code module | Y | Y | Y | Y | — | Y | — | Y |
 | `sound-music` | Sound/music source and tools | Y | Y | N | N | — | Y | — | Y |
@@ -60,6 +61,7 @@ current workspace contains that destination.
 | `fixed-text` | Text | `bank_85.asm` | `AsmTextSourceBridge.kt` |
 | `typewriter-text` | Text | `bank_A6.asm` | `AsmTypewriterTextBridge.kt` |
 | `intro-story-text` | Text | `bank_8B.asm` | `AsmIntroStoryTextBridge.kt` |
+| `end-credits` | Text | `project/smedit_credits.asm` | `AsmCreditsSourceBridge.kt` |
 | `gameplay-tuning` | Enemy tuning · Boss tuning · Patches | `bank_A0.asm`, `bank_B4.asm`, `bank_93.asm`, `bank_8D.asm`, `bank_90.asm` | `AsmEnemyTuningBridge.kt`, `AsmBeamDamageBridge.kt`, `AsmBossStatsBridge.kt`, `AsmEnvironmentalDamageBridge.kt`, `AsmDataPatchBridge.kt`, `AsmPatchToggleController.kt` |
 | `fast-doors` | Patches | `project/fast_doors.asm` | `AsmFastDoorsModule.kt` |
 | `sound-music` | Sound tools · independent | `bank_CF..DE.asm`, `data/Music_*.bin` | `AsmSemanticBridge.kt` |

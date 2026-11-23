@@ -433,6 +433,7 @@ class SmeditBuildService(
             if (project.customGfx.spriteTileBlocks.isNotEmpty()) unsupportedRomEdits.add("sprite tile blocks")
             if (project.customGfx.samusCommunitySource != null) unsupportedRomEdits.add("community Samus source")
             if (project.textEdits.isNotEmpty()) unsupportedRomEdits.add("text edits")
+            if (project.creditsGroups.isNotEmpty()) unsupportedRomEdits.add("end-credit groups")
             if (!roomNameOverridesHandled && project.roomNameOverrides.isNotEmpty()) {
                 unsupportedRomEdits.add("room name overrides")
             }

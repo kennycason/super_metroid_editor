@@ -390,6 +390,10 @@ internal class AsmWorkspaceState(
     private val sourceRedoStacks = mutableMapOf<String, MutableList<AsmSourceTextChange>>()
     var sourceSaveParticipant: AsmSourceSaveParticipant? = null
     var sourceEditorInterceptor: ((String, String, String) -> Boolean?)? = null
+    /** Observes every committed in-memory source transition, including ASM
+     * Undo/Redo. Invalid semantic drafts may remain in the editor; observers
+     * must retain their last valid visual projection instead of throwing. */
+    var sourceTextObserver: ((String, String) -> Unit)? = null
     var sourceEditorLinks by mutableStateOf<((String, Int) -> List<AsmEditorLink>)?>(null)
     var roomSourceInspection by mutableStateOf<AsmRoomSourceInspection?>(null)
         private set
@@ -1910,6 +1914,7 @@ internal class AsmWorkspaceState(
         if (saved != null && text != saved) dirtySourceFileIds[fileId] = Unit
         else dirtySourceFileIds.remove(fileId)
         sourceBufferRevision++
+        sourceTextObserver?.invoke(fileId, text)
     }
 
     private fun recordSourceUndo(
@@ -2481,6 +2486,25 @@ internal class AsmWorkspaceState(
         buildReport = null
     }
 
+    /** Install the managed credits document once. Its first visual edit is a
+     * normal in-memory source replacement, so subsequent edits and Undo/Redo
+     * all use the same ASM history. */
+    internal fun ensureCreditsModule(initialSource: String) {
+        check(!busy && projectWorkspace != null && boundProjectFilePath.isNotBlank()) {
+            "Wait for the project ASM workspace."
+        }
+        if (AsmCreditsSourceModule.FILE in projectModuleFileIds) return
+        val (result, fileId) = projectRepository.createModule(
+            boundProjectFilePath,
+            AsmCreditsSourceModule.FILE.removePrefix(ASM_PROJECT_MODULE_PREFIX),
+            description = "Managed end-credit declarations for the Credits visual editor",
+            initialSource = initialSource,
+        )
+        check(fileId == AsmCreditsSourceModule.FILE)
+        adoptProjectWorkspace(result)
+        buildReport = null
+    }
+
     suspend fun renameProjectModule(fileId: String, name: String): Boolean =
         updateProjectModuleSettings(
             fileId = fileId,
@@ -2939,6 +2963,7 @@ internal class AsmWorkspaceState(
         cancelSourceIndexing()
         sourceSaveParticipant = null
         sourceEditorInterceptor = null
+        sourceTextObserver = null
         sourceEditorLinks = null
         sourceBuffers.clear()
         savedSourceTexts.clear()

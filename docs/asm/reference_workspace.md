@@ -4567,11 +4567,12 @@ Restore and source-aware Undo/Redo cross direct/managed ownership atomically.
 Unsaved declaration drafts and newer asset bytes block every visual mutation.
 
 The boundary is intentionally narrower than “all cinematic data.” OAM
-composition, frame/instruction programs, graphics tiles, menu layouts, credits,
-and runtime effects remain read-only until they have an exact semantic model.
+composition, frame/instruction programs, graphics tiles, menu layouts, native
+credit sections, and runtime effects remain read-only unless their own exact
+semantic model applies.
 PAL options branches, English/Japanese controller and special-settings maps,
-the Japanese intro font/text path, and regional credits data are inventoried but
-not routed through the NTSC scene editor. Their active branches and encodings
+the Japanese intro font/text path, and regional credits branches are inventoried
+but not routed through the NTSC scene editor. Their active branches and encodings
 must be modeled before reciprocal editing is safe.
 
 ## Reciprocal fixed tilemap text
@@ -4691,6 +4692,42 @@ controls and unsupported glyphs fail closed as **ASM only**. The visual field
 shows the reason and does not fall back to stale ROM or project text. The
 Japanese font/text path and other regional branches have separate encodings and
 remain explicitly outside this English NTSC contract.
+
+## Reciprocal English NTSC end-credit groups
+
+The Credits editor and `project/smedit_credits.asm` now share one managed source
+authority. The hand-editable portion is deliberately small:
+
+```asm
+; CREDIT GROUP: SMEDIT TEAM
+; CREDIT NAME: SAMUS ARAN
+; CREDIT NAME: BABY METROID
+```
+
+Saving validates A-Z/space text, five-group and six-name limits, and the global
+free-row budget. It then regenerates three coupled outputs: the LZ5 tilemap at
+`$97:EEFF`, a self-reference-rebased instruction list at `$8C:F3E9`, and its
+bank-local pointer at `$8B:F6FC`. The compressed map cannot exceed the frozen
+`$A88` source envelope, and the list cannot cross bank `$8C`.
+
+Compatible ASM declarations refresh the visual groups immediately. Visual edits
+rewrite the same module and share guarded source Undo/Redo. An invalid draft
+remains editable, while the Credits editor keeps its last valid projection and
+shows the error; Save and Build fail closed. A newer ASM edit blocks an older
+visual undo. Project JSON mirrors the declarations for UI persistence but the
+normal GUI ROM writer is disabled while source ownership is active, preventing
+the same credits from being emitted twice.
+
+Project-module isolation attributes the tilemap, instruction list, and pointer
+bytes to `smedit_credits.asm`; a second module touching them fails the collision
+audit. Save/reopen and cache-free compiler proofs reparse the live compiled
+pointer. Headered ROMs use physical offsets consistently, and unsupported
+headless ROM export rejects credit groups rather than dropping them.
+
+This contract appends English NTSC custom groups using the native small header
+and large name fonts. Original Nintendo sections, arbitrary instruction
+programs, unsupported glyphs, custom payload shapes, and PAL/regional branches
+remain ASM only.
 
 ## Compiled Output Inspector
 

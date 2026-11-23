@@ -30,6 +30,7 @@ import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanException
 import com.supermetroid.editor.rom.RomWritePlanReport
+import com.supermetroid.editor.rom.CreditsData
 import com.supermetroid.editor.rom.RomResourceAccess
 import com.supermetroid.editor.rom.RomResourceClaim
 import com.supermetroid.editor.rom.RomValidator
@@ -260,6 +261,11 @@ internal class RomExporter(
                 project.asmWorkspace.disabledPatchValues.isNotEmpty()) && compiledAsmBase == null) {
             onStatus("Authored tuning or patch data requires its validated ASM build.")
             onLog("ERROR: Authored tuning or patch data requires its validated ASM build.")
+            return null
+        }
+        if (project.asmWorkspace.creditsSourceVersion != 0 && compiledAsmBase == null) {
+            onStatus("Source-authored credits require their validated ASM build.")
+            onLog("ERROR: Source-authored credits require their validated ASM build.")
             return null
         }
         fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
@@ -688,6 +694,17 @@ internal class RomExporter(
             )
             minimapPatched = applyMinimapEdits(writePlan)
             textPatched = applyTextEdits(writePlan)
+            if (project.asmWorkspace.creditsSourceVersion == 0) {
+                applyCreditsEdits(
+                    writePlan,
+                    freeSpaceAllocator.scoped(
+                        owner = "credits:instlist",
+                        kind = RomSegmentKind.TEXT,
+                        idPrefix = "credits:instlist",
+                        constraint = "Credits instructions use a 16-bit bank-\$8C pointer",
+                    ),
+                )
+            }
             asmPatched = applyCustomAsm(
                 writePlan,
                 freeSpaceAllocator.scoped(
@@ -2205,6 +2222,79 @@ internal class RomExporter(
         }
         if (patched > 0) onLog("[EXPORT] Patched $patched text entries")
         return patched
+    }
+
+    private fun applyCreditsEdits(
+        writePlan: RomWritePlan,
+        freeSpaceAllocator: RomFreeSpaceAllocator,
+    ) {
+        if (project.creditsGroups.isEmpty()) return
+
+        val groups = project.creditsGroups.map { group ->
+            CreditsData.CreditGroup(
+                header = group.header,
+                names = group.names.toList(),
+            )
+        }
+
+        // Credits must be derived from the current transaction image, which may
+        // already contain a compiled ASM build and other checked source writes.
+        val currentParser = RomParser(writePlan.romData)
+        val parsed = CreditsData.parseCredits(currentParser)
+            ?: throw RomWritePlanException("Credits export failed: the live credits pointer, tilemap, or instruction list is unsupported")
+        CreditsData.validateGroups(groups, parsed.freeRowIndices.size).takeIf(List<String>::isNotEmpty)?.let { errors ->
+            throw RomWritePlanException("Credits export failed: ${errors.joinToString("; ")}")
+        }
+        val preview = CreditsData.buildCreditsExport(currentParser, groups, parsed.instListSnesAddr)
+            ?: throw RomWritePlanException(
+                "Credits export failed: the compressed tilemap exceeds its ${CreditsData.CREDITS_TILEMAP_CAPACITY}-byte source envelope"
+            )
+        val allocation = freeSpaceAllocator.reserveOrThrow(
+            size = preview.instListBytes.size,
+            banks = listOf(CreditsData.INST_LIST_BANK),
+            label = "Credits instruction list",
+            alignment = 2,
+        )
+        val export = CreditsData.buildCreditsExport(currentParser, groups, allocation.snesAddress)
+            ?: throw RomWritePlanException("Credits export failed after allocating its instruction list")
+        require(export.instListBytes.size == allocation.size) {
+            "Credits instruction-list size changed during allocation"
+        }
+
+        val romData = writePlan.romData
+        val headerSize = writePlan.headerSize
+
+        // 1. Write recompressed tilemap (overwrite in-place at original location)
+        val tilemapPc = currentParser.snesToPc(CreditsData.CREDITS_TILEMAP_SNES)
+        writePlan.add(
+            owner = "credits:tilemap",
+            label = "Credits tilemap (recompressed)",
+            offset = tilemapPc - headerSize,
+            bytes = export.tilemapBytes.map { it.toInt() and 0xFF },
+            kind = RomWriteKind.TEXT,
+            expectedBefore = (tilemapPc until tilemapPc + export.tilemapBytes.size)
+                .map { romData[it].toInt() and 0xFF },
+        )
+
+        // 2. Publish the allocator-owned bank-$8C instruction list.
+        writePlan.addAllocation(allocation, export.instListBytes, RomWriteKind.TEXT)
+
+        // 3. Patch the credits object definition pointer to point to new instruction list
+        val objDefPc = currentParser.snesToPc(CreditsData.CREDITS_OBJ_DEF_INSTLIST_SNES)
+        val newInstListLow = export.instListSnesAddr and 0xFFFF
+        writePlan.add(
+            owner = "credits:instlist-ptr",
+            label = "Credits instruction list pointer",
+            offset = objDefPc - headerSize,
+            bytes = listOf(newInstListLow and 0xFF, (newInstListLow shr 8) and 0xFF),
+            kind = RomWriteKind.TEXT,
+            expectedBefore = listOf(
+                romData[objDefPc].toInt() and 0xFF,
+                romData[objDefPc + 1].toInt() and 0xFF,
+            ),
+        )
+
+        onLog("[EXPORT] Applied ${groups.size} custom credit group(s)")
     }
 
     /**

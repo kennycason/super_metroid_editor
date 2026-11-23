@@ -907,6 +907,7 @@ fun main() = application {
                 editorState.objectPreviewLoading = false
                 editorState.detachRoomSourceBridges()
                 asmWorkspaceState.sourceSaveParticipant = null
+                asmWorkspaceState.sourceTextObserver = null
                 val projectWorkspace = asmWorkspaceState.projectWorkspace
                 val parser = romParser
                 if (projectWorkspace != null && parser != null) {

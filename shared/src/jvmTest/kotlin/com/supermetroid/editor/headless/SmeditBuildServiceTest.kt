@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.MapStationTileEdit
 import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.RoomHeaderChange
+import com.supermetroid.editor.data.ProjectCreditsGroup
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
@@ -1391,6 +1392,21 @@ class SmeditBuildServiceTest {
 
         assertTrue(error.message.orEmpty().contains("cannot safely export"))
         assertTrue(error.message.orEmpty().contains("metatile"))
+    }
+
+    @Test
+    fun `headless ROM build rejects credits instead of silently dropping them`() {
+        val original = TestRomHelper.requireRomBytes()
+        val project = SmEditProject("base.smc").apply {
+            creditsGroups += ProjectCreditsGroup("SMEDIT TEAM", mutableListOf("SAMUS ARAN"))
+        }
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().build(original, SmeditBuildRequest(), project)
+        }
+
+        assertTrue(error.message.orEmpty().contains("cannot safely export"))
+        assertTrue(error.message.orEmpty().contains("end-credit groups"))
     }
 
     @Test
