@@ -47,8 +47,10 @@ object SpritePalettes {
     val BOSS_REGIONS: List<PaletteRegion> = listOf(
         region("boss_spore_spawn", "Spore Spawn", "Spore Spawn palette (all rows)", 0x12E359, 176, "bosses"),
         region("boss_ridley", "Ridley", "Ridley sprite palettes (all rows)", 0x13614F, 160, "bosses"),
-        region("boss_kraid", "Kraid", "Kraid sprite palettes (all rows)", 0x138687, 48, "bosses"),
-        region("boss_kraid_bg", "Kraid (background)", "Kraid room background palette", 0x13AAA6, 16, "bosses"),
+        region("boss_kraid", "Kraid", "Kraid initial/base rows; runtime health palettes can overwrite these", 0x138687, 48, "bosses"),
+        region("boss_kraid_bg", "Kraid (room background)", "Kraid room environment palette; not the body palette", 0x13AAA6, 16, "bosses"),
+        region("boss_kraid_health_bg", "Kraid (health stages · BG)", "Kraid BG2 body palettes: hurt, health 1–8, and death", 0x13B3D3, 160, "bosses"),
+        region("boss_kraid_health_oam", "Kraid (health stages · OAM)", "Kraid arm, foot, lint, and nail palettes: hurt and health 1–8", 0x13B513, 144, "bosses"),
         region("boss_phantoon", "Phantoon", "Phantoon palettes", 0x13CA01, 32, "bosses"),
         region("boss_draygon", "Draygon", "Draygon palettes (all rows)", 0x12A1F7, 96, "bosses"),
         region("boss_crocomire", "Crocomire", "Crocomire palettes (all rows)", 0x12387D, 96, "bosses"),

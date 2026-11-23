@@ -114,6 +114,7 @@ fun KraidSpriteEditor(
     var editingPalette by remember { mutableStateOf<IntArray?>(null) }
     var editingLabel by remember { mutableStateOf("") }
     var refreshKey by remember { mutableStateOf(0) }
+    val renderRefreshKey = refreshKey * 31 + editorState.paletteVersion
 
     editingPixels?.let { pixels ->
         val sprite = editingSprite
@@ -197,7 +198,7 @@ fun KraidSpriteEditor(
                 selectedComponent = selectedComponent,
                 onSelectComponent = { selectedComponent = it },
                 compositionsOnly = false,
-                refreshKey = refreshKey,
+                refreshKey = renderRefreshKey,
                 onEditHead = { component ->
                     val rp = romParser ?: return@KraidComponentsTab
                     val sprite = editorState.renderKraidHeadTilemap(rp, component.def)
@@ -216,7 +217,7 @@ fun KraidSpriteEditor(
                 selectedComponent = selectedComposition,
                 onSelectComponent = { selectedComposition = it },
                 compositionsOnly = true,
-                refreshKey = refreshKey,
+                refreshKey = renderRefreshKey,
                 onEditHead = {},
                 modifier = Modifier.weight(1f),
             )
@@ -224,14 +225,14 @@ fun KraidSpriteEditor(
             KraidTab.ANIMATIONS -> KraidAnimationsTab(
                 editorState = editorState,
                 romParser = romParser,
-                refreshKey = refreshKey,
+                refreshKey = renderRefreshKey,
                 modifier = Modifier.weight(1f),
             )
 
             KraidTab.SOURCES -> KraidSourcesTab(
                 editorState = editorState,
                 romParser = romParser,
-                refreshKey = refreshKey,
+                refreshKey = renderRefreshKey,
                 onRefresh = { refreshKey++ },
                 onOpenComponents = { activeTab = KraidTab.COMPONENTS },
                 modifier = Modifier.weight(1f)
@@ -495,7 +496,8 @@ private fun KraidComponentDetail(
             ) {
                 Text("Source-backed complete composition: the two upper and two lower BG2 screen " +
                     "blocks with ${comp.head.name}, plus representative linked arm/claw and front-foot " +
-                    "OAM at their live body-relative AI anchors.",
+                    "OAM at their live body-relative AI anchors. This view uses Health 8/8 from " +
+                    "Kraid (health stages · BG/OAM); the base Kraid palette is replaced by the runtime health handler.",
                     fontSize = 9.sp, color = Color(0xFF88CC88),
                     lineHeight = 12.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))

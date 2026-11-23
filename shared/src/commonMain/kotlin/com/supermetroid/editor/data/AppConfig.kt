@@ -76,6 +76,10 @@ data class AppSettings(
     val aiSelectedModels: Map<String, String> = emptyMap(),
     /** Preferred credential source per provider. Secrets remain outside config.json. */
     val aiCredentialSources: Map<String, String> = emptyMap(),
+    val aiWindowX: Float = -1f,
+    val aiWindowY: Float = -1f,
+    val aiWindowWidth: Float = -1f,
+    val aiWindowHeight: Float = -1f,
 )
 
 object AppConfig {

@@ -62,6 +62,46 @@ The canonical `fxBitC` meanings are `flow_left=0x01`,
 lava heat wave, use Lava with `$FFFF/$FFFF`, `bg_animate`, and no tide. See
 [`rom/lava_acid_fx_rendering.md`](../rom/lava_acid_fx_rendering.md).
 
+## Palette edits
+
+`list_palettes` exposes stable tileset and sprite-palette IDs, while
+`get_palette` returns the complete current color table in native SNES BGR555 and
+provider-friendly `#RRGGBB` form. `set_palette_colors` accepts partial indexed
+changes only; an index is `row * 16 + column`, and every unmentioned color is
+preserved. RGB inputs are quantized to the SNES five-bit channels before the
+approval plan is frozen.
+
+Some tilesets share one source palette asset. The read API and approval plan
+list every affected tileset, and optimistic source-byte checks prevent approval,
+undo, or redo from replacing a newer edit. In ASM-source mode, an unsaved draft
+for the palette declaration blocks AI planning so the data asset and live source
+buffer cannot silently diverge.
+
+Boss palettes are often split by rendering role and runtime phase. Kraid has
+separate initial sprite/background palettes plus BG and OAM health-stage tables.
+Changing one region never implies changing the others. The default assembled
+Kraid preview uses full-health row 8 (indices 128–143) from both health-stage
+tables; editing only the base `sprite:boss_kraid` palette will not recolor that
+view. `set_palette_colors.palette_edits` can freeze the related base, BG, and OAM
+diffs into one atomic approval. After approval, SMEDIT
+invalidates the relevant palette and boss preview caches so the editor reflects
+the approved colors before export or in-game testing.
+
+## Item placement
+
+`list_room_items` reports zero-based 16x16 room-block coordinates for every
+effective state. `place_item` requires a PLM ID returned by `list_item_types`
+and an explicit scope: `all_states` targets every current runtime state, while
+`single_state` requires one stable state ID from the room-item response.
+
+Item collection parameters are global collection-bit identities, not cosmetic
+metadata. SMEDIT allocates an unused safe value by default, rejects duplicate
+explicit values, validates coordinates against room bounds, and rejects an
+existing item at the requested position. Project-owned rooms receive frozen
+room-model snapshots. ASM-managed rooms receive an exact full-source replacement
+with a stale-source guard. Both routes remain approval-backed and participate in
+AI undo/redo.
+
 ## Context hierarchy
 
 Use the smallest authoritative context that answers the question:

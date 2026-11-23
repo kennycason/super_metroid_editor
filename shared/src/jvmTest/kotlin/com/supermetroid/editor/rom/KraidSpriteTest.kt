@@ -133,6 +133,27 @@ class KraidSpriteTest {
     }
 
     @Test
+    fun `project health palette overrides feed Kraid BG and OAM previews`() {
+        val rp = loadTestRom() ?: return
+        val kraid = KraidSpritemap(rp)
+        if (!kraid.load()) return
+        val bg = IntArray(160)
+        val oam = IntArray(144)
+        repeat(16) { column ->
+            bg[8 * 16 + column] = 0x001F // full-health BG row: red
+            oam[8 * 16 + column] = 0x03E0 // full-health OAM row: green
+        }
+
+        kraid.applyPaletteRegionOverrides(
+            mapOf("boss_kraid_health_bg" to bg, "boss_kraid_health_oam" to oam),
+        )
+
+        val full = KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" }
+        assertEquals(0xFFFF0000.toInt(), kraid.readBgPalette(full)!![1])
+        assertEquals(0xFF00FF00.toInt(), kraid.readOamPalette(full)!![1])
+    }
+
+    @Test
     fun `kraid exposes the four exact source head maps`() {
         assertEquals(
             listOf(0xA797C8, 0xA79AC8, 0xA79DC8, 0xA7A0C8),

@@ -13,6 +13,8 @@ package com.supermetroid.editor.rom
  */
 class KraidSpritemap(private val romParser: RomParser) {
 
+    private val paletteOverrides = mutableMapOf<Int, IntArray>()
+
     companion object {
         const val KRAID_ROOM_SNES = 0x8FA59F
         const val KRAID_TILESET_ID = 0x1A
@@ -290,6 +292,27 @@ class KraidSpritemap(private val romParser: RomParser) {
         return cachedTileGfx
     }
 
+    /** Apply project palette overrides to the exact runtime tables used by this preview. */
+    fun applyPaletteRegionOverrides(overrides: Map<String, IntArray>) {
+        paletteOverrides.clear()
+        fun mapRows(regionId: String, startSnes: Int, rowCount: Int) {
+            val colors = overrides[regionId] ?: return
+            if (colors.size < rowCount * 16) return
+            repeat(rowCount) { row ->
+                paletteOverrides[startSnes + row * 0x20] = colors.copyOfRange(row * 16, row * 16 + 16)
+            }
+        }
+        // The initial table includes Palette_KraidRoomBackground at row 2.
+        mapRows("boss_kraid", 0xA78687, 3)
+        mapRows("boss_kraid_health_bg", 0xA7B3D3, 10)
+        mapRows("boss_kraid_health_oam", 0xA7B513, 9)
+        paletteOverrides[PALETTE_SNES]?.let { row ->
+            cachedTileGfx?.let { graphics ->
+                row.forEachIndexed { column, bgr555 -> graphics.setPaletteEntry(PALETTE_ROW, column, bgr555) }
+            }
+        }
+    }
+
     fun getTileData(): ByteArray? =
         cachedTileGfx?.extractRawTileData(TILE_INDEX_BASE, TILE_COUNT) ?: tileData?.copyOf()
 
@@ -303,6 +326,11 @@ class KraidSpritemap(private val romParser: RomParser) {
 
     /** Read Palette_KraidRoomBackground at $A7:86C7 (BG row 6, environment). */
     private fun readKraidPalette2(): IntArray? {
+        paletteOverrides[PALETTE_SNES]?.let { row ->
+            return IntArray(16) { index ->
+                if (index == 0) 0 else EnemySpriteGraphics.snesColorToArgb(row[index])
+            }
+        }
         val rom = romParser.getRomData()
         val palPc = romParser.snesToPc(PALETTE_SNES)
         if (palPc < 0 || palPc + 32 > rom.size) return null
@@ -765,6 +793,11 @@ class KraidSpritemap(private val romParser: RomParser) {
     }
 
     private fun readPalette(snesAddr: Int): IntArray? {
+        paletteOverrides[snesAddr]?.let { row ->
+            return IntArray(16) { index ->
+                if (index == 0) 0 else EnemySpriteGraphics.snesColorToArgb(row[index])
+            }
+        }
         val rom = romParser.getRomData()
         val pc = romParser.snesToPc(snesAddr)
         if (pc < 0 || pc + 32 > rom.size) return null

@@ -23,6 +23,18 @@ class AiConversationStoreTest {
 
         assertEquals(second, store.loadActive(AiProviderId.OPENAI))
         assertEquals(listOf("conversation-two", "conversation-one"), store.conversations(AiProviderId.OPENAI).map { it.id })
+        assertTrue(store.setActive(AiProviderId.OPENAI, "conversation-one"))
+        assertEquals(first, store.loadActive(AiProviderId.OPENAI))
+        assertTrue(store.rename(AiProviderId.OPENAI, "conversation-two", "Kraid palette work"))
+        assertEquals("Kraid palette work", store.load(AiProviderId.OPENAI, "conversation-two")?.customTitle)
+        assertEquals(
+            "conversation-one",
+            store.loadActive(AiProviderId.OPENAI)?.id,
+            "Renaming history must not switch the active conversation.",
+        )
+        assertTrue(store.rename(AiProviderId.OPENAI, "conversation-two", "  "))
+        assertEquals(null, store.load(AiProviderId.OPENAI, "conversation-two")?.customTitle)
+        assertFalse(store.setActive(AiProviderId.OPENAI, "missing-conversation"))
         val historyFile = File(temporary, "ai/conversations/conversation-two.json")
         val activeFile = File(temporary, "ai/active.json")
         assertTrue(historyFile.isFile)

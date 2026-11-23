@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.KraidSpritemap
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 
 /**
@@ -29,6 +30,13 @@ class KraidSpriteEditorState(
         if (!loaded) return null
         val tileGraphics = sm.getTileGraphics() ?: return null
         applyCustomGfx(tileGraphics, sm.getTilesetId())
+        sm.applyPaletteRegionOverrides(
+            customGfx().spritePalettes.mapNotNull { (regionId, encoded) ->
+                runCatching {
+                    regionId to SpritePalettes.bytesToColors(java.util.Base64.getDecoder().decode(encoded))
+                }.getOrNull()
+            }.toMap(),
+        )
         spritemap = sm
         return sm
     }

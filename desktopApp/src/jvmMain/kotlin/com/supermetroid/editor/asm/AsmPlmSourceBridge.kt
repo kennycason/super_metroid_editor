@@ -452,11 +452,38 @@ internal class AsmPlmSourceBridge(
 
     fun editManaged(roomId: Int, stateId: String, allStates: Boolean,
                     remove: (RomParser.PlmEntry) -> Boolean, add: RomParser.PlmEntry?, companions: List<RomParser.PlmEntry> = emptyList()) {
+        val before = sourceText()
+        workspace.replaceProjectSource(
+            PLM_SOURCE_FILE,
+            before,
+            planManagedEdit(roomId, stateId, allStates, remove, add, companions),
+        )
+    }
+
+    /** Build the exact source replacement for an approval plan without publishing it. */
+    fun planManagedEdit(
+        roomId: Int,
+        stateId: String,
+        allStates: Boolean,
+        remove: (RomParser.PlmEntry) -> Boolean,
+        add: RomParser.PlmEntry?,
+        companions: List<RomParser.PlmEntry> = emptyList(),
+    ): String {
         val room = project().rooms.getValue(project().roomKey(roomId))
         val source = managedSource()
         source.resources(room)
-        val edited = AsmRoomObjectSource(source.edit(room, stateId, allStates, remove, add, externalObjectReferences(), companions = companions), catalog.symbols, context.identities())
-        workspace.replaceProjectSource(PLM_SOURCE_FILE, source.text, edited.withComments(roomId, describePlm))
+        val edited = AsmRoomObjectSource(
+            source.edit(room, stateId, allStates, remove, add, externalObjectReferences(), companions = companions),
+            catalog.symbols,
+            context.identities(),
+        )
+        return edited.withComments(roomId, describePlm)
+    }
+
+    /** Publish a previously planned full source transition with optimistic stale-source protection. */
+    fun replaceManagedSource(expected: String, replacement: String) {
+        require(sourceText() == expected) { "Room-object source changed after the AI plan was created. Nothing was changed." }
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, expected, replacement)
     }
 
     /** No workspace or model mutation until every row, spawn and resource link is checked. */

@@ -207,6 +207,85 @@ data class SmeditPatchDetails(
 )
 
 @Serializable
+data class SmeditPaletteSummary(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val category: String,
+    val description: String,
+    val colorCount: Int,
+    val rowCount: Int,
+    val editable: Boolean,
+    val sourceManaged: Boolean,
+    val modified: Boolean,
+    val affectedPaletteIds: List<String> = emptyList(),
+    /** Semantically related palettes that are not implicitly changed. */
+    val relatedPaletteIds: List<String> = emptyList(),
+    val usage: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
+data class SmeditPaletteDetails(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val category: String,
+    val description: String,
+    val colorCount: Int,
+    val rowCount: Int,
+    val editable: Boolean,
+    val sourceManaged: Boolean,
+    val modified: Boolean,
+    val affectedPaletteIds: List<String> = emptyList(),
+    val relatedPaletteIds: List<String> = emptyList(),
+    val usage: String? = null,
+    val message: String? = null,
+    /** Native SNES BGR555 words, ordered by row then column. */
+    val colorsBgr555: List<Int> = emptyList(),
+    /** The same colors as provider-friendly #RRGGBB strings. */
+    val colorsRgbHex: List<String> = emptyList(),
+)
+
+@Serializable
+data class SmeditItemType(
+    val name: String,
+    val variant: String,
+    val plmId: Int,
+    val plmIdHex: String,
+    val custom: Boolean = false,
+)
+
+@Serializable
+data class SmeditPlacedItem(
+    val name: String,
+    val plmId: Int,
+    val plmIdHex: String,
+    val x: Int,
+    val y: Int,
+    val parameter: Int,
+    val parameterHex: String,
+)
+
+@Serializable
+data class SmeditRoomItemState(
+    val id: String,
+    val index: Int,
+    val condition: String,
+    val items: List<SmeditPlacedItem>,
+)
+
+@Serializable
+data class SmeditRoomItemsDetails(
+    val roomId: String,
+    val roomName: String,
+    val widthBlocks: Int,
+    val heightBlocks: Int,
+    val sourceManaged: Boolean,
+    val states: List<SmeditRoomItemState>,
+)
+
+@Serializable
 data class SmeditEditorSettingsSummary(
     val theme: String,
     val fontSize: String,
@@ -251,6 +330,10 @@ interface SmeditWorkspaceAccess {
     fun room(roomId: Int): SmeditRoomDetails?
     fun patches(): List<SmeditPatchSummary>
     fun patch(identifier: String): SmeditPatchDetails?
+    fun palettes(): List<SmeditPaletteSummary> = emptyList()
+    fun palette(identifier: String): SmeditPaletteDetails? = null
+    fun itemTypes(): List<SmeditItemType> = emptyList()
+    fun roomItems(roomId: Int): SmeditRoomItemsDetails? = null
     fun editorSettings(): SmeditEditorSettingsSummary
     fun searchDocs(query: String, limit: Int): List<SmeditDocumentationMatch> = emptyList()
     fun readDoc(path: String, startLine: Int, maxLines: Int): SmeditDocumentationExcerpt? = null
@@ -323,6 +406,47 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                     "limit" to integerSchema("Maximum configuration fields to return, from 1 through 100."),
                 ),
                 required = listOf("patch"),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "list_palettes",
+            description = "List editable tileset and sprite palettes, including runtime roles and related boss tables. Use get_palette before proposing exact color changes. Kraid's assembled full-health preview uses its health-stage BG and OAM palettes, not only the base Kraid palette.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "query" to stringSchema("Optional case-insensitive id, name, description, kind, or category filter."),
+                    "kind" to enumSchema("Optional palette kind.", listOf("all", "tileset", "sprite")),
+                    "limit" to integerSchema("Maximum palettes to return, from 1 through 100."),
+                ),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "get_palette",
+            description = "Read one palette's current ordered colors in SNES BGR555 and #RRGGBB form, plus runtime usage, related palettes, source ownership, and shared-resource safety information.",
+            inputSchema = objectSchema(
+                properties = mapOf("palette" to stringSchema("Stable palette id from list_palettes, or an exact unique palette name.")),
+                required = listOf("palette"),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "list_item_types",
+            description = "List vanilla and currently enabled custom item PLM variants that can be placed in rooms.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "query" to stringSchema("Optional case-insensitive item, variant, or PLM id filter."),
+                    "limit" to integerSchema("Maximum item variants to return, from 1 through 100."),
+                ),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "list_room_items",
+            description = "Inspect effective item placements for every state of one room. Coordinates are zero-based 16x16 room-block coordinates.",
+            inputSchema = objectSchema(
+                properties = mapOf("room_id" to stringSchema("Room id in hexadecimal, such as 91F8, 0x91F8, or $91F8.")),
+                required = listOf("room_id"),
             ),
             effect = SmeditToolEffect.READ_ONLY,
         ),
@@ -444,6 +568,35 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             ),
             effect = SmeditToolEffect.MUTATION,
         ),
+        SmeditToolDefinition(
+            name = "set_palette_colors",
+            description = "Stage exact partial color changes to one or more tileset or sprite palettes in one atomic approval. Use get_palette first. For one palette requiring changes send palette + changes; for two or more related targets requiring changes send palette_edits. Omit an already-correct target, or include its current requested colors in a batch and SMEDIT will treat it as satisfied without writing it. Each index is row * 16 + column; unchanged indices are preserved. Sprite and boss preview caches refresh after approval.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "palette" to stringSchema("Stable palette id for a single edit. Ignored when a non-empty palette_edits batch is present."),
+                    "changes" to paletteChangesSchema("Exact entries for a single palette. Ignored when a non-empty palette_edits batch is present."),
+                    "palette_edits" to paletteEditsSchema(),
+                ),
+            ),
+            effect = SmeditToolEffect.MUTATION,
+        ),
+        SmeditToolDefinition(
+            name = "place_item",
+            description = "Stage placement of one item at zero-based 16x16 room-block coordinates for explicit approval. Use list_item_types and list_room_items first. all_states targets every current runtime state; single_state requires an exact stable state_id.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "room_id" to stringSchema("Target room id in hexadecimal."),
+                    "plm_id" to integerSchema("Item PLM id returned by list_item_types.", 1, 0xFFFF),
+                    "x" to integerSchema("Zero-based room-block X coordinate.", 0, 255),
+                    "y" to integerSchema("Zero-based room-block Y coordinate.", 0, 255),
+                    "state_scope" to enumSchema("Whether the item belongs to every state or one state.", listOf("all_states", "single_state")),
+                    "state_id" to stringSchema("Exact stable state id from get_room/list_room_items; required for single_state."),
+                    "item_parameter" to integerSchema("Optional explicit item collection-bit parameter. Omit to allocate a safe unused project value.", 1, 0x1FF),
+                ),
+                required = listOf("room_id", "plm_id", "x", "y", "state_scope"),
+            ),
+            effect = SmeditToolEffect.MUTATION,
+        ),
     )
 
     private val definitionsByName = definitions.associateBy(SmeditToolDefinition::name)
@@ -523,6 +676,45 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                             field.label.contains(query, ignoreCase = true)
                     }.take(arguments.limit()).toList()
                     success(json.encodeToJsonElement(SmeditPatchDetails.serializer(), patch.copy(configFields = fields)))
+                }
+                "list_palettes" -> {
+                    val query = arguments.string("query")?.trim().orEmpty()
+                    val kind = arguments.string("kind")?.lowercase() ?: "all"
+                    if (kind !in setOf("all", "tileset", "sprite")) {
+                        return failure("invalid_arguments", "kind must be all, tileset, or sprite.")
+                    }
+                    val palettes = access.palettes().asSequence().filter { palette ->
+                        (kind == "all" || palette.kind == kind) &&
+                            (query.isEmpty() || listOf(
+                                palette.id, palette.name, palette.description, palette.kind, palette.category,
+                            ).any { it.contains(query, ignoreCase = true) })
+                    }.take(arguments.limit(default = 100)).toList()
+                    success(json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(SmeditPaletteSummary.serializer()), palettes))
+                }
+                "get_palette" -> {
+                    val identifier = arguments.string("palette")?.trim()?.takeIf(String::isNotEmpty)
+                        ?: return failure("invalid_arguments", "palette is required.")
+                    val palette = access.palette(identifier)
+                        ?: return failure("palette_not_found", "No palette uniquely matches '$identifier'.")
+                    success(json.encodeToJsonElement(SmeditPaletteDetails.serializer(), palette))
+                }
+                "list_item_types" -> {
+                    val query = arguments.string("query")?.trim().orEmpty()
+                    val types = access.itemTypes().asSequence().filter { item ->
+                        query.isEmpty() || listOf(item.name, item.variant, item.plmIdHex).any {
+                            it.contains(query, ignoreCase = true)
+                        }
+                    }.take(arguments.limit(default = 100)).toList()
+                    success(json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(SmeditItemType.serializer()), types))
+                }
+                "list_room_items" -> {
+                    val rawId = arguments.string("room_id")
+                        ?: return failure("invalid_arguments", "room_id is required.")
+                    val roomId = parseRoomId(rawId)
+                        ?: return failure("invalid_room_id", "'$rawId' is not a 16-bit hexadecimal room id.")
+                    val details = access.roomItems(roomId)
+                        ?: return failure("room_not_found", "No readable room exists at ${formatRoomId(roomId)}.")
+                    success(json.encodeToJsonElement(SmeditRoomItemsDetails.serializer(), details))
                 }
                 "get_editor_settings" -> success(
                     json.encodeToJsonElement(SmeditEditorSettingsSummary.serializer(), access.editorSettings()),
@@ -636,6 +828,38 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             put("type", "array")
             put("description", description)
             put("items", buildJsonObject { put("type", "string") })
+        }
+
+        private fun paletteChangesSchema(
+            description: String = "One or more exact palette entries. color must be #RRGGBB.",
+        ) = buildJsonObject {
+            put("type", "array")
+            put("description", description)
+            put("minItems", 1)
+            put("items", buildJsonObject {
+                put("type", "object")
+                put("properties", buildJsonObject {
+                    put("index", integerSchema("Zero-based color index, equal to row * 16 + column.", 0, 4095))
+                    put("color", stringSchema("Six-digit RGB color such as #FF8000."))
+                })
+                put("required", JsonArray(listOf("index", "color").map(::JsonPrimitive)))
+                put("additionalProperties", false)
+            })
+        }
+
+        private fun paletteEditsSchema() = buildJsonObject {
+            put("type", "array")
+            put("description", "Two or more related palette edits to stage atomically in one approval. A non-empty batch takes precedence over redundant top-level palette and changes fields.")
+            put("minItems", 2)
+            put("items", buildJsonObject {
+                put("type", "object")
+                put("properties", buildJsonObject {
+                    put("palette", stringSchema("Stable palette id from list_palettes."))
+                    put("changes", paletteChangesSchema())
+                })
+                put("required", JsonArray(listOf("palette", "changes").map(::JsonPrimitive)))
+                put("additionalProperties", false)
+            })
         }
 
         private fun integerArraySchema(description: String, minimum: Int, maximum: Int) = buildJsonObject {

@@ -3,6 +3,7 @@ package com.supermetroid.editor.api
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.SmPatch
@@ -27,6 +28,7 @@ import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.withFxChange
 import com.supermetroid.editor.asm.snapshotRoomForResize
 import com.supermetroid.editor.ui.EditorState
+import com.supermetroid.editor.ui.AiPaletteMutation
 import java.util.UUID
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -37,7 +39,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
-enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH, ROOM_FX }
+enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH, ROOM_FX, PALETTE, ITEM }
 
 data class SmeditPatchValueChange(
     val key: String,
@@ -61,6 +63,46 @@ data class SmeditRoomFxMutationPlan(
     val affectedStatePreview: List<String>,
 )
 
+data class SmeditPaletteColorChange(
+    val index: Int,
+    val row: Int,
+    val column: Int,
+    val beforeRgb: String,
+    val afterRgb: String,
+)
+
+data class SmeditPaletteTargetMutationPlan(
+    val paletteId: String,
+    val paletteName: String,
+    val paletteKind: String,
+    val sourceManaged: Boolean,
+    val affectedPaletteIds: List<String>,
+    val colorChanges: List<SmeditPaletteColorChange>,
+)
+
+data class SmeditPaletteMutationPlan(
+    val paletteId: String,
+    val paletteName: String,
+    val paletteKind: String,
+    val sourceManaged: Boolean,
+    val affectedPaletteIds: List<String>,
+    val colorChanges: List<SmeditPaletteColorChange>,
+    val additionalTargets: List<SmeditPaletteTargetMutationPlan> = emptyList(),
+)
+
+data class SmeditItemMutationPlan(
+    val roomId: String,
+    val roomName: String,
+    val itemName: String,
+    val plmIdHex: String,
+    val x: Int,
+    val y: Int,
+    val parameterHex: String,
+    val stateScope: String,
+    val stateIds: List<String>,
+    val sourceManaged: Boolean,
+)
+
 data class SmeditMutationPlan(
     val id: String,
     val toolName: String,
@@ -78,6 +120,8 @@ data class SmeditMutationPlan(
     val kind: SmeditMutationPlanKind = SmeditMutationPlanKind.ROOM_MUSIC,
     val patch: SmeditPatchMutationPlan? = null,
     val fx: SmeditRoomFxMutationPlan? = null,
+    val palette: SmeditPaletteMutationPlan? = null,
+    val item: SmeditItemMutationPlan? = null,
 )
 
 data class SmeditMutationPlanningResult(
@@ -187,6 +231,36 @@ internal class DesktopSmeditMutationController(
         override val projectId: String get() = plan.projectId
     }
 
+    private data class PalettePlan(
+        override val presentation: SmeditMutationPlan,
+        override val projectId: String,
+        val mutations: List<AiPaletteMutation>,
+    ) : PendingPlan
+
+    private data class AppliedPaletteAction(
+        val plan: PalettePlan,
+    ) : AppliedAction {
+        override val presentation: SmeditMutationPlan get() = plan.presentation
+        override val projectId: String get() = plan.projectId
+    }
+
+    private data class ItemPlan(
+        override val presentation: SmeditMutationPlan,
+        override val projectId: String,
+        val roomId: Int,
+        val before: RoomModelSnapshot?,
+        val after: RoomModelSnapshot?,
+        val sourceBefore: String?,
+        val sourceAfter: String?,
+    ) : PendingPlan
+
+    private data class AppliedItemAction(
+        val plan: ItemPlan,
+    ) : AppliedAction {
+        override val presentation: SmeditMutationPlan get() = plan.presentation
+        override val projectId: String get() = plan.projectId
+    }
+
     private var pending: PendingPlan? = null
     private val undoStack = mutableListOf<AppliedAction>()
     private val redoStack = mutableListOf<AppliedAction>()
@@ -200,6 +274,8 @@ internal class DesktopSmeditMutationController(
             SET_ROOM_MUSIC -> planRoomMusic(arguments)
             CONFIGURE_PATCH -> planPatch(arguments)
             SET_ROOM_FX -> planRoomFx(arguments)
+            SET_PALETTE_COLORS -> planPalette(arguments)
+            PLACE_ITEM -> planItem(arguments)
             else -> failure("unknown_mutation", "SMEDIT does not expose a mutation named '$toolName'.")
         }
     }
@@ -868,6 +944,357 @@ internal class DesktopSmeditMutationController(
         )
     }
 
+    private fun planPalette(arguments: JsonObject): SmeditMutationPlanningResult {
+        val summary = workspace.workspaceSummary()
+        if (!summary.projectLoaded) return failure("workspace_unavailable", "Open a project or editable ROM before changing palettes.")
+        if (summary.readOnly) return failure("workspace_read_only", "The current workspace is read-only.")
+        val paletteEdits = arguments["palette_edits"]
+        val batch = paletteEdits as? JsonArray
+        if (paletteEdits != null && batch == null) {
+            return failure("invalid_arguments", "palette_edits must be an array.")
+        }
+        val requestedEdits: List<Pair<String, JsonArray>> = if (!batch.isNullOrEmpty()) {
+            if (batch.size < 2) return failure("invalid_arguments", "palette_edits must contain at least two palettes.")
+            batch.map { element ->
+                val edit = element as? JsonObject
+                    ?: return failure("invalid_arguments", "Every palette_edits entry must be an object.")
+                val identifier = edit.string("palette")?.trim()?.takeIf(String::isNotEmpty)
+                    ?: return failure("invalid_arguments", "Every palette_edits entry requires palette.")
+                val changes = edit["changes"] as? JsonArray
+                    ?: return failure("invalid_arguments", "Every palette_edits entry requires a changes array.")
+                identifier to changes
+            }
+        } else {
+            val identifier = arguments.string("palette")?.trim()?.takeIf(String::isNotEmpty)
+                ?: return failure("invalid_arguments", "Provide palette + changes, or palette_edits.")
+            val changes = arguments["changes"] as? JsonArray
+                ?: return failure("invalid_arguments", "changes must be a non-empty array.")
+            listOf(identifier to changes)
+        }
+
+        data class RequestedColor(val index: Int, val rgb: String, val bgr555: Int)
+        data class PlannedPalette(
+            val details: SmeditPaletteDetails,
+            val mutation: AiPaletteMutation,
+            val target: SmeditPaletteTargetMutationPlan,
+        )
+        val planned = mutableListOf<PlannedPalette>()
+        val requestedDetails = mutableListOf<SmeditPaletteDetails>()
+        val requestedTargetIds = linkedSetOf<String>()
+        val alreadyMatching = mutableListOf<SmeditPaletteDetails>()
+        for ((identifier, requested) in requestedEdits) {
+            val details = workspace.palette(identifier)
+                ?: return failure("palette_not_found", "No palette uniquely matches '$identifier'.")
+            if (!requestedTargetIds.add(details.id)) {
+                return failure("duplicate_palettes", "Each palette may appear once: ${details.id}.")
+            }
+            requestedDetails += details
+            if (!details.editable) return failure("palette_read_only", details.message ?: "${details.name} is not editable.")
+            if (requested.isEmpty()) return failure("invalid_arguments", "Changes for ${details.name} must not be empty.")
+            val changes = requested.map { element ->
+                val value = element as? JsonObject
+                    ?: return failure("invalid_arguments", "Every palette change must be an object.")
+                val index = (value["index"] as? JsonPrimitive)?.intOrNull
+                    ?.takeIf { it in 0 until details.colorCount }
+                    ?: return failure(
+                        "invalid_arguments",
+                        "${details.name} color indices must be from 0 through ${details.colorCount - 1}.",
+                    )
+                val rgb = (value["color"] as? JsonPrimitive)?.contentOrNull
+                    ?.uppercase()?.takeIf { it.matches(Regex("#[0-9A-F]{6}")) }
+                    ?: return failure("invalid_arguments", "Palette colors must use #RRGGBB.")
+                RequestedColor(index, rgb, rgbHexToBgr555(rgb))
+            }
+            val duplicateIndices = changes.groupingBy { it.index }.eachCount().filterValues { it > 1 }.keys
+            if (duplicateIndices.isNotEmpty()) {
+                return failure(
+                    "duplicate_palette_indices",
+                    "Each ${details.name} palette index may be changed once: ${duplicateIndices.sorted().joinToString()}.",
+                )
+            }
+            if (details.colorsBgr555.size != details.colorCount) {
+                return failure("palette_unreadable", "${details.name} did not return its complete current color table.")
+            }
+            val afterColors = details.colorsBgr555.toIntArray()
+            changes.forEach { afterColors[it.index] = it.bgr555 }
+            val effectiveChanges = changes.filter { details.colorsBgr555[it.index] != it.bgr555 }
+            if (effectiveChanges.isEmpty()) {
+                if (requestedEdits.size == 1) {
+                    return failure("no_changes", "${details.name} already has the requested colors.")
+                }
+                alreadyMatching += details
+                continue
+            }
+            val mutation = try {
+                editorState.planAiPaletteMutation(details.id, afterColors)
+            } catch (problem: Exception) {
+                return failure("palette_plan_blocked", problem.message ?: "The ${details.name} change could not be planned.")
+            }
+            val preview = effectiveChanges.map { change ->
+                SmeditPaletteColorChange(
+                    index = change.index,
+                    row = change.index / 16,
+                    column = change.index % 16,
+                    beforeRgb = details.colorsRgbHex.getOrNull(change.index)
+                        ?: bgr555ToRgbHex(details.colorsBgr555[change.index]),
+                    afterRgb = change.rgb,
+                )
+            }
+            planned += PlannedPalette(
+                details,
+                mutation,
+                SmeditPaletteTargetMutationPlan(
+                    paletteId = details.id,
+                    paletteName = details.name,
+                    paletteKind = details.kind,
+                    sourceManaged = details.sourceManaged,
+                    affectedPaletteIds = details.affectedPaletteIds,
+                    colorChanges = preview,
+                ),
+            )
+        }
+
+        if (planned.isEmpty()) {
+            return failure("no_changes", "Every requested palette already has the requested colors.")
+        }
+        requestedDetails.indices.forEach { left ->
+            val leftSources = setOf(requestedDetails[left].id) + requestedDetails[left].affectedPaletteIds
+            for (right in left + 1 until requestedDetails.size) {
+                val rightSources = setOf(requestedDetails[right].id) + requestedDetails[right].affectedPaletteIds
+                if ((leftSources intersect rightSources).isNotEmpty()) {
+                    return failure(
+                        "overlapping_palette_sources",
+                        "${requestedDetails[left].name} and ${requestedDetails[right].name} share one palette source; stage only one.",
+                    )
+                }
+            }
+        }
+
+        val targetIds = requestedTargetIds
+        val warnings = buildList {
+            planned.forEach { edit ->
+                if (edit.details.affectedPaletteIds.isNotEmpty()) {
+                    add("${edit.details.name} shares its source and also updates ${edit.details.affectedPaletteIds.joinToString()}.")
+                }
+                edit.details.usage?.let { add("${edit.details.name}: $it") }
+            }
+            alreadyMatching.forEach { palette ->
+                add("${palette.name} already matches the requested colors; no write is needed for that target.")
+            }
+            val kraidRuntimeSet = setOf(
+                "sprite:boss_kraid",
+                "sprite:boss_kraid_health_bg",
+                "sprite:boss_kraid_health_oam",
+            )
+            if ((targetIds intersect kraidRuntimeSet).isNotEmpty() && !targetIds.containsAll(kraidRuntimeSet)) {
+                add(
+                    "A complete Kraid-wide recolor normally includes ${
+                        (kraidRuntimeSet - targetIds).sorted().joinToString()
+                    }; those related runtime palettes are not changed by this plan.",
+                )
+            }
+        }
+        val primary = planned.first().target
+        val totalColors = planned.sumOf { it.target.colorChanges.size }
+        val presentation = SmeditMutationPlan(
+            id = UUID.randomUUID().toString(),
+            toolName = SET_PALETTE_COLORS,
+            title = if (planned.size == 1) {
+                "Change $totalColors color(s) in ${primary.paletteName}"
+            } else {
+                "Change $totalColors color(s) across ${planned.size} palettes"
+            },
+            musicData = 0,
+            musicTrack = 0,
+            affectedRoomCount = 0,
+            affectedStateCount = 0,
+            affectedRoomPreview = emptyList(),
+            excludedRoomIds = emptyList(),
+            excludedAreas = emptyList(),
+            warnings = warnings,
+            kind = SmeditMutationPlanKind.PALETTE,
+            palette = SmeditPaletteMutationPlan(
+                paletteId = primary.paletteId,
+                paletteName = primary.paletteName,
+                paletteKind = primary.paletteKind,
+                sourceManaged = primary.sourceManaged,
+                affectedPaletteIds = primary.affectedPaletteIds,
+                colorChanges = primary.colorChanges,
+                additionalTargets = planned.drop(1).map(PlannedPalette::target),
+            ),
+        )
+        pending = PalettePlan(presentation, editorState.project.projectId, planned.map(PlannedPalette::mutation))
+        return SmeditMutationPlanningResult(
+            result = SmeditToolResult(buildJsonObject {
+                put("ok", true)
+                put("status", "approval_required")
+                put("plan_id", presentation.id)
+                put("tool", SET_PALETTE_COLORS)
+                put("palette_ids", JsonArray(planned.map { JsonPrimitive(it.details.id) }))
+                put("already_matching_palette_ids", JsonArray(alreadyMatching.map { JsonPrimitive(it.id) }))
+                put("changed_color_count", totalColors)
+                put("message", "The exact atomic palette diff is waiting for user approval. No project or ASM source data has changed.")
+            }, isError = false),
+            plan = presentation,
+        )
+    }
+
+    private fun planItem(arguments: JsonObject): SmeditMutationPlanningResult {
+        val summary = workspace.workspaceSummary()
+        if (!summary.projectLoaded) return failure("workspace_unavailable", "Open a project or editable ROM before placing items.")
+        if (summary.readOnly) return failure("workspace_read_only", "The current workspace is read-only.")
+        val rawRoomId = arguments.string("room_id")
+            ?: return failure("invalid_arguments", "room_id is required.")
+        val roomId = parseRoomId(rawRoomId)
+            ?: return failure("invalid_arguments", "room_id must be a 16-bit hexadecimal room id.")
+        val room = workspace.room(roomId)
+            ?: return failure("room_not_found", "No readable room exists at ${formatRoomId(roomId)}.")
+        val items = workspace.roomItems(roomId)
+            ?: return failure("items_unreadable", "SMEDIT could not inspect every item state in ${room.name}.")
+        if (items.states.isEmpty()) return failure("items_unreadable", "${room.name} has no safely readable item states.")
+        val plmId = (arguments["plm_id"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 1..0xFFFF }
+            ?: return failure("invalid_arguments", "plm_id must be an item PLM id from list_item_types.")
+        val itemType = workspace.itemTypes().singleOrNull { it.plmId == plmId }
+            ?: return failure("unknown_item", "${formatWord(plmId)} is not a currently placeable item PLM.")
+        val x = (arguments["x"] as? JsonPrimitive)?.intOrNull
+            ?.takeIf { it in 0 until items.widthBlocks && it <= 255 }
+            ?: return failure("invalid_coordinates", "x must be inside this room (0 through ${items.widthBlocks - 1}).")
+        val y = (arguments["y"] as? JsonPrimitive)?.intOrNull
+            ?.takeIf { it in 0 until items.heightBlocks && it <= 255 }
+            ?: return failure("invalid_coordinates", "y must be inside this room (0 through ${items.heightBlocks - 1}).")
+        val scope = arguments.string("state_scope")
+            ?: return failure("invalid_arguments", "state_scope is required.")
+        if (scope !in setOf("all_states", "single_state")) {
+            return failure("invalid_arguments", "state_scope must be all_states or single_state.")
+        }
+        val requestedState = arguments.string("state_id")?.trim()?.takeIf(String::isNotEmpty)
+        val targetStates = if (scope == "all_states") {
+            items.states
+        } else {
+            if (requestedState == null) return failure("invalid_arguments", "state_id is required for single_state.")
+            listOfNotNull(items.states.singleOrNull { it.id == requestedState }).takeIf { it.isNotEmpty() }
+                ?: return failure("state_not_found", "No state '$requestedState' exists in ${room.name}.")
+        }
+        val conflicts = targetStates.flatMap { state ->
+            state.items.filter { it.x == x && it.y == y }.map { "${state.id}: ${it.name}" }
+        }
+        if (conflicts.isNotEmpty()) {
+            return failure("item_position_occupied", "An item already occupies ($x,$y): ${conflicts.joinToString()}.")
+        }
+        val itemCatalogs = workspace.rooms().mapNotNull { roomSummary ->
+            parseRoomId(roomSummary.id)?.let { roomId -> roomId to workspace.roomItems(roomId) }
+        }
+        val unreadableCatalogs = itemCatalogs.filter { (_, catalog) -> catalog == null }.map(Pair<Int, SmeditRoomItemsDetails?>::first)
+        if (unreadableCatalogs.isNotEmpty()) {
+            return failure(
+                "item_catalog_incomplete",
+                "SMEDIT could not verify item collection parameters in ${unreadableCatalogs.size} room(s), including " +
+                    unreadableCatalogs.take(8).joinToString { formatRoomId(it) } + ". No item was staged.",
+            )
+        }
+        val usedParameters = itemCatalogs.asSequence().map { (_, catalog) -> requireNotNull(catalog) }
+            .flatMap { it.states.asSequence() }
+            .flatMap { it.items.asSequence() }.map(SmeditPlacedItem::parameter).filter { it > 0 }.toSet()
+        val explicitParameter = (arguments["item_parameter"] as? JsonPrimitive)?.intOrNull
+        if ("item_parameter" in arguments && explicitParameter !in 1..0x1FF) {
+            return failure("invalid_arguments", "item_parameter must be from 1 through 511.")
+        }
+        val parameter = explicitParameter ?: (0x51..0x1FF).firstOrNull { it !in usedParameters }
+            ?: return failure("item_parameters_exhausted", "All safe custom item collection-bit parameters are in use.")
+        if (explicitParameter != null && parameter in usedParameters) {
+            return failure("item_parameter_in_use", "Item parameter ${formatWord(parameter)} is already in use.")
+        }
+        val entry = RomParser.PlmEntry(plmId, x, y, parameter)
+        val currentParser = parser()
+            ?: return failure("workspace_unavailable", "The room source ROM is unavailable.")
+        val project = editorState.project
+        val key = project.roomKey(roomId)
+        val sourceManaged = items.sourceManaged
+        val before: RoomModelSnapshot?
+        val after: RoomModelSnapshot?
+        val sourceBefore: String?
+        val sourceAfter: String?
+        if (sourceManaged) {
+            val authoredRoom = project.rooms[key]
+                ?: return failure("source_unavailable", "The source-managed room model is unavailable.")
+            val bridge = editorState.asmPlmSourceBridge
+                ?: return failure("source_unavailable", "Wait for the project ASM object workspace, then try again.")
+            val stateId = targetStates.first().id
+            val view = bridge.managedView(roomId, stateId)
+            if (view.problem != null) return failure("source_invalid", view.problem)
+            sourceBefore = bridge.sourceText()
+            sourceAfter = try {
+                bridge.planManagedEdit(roomId, stateId, scope == "all_states", { false }, entry)
+            } catch (problem: Exception) {
+                return failure("item_plan_blocked", problem.message ?: "The item source change could not be planned.")
+            }
+            if (sourceBefore == sourceAfter) return failure("no_changes", "The requested item already exists.")
+            before = null
+            after = null
+            check(authoredRoom.asmPlmSourceVersion != 0)
+        } else {
+            val linkedPointers = currentParser.parseRoomStatesWithData(roomId).map { it.plmSetPtr }
+                .filter { pointer -> editorState.asmPlmSourceBridge?.isLinked(pointer) == true }
+            if (linkedPointers.isNotEmpty()) {
+                return failure("source_managed", "One or more room states use linked ASM object source. Adopt the room's objects before AI placement.")
+            }
+            val staged = snapshotRoomForResize(project.rooms[key] ?: RoomEdits(roomId))
+            if (staged.states.isEmpty()) staged.ensureStateManifest(currentParser)
+            if (scope == "all_states") {
+                staged.plmChanges += PlmChange("add", plmId, x, y, parameter)
+            } else {
+                val state = staged.states.singleOrNull { it.id == targetStates.single().id }
+                    ?: return failure("state_not_found", "The target state changed while planning.")
+                state.plmChanges += PlmChange("add", plmId, x, y, parameter)
+            }
+            before = RoomModelSnapshot(roomId, project.rooms[key]?.let(::snapshotRoomForResize))
+            after = RoomModelSnapshot(roomId, staged)
+            sourceBefore = null
+            sourceAfter = null
+        }
+        val itemName = "${itemType.name} (${itemType.variant})"
+        val presentation = SmeditMutationPlan(
+            id = UUID.randomUUID().toString(),
+            toolName = PLACE_ITEM,
+            title = "Place $itemName in ${room.name}",
+            musicData = 0,
+            musicTrack = 0,
+            affectedRoomCount = 1,
+            affectedStateCount = targetStates.size,
+            affectedRoomPreview = listOf("${room.name} (${formatRoomId(roomId)})"),
+            excludedRoomIds = emptyList(),
+            excludedAreas = emptyList(),
+            warnings = emptyList(),
+            kind = SmeditMutationPlanKind.ITEM,
+            item = SmeditItemMutationPlan(
+                roomId = formatRoomId(roomId),
+                roomName = room.name,
+                itemName = itemName,
+                plmIdHex = formatWord(plmId),
+                x = x,
+                y = y,
+                parameterHex = formatWord(parameter),
+                stateScope = scope,
+                stateIds = targetStates.map(SmeditRoomItemState::id),
+                sourceManaged = sourceManaged,
+            ),
+        )
+        pending = ItemPlan(presentation, project.projectId, roomId, before, after, sourceBefore, sourceAfter)
+        return SmeditMutationPlanningResult(
+            result = SmeditToolResult(buildJsonObject {
+                put("ok", true)
+                put("status", "approval_required")
+                put("plan_id", presentation.id)
+                put("tool", PLACE_ITEM)
+                put("room_id", formatRoomId(roomId))
+                put("affected_state_count", targetStates.size)
+                put("item_parameter", parameter)
+                put("message", "The exact item placement is waiting for user approval. No project or ASM source data has changed.")
+            }, isError = false),
+            plan = presentation,
+        )
+    }
+
     override fun approve(planId: String): SmeditMutationTransition {
         val plan = pending?.takeIf { it.presentation.id == planId }
             ?: error("The pending AI plan is no longer available.")
@@ -925,6 +1352,32 @@ internal class DesktopSmeditMutationController(
                 editorState.recordExternalRoomMutation(plan.after.map(RoomModelSnapshot::roomId))
                 transition(plan.presentation, "Applied")
             }
+            is PalettePlan -> {
+                requireProject(plan.projectId)
+                applyPaletteMutations(plan.mutations, forward = true, operation = "approval")
+                undoStack += AppliedPaletteAction(plan)
+                redoStack.clear()
+                pending = null
+                transition(plan.presentation, "Applied")
+            }
+            is ItemPlan -> {
+                requireProject(plan.projectId)
+                if (plan.sourceBefore != null) {
+                    val bridge = requireNotNull(editorState.asmPlmSourceBridge) { "The ASM object workspace is unavailable." }
+                    require(bridge.sourceText() == plan.sourceBefore) {
+                        "Room-object source changed after the AI plan was created. Nothing was changed."
+                    }
+                    bridge.replaceManagedSource(plan.sourceBefore, requireNotNull(plan.sourceAfter))
+                } else {
+                    requireRoomModels(listOf(requireNotNull(plan.before)), "approval")
+                    restoreRoomModels(listOf(requireNotNull(plan.after)))
+                }
+                undoStack += AppliedItemAction(plan)
+                redoStack.clear()
+                pending = null
+                editorState.recordExternalItemMutation(plan.roomId)
+                transition(plan.presentation, "Applied")
+            }
         }
     }
 
@@ -976,6 +1429,22 @@ internal class DesktopSmeditMutationController(
                 }
                 editorState.recordExternalRoomMutation(action.plan.before.map(RoomModelSnapshot::roomId))
             }
+            is AppliedPaletteAction -> {
+                requireProject(action.projectId)
+                applyPaletteMutations(action.plan.mutations, forward = false, operation = "undo")
+            }
+            is AppliedItemAction -> {
+                requireProject(action.projectId)
+                val plan = action.plan
+                if (plan.sourceBefore != null) {
+                    val bridge = requireNotNull(editorState.asmPlmSourceBridge) { "The ASM object workspace is unavailable." }
+                    bridge.replaceManagedSource(requireNotNull(plan.sourceAfter), plan.sourceBefore)
+                } else {
+                    requireRoomModels(listOf(requireNotNull(plan.after)), "undo")
+                    restoreRoomModels(listOf(requireNotNull(plan.before)))
+                }
+                editorState.recordExternalItemMutation(plan.roomId)
+            }
         }
         undoStack.removeAt(undoStack.lastIndex)
         redoStack += action
@@ -1022,6 +1491,22 @@ internal class DesktopSmeditMutationController(
                     throw problem
                 }
                 editorState.recordExternalRoomMutation(action.plan.after.map(RoomModelSnapshot::roomId))
+            }
+            is AppliedPaletteAction -> {
+                requireProject(action.projectId)
+                applyPaletteMutations(action.plan.mutations, forward = true, operation = "redo")
+            }
+            is AppliedItemAction -> {
+                requireProject(action.projectId)
+                val plan = action.plan
+                if (plan.sourceBefore != null) {
+                    val bridge = requireNotNull(editorState.asmPlmSourceBridge) { "The ASM object workspace is unavailable." }
+                    bridge.replaceManagedSource(plan.sourceBefore, requireNotNull(plan.sourceAfter))
+                } else {
+                    requireRoomModels(listOf(requireNotNull(plan.before)), "redo")
+                    restoreRoomModels(listOf(requireNotNull(plan.after)))
+                }
+                editorState.recordExternalItemMutation(plan.roomId)
             }
         }
         redoStack.removeAt(redoStack.lastIndex)
@@ -1171,8 +1656,54 @@ internal class DesktopSmeditMutationController(
             SmeditMutationPlanKind.PATCH -> "$verb ${plan.title.lowercase()}."
             SmeditMutationPlanKind.ROOM_FX ->
                 "$verb room FX for ${plan.affectedRoomCount} room(s) and ${plan.affectedStateCount} state(s)."
+            SmeditMutationPlanKind.PALETTE -> "$verb ${plan.title.lowercase()}."
+            SmeditMutationPlanKind.ITEM ->
+                "$verb ${plan.title.lowercase()} for ${plan.affectedStateCount} state(s)."
         },
     )
+
+    private fun applyPaletteMutations(
+        mutations: List<AiPaletteMutation>,
+        forward: Boolean,
+        operation: String,
+    ) {
+        val ordered = if (forward) mutations else mutations.asReversed()
+        val transitions = ordered.map { mutation ->
+            if (forward) mutation.before to mutation.after else mutation.after to mutation.before
+        }
+        transitions.forEach { (expected, _) -> editorState.requireAiPaletteState(expected, operation) }
+        val applied = mutableListOf<Pair<com.supermetroid.editor.ui.AiPaletteMutationState, com.supermetroid.editor.ui.AiPaletteMutationState>>()
+        val currentParser = parser()
+        try {
+            transitions.forEach { (expected, target) ->
+                editorState.applyAiPaletteState(expected, target, currentParser)
+                applied += expected to target
+            }
+        } catch (problem: Throwable) {
+            applied.asReversed().forEach { (expected, target) ->
+                runCatching { editorState.applyAiPaletteState(target, expected, currentParser) }
+                    .onFailure(problem::addSuppressed)
+            }
+            throw problem
+        }
+    }
+
+    private fun rgbHexToBgr555(rgb: String): Int {
+        val red = rgb.substring(1, 3).toInt(16)
+        val green = rgb.substring(3, 5).toInt(16)
+        val blue = rgb.substring(5, 7).toInt(16)
+        fun shrink(value: Int) = (value * 31 + 127) / 255
+        return (shrink(blue) shl 10) or (shrink(green) shl 5) or shrink(red)
+    }
+
+    private fun bgr555ToRgbHex(color: Int): String {
+        fun expand(value: Int) = (value * 255 + 15) / 31
+        return "#%02X%02X%02X".format(
+            expand(color and 0x1F),
+            expand((color ushr 5) and 0x1F),
+            expand((color ushr 10) and 0x1F),
+        )
+    }
 
     private fun JsonObject.byte(name: String): Int? = (get(name) as? JsonPrimitive)?.intOrNull?.takeIf { it in 0..255 }
 
@@ -1284,6 +1815,8 @@ internal class DesktopSmeditMutationController(
         const val SET_ROOM_MUSIC = "set_room_music"
         const val CONFIGURE_PATCH = "configure_patch"
         const val SET_ROOM_FX = "set_room_fx"
+        const val SET_PALETTE_COLORS = "set_palette_colors"
+        const val PLACE_ITEM = "place_item"
         const val TOURIAN_AREA = "Tourian"
         const val MOTHER_BRAIN_RUNTIME_FX_POINTER = 0xA0A4
         val CONFIG_VALUE_ALIASES = setOf("seconds", "total_seconds", "totalSeconds")

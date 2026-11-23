@@ -1,5 +1,7 @@
 package com.supermetroid.editor.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,11 +12,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.DisableSelection
@@ -29,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +51,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.ai.AiCredentialSource
 import com.supermetroid.editor.ai.AiCredentialStore
@@ -62,6 +68,10 @@ import com.supermetroid.editor.ai.StoredAiMutationPlan
 import com.supermetroid.editor.ai.StoredAiPatchMutationPlan
 import com.supermetroid.editor.ai.StoredAiPatchValueChange
 import com.supermetroid.editor.ai.StoredAiRoomFxMutationPlan
+import com.supermetroid.editor.ai.StoredAiPaletteColorChange
+import com.supermetroid.editor.ai.StoredAiPaletteMutationPlan
+import com.supermetroid.editor.ai.StoredAiPaletteTargetMutationPlan
+import com.supermetroid.editor.ai.StoredAiItemMutationPlan
 import com.supermetroid.editor.api.SmeditToolRegistry
 import com.supermetroid.editor.api.SmeditToolEffect
 import com.supermetroid.editor.api.SmeditToolResult
@@ -71,14 +81,23 @@ import com.supermetroid.editor.api.SmeditMutationPlan
 import com.supermetroid.editor.api.SmeditPatchMutationPlan
 import com.supermetroid.editor.api.SmeditPatchValueChange
 import com.supermetroid.editor.api.SmeditRoomFxMutationPlan
+import com.supermetroid.editor.api.SmeditPaletteColorChange
+import com.supermetroid.editor.api.SmeditPaletteMutationPlan
+import com.supermetroid.editor.api.SmeditPaletteTargetMutationPlan
+import com.supermetroid.editor.api.SmeditItemMutationPlan
 import com.supermetroid.editor.data.AppConfig
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 enum class AiChatRole { USER, ASSISTANT }
@@ -104,11 +123,14 @@ data class AiMutationNotice(
     val text: String,
     val isError: Boolean,
     override val sequence: Long,
+    val title: String? = null,
 ) : AiConversationItem
 
 enum class AiToolActivityStatus { RUNNING, SUCCEEDED, FAILED, AWAITING_APPROVAL, APPLIED, REJECTED, UNDONE, REDONE }
 
 enum class AiMutationAction { APPLYING, REJECTING }
+
+private val AI_CONTROL_SHAPE = RoundedCornerShape(4.dp)
 
 data class AiToolActivity(
     val callId: String,
@@ -117,6 +139,15 @@ data class AiToolActivity(
     val status: AiToolActivityStatus,
     val outputPreview: String? = null,
     val planId: String? = null,
+)
+
+data class AiConversationHistoryEntry(
+    val id: String,
+    val title: String,
+    val customTitle: String?,
+    val modelId: String?,
+    val updatedAtEpochMillis: Long,
+    val itemCount: Int,
 )
 
 internal fun maskedAiCredentialPreview(value: String): String = when {
@@ -131,6 +162,7 @@ class AiWorkspaceState(
     providerList: List<AiProvider> = listOf(OpenAiProvider()),
     private val toolRegistry: SmeditToolRegistry? = null,
     private val mutationController: SmeditMutationController? = null,
+    private val requestTimeoutMillis: Long = DEFAULT_AI_REQUEST_TIMEOUT_MILLIS,
 ) {
     private val providers = providerList.associateBy(AiProvider::id)
     private var credentialRevision by mutableStateOf(0)
@@ -162,11 +194,16 @@ class AiWorkspaceState(
     private val mutationPlans = mutableStateListOf<AiMutationPlanMessage>()
     private val mutationNotices = mutableStateListOf<AiMutationNotice>()
     val toolActivity = mutableStateListOf<AiToolActivity>()
+    val conversationHistory = mutableStateListOf<AiConversationHistoryEntry>()
+    var historyVisible by mutableStateOf(false)
+        private set
 
     private var previousResponseId: String? = null
     private var nextConversationSequence = 0L
     private var conversationId = UUID.randomUUID().toString()
+    private var conversationCustomTitle: String? = null
     private var conversationModelId: String? = null
+    val activeConversationId: String get() = conversationId
 
     val conversationItems: List<AiConversationItem>
         get() = (messages + mutationPlans + mutationNotices).sortedBy(AiConversationItem::sequence)
@@ -197,10 +234,13 @@ class AiWorkspaceState(
         val stored = conversationStore.loadActive(provider)
         if (stored == null) {
             conversationId = UUID.randomUUID().toString()
+            conversationCustomTitle = null
             conversationModelId = AppConfig.load().aiSelectedModels[provider.configId]
+            refreshConversationHistory()
             return
         }
         conversationId = stored.id
+        conversationCustomTitle = stored.customTitle
         conversationModelId = stored.modelId
         nextConversationSequence = stored.nextSequence
         val expiredPlanIds = mutableListOf<String>()
@@ -224,11 +264,12 @@ class AiWorkspaceState(
                 }
                 ITEM_NOTICE -> {
                     val text = item.text ?: return@forEach
-                    mutationNotices += AiMutationNotice(item.planId, text, item.isError, item.sequence)
+                    mutationNotices += AiMutationNotice(item.planId, text, item.isError, item.sequence, item.title)
                 }
             }
         }
         val normalizedLegacyPlanOrdering = normalizeLegacyPlanOrdering()
+        val normalizedDuplicateNotices = normalizeDuplicateNotices()
         val configuredModel = AppConfig.load().aiSelectedModels[provider.configId]
         previousResponseId = stored.previousResponseId.takeIf { stored.modelId != null && stored.modelId == configuredModel }
         expiredPlanIds.forEach { planId ->
@@ -239,7 +280,8 @@ class AiWorkspaceState(
                 sequence = nextSequence(),
             )
         }
-        if (expiredPlanIds.isNotEmpty() || normalizedLegacyPlanOrdering) persistConversation()
+        if (expiredPlanIds.isNotEmpty() || normalizedLegacyPlanOrdering || normalizedDuplicateNotices) persistConversation()
+        else refreshConversationHistory()
     }
 
     private fun normalizeLegacyPlanOrdering(): Boolean {
@@ -259,6 +301,22 @@ class AiWorkspaceState(
         return legacyPairs.isNotEmpty()
     }
 
+    private fun normalizeDuplicateNotices(): Boolean {
+        val duplicates = conversationItems.zipWithNext().mapNotNull { (first, second) ->
+            val left = first as? AiMutationNotice ?: return@mapNotNull null
+            val right = second as? AiMutationNotice ?: return@mapNotNull null
+            right.sequence.takeIf {
+                left.planId == right.planId &&
+                    left.text == right.text &&
+                    left.isError == right.isError &&
+                    left.title == right.title
+            }
+        }.toSet()
+        if (duplicates.isEmpty()) return false
+        mutationNotices.removeAll { it.sequence in duplicates }
+        return true
+    }
+
     private fun clearConversationMemory() {
         pendingMutation = null
         mutationActionInFlight = null
@@ -270,12 +328,14 @@ class AiWorkspaceState(
         canUndoAiMutation = false
         canRedoAiMutation = false
         nextConversationSequence = 0L
+        conversationCustomTitle = null
     }
 
     private fun persistConversation() {
         val snapshot = StoredAiConversation(
             id = conversationId,
             providerId = selectedProvider.configId,
+            customTitle = conversationCustomTitle,
             modelId = conversationModelId ?: selectedModelId,
             previousResponseId = previousResponseId,
             updatedAtEpochMillis = System.currentTimeMillis(),
@@ -284,7 +344,42 @@ class AiWorkspaceState(
         )
         runCatching { conversationStore.save(snapshot) }.onFailure { problem ->
             errorMessage = "Could not save AI conversation history: ${problem.message ?: "unknown file error"}"
+        }.onSuccess { refreshConversationHistory() }
+    }
+
+    private fun refreshConversationHistory() {
+        val entries = conversationStore.conversations(selectedProvider).map { stored ->
+            val generatedTitle = stored.items.asSequence()
+                .filter { it.kind == ITEM_CHAT && it.role == AiChatRole.USER.name }
+                .mapNotNull(StoredAiConversationItem::text)
+                .map { it.replace(Regex("\\s+"), " ").trim() }
+                .firstOrNull(String::isNotEmpty)
+                ?.take(64)
+                ?: "New conversation"
+            AiConversationHistoryEntry(
+                id = stored.id,
+                title = stored.customTitle ?: generatedTitle,
+                customTitle = stored.customTitle,
+                modelId = stored.modelId,
+                updatedAtEpochMillis = stored.updatedAtEpochMillis,
+                itemCount = stored.items.size,
+            )
+        }.toMutableList()
+        if (entries.none { it.id == conversationId }) {
+            entries.add(
+                0,
+                AiConversationHistoryEntry(
+                    id = conversationId,
+                    title = conversationCustomTitle ?: "New conversation",
+                    customTitle = conversationCustomTitle,
+                    modelId = conversationModelId ?: selectedModelId,
+                    updatedAtEpochMillis = System.currentTimeMillis(),
+                    itemCount = conversationItems.size,
+                ),
+            )
         }
+        conversationHistory.clear()
+        conversationHistory.addAll(entries)
     }
 
     private fun AiConversationItem.toStored(): StoredAiConversationItem = when (this) {
@@ -306,6 +401,7 @@ class AiWorkspaceState(
             kind = ITEM_NOTICE,
             planId = planId,
             text = text,
+            title = title,
             isError = isError,
         )
     }
@@ -341,6 +437,56 @@ class AiWorkspaceState(
         fx = fx?.let { fx ->
             StoredAiRoomFxMutationPlan(fx.requestedChanges, fx.affectedStatePreview)
         },
+        palette = palette?.let { palette ->
+            StoredAiPaletteMutationPlan(
+                paletteId = palette.paletteId,
+                paletteName = palette.paletteName,
+                paletteKind = palette.paletteKind,
+                sourceManaged = palette.sourceManaged,
+                affectedPaletteIds = palette.affectedPaletteIds,
+                colorChanges = palette.colorChanges.map { change ->
+                    StoredAiPaletteColorChange(
+                        change.index,
+                        change.row,
+                        change.column,
+                        change.beforeRgb,
+                        change.afterRgb,
+                    )
+                },
+                additionalTargets = palette.additionalTargets.map { target ->
+                    StoredAiPaletteTargetMutationPlan(
+                        paletteId = target.paletteId,
+                        paletteName = target.paletteName,
+                        paletteKind = target.paletteKind,
+                        sourceManaged = target.sourceManaged,
+                        affectedPaletteIds = target.affectedPaletteIds,
+                        colorChanges = target.colorChanges.map { change ->
+                            StoredAiPaletteColorChange(
+                                change.index,
+                                change.row,
+                                change.column,
+                                change.beforeRgb,
+                                change.afterRgb,
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        item = item?.let { item ->
+            StoredAiItemMutationPlan(
+                roomId = item.roomId,
+                roomName = item.roomName,
+                itemName = item.itemName,
+                plmIdHex = item.plmIdHex,
+                x = item.x,
+                y = item.y,
+                parameterHex = item.parameterHex,
+                stateScope = item.stateScope,
+                stateIds = item.stateIds,
+                sourceManaged = item.sourceManaged,
+            )
+        },
     )
 
     private fun StoredAiMutationPlan.toRuntime() = SmeditMutationPlan(
@@ -374,6 +520,56 @@ class AiWorkspaceState(
         },
         fx = fx?.let { fx ->
             SmeditRoomFxMutationPlan(fx.requestedChanges, fx.affectedStatePreview)
+        },
+        palette = palette?.let { palette ->
+            SmeditPaletteMutationPlan(
+                paletteId = palette.paletteId,
+                paletteName = palette.paletteName,
+                paletteKind = palette.paletteKind,
+                sourceManaged = palette.sourceManaged,
+                affectedPaletteIds = palette.affectedPaletteIds,
+                colorChanges = palette.colorChanges.map { change ->
+                    SmeditPaletteColorChange(
+                        change.index,
+                        change.row,
+                        change.column,
+                        change.beforeRgb,
+                        change.afterRgb,
+                    )
+                },
+                additionalTargets = palette.additionalTargets.map { target ->
+                    SmeditPaletteTargetMutationPlan(
+                        paletteId = target.paletteId,
+                        paletteName = target.paletteName,
+                        paletteKind = target.paletteKind,
+                        sourceManaged = target.sourceManaged,
+                        affectedPaletteIds = target.affectedPaletteIds,
+                        colorChanges = target.colorChanges.map { change ->
+                            SmeditPaletteColorChange(
+                                change.index,
+                                change.row,
+                                change.column,
+                                change.beforeRgb,
+                                change.afterRgb,
+                            )
+                        },
+                    )
+                },
+            )
+        },
+        item = item?.let { item ->
+            SmeditItemMutationPlan(
+                roomId = item.roomId,
+                roomName = item.roomName,
+                itemName = item.itemName,
+                plmIdHex = item.plmIdHex,
+                x = item.x,
+                y = item.y,
+                parameterHex = item.parameterHex,
+                stateScope = item.stateScope,
+                stateIds = item.stateIds,
+                sourceManaged = item.sourceManaged,
+            )
         },
     )
 
@@ -582,31 +778,39 @@ class AiWorkspaceState(
         addChatMessage(AiChatRole.USER, normalized)
         val plansCreatedAfterSequence = nextConversationSequence
         try {
-            val reply = provider.createResponse(
-                apiKey = credential.value,
-                modelId = modelId,
-                prompt = normalized,
-                previousResponseId = previousResponseId,
-                runtimeContext = approvalRuntimeContext(),
-                toolDefinitions = toolRegistry?.definitions.orEmpty(),
-                executeTool = toolRegistry?.let { registry ->
-                    { call -> executeToolCall(registry, call) }
-                },
-            )
+            val reply = withTimeout(requestTimeoutMillis) {
+                provider.createResponse(
+                    apiKey = credential.value,
+                    modelId = modelId,
+                    prompt = normalized,
+                    previousResponseId = previousResponseId,
+                    runtimeContext = providerRuntimeContext(plansCreatedAfterSequence),
+                    toolDefinitions = toolRegistry?.definitions.orEmpty(),
+                    executeTool = toolRegistry?.let { registry ->
+                        { call -> executeToolCall(registry, call) }
+                    },
+                )
+            }
             previousResponseId = reply.responseId
             commitAssistantReply(reply.text, plansCreatedAfterSequence)
+        } catch (_: TimeoutCancellationException) {
+            addRequestNotice(
+                "The request timed out after ${formatRequestTimeout(requestTimeoutMillis)}. " +
+                    "SMEDIT stopped waiting; try again or ask for a smaller bounded step.",
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            errorMessage = e.message ?: "The AI request failed."
+            addRequestNotice(e.message ?: "The AI request failed.")
         } finally {
             requestInFlight = false
         }
     }
 
     fun requestCancelled() {
+        if (!requestInFlight) return
         requestInFlight = false
-        errorMessage = "Request cancelled."
+        addRequestNotice("The request was cancelled. No unapproved project changes were applied.", isError = false)
     }
 
     private fun approvalRuntimeContext(): String = pendingMutation?.let { plan ->
@@ -617,13 +821,76 @@ class AiWorkspaceState(
         "it must not block a new mutation tool call. A mutation tool successfully called during this request may " +
         "create a new pending plan."
 
+    private fun providerRuntimeContext(currentUserSequence: Long): String {
+        val lastAssistantSequence = messages.asSequence()
+            .filter { it.role == AiChatRole.ASSISTANT }
+            .maxOfOrNull(AiChatMessage::sequence)
+            ?: 0L
+        val failedTurnPrompts = messages.asSequence()
+            .filter {
+                it.role == AiChatRole.USER &&
+                    it.sequence > lastAssistantSequence &&
+                    it.sequence < currentUserSequence
+            }
+            .toList()
+            .takeLast(3)
+        if (failedTurnPrompts.isEmpty()) return approvalRuntimeContext()
+        return buildString {
+            append(approvalRuntimeContext())
+            append("\n\nLocal user request(s) after the last successful provider response are included below because " +
+                "their provider turns failed or timed out. The current prompt may refer to them:\n")
+            failedTurnPrompts.forEach { prompt ->
+                append("- ")
+                append(prompt.text.take(2_000))
+                append('\n')
+            }
+        }.trimEnd()
+    }
+
     fun newConversation() {
         abandonPendingPlan("The unapproved plan was closed when a new conversation started. No project data changed.")
         clearConversationMemory()
         conversationId = UUID.randomUUID().toString()
         conversationModelId = selectedModelId
+        historyVisible = false
         errorMessage = null
         persistConversation()
+    }
+
+    fun selectConversation(id: String): Boolean {
+        if (id == conversationId) {
+            historyVisible = false
+            return true
+        }
+        if (interactionInFlight) return false
+        val stored = conversationStore.load(selectedProvider, id) ?: return false
+        abandonPendingPlan("The unapproved plan was closed when another conversation was opened. No project data changed.")
+        if (!conversationStore.setActive(selectedProvider, stored.id)) return false
+        restoreConversation(selectedProvider)
+        historyVisible = false
+        errorMessage = null
+        return conversationId == stored.id
+    }
+
+    fun showConversationHistory() {
+        historyVisible = true
+        refreshConversationHistory()
+    }
+
+    fun renameConversation(id: String, title: String): Boolean {
+        val normalized = title.trim()
+            .take(AiConversationStore.MAX_CONVERSATION_TITLE_LENGTH)
+            .takeIf(String::isNotEmpty)
+        val renamed = if (id == conversationId) {
+            conversationCustomTitle = normalized
+            persistConversation()
+            true
+        } else {
+            conversationStore.rename(selectedProvider, id, normalized).also {
+                if (it) refreshConversationHistory()
+            }
+        }
+        return renamed
     }
 
     private fun abandonPendingPlan(message: String) {
@@ -701,9 +968,34 @@ class AiWorkspaceState(
         }
     }
 
-    private fun addMutationNotice(planId: String?, text: String, isError: Boolean = false) {
-        mutationNotices += AiMutationNotice(planId, text, isError, nextSequence())
+    private fun addMutationNotice(
+        planId: String?,
+        text: String,
+        isError: Boolean = false,
+        title: String? = null,
+        deduplicateConsecutive: Boolean = false,
+    ) {
+        val notice = AiMutationNotice(planId, text, isError, nextConversationSequence + 1, title)
+        if (deduplicateConsecutive) {
+            val previous = conversationItems.lastOrNull() as? AiMutationNotice
+            if (previous != null && previous.planId == notice.planId && previous.text == notice.text &&
+                previous.isError == notice.isError && previous.title == notice.title
+            ) {
+                return
+            }
+        }
+        nextConversationSequence++
+        mutationNotices += notice
         persistConversation()
+    }
+
+    private fun addRequestNotice(text: String, isError: Boolean = true) {
+        addMutationNotice(
+            planId = null,
+            text = text,
+            isError = isError,
+            title = if (isError) "${selectedProvider.displayName} request failed" else "Request cancelled",
+        )
     }
 
     private fun updatePlanStatus(planId: String, status: AiToolActivityStatus) {
@@ -781,6 +1073,19 @@ class AiWorkspaceState(
                 planId = plan?.id,
             )
         }
+        if (result.isError && registry.definition(call.name)?.effect == SmeditToolEffect.MUTATION) {
+            val error = result.output["error"] as? JsonObject
+            val code = (error?.get("code") as? JsonPrimitive)?.contentOrNull
+            val message = (error?.get("message") as? JsonPrimitive)?.contentOrNull
+                ?: "The mutation request failed validation."
+            addMutationNotice(
+                planId = null,
+                text = if (code.isNullOrBlank()) message else "$message (error: $code)",
+                isError = true,
+                title = "SMEDIT rejected ${call.name}",
+            deduplicateConsecutive = true,
+            )
+        }
         return result
     }
 
@@ -829,12 +1134,13 @@ fun AiSettingsTab(state: AiWorkspaceState, fontSize: FontSize) {
                 state.selectCredentialSource(provider, AiCredentialSource.ENVIRONMENT)
             },
             enabled = environmentAvailable && !state.modelsLoading && !state.interactionInFlight,
+            shape = AI_CONTROL_SHAPE,
             colors = ButtonDefaults.outlinedButtonColors(
                 containerColor = if (credentialMode == AiCredentialSource.ENVIRONMENT) {
                     MaterialTheme.colorScheme.primaryContainer
                 } else MaterialTheme.colorScheme.surface,
             ),
-        ) { Text("Environment") }
+        ) { Text("Environment", fontSize = fontSize.body) }
         OutlinedButton(
             onClick = {
                 apiKey = ""
@@ -842,12 +1148,13 @@ fun AiSettingsTab(state: AiWorkspaceState, fontSize: FontSize) {
                 state.selectCredentialSource(provider, AiCredentialSource.SMEDIT_STORE)
             },
             enabled = !state.modelsLoading && !state.interactionInFlight,
+            shape = AI_CONTROL_SHAPE,
             colors = ButtonDefaults.outlinedButtonColors(
                 containerColor = if (credentialMode == AiCredentialSource.SMEDIT_STORE) {
                     MaterialTheme.colorScheme.primaryContainer
                 } else MaterialTheme.colorScheme.surface,
             ),
-        ) { Text("Open API Key") }
+        ) { Text("Open API Key", fontSize = fontSize.body) }
     }
     OutlinedTextField(
         value = when (credentialMode) {
@@ -908,14 +1215,16 @@ fun AiSettingsTab(state: AiWorkspaceState, fontSize: FontSize) {
             },
             enabled = credentialMode == AiCredentialSource.SMEDIT_STORE && editingStoredKey &&
                 apiKey.isNotBlank() && !actionInFlight && !state.modelsLoading && !state.interactionInFlight,
+            shape = AI_CONTROL_SHAPE,
         ) {
-            Text(if (storedPreview == null) "Save & connect" else "Replace & connect")
+            Text(if (storedPreview == null) "Save & connect" else "Replace & connect", fontSize = fontSize.body)
         }
         if (credentialMode == AiCredentialSource.SMEDIT_STORE && storedPreview != null) {
             TextButton(
                 onClick = { state.deleteCredential(provider) },
                 enabled = !state.modelsLoading && !state.interactionInFlight,
-            ) { Text("Remove") }
+                shape = AI_CONTROL_SHAPE,
+            ) { Text("Remove", fontSize = fontSize.body) }
         }
     }
     if (actionInFlight || state.modelsLoading) {
@@ -943,81 +1252,11 @@ fun AiSettingsTab(state: AiWorkspaceState, fontSize: FontSize) {
 }
 
 @Composable
-fun AiWorkspaceSidebar(state: AiWorkspaceState, modifier: Modifier = Modifier) {
-    val fs = LocalEditorTheme.current.fontSize.value
-    Column(
-        modifier = modifier.padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text("AI Assistant", fontSize = fs.heading, fontWeight = FontWeight.Bold)
-        Text(
-            "Approval-backed workspace",
-            fontSize = fs.detail,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            "Workspace reads are logged. Room-music and patch writes show an exact plan and cannot run until you approve them.",
-            fontSize = fs.detail,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            "Conversation history is saved globally in ~/.smedit/ai/conversations/.",
-            fontSize = fs.detail,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text("Provider", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(state.selectedProvider.displayName, fontSize = fs.body, fontWeight = FontWeight.SemiBold)
-        Text("Model", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(state.selectedModelId ?: "Not selected", fontSize = fs.body)
-        OutlinedButton(
-            onClick = state::newConversation,
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !state.interactionInFlight,
-        ) {
-            Text("New conversation")
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = state::undoAiMutation,
-                enabled = state.canUndoAiMutation && state.pendingMutation == null && !state.interactionInFlight,
-            ) { Text("AI Undo") }
-            OutlinedButton(
-                onClick = state::redoAiMutation,
-                enabled = state.canRedoAiMutation && state.pendingMutation == null && !state.interactionInFlight,
-            ) { Text("AI Redo") }
-        }
-        if (state.toolActivity.isNotEmpty()) {
-            Text("Tool activity", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
-            state.toolActivity.takeLast(6).forEach { activity ->
-                val marker = when (activity.status) {
-                    AiToolActivityStatus.RUNNING -> "…"
-                    AiToolActivityStatus.SUCCEEDED -> "✓"
-                    AiToolActivityStatus.FAILED -> "!"
-                    AiToolActivityStatus.AWAITING_APPROVAL -> "?"
-                    AiToolActivityStatus.APPLIED -> "✓"
-                    AiToolActivityStatus.REJECTED -> "×"
-                    AiToolActivityStatus.UNDONE -> "↶"
-                    AiToolActivityStatus.REDONE -> "↷"
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("$marker ${activity.name}", fontSize = fs.detail, fontWeight = FontWeight.Medium)
-                    Text(
-                        activity.arguments,
-                        fontSize = fs.detail,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun AiWorkspaceCanvas(
     state: AiWorkspaceState,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    showHeader: Boolean = true,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val actionScope = rememberCoroutineScope()
@@ -1037,17 +1276,23 @@ fun AiWorkspaceCanvas(
     }
 
     Column(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("SMEDIT AI", fontSize = fs.heading, fontWeight = FontWeight.Bold)
-            AiModelPicker(state)
-            if (state.modelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.weight(1f))
+        if (showHeader) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("SMEDIT AI", fontSize = fs.heading, fontWeight = FontWeight.Bold)
+                AiModelPicker(state)
+                if (state.modelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.weight(1f))
+            }
         }
-        state.errorMessage?.let {
+        AiConversationTabs(state)
+        if (state.historyVisible) {
+            AiConversationHistoryPanel(state, Modifier.weight(1f).fillMaxWidth())
+        } else {
+            state.errorMessage?.let {
             Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(6.dp)) {
                 Text(
                     it,
@@ -1080,7 +1325,7 @@ fun AiWorkspaceCanvas(
                     if (conversationItems.isEmpty()) {
                         item {
                             Text(
-                                "Ask about the current project, rooms, patches, settings, or loaded ASM source. You can also ask to change room music or configure patches; SMEDIT will preview the exact scope for approval.",
+                                "Ask about the project, rooms, patches, palettes, items, settings, or loaded ASM source. You can also request music, FX, patch, palette, and item changes; SMEDIT will preview the exact scope for approval.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = fs.body,
                             )
@@ -1141,7 +1386,8 @@ fun AiWorkspaceCanvas(
                 value = state.promptDraft,
                 onValueChange = { state.promptDraft = it },
                 modifier = Modifier.weight(1f).heightIn(min = 96.dp, max = 240.dp).testTag("ai-prompt"),
-                placeholder = { Text("Ask SMEDIT AI…") },
+                textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
+                placeholder = { Text("Ask SMEDIT AI…", fontSize = fs.body) },
                 enabled = !state.interactionInFlight,
                 minLines = 3,
                 maxLines = 10,
@@ -1153,8 +1399,8 @@ fun AiWorkspaceCanvas(
                         sendJob = null
                         state.requestCancelled()
                     },
-                    shape = RoundedCornerShape(6.dp),
-                ) { Text("Cancel") }
+                    shape = AI_CONTROL_SHAPE,
+                ) { Text("Cancel", fontSize = fs.body) }
             } else {
                 Button(
                     onClick = {
@@ -1163,8 +1409,141 @@ fun AiWorkspaceCanvas(
                         sendJob = actionScope.launch { state.send(message) }
                     },
                     enabled = state.promptDraft.isNotBlank() && state.selectedModelId != null && !state.interactionInFlight,
-                    shape = RoundedCornerShape(6.dp),
-                ) { Text("Send") }
+                    shape = AI_CONTROL_SHAPE,
+                ) { Text("Send", fontSize = fs.body) }
+            }
+        }
+        }
+    }
+}
+
+@Composable
+private fun AiConversationTabs(state: AiWorkspaceState) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("ai-conversation-tabs"),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val historySelected = state.historyVisible
+        Surface(
+            color = if (historySelected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceVariant,
+            shape = AI_CONTROL_SHAPE,
+            modifier = Modifier.clickable(enabled = !historySelected) {
+                state.showConversationHistory()
+            }.testTag("ai-history-tab"),
+        ) {
+            Text(
+                "History",
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                fontSize = fs.detail,
+                fontWeight = if (historySelected) FontWeight.SemiBold else FontWeight.Normal,
+            )
+        }
+        state.conversationHistory.forEach { conversation ->
+            val selected = !historySelected && conversation.id == state.activeConversationId
+            Surface(
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                shape = AI_CONTROL_SHAPE,
+                modifier = Modifier
+                    .widthIn(max = 190.dp)
+                    .clickable(enabled = !state.interactionInFlight && !selected) {
+                        state.selectConversation(conversation.id)
+                    }
+                    .testTag("ai-conversation-tab-${conversation.id}"),
+            ) {
+                Text(
+                    conversation.title,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    fontSize = fs.detail,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiConversationHistoryPanel(
+    state: AiWorkspaceState,
+    modifier: Modifier = Modifier,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    LazyColumn(
+        modifier = modifier.testTag("ai-history-panel"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Text("Conversation history", fontSize = fs.body, fontWeight = FontWeight.Bold)
+            Text(
+                "Rename a conversation to use that name on its tab. Clear a custom name to return to its first prompt.",
+                fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        items(state.conversationHistory, key = { it.id }) { conversation ->
+            var renameDraft by remember(conversation.id, conversation.customTitle, conversation.title) {
+                mutableStateOf(conversation.customTitle ?: conversation.title)
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    OutlinedTextField(
+                        value = renameDraft,
+                        onValueChange = {
+                            renameDraft = it.take(AiConversationStore.MAX_CONVERSATION_TITLE_LENGTH)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("ai-history-name-${conversation.id}"),
+                        singleLine = true,
+                        textStyle = LocalTextStyle.current.copy(fontSize = fs.body),
+                        label = { Text("Conversation name", fontSize = fs.detail) },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            buildString {
+                                append(conversation.itemCount)
+                                append(if (conversation.itemCount == 1) " message" else " messages")
+                                conversation.modelId?.let { append(" · "); append(it) }
+                            },
+                            modifier = Modifier.weight(1f),
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (conversation.customTitle != null) {
+                            TextButton(
+                                onClick = {
+                                    state.renameConversation(conversation.id, "")
+                                },
+                                shape = AI_CONTROL_SHAPE,
+                            ) { Text("Reset name", fontSize = fs.detail) }
+                        }
+                        Button(
+                            onClick = { state.renameConversation(conversation.id, renameDraft) },
+                            enabled = renameDraft.trim().isNotEmpty() &&
+                                renameDraft.trim() != conversation.customTitle,
+                            shape = AI_CONTROL_SHAPE,
+                        ) { Text("Save name", fontSize = fs.detail) }
+                        OutlinedButton(
+                            onClick = { state.selectConversation(conversation.id) },
+                            enabled = !state.interactionInFlight,
+                            shape = AI_CONTROL_SHAPE,
+                        ) { Text("Open", fontSize = fs.detail) }
+                    }
+                }
             }
         }
     }
@@ -1302,6 +1681,55 @@ private fun AiMutationApprovalCard(
                         )
                     }
                 }
+                SmeditMutationPlanKind.PALETTE -> plan.palette?.let { palette ->
+                    val targets = listOf(
+                        SmeditPaletteTargetMutationPlan(
+                            palette.paletteId,
+                            palette.paletteName,
+                            palette.paletteKind,
+                            palette.sourceManaged,
+                            palette.affectedPaletteIds,
+                            palette.colorChanges,
+                        ),
+                    ) + palette.additionalTargets
+                    targets.forEach { target ->
+                        Text(
+                            "${target.paletteName} · ${target.paletteKind}" +
+                                if (target.sourceManaged) " · ASM source" else " · project override",
+                            fontSize = fs.detail,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        target.colorChanges.take(16).forEach { change ->
+                            Text(
+                                "[${change.row},${change.column}] ${change.beforeRgb} → ${change.afterRgb}",
+                                fontSize = fs.detail,
+                            )
+                        }
+                        if (target.colorChanges.size > 16) {
+                            Text("…and ${target.colorChanges.size - 16} more color(s)", fontSize = fs.detail)
+                        }
+                        if (target.affectedPaletteIds.isNotEmpty()) {
+                            Text("Shared with: ${target.affectedPaletteIds.joinToString()}", fontSize = fs.detail)
+                        }
+                    }
+                }
+                SmeditMutationPlanKind.ITEM -> plan.item?.let { item ->
+                    Text(
+                        "${item.itemName} · ${item.plmIdHex} · tile (${item.x}, ${item.y})",
+                        fontSize = fs.detail,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Parameter ${item.parameterHex} · " +
+                            if (item.stateScope == "all_states") "all ${item.stateIds.size} state(s)"
+                            else "state ${item.stateIds.singleOrNull() ?: item.stateIds.joinToString()}",
+                        fontSize = fs.detail,
+                    )
+                    Text(
+                        if (item.sourceManaged) "Writes project ASM object source" else "Writes the project room model",
+                        fontSize = fs.detail,
+                    )
+                }
             }
             plan.warnings.forEach { warning ->
                 Text("Warning: $warning", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
@@ -1317,24 +1745,24 @@ private fun AiMutationApprovalCard(
                         Button(
                             onClick = onApprove,
                             enabled = !state.requestInFlight && mutationAction == null,
-                            shape = RoundedCornerShape(6.dp),
+                            shape = AI_CONTROL_SHAPE,
                         ) {
                             if (mutationAction == AiMutationAction.APPLYING) {
                                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.size(6.dp))
                             }
-                            Text(if (mutationAction == AiMutationAction.APPLYING) "Applying…" else "Approve")
+                            Text(if (mutationAction == AiMutationAction.APPLYING) "Applying…" else "Approve", fontSize = fs.body)
                         }
                         OutlinedButton(
                             onClick = onReject,
                             enabled = !state.requestInFlight && mutationAction == null,
-                            shape = RoundedCornerShape(6.dp),
+                            shape = AI_CONTROL_SHAPE,
                         ) {
                             if (mutationAction == AiMutationAction.REJECTING) {
                                 CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.size(6.dp))
                             }
-                            Text(if (mutationAction == AiMutationAction.REJECTING) "Rejecting…" else "Reject")
+                            Text(if (mutationAction == AiMutationAction.REJECTING) "Rejecting…" else "Reject", fontSize = fs.body)
                         }
                     }
                 }
@@ -1354,7 +1782,7 @@ private fun AiMutationNoticeCard(notice: AiMutationNotice) {
         SelectionContainer {
             Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    if (notice.isError) "SMEDIT action blocked" else "SMEDIT",
+                    notice.title ?: if (notice.isError) "SMEDIT action blocked" else "SMEDIT",
                     fontSize = fs.detail,
                     fontWeight = FontWeight.Bold,
                     color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
@@ -1369,20 +1797,69 @@ private fun AiMutationNoticeCard(notice: AiMutationNotice) {
     }
 }
 
+private fun formatRequestTimeout(timeoutMillis: Long): String = when {
+    timeoutMillis % 60_000L == 0L -> {
+        val minutes = timeoutMillis / 60_000L
+        "$minutes ${if (minutes == 1L) "minute" else "minutes"}"
+    }
+    timeoutMillis % 1_000L == 0L -> "${timeoutMillis / 1_000L} seconds"
+    else -> "$timeoutMillis ms"
+}
+
+private const val DEFAULT_AI_REQUEST_TIMEOUT_MILLIS = 4 * 60 * 1_000L
+
+@Composable
+internal fun AiCompactModelPicker(state: AiWorkspaceState) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(
+            onClick = { expanded = true },
+            enabled = state.models.isNotEmpty() && !state.modelsLoading && !state.interactionInFlight,
+            modifier = Modifier.widthIn(max = 190.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 5.dp),
+            shape = AI_CONTROL_SHAPE,
+        ) {
+            Text(
+                state.selectedModelId ?: if (state.modelsLoading) "Loading models…" else "Select model",
+                fontSize = fs.detail,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            state.models.forEach { model ->
+                DropdownMenuItem(
+                    text = { Text(model.id, fontSize = fs.body) },
+                    onClick = {
+                        state.selectModel(model.id)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun AiModelPicker(state: AiWorkspaceState) {
+    val fs = LocalEditorTheme.current.fontSize.value
     var expanded by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(
             onClick = { expanded = true },
             enabled = state.models.isNotEmpty() && !state.modelsLoading && !state.interactionInFlight,
+            shape = AI_CONTROL_SHAPE,
         ) {
-            Text(state.selectedModelId ?: if (state.modelsLoading) "Loading models…" else "Select model")
+            Text(
+                state.selectedModelId ?: if (state.modelsLoading) "Loading models…" else "Select model",
+                fontSize = fs.body,
+            )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             state.models.forEach { model ->
                 DropdownMenuItem(
-                    text = { Text(model.id) },
+                    text = { Text(model.id, fontSize = fs.body) },
                     onClick = {
                         state.selectModel(model.id)
                         expanded = false

@@ -1,7 +1,10 @@
 package com.supermetroid.editor.asm
 
+import com.supermetroid.editor.api.DesktopSmeditMutationController
+import com.supermetroid.editor.api.DesktopSmeditWorkspaceAccess
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.ProjectRomBuildMode
+import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.LZ5Compressor
@@ -14,6 +17,8 @@ import com.supermetroid.editor.rom.SourceSaveResource
 import com.supermetroid.editor.rom.words
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.*
@@ -765,6 +770,44 @@ class AsmPlmSourceBridgeTest {
         assertEquals(entries, restored.managedView(0x91F8, "state-1").document?.entries)
         assertTrue(restoredProject.rooms.getValue("91F8").plmChanges.isEmpty())
         assertTrue(restored.catalog.sourceBindings(restoredProject, reopened.projectSourceText(PLM_SOURCE_FILE), macros).isEmpty())
+    }
+
+    @Test fun `AI item placement plans source exactly and supports undo redo`() = runBlocking {
+        val (workspace, bridge, project) = fixture(withLevelData = true)
+        bridge.migrateRoom(0x91F8, "Landing Site")
+        val editor = scopeEditor(bridge, project)
+        val access = DesktopSmeditWorkspaceAccess(
+            editorState = editor,
+            asmWorkspaceState = workspace,
+            parser = { bridge.catalog.parser },
+            roomInfos = { listOf(RoomInfo("0x91F8", "landing-site", "Landing Site")) },
+            selectedRoom = { null },
+        )
+        val controller = DesktopSmeditMutationController(editor, access) { bridge.catalog.parser }
+        val before = bridge.sourceText()
+
+        val planning = controller.plan("place_item", buildJsonObject {
+            put("room_id", "0x91F8")
+            put("plm_id", 0xEEDB)
+            put("x", 4)
+            put("y", 6)
+            put("state_scope", "all_states")
+        })
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(before, bridge.sourceText(), "Planning must not publish source")
+        controller.approve(planning.plan!!.id)
+        val after = bridge.sourceText()
+        assertNotEquals(before, after)
+        project.rooms.getValue("91F8").states.forEach { state ->
+            assertTrue(bridge.managedView(0x91F8, state.id).document!!.entries.any {
+                it.id == 0xEEDB && it.x == 4 && it.y == 6 && it.param == 0x51
+            })
+        }
+        controller.undo()
+        assertEquals(before, bridge.sourceText())
+        controller.redo()
+        assertEquals(after, bridge.sourceText())
     }
 
     @Test fun `cached projections stay live in both directions and unrelated source edits reuse the room model`() = runBlocking {

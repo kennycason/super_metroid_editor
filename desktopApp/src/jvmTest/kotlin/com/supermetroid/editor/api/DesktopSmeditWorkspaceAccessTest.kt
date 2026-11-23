@@ -71,4 +71,26 @@ class DesktopSmeditWorkspaceAccessTest {
         assertNull(access.readDoc("../README.md", startLine = 1, maxLines = 20))
         assertNull(access.readDoc("/etc/passwd", startLine = 1, maxLines = 20))
     }
+
+    @Test
+    fun `palette and item catalogs expose boss colors and state aware room items`() {
+        val parser = RomParser(objectSourceTestRom())
+        val access = DesktopSmeditWorkspaceAccess(
+            editorState = EditorState(),
+            asmWorkspaceState = AsmWorkspaceState(),
+            parser = { parser },
+            roomInfos = { listOf(RoomInfo("0x91F8", "landing-site", "Landing Site")) },
+            selectedRoom = { null },
+        )
+
+        val kraid = access.palette("sprite:boss_kraid_health_bg")
+        assertEquals(160, kraid?.colorCount)
+        assertEquals(160, kraid?.colorsBgr555?.size)
+        assertTrue(kraid?.usage?.contains("full-health assembled preview") == true)
+        assertTrue("sprite:boss_kraid_health_oam" in kraid?.relatedPaletteIds.orEmpty())
+        assertTrue(access.itemTypes().any { it.name == "Missile" && it.variant == "Visible" })
+        val roomItems = access.roomItems(0x91F8)
+        assertEquals(2, roomItems?.states?.size)
+        assertEquals(32, roomItems?.widthBlocks)
+    }
 }

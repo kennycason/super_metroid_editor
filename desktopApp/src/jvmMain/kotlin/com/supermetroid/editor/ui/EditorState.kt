@@ -203,6 +203,33 @@ internal data class TilesetPaletteEditingStatus(
     val affectedTilesetIds: List<Int> = emptyList(),
 )
 
+internal data class AiPaletteMutationState(
+    val paletteId: String,
+    val overrideKey: String,
+    val overrideValue: String?,
+    val effectKey: String,
+    val effectValue: String?,
+    val sourceTilesetId: Int? = null,
+    val sourceAssetPath: String? = null,
+    val sourceBytes: ByteArray? = null,
+    val affectedTilesetIds: List<Int> = emptyList(),
+) {
+    fun sameAs(other: AiPaletteMutationState): Boolean =
+        paletteId == other.paletteId && overrideKey == other.overrideKey && overrideValue == other.overrideValue &&
+            effectKey == other.effectKey && effectValue == other.effectValue &&
+            sourceTilesetId == other.sourceTilesetId && sourceAssetPath == other.sourceAssetPath &&
+            affectedTilesetIds == other.affectedTilesetIds && when {
+                sourceBytes == null -> other.sourceBytes == null
+                other.sourceBytes == null -> false
+                else -> sourceBytes.contentEquals(other.sourceBytes)
+            }
+}
+
+internal data class AiPaletteMutation(
+    val before: AiPaletteMutationState,
+    val after: AiPaletteMutationState,
+)
+
 internal data class TilesetGraphicsEditingStatus(
     val editable: Boolean,
     val sourceManaged: Boolean,
@@ -605,6 +632,23 @@ class EditorState(
     internal fun recordExternalPatchMutation() {
         dirty = true
         patchVersion++
+    }
+
+    /** Refresh item overlays after an approved external PLM/source transition. */
+    internal fun recordExternalItemMutation(roomId: Int) {
+        dirty = true
+        editVersion++
+        _roomEditOrder[roomId] = ++_editCounter
+        if (currentRoomId != roomId) return
+        if (hasManagedPlms()) {
+            refreshLinkedPlms()
+        } else {
+            currentRomParser?.let { parser ->
+                _workingPlms.clear()
+                _workingPlms.addAll(effectiveCurrentStatePlms(parser))
+                _editVersionState.value++
+            }
+        }
     }
 
     internal fun updateAsmDebugWatches(watches: List<com.supermetroid.editor.data.ProjectAsmDebugWatch>): Boolean {
@@ -3274,6 +3318,7 @@ class EditorState(
         require(colors.size == region.colorCount)
         val bytes = com.supermetroid.editor.rom.SpritePalettes.colorsToBytes(colors)
         project.customGfx.spritePalettes[regionId] = java.util.Base64.getEncoder().encodeToString(bytes)
+        kraidSprite.invalidate()
         dirty = true
         paletteVersion++
     }
@@ -3283,6 +3328,7 @@ class EditorState(
         val removedPalette = project.customGfx.spritePalettes.remove(regionId) != null
         val removedEffect = project.customGfx.paletteEffects.remove(regionId) != null
         if (removedPalette || removedEffect) {
+            kraidSprite.invalidate()
             dirty = true
             paletteVersion++
             return true
@@ -3378,6 +3424,138 @@ class EditorState(
             }
         }
         return true
+    }
+
+    /** Freeze a provider-neutral palette write without changing project or ASM source state. */
+    internal fun planAiPaletteMutation(
+        paletteId: String,
+        colors: IntArray,
+    ): AiPaletteMutation {
+        fun encoded(values: IntArray) = java.util.Base64.getEncoder()
+            .encodeToString(com.supermetroid.editor.rom.SpritePalettes.colorsToBytes(values))
+        return when {
+            paletteId.startsWith("tileset:") -> {
+                val tilesetId = paletteId.substringAfter(':').toIntOrNull()
+                    ?.takeIf { it in 0 until TileGraphics.NUM_TILESETS }
+                    ?: error("Unknown tileset palette '$paletteId'.")
+                require(colors.size == 128) { "Tileset palettes require exactly 128 colors." }
+                require(colors.all { it in 0..0x7FFF }) { "Palette colors must fit SNES BGR555." }
+                val key = tilesetId.toString()
+                val effectKey = "tileset:$tilesetId"
+                val access = asmTilesetPaletteAccess(tilesetId)
+                if (access is AsmTilesetPaletteAccess.AsmOnly) error(access.reason)
+                if (access is AsmTilesetPaletteAccess.Editable) {
+                    val declarationSourceId = access.managedSourceFileId ?: access.relocation?.sourceFileId
+                    require(declarationSourceId?.let { asmSourceWorkspace?.hasUnsavedSourceChanges(it) } != true) {
+                        "Palette planning is blocked while its ASM declaration has an unsaved draft. Save or discard the draft first."
+                    }
+                }
+                val affected = (access as? AsmTilesetPaletteAccess.Editable)?.affectedTilesetIds
+                    .orEmpty().ifEmpty { listOf(tilesetId) }
+                val before = AiPaletteMutationState(
+                    paletteId = paletteId,
+                    overrideKey = key,
+                    overrideValue = project.customGfx.palettes[key],
+                    effectKey = effectKey,
+                    effectValue = project.customGfx.paletteEffects[effectKey],
+                    sourceTilesetId = (access as? AsmTilesetPaletteAccess.Editable)?.let { tilesetId },
+                    sourceAssetPath = (access as? AsmTilesetPaletteAccess.Editable)?.assetPath,
+                    sourceBytes = (access as? AsmTilesetPaletteAccess.Editable)?.sourceBytes?.copyOf(),
+                    affectedTilesetIds = affected,
+                )
+                val after = if (access is AsmTilesetPaletteAccess.Editable) {
+                    val conflictingAliases = access.affectedTilesetIds.filter { alias ->
+                        alias != tilesetId && project.customGfx.palettes.containsKey(alias.toString())
+                    }
+                    require(conflictingAliases.isEmpty()) {
+                        "${access.assetPath} is shared with tileset(s) ${conflictingAliases.joinToString()} that still " +
+                            "have project palette overrides. Reset or migrate those first."
+                    }
+                    val raw = com.supermetroid.editor.rom.SpritePalettes.colorsToBytes(colors)
+                    before.copy(
+                        overrideValue = null,
+                        effectValue = null,
+                        sourceBytes = asmTilesetPaletteBridge.encode(access, raw),
+                    )
+                } else {
+                    before.copy(overrideValue = encoded(colors), effectValue = null)
+                }
+                AiPaletteMutation(before, after)
+            }
+            paletteId.startsWith("sprite:") -> {
+                val regionId = paletteId.substringAfter(':')
+                val region = requireNotNull(com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId)) {
+                    "Unknown sprite palette '$paletteId'."
+                }
+                require(colors.size == region.colorCount) {
+                    "${region.name} requires exactly ${region.colorCount} colors."
+                }
+                require(colors.all { it in 0..0x7FFF }) { "Palette colors must fit SNES BGR555." }
+                val before = AiPaletteMutationState(
+                    paletteId = paletteId,
+                    overrideKey = regionId,
+                    overrideValue = project.customGfx.spritePalettes[regionId],
+                    effectKey = regionId,
+                    effectValue = project.customGfx.paletteEffects[regionId],
+                )
+                AiPaletteMutation(before, before.copy(overrideValue = encoded(colors), effectValue = null))
+            }
+            else -> error("Palette ids must start with tileset: or sprite:.")
+        }
+    }
+
+    internal fun requireAiPaletteState(expected: AiPaletteMutationState, operation: String) {
+        val current = if (expected.paletteId.startsWith("tileset:")) {
+            val tilesetId = requireNotNull(expected.sourceTilesetId ?: expected.paletteId.substringAfter(':').toIntOrNull())
+            val access = asmTilesetPaletteAccess(tilesetId)
+            expected.copy(
+                overrideValue = project.customGfx.palettes[expected.overrideKey],
+                effectValue = project.customGfx.paletteEffects[expected.effectKey],
+                sourceAssetPath = (access as? AsmTilesetPaletteAccess.Editable)?.assetPath,
+                sourceBytes = (access as? AsmTilesetPaletteAccess.Editable)?.sourceBytes?.copyOf(),
+                affectedTilesetIds = (access as? AsmTilesetPaletteAccess.Editable)?.affectedTilesetIds
+                    .orEmpty().ifEmpty { listOf(tilesetId) },
+            )
+        } else {
+            expected.copy(
+                overrideValue = project.customGfx.spritePalettes[expected.overrideKey],
+                effectValue = project.customGfx.paletteEffects[expected.effectKey],
+            )
+        }
+        require(expected.sameAs(current)) {
+            "AI $operation was blocked because the palette or its shared ASM source changed. Nothing was changed."
+        }
+    }
+
+    internal fun applyAiPaletteState(
+        expected: AiPaletteMutationState,
+        target: AiPaletteMutationState,
+        parser: RomParser?,
+    ) {
+        requireAiPaletteState(expected, "palette transition")
+        if (expected.sourceTilesetId != null) {
+            asmTilesetPaletteBridge.replaceSourceBytes(
+                projectFilePath = projectFilePath,
+                tilesetId = expected.sourceTilesetId,
+                sourceBytes = requireNotNull(target.sourceBytes),
+                expectedSourceBytes = requireNotNull(expected.sourceBytes),
+            )
+            refreshAsmTilesetPaletteAccesses()
+        }
+        val palettes = if (target.paletteId.startsWith("tileset:")) project.customGfx.palettes
+            else project.customGfx.spritePalettes
+        if (target.overrideValue == null) palettes.remove(target.overrideKey)
+        else palettes[target.overrideKey] = target.overrideValue
+        if (target.effectValue == null) project.customGfx.paletteEffects.remove(target.effectKey)
+        else project.customGfx.paletteEffects[target.effectKey] = target.effectValue
+        kraidSprite.invalidate()
+        target.affectedTilesetIds.takeIf { it.isNotEmpty() }?.let { affected ->
+            if (parser != null && currentTilesetId in affected) reloadCurrentRoomTileGraphics(parser)
+            if (parser != null && editorTilesetId in affected) loadEditorTileset(editorTilesetId, parser)
+        }
+        dirty = true
+        paletteVersion++
+        editVersion++
     }
 
     fun reloadCurrentRoomTileGraphics(romParser: RomParser): Boolean {

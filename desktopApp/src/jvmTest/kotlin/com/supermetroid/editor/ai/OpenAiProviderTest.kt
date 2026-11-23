@@ -201,6 +201,57 @@ class OpenAiProviderTest {
         assertTrue(output.contains("affected_room_count"))
     }
 
+    @Test
+    fun `tool budget ends with an assistant summary instead of a provider error`() = runBlocking {
+        val toolResponses = (0..8).map { round ->
+            AiHttpResponse(
+                200,
+                """{"id":"resp_$round","output":[{"type":"function_call","call_id":"call_$round","name":"get_room","arguments":"{\"room_id\":\"91F8\"}"}]}""",
+            )
+        }
+        val transport = RecordingTransport(
+            *(toolResponses + AiHttpResponse(
+                200,
+                """{"id":"resp_summary","output":[{"type":"message","content":[{"type":"output_text","text":"I reached the tool budget. Please continue with the BG palette as one bounded step."}]}]}""",
+            )).toTypedArray(),
+        )
+        val provider = OpenAiProvider(transport, "https://example.invalid/v1")
+        val definition = SmeditToolDefinition(
+            name = "get_room",
+            description = "Get a room.",
+            inputSchema = buildJsonObject {
+                put("type", "object")
+                put("properties", buildJsonObject { })
+                put("additionalProperties", false)
+            },
+            effect = SmeditToolEffect.READ_ONLY,
+        )
+        var executions = 0
+
+        val reply = provider.createResponse(
+            apiKey = "top-secret",
+            modelId = "provider-returned-model",
+            prompt = "Inspect everything.",
+            toolDefinitions = listOf(definition),
+            executeTool = {
+                executions++
+                SmeditToolResult(buildJsonObject { put("ok", true) }, isError = false)
+            },
+        )
+
+        assertEquals(8, executions)
+        assertEquals("resp_summary", reply.responseId)
+        assertTrue(reply.text.contains("reached the tool budget"))
+        assertEquals(10, transport.requests.size)
+        val finalPayload = Json.parseToJsonElement(transport.requests.last().body!!).jsonObject
+        assertFalse("tools" in finalPayload)
+        assertTrue(finalPayload.getValue("instructions").jsonPrimitive.content.contains("tool budget for this turn is exhausted"))
+        assertTrue(
+            finalPayload.getValue("input").jsonArray.single().jsonObject
+                .getValue("output").jsonPrimitive.content.contains("tool_budget_exhausted"),
+        )
+    }
+
     private data class RecordedRequest(
         val method: String,
         val url: String,

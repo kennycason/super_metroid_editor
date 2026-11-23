@@ -34,6 +34,50 @@ data class StoredAiRoomFxMutationPlan(
 )
 
 @Serializable
+data class StoredAiPaletteColorChange(
+    val index: Int,
+    val row: Int,
+    val column: Int,
+    val beforeRgb: String,
+    val afterRgb: String,
+)
+
+@Serializable
+data class StoredAiPaletteTargetMutationPlan(
+    val paletteId: String,
+    val paletteName: String,
+    val paletteKind: String,
+    val sourceManaged: Boolean,
+    val affectedPaletteIds: List<String> = emptyList(),
+    val colorChanges: List<StoredAiPaletteColorChange> = emptyList(),
+)
+
+@Serializable
+data class StoredAiPaletteMutationPlan(
+    val paletteId: String,
+    val paletteName: String,
+    val paletteKind: String,
+    val sourceManaged: Boolean,
+    val affectedPaletteIds: List<String> = emptyList(),
+    val colorChanges: List<StoredAiPaletteColorChange> = emptyList(),
+    val additionalTargets: List<StoredAiPaletteTargetMutationPlan> = emptyList(),
+)
+
+@Serializable
+data class StoredAiItemMutationPlan(
+    val roomId: String,
+    val roomName: String,
+    val itemName: String,
+    val plmIdHex: String,
+    val x: Int,
+    val y: Int,
+    val parameterHex: String,
+    val stateScope: String,
+    val stateIds: List<String> = emptyList(),
+    val sourceManaged: Boolean,
+)
+
+@Serializable
 data class StoredAiMutationPlan(
     val id: String,
     val toolName: String,
@@ -51,6 +95,8 @@ data class StoredAiMutationPlan(
     val kind: String = "ROOM_MUSIC",
     val patch: StoredAiPatchMutationPlan? = null,
     val fx: StoredAiRoomFxMutationPlan? = null,
+    val palette: StoredAiPaletteMutationPlan? = null,
+    val item: StoredAiItemMutationPlan? = null,
 )
 
 @Serializable
@@ -59,6 +105,7 @@ data class StoredAiConversationItem(
     val kind: String,
     val role: String? = null,
     val text: String? = null,
+    val title: String? = null,
     val planId: String? = null,
     val plan: StoredAiMutationPlan? = null,
     val status: String? = null,
@@ -69,6 +116,7 @@ data class StoredAiConversationItem(
 data class StoredAiConversation(
     val id: String,
     val providerId: String,
+    val customTitle: String? = null,
     val modelId: String? = null,
     val previousResponseId: String? = null,
     val updatedAtEpochMillis: Long,
@@ -95,6 +143,12 @@ class AiConversationStore(
     @Synchronized
     fun loadActive(provider: AiProviderId): StoredAiConversation? {
         val id = readActive().providers[provider.configId]?.takeIf(::safeConversationId) ?: return null
+        return load(provider, id)
+    }
+
+    @Synchronized
+    fun load(provider: AiProviderId, id: String): StoredAiConversation? {
+        if (!safeConversationId(id)) return null
         return readConversation(File(conversationsDirectory, "$id.json"))
             ?.takeIf { it.id == id && it.providerId == provider.configId }
     }
@@ -118,6 +172,35 @@ class AiConversationStore(
         )
         val active = readActive().providers + (conversation.providerId to conversation.id)
         writeOwnerOnly(activeFile, json.encodeToString(ActiveAiConversations(active)))
+    }
+
+    @Synchronized
+    fun setActive(provider: AiProviderId, id: String): Boolean {
+        if (load(provider, id) == null) return false
+        ensureDirectories()
+        val active = readActive().providers + (provider.configId to id)
+        writeOwnerOnly(activeFile, json.encodeToString(ActiveAiConversations(active)))
+        return true
+    }
+
+    @Synchronized
+    fun rename(provider: AiProviderId, id: String, customTitle: String?): Boolean {
+        val conversation = load(provider, id) ?: return false
+        val normalized = customTitle?.trim()?.takeIf(String::isNotEmpty)
+        require(normalized == null || normalized.length <= MAX_CONVERSATION_TITLE_LENGTH) {
+            "Conversation names may contain at most $MAX_CONVERSATION_TITLE_LENGTH characters."
+        }
+        ensureDirectories()
+        writeOwnerOnly(
+            File(conversationsDirectory, "$id.json"),
+            json.encodeToString(
+                conversation.copy(
+                    customTitle = normalized,
+                    updatedAtEpochMillis = System.currentTimeMillis(),
+                ),
+            ),
+        )
+        return true
     }
 
     private fun readConversation(file: File): StoredAiConversation? {
@@ -178,4 +261,8 @@ class AiConversationStore(
 
     private fun safeConversationId(value: String): Boolean =
         value.length in 1..100 && value.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+
+    companion object {
+        const val MAX_CONVERSATION_TITLE_LENGTH = 80
+    }
 }

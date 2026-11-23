@@ -14,6 +14,8 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.NativeLiquidOptions
+import com.supermetroid.editor.rom.SpritePalettes
+import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.displaySummary
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
@@ -281,6 +283,152 @@ internal class DesktopSmeditWorkspaceAccess(
         )
     }
 
+    override fun palettes(): List<SmeditPaletteSummary> {
+        val currentParser = parser() ?: return emptyList()
+        val tilesets = (0 until TileGraphics.NUM_TILESETS).map { tilesetId ->
+            val status = editorState.tilesetPaletteEditingStatus(tilesetId)
+            SmeditPaletteSummary(
+                id = "tileset:$tilesetId",
+                name = SpritePalettes.tilesetName(tilesetId),
+                kind = "tileset",
+                category = "rooms",
+                description = "Tileset $tilesetId palette (8 rows × 16 colors).",
+                colorCount = 128,
+                rowCount = 8,
+                editable = status.editable && editorState.readTilesetPalette(tilesetId, currentParser) != null,
+                sourceManaged = status.sourceManaged,
+                modified = editorState.hasCustomPalette(tilesetId),
+                affectedPaletteIds = status.affectedTilesetIds.filterNot { it == tilesetId }.map { "tileset:$it" },
+                message = status.message,
+            )
+        }
+        val sprites = SpritePalettes.REGIONS.map { region ->
+            val related = when (region.id) {
+                "boss_kraid" -> listOf("boss_kraid_health_bg", "boss_kraid_health_oam")
+                "boss_kraid_health_bg" -> listOf("boss_kraid", "boss_kraid_health_oam")
+                "boss_kraid_health_oam" -> listOf("boss_kraid", "boss_kraid_health_bg")
+                else -> emptyList()
+            }.map { "sprite:$it" }
+            val usage = when (region.id) {
+                "boss_kraid" -> "Initial/base Kraid rows. The runtime health handler replaces the assembled body with the health-stage BG and OAM tables."
+                "boss_kraid_bg" -> "Kraid room background environment colors; this is not Kraid's body palette."
+                "boss_kraid_health_bg" -> "Kraid BG2 body runtime stages. Row 8 (indices 128–143) drives the default full-health assembled preview."
+                "boss_kraid_health_oam" -> "Kraid arm, foot, lint, and nail runtime stages. Row 8 (indices 128–143) drives the default full-health assembled preview."
+                else -> null
+            }
+            SmeditPaletteSummary(
+                id = "sprite:${region.id}",
+                name = region.name,
+                kind = "sprite",
+                category = region.category,
+                description = region.description,
+                colorCount = region.colorCount,
+                rowCount = region.rowCount,
+                editable = editorState.readSpritePalette(region.id, currentParser) != null,
+                sourceManaged = false,
+                modified = editorState.hasSpritePaletteOverride(region.id),
+                relatedPaletteIds = related,
+                usage = usage,
+            )
+        }
+        return tilesets + sprites
+    }
+
+    override fun palette(identifier: String): SmeditPaletteDetails? {
+        val currentParser = parser() ?: return null
+        val raw = identifier.trim()
+        val summaries = palettes()
+        val summary = summaries.singleOrNull { it.id.equals(raw, ignoreCase = true) }
+            ?: summaries.singleOrNull { it.name.equals(raw, ignoreCase = true) }
+            ?: return null
+        val colors = when (summary.kind) {
+            "tileset" -> summary.id.substringAfter(':').toIntOrNull()
+                ?.let { editorState.readTilesetPalette(it, currentParser) }
+            "sprite" -> editorState.readSpritePalette(summary.id.substringAfter(':'), currentParser)
+            else -> null
+        } ?: return null
+        return SmeditPaletteDetails(
+            id = summary.id,
+            name = summary.name,
+            kind = summary.kind,
+            category = summary.category,
+            description = summary.description,
+            colorCount = summary.colorCount,
+            rowCount = summary.rowCount,
+            editable = summary.editable,
+            sourceManaged = summary.sourceManaged,
+            modified = summary.modified,
+            affectedPaletteIds = summary.affectedPaletteIds,
+            relatedPaletteIds = summary.relatedPaletteIds,
+            usage = summary.usage,
+            message = summary.message,
+            colorsBgr555 = colors.toList(),
+            colorsRgbHex = colors.map(::bgr555ToRgbHex),
+        )
+    }
+
+    override fun itemTypes(): List<SmeditItemType> = buildList {
+        RomParser.ITEM_DEFS.forEach { item ->
+            add(SmeditItemType(item.name, "Visible", item.visibleId, formatWord(item.visibleId)))
+            add(SmeditItemType(item.name, "Chozo", item.chozoId, formatWord(item.chozoId)))
+            add(SmeditItemType(item.name, "Hidden", item.hiddenId, formatWord(item.hiddenId)))
+        }
+        editorState.enabledCustomItemPlms().forEach { item ->
+            add(SmeditItemType(item.item.name, item.variant, item.plmId, formatWord(item.plmId), custom = true))
+        }
+    }
+
+    override fun roomItems(roomId: Int): SmeditRoomItemsDetails? {
+        val currentParser = parser() ?: return null
+        val header = currentParser.readRoomHeader(roomId)?.let { effectiveRoom(it, currentParser) } ?: return null
+        val live = editorState.project.rooms[editorState.project.roomKey(roomId)]
+        val room = snapshotRoomForResize(live ?: RoomEdits(roomId))
+        if (room.states.isEmpty()) {
+            if (!currentParser.inspectRoomStates(roomId).isComplete) return null
+            room.ensureStateManifest(currentParser)
+        }
+        val runtimeStates = currentParser.parseRoomStatesWithData(roomId)
+        val sourceManaged = room.asmPlmSourceVersion != 0
+        val states = room.effectiveStates.mapIndexedNotNull { index, state ->
+            val entries = if (sourceManaged) {
+                val view = editorState.asmPlmSourceBridge?.managedView(roomId, state.id) ?: return@mapIndexedNotNull null
+                if (view.problem != null) return@mapIndexedNotNull null
+                view.document?.entries.orEmpty()
+            } else {
+                val sourceIndex = state.baseSourceStateIndex() ?: return@mapIndexedNotNull null
+                val base = runtimeStates.getOrNull(sourceIndex)?.plmSetPtr?.let(currentParser::parsePlmSet).orEmpty()
+                applyPlmChanges(applyPlmChanges(base, room.plmChanges), state.plmChanges)
+            }
+            SmeditRoomItemState(
+                id = state.id,
+                index = index,
+                condition = state.effectiveCondition.displaySummary(header.area),
+                items = entries.filter { editorState.isEditorItemPlm(it.id) }.map { entry ->
+                    SmeditPlacedItem(
+                        name = editorState.customItemNameForPlm(entry.id)
+                            ?: RomParser.itemNameForPlm(entry.id)
+                            ?: RomParser.plmDisplayName(entry.id, entry.param),
+                        plmId = entry.id,
+                        plmIdHex = formatWord(entry.id),
+                        x = entry.x,
+                        y = entry.y,
+                        parameter = entry.param,
+                        parameterHex = formatWord(entry.param),
+                    )
+                },
+            )
+        }
+        if (states.size != room.effectiveStates.size) return null
+        return SmeditRoomItemsDetails(
+            roomId = formatRoomId(roomId),
+            roomName = roomInfos().firstOrNull { it.getRoomIdAsInt() == roomId }?.name ?: header.name,
+            widthBlocks = header.width * 16,
+            heightBlocks = header.height * 16,
+            sourceManaged = sourceManaged,
+            states = states,
+        )
+    }
+
     override fun editorSettings(): SmeditEditorSettingsSummary {
         val settings = AppConfig.load()
         val selectedProvider = AiProviderId.fromConfigId(settings.aiSelectedProvider)
@@ -417,6 +565,26 @@ internal class DesktopSmeditWorkspaceAccess(
 
     private fun formatRoomId(roomId: Int): String = "0x" + roomId.toString(16).uppercase().padStart(4, '0')
     private fun formatWord(value: Int): String = "0x" + value.toString(16).uppercase().padStart(4, '0')
+
+    private fun applyPlmChanges(
+        source: List<RomParser.PlmEntry>,
+        changes: List<com.supermetroid.editor.data.PlmChange>,
+    ): List<RomParser.PlmEntry> = source.toMutableList().also { result ->
+        changes.forEach { change ->
+            when (change.action) {
+                "add" -> result += RomParser.PlmEntry(change.plmId, change.x, change.y, change.param)
+                "remove" -> result.removeAll { it.id == change.plmId && it.x == change.x && it.y == change.y }
+            }
+        }
+    }
+
+    private fun bgr555ToRgbHex(color: Int): String {
+        val red = color and 0x1F
+        val green = (color ushr 5) and 0x1F
+        val blue = (color ushr 10) and 0x1F
+        fun expand(value: Int) = (value * 255 + 15) / 31
+        return "#%02X%02X%02X".format(expand(red), expand(green), expand(blue))
+    }
 
     private companion object {
         val CONFIG_VALUE_ALIASES = setOf("seconds", "total_seconds", "totalSeconds")

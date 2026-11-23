@@ -107,8 +107,6 @@ import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmPlmPlacementTarget
 import com.supermetroid.editor.ui.AsmWorkspaceCanvas
 import com.supermetroid.editor.ui.AsmWorkspaceSidebar
-import com.supermetroid.editor.ui.AiWorkspaceCanvas
-import com.supermetroid.editor.ui.AiWorkspaceSidebar
 import com.supermetroid.editor.ui.AiWorkspaceState
 import com.supermetroid.editor.ui.BossTabCanvas
 import com.supermetroid.editor.ui.BossTabSidebar
@@ -120,6 +118,7 @@ import com.supermetroid.editor.ui.EnemySpriteCache
 import com.supermetroid.editor.ui.EmulatorWorkspaceState
 import com.supermetroid.editor.ui.HexEditorPanel
 import com.supermetroid.editor.ui.HexEditorState
+import com.supermetroid.editor.ui.FloatingAiWindow
 import com.supermetroid.editor.ui.debugWatchWramOffset
 import com.supermetroid.editor.ui.EnemyTabCanvas
 import com.supermetroid.editor.ui.EnemyTabSidebar
@@ -183,11 +182,20 @@ private const val TAB_TEXT = 7
 private const val TAB_ENEMY = 8
 private const val TAB_BOSS = 9
 private const val TAB_ASM = 10
-private const val TAB_AI = 11
+internal const val TAB_AI = 11
+
+internal data class MainTabActivation(
+    val selectedTab: Int,
+    val openFloatingAi: Boolean,
+)
+
+internal fun mainTabActivation(currentTab: Int, clickedTab: Int): MainTabActivation =
+    if (clickedTab == TAB_AI) MainTabActivation(currentTab, openFloatingAi = true)
+    else MainTabActivation(clickedTab, openFloatingAi = false)
 
 internal fun mainTabLabels(aiConfigured: Boolean): List<String> = buildList {
-    if (aiConfigured) add("AI")
     addAll(listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss", "ASM"))
+    if (aiConfigured) add("AI")
 }
 
 private fun mainTabs(aiConfigured: Boolean): List<Pair<Int, String>> {
@@ -205,7 +213,7 @@ private fun mainTabs(aiConfigured: Boolean): List<Pair<Int, String>> {
         TAB_ASM,
     )
     val editorTabs = ids.zip(mainTabLabels(aiConfigured = false))
-    return if (aiConfigured) listOf(TAB_AI to "AI") + editorTabs else editorTabs
+    return if (aiConfigured) editorTabs + (TAB_AI to "AI") else editorTabs
 }
 
 private val READ_ONLY_INSPECTABLE_TABS = setOf(
@@ -454,6 +462,7 @@ fun main() = application {
                     mutationController = DesktopSmeditMutationController(editorState, workspaceAccess) { romParser },
                 )
             }
+            var aiWindowFloating by remember { mutableStateOf(false) }
             val activeAiCredentialSource = aiWorkspaceState.credentialSource(aiWorkspaceState.selectedProvider)
             LaunchedEffect(aiWorkspaceState.selectedProvider, activeAiCredentialSource) {
                 if (activeAiCredentialSource != null && aiWorkspaceState.models.isEmpty()) {
@@ -958,8 +967,8 @@ fun main() = application {
             LaunchedEffect(romReadOnly, leftTab) {
                 if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
             }
-            LaunchedEffect(aiWorkspaceState.hasAnyCredential, leftTab) {
-                if (leftTab == TAB_AI && !aiWorkspaceState.hasAnyCredential) leftTab = TAB_ROOMS
+            LaunchedEffect(aiWorkspaceState.hasAnyCredential) {
+                if (!aiWorkspaceState.hasAnyCredential) aiWindowFloating = false
             }
             LaunchedEffect(leftTab, soundEditorState.isPianoRollOpen) {
                 if (leftTab == TAB_ROOMS || leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
@@ -1482,7 +1491,7 @@ fun main() = application {
                             ) {
                                 val tabs = mainTabs(aiWorkspaceState.hasAnyCredential)
                                 tabs.forEach { (tabId, name) ->
-                                    val selected = leftTab == tabId
+                                    val selected = if (tabId == TAB_AI) aiWindowFloating else leftTab == tabId
                                     val tabEnabled = isTabAvailableForRom(tabId, romReadOnly)
                                     Text(
                                         text = name,
@@ -1495,9 +1504,16 @@ fun main() = application {
                                         fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
                                         modifier = Modifier
                                             .clickable(enabled = tabEnabled) {
-                                                if (leftTab != tabId) navigate { leftTab = tabId }
-                                                if (!romReadOnly && (tabId == TAB_PATCHES || tabId == TAB_ITEMS)) {
-                                                    editorState.seedDefaultPatches()
+                                                val activation = mainTabActivation(leftTab, tabId)
+                                                if (activation.openFloatingAi) {
+                                                    aiWindowFloating = true
+                                                } else {
+                                                    if (leftTab != activation.selectedTab) {
+                                                        navigate { leftTab = activation.selectedTab }
+                                                    }
+                                                    if (!romReadOnly && (tabId == TAB_PATCHES || tabId == TAB_ITEMS)) {
+                                                        editorState.seedDefaultPatches()
+                                                    }
                                                 }
                                             }
                                             .padding(horizontal = 7.dp, vertical = 6.dp)
@@ -1679,10 +1695,6 @@ fun main() = application {
                                         onOpenInEditor = ::openAsmEditorTarget,
                                         modifier = Modifier.fillMaxSize(),
                                     )
-                                    TAB_AI -> AiWorkspaceSidebar(
-                                        state = aiWorkspaceState,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
                                 }
                                 }
                             }
@@ -1835,10 +1847,6 @@ fun main() = application {
                                         onOpenRomSpaceBank = ::openAsmRomSpaceBank,
                                         problemsPaneHeightDp = asmProblemsPaneHeightDp,
                                         onProblemsPaneHeightChange = { asmProblemsPaneHeightDp = it },
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                    TAB_AI -> AiWorkspaceCanvas(
-                                        state = aiWorkspaceState,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -2061,6 +2069,15 @@ fun main() = application {
                                     leftTab = TAB_ASM
                                 }
                             },
+                        )
+                    }
+
+                    if (aiWindowFloating) {
+                        FloatingAiWindow(
+                            state = aiWorkspaceState,
+                            containerSizePx = emulatorContainerSize,
+                            density = windowDensity.density,
+                            onClose = { aiWindowFloating = false },
                         )
                     }
                 }

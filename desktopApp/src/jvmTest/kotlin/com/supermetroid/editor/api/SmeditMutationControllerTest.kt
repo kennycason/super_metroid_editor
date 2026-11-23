@@ -2,6 +2,7 @@ package com.supermetroid.editor.api
 
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.FxChange
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.RoomStateResourceLinks
@@ -410,6 +411,250 @@ class SmeditMutationControllerTest {
         assertTrue(editor.project.rooms.getValue("91F8").states.all { it.fxChange?.paletteBlend == null })
     }
 
+    @Test
+    fun `palette color plan applies and round trips through AI undo redo`() {
+        val editor = editor()
+        val workspace = FakeWorkspace()
+        val controller = DesktopSmeditMutationController(editor, workspace)
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette", "sprite:boss_kraid_health_bg")
+                put("changes", JsonArray(listOf(buildJsonObject {
+                    put("index", 17)
+                    put("color", "#FF8000")
+                })))
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(SmeditMutationPlanKind.PALETTE, planning.plan?.kind)
+        assertTrue(editor.project.customGfx.spritePalettes.isEmpty(), "Planning must not write palette data")
+
+        controller.approve(planning.plan!!.id)
+        val applied = com.supermetroid.editor.rom.SpritePalettes.bytesToColors(
+            java.util.Base64.getDecoder().decode(
+                editor.project.customGfx.spritePalettes.getValue("boss_kraid_health_bg"),
+            ),
+        )
+        assertEquals("#FF8400", bgr555Hex(applied[17]))
+
+        controller.undo()
+        assertFalse(editor.project.customGfx.spritePalettes.containsKey("boss_kraid_health_bg"))
+        controller.redo()
+        assertTrue(editor.project.customGfx.spritePalettes.containsKey("boss_kraid_health_bg"))
+    }
+
+    @Test
+    fun `related Kraid palettes apply atomically in one approval`() {
+        val editor = editor()
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_oam")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                )))
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(1, planning.plan?.palette?.additionalTargets?.size)
+        assertTrue(editor.project.customGfx.spritePalettes.isEmpty())
+        controller.approve(planning.plan!!.id)
+        assertTrue(editor.project.customGfx.spritePalettes.keys.containsAll(
+            listOf("boss_kraid_health_bg", "boss_kraid_health_oam"),
+        ))
+        controller.undo()
+        assertTrue(editor.project.customGfx.spritePalettes.isEmpty())
+        controller.redo()
+        assertTrue(editor.project.customGfx.spritePalettes.keys.containsAll(
+            listOf("boss_kraid_health_bg", "boss_kraid_health_oam"),
+        ))
+    }
+
+    @Test
+    fun `non-empty atomic palette batch takes precedence over redundant single fields`() {
+        val editor = editor()
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette", "sprite:boss_kraid_health_bg")
+                put("changes", JsonArray(listOf(buildJsonObject {
+                    put("index", 17)
+                    put("color", "#00FF00")
+                })))
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_oam")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                )))
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(1, planning.plan?.palette?.additionalTargets?.size)
+        controller.approve(planning.plan!!.id)
+        assertTrue(editor.project.customGfx.spritePalettes.keys.containsAll(
+            listOf("boss_kraid_health_bg", "boss_kraid_health_oam"),
+        ))
+    }
+
+    @Test
+    fun `atomic palette plan skips an already matching target and stages remaining changes`() {
+        val editor = editor()
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#000000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_oam")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                )))
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals("sprite:boss_kraid_health_oam", planning.plan?.palette?.paletteId)
+        assertTrue(planning.plan!!.warnings.any { it.contains("already matches") })
+        assertEquals(
+            listOf("sprite:boss_kraid_health_bg"),
+            (planning.result.output.getValue("already_matching_palette_ids") as JsonArray)
+                .map { it.jsonPrimitive.content },
+        )
+        controller.approve(planning.plan!!.id)
+        assertFalse(editor.project.customGfx.spritePalettes.containsKey("boss_kraid_health_bg"))
+        assertTrue(editor.project.customGfx.spritePalettes.containsKey("boss_kraid_health_oam"))
+    }
+
+    @Test
+    fun `related palette approval fails before any write when one target is stale`() {
+        val editor = editor()
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
+        val planning = controller.plan(
+            "set_palette_colors",
+            buildJsonObject {
+                put("palette_edits", JsonArray(listOf(
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_bg")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                    buildJsonObject {
+                        put("palette", "sprite:boss_kraid_health_oam")
+                        put("changes", JsonArray(listOf(buildJsonObject {
+                            put("index", 128)
+                            put("color", "#FF0000")
+                        })))
+                    },
+                )))
+            },
+        )
+        val external = java.util.Base64.getEncoder().encodeToString(ByteArray(144 * 2) { 1 })
+        editor.project.customGfx.spritePalettes["boss_kraid_health_oam"] = external
+
+        assertFailsWith<IllegalArgumentException> { controller.approve(planning.plan!!.id) }
+        assertFalse(editor.project.customGfx.spritePalettes.containsKey("boss_kraid_health_bg"))
+        assertEquals(external, editor.project.customGfx.spritePalettes["boss_kraid_health_oam"])
+    }
+
+    @Test
+    fun `item placement plans all state change and is undoable`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val planning = controller.plan(
+            "place_item",
+            buildJsonObject {
+                put("room_id", "0x91F8")
+                put("plm_id", 0xEEDB)
+                put("x", 4)
+                put("y", 6)
+                put("state_scope", "all_states")
+            },
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(SmeditMutationPlanKind.ITEM, planning.plan?.kind)
+        assertTrue(editor.project.rooms.isEmpty(), "Planning must not create a room edit")
+
+        controller.approve(planning.plan!!.id)
+        val placed = editor.project.rooms.getValue("91F8").plmChanges.single()
+        assertEquals(PlmChange("add", 0xEEDB, 4, 6, 0x51), placed)
+        controller.undo()
+        assertFalse(editor.project.rooms.containsKey("91F8"))
+        controller.redo()
+        assertEquals(placed, editor.project.rooms.getValue("91F8").plmChanges.single())
+    }
+
+    @Test
+    fun `item placement fails closed when global collection parameters are unreadable`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val controller = DesktopSmeditMutationController(
+            editor,
+            FakeWorkspace(unreadableItemRoomIds = setOf(0x9AD9)),
+            parser = { parser },
+        )
+
+        val planning = controller.plan("place_item", buildJsonObject {
+            put("room_id", "0x91F8")
+            put("plm_id", 0xEEDB)
+            put("x", 4)
+            put("y", 6)
+            put("state_scope", "all_states")
+        })
+
+        assertEquals("item_catalog_incomplete", planning.errorCode())
+        assertTrue(editor.project.rooms.isEmpty())
+    }
+
+    private fun bgr555Hex(color: Int): String {
+        fun expand(value: Int) = (value * 255 + 15) / 31
+        return "#%02X%02X%02X".format(
+            expand(color and 31), expand((color ushr 5) and 31), expand((color ushr 10) and 31),
+        )
+    }
+
     private fun editor() = EditorState()
 
     private fun state(id: String, change: StateDataChange) = RoomStateEdits(
@@ -481,6 +726,7 @@ class SmeditMutationControllerTest {
     private class FakeWorkspace(
         private val distinctMusicRoomIds: Set<Int> = emptySet(),
         includeTourianRoom: Boolean = false,
+        private val unreadableItemRoomIds: Set<Int> = emptySet(),
     ) : SmeditWorkspaceAccess {
         private val roomList = buildList {
             add(SmeditRoomSummary("0x91F8", "Landing Site", area = "Crateria"))
@@ -542,6 +788,65 @@ class SmeditMutationControllerTest {
         }
         override fun patches() = emptyList<SmeditPatchSummary>()
         override fun patch(identifier: String): SmeditPatchDetails? = null
+        override fun palettes() = listOf(
+            SmeditPaletteSummary(
+                id = "sprite:boss_kraid_health_bg",
+                name = "Kraid (health stages · BG)",
+                kind = "sprite",
+                category = "bosses",
+                description = "Kraid BG2 palettes",
+                colorCount = 160,
+                rowCount = 10,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+            ),
+            SmeditPaletteSummary(
+                id = "sprite:boss_kraid_health_oam",
+                name = "Kraid (health stages · OAM)",
+                kind = "sprite",
+                category = "bosses",
+                description = "Kraid OAM palettes",
+                colorCount = 144,
+                rowCount = 9,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+            ),
+        )
+        override fun palette(identifier: String): SmeditPaletteDetails? = palettes().singleOrNull {
+            it.id == identifier
+        }?.let { summary ->
+            SmeditPaletteDetails(
+                id = summary.id,
+                name = summary.name,
+                kind = summary.kind,
+                category = summary.category,
+                description = summary.description,
+                colorCount = summary.colorCount,
+                rowCount = summary.rowCount,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+                colorsBgr555 = List(summary.colorCount) { 0 },
+                colorsRgbHex = List(summary.colorCount) { "#000000" },
+            )
+        }
+        override fun itemTypes() = listOf(SmeditItemType("Missile", "Visible", 0xEEDB, "0xEEDB"))
+        override fun roomItems(roomId: Int): SmeditRoomItemsDetails? {
+            if (roomId in unreadableItemRoomIds) return null
+            val room = room(roomId) ?: return null
+            return SmeditRoomItemsDetails(
+                roomId = room.id,
+                roomName = room.name,
+                widthBlocks = room.widthScreens * 16,
+                heightBlocks = room.heightScreens * 16,
+                sourceManaged = false,
+                states = room.states.map { state ->
+                    SmeditRoomItemState(state.id, state.index, state.condition, emptyList())
+                },
+            )
+        }
         override fun editorSettings() = SmeditEditorSettingsSummary(
             theme = "DARK",
             fontSize = "MEDIUM",

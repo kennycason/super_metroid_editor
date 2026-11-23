@@ -23,13 +23,16 @@ class SmeditToolRegistryTest {
             setOf(
                 "get_workspace_summary", "list_rooms", "get_room", "list_patches", "get_patch",
                 "list_room_fx", "get_editor_settings", "search_docs", "read_doc", "search_asm",
-                "set_room_music", "configure_patch", "set_room_fx",
+                "list_palettes", "get_palette", "list_item_types", "list_room_items",
+                "set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item",
             ),
             registry.definitions.mapTo(mutableSetOf(), SmeditToolDefinition::name),
         )
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_music")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("configure_patch")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_fx")?.effect)
+        assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_palette_colors")?.effect)
+        assertEquals(SmeditToolEffect.MUTATION, registry.definition("place_item")?.effect)
         assertEquals(
             listOf("update_fields"),
             registry.definition("set_room_fx")!!.inputSchema.getValue("required").jsonArray
@@ -40,7 +43,13 @@ class SmeditToolRegistryTest {
                 .inputSchema.getValue("properties").jsonObject,
         )
         assertTrue(
-            registry.definitions.filterNot { it.name in setOf("set_room_music", "configure_patch", "set_room_fx") }
+            "palette_edits" in registry.definition("set_palette_colors")!!
+                .inputSchema.getValue("properties").jsonObject,
+        )
+        assertTrue(
+            registry.definitions.filterNot {
+                it.name in setOf("set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item")
+            }
                 .all { it.effect == SmeditToolEffect.READ_ONLY },
         )
         registry.definitions.forEach { definition ->
@@ -253,6 +262,53 @@ class SmeditToolRegistryTest {
                     ),
                 )
             } else null
+
+        override fun palettes() = listOf(
+            SmeditPaletteSummary(
+                id = "sprite:boss_kraid_health_bg",
+                name = "Kraid (health stages · BG)",
+                kind = "sprite",
+                category = "bosses",
+                description = "Kraid BG2 palettes",
+                colorCount = 160,
+                rowCount = 10,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+            ),
+        )
+
+        override fun palette(identifier: String) = palettes().singleOrNull {
+            it.id == identifier
+        }?.let { summary ->
+            SmeditPaletteDetails(
+                id = summary.id,
+                name = summary.name,
+                kind = summary.kind,
+                category = summary.category,
+                description = summary.description,
+                colorCount = summary.colorCount,
+                rowCount = summary.rowCount,
+                editable = true,
+                sourceManaged = false,
+                modified = false,
+                colorsBgr555 = List(160) { 0 },
+                colorsRgbHex = List(160) { "#000000" },
+            )
+        }
+
+        override fun itemTypes() = listOf(SmeditItemType("Missile", "Visible", 0xEEDB, "0xEEDB"))
+
+        override fun roomItems(roomId: Int) = if (roomId == 0x91F8) {
+            SmeditRoomItemsDetails(
+                roomId = "0x91F8",
+                roomName = "Landing Site",
+                widthBlocks = 80,
+                heightBlocks = 32,
+                sourceManaged = false,
+                states = listOf(SmeditRoomItemState("state-1", 0, "Default", emptyList())),
+            )
+        } else null
 
         override fun editorSettings() = SmeditEditorSettingsSummary(
             theme = "DARK",
