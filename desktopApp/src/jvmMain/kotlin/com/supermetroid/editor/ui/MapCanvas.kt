@@ -1008,13 +1008,15 @@ fun MapCanvas(
                                 doorDiagnostics,
                             ) {
                                 val es = editorState ?: return@remember emptyList()
+                                val doorSlots = es.effectiveDoorsForRoom(currentRoomId, romParser)
                                 buildList {
                                     for (y in 0 until effectiveBlocksTall) {
                                         for (x in 0 until effectiveBlocksWide) {
                                             if (((es.readBlockWord(x, y) shr 12) and 0x0F) != 0x09) continue
-                                            val diagnostic = doorDiagnostics[es.readBts(x, y)]
-                                            if (diagnostic == null || diagnostic.needsAttention) {
-                                                add(DoorWarningTile(x, y, diagnostic?.hasError != false))
+                                            when (doorTileWarningSeverity(es.readBts(x, y), doorSlots, doorDiagnostics)) {
+                                                DoorConnectionSeverity.ERROR -> add(DoorWarningTile(x, y, hasError = true))
+                                                DoorConnectionSeverity.WARNING -> add(DoorWarningTile(x, y, hasError = false))
+                                                null -> Unit
                                             }
                                         }
                                     }

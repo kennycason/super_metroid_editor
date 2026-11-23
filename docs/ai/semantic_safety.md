@@ -116,6 +116,36 @@ room-model snapshots. ASM-managed rooms receive an exact full-source replacement
 with a stale-source guard. Both routes remain approval-backed and participate in
 AI undo/redo.
 
+## Room tiles, metatiles, and palette provenance
+
+A visible 16x16 room block does not directly name one palette color. Its room
+word selects a metatile and carries room-level horizontal/vertical flips plus a
+Layer 1 collision type. The metatile then contains four independent 8x8 SNES
+tilemap words; each word selects a physical tile, palette row, priority, and its
+own flips. The 4bpp pixel finally selects one of the 16 colors in that row.
+
+Agents must use this exact chain instead of inferring a palette ramp from its
+appearance:
+
+1. `find_room_tiles` searches one effective room state by metatile, palette row,
+   used color index, exact current BGR555 color, block type, or BTS.
+2. `inspect_room_tiles` decodes chosen room coordinates and optionally samples
+   one rendered pixel inside a block. It reports the room word, all four
+   metatile words, area/CRE tile ownership, palette rows, used color indices,
+   and current project palette colors.
+3. `get_tileset_metatile` performs the same decode directly for a tileset asset.
+4. `get_palette` and `set_palette_colors` read or stage the proven palette
+   indices. A palette recolor is global to every consumer of that palette asset.
+
+`set_room_tiles` stages room-layout block changes, not global tileset-definition
+changes. Unspecified metatile, collision, BTS, and flip fields are preserved.
+An all-state request edits each distinct layout resource. A single-state request
+forks a shared layout before adding its operation, so sibling states do not
+change accidentally. ASM-source-owned layouts fail closed until the mutation
+can be expressed as a checked source edit. Globally shared metatile-word changes
+remain a separate authoring boundary because a CRE or tileset-table edit can
+affect many rooms.
+
 ## Context hierarchy
 
 Use the smallest authoritative context that answers the question:

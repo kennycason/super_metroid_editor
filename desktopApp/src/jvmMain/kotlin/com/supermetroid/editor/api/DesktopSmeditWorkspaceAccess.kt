@@ -18,6 +18,7 @@ import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.displaySummary
+import com.supermetroid.editor.rom.embeddedLayer2StartOffset
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
 import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.withFxChange
@@ -433,6 +434,271 @@ internal class DesktopSmeditWorkspaceAccess(
         )
     }
 
+    private data class RoomTileContext(
+        val roomId: Int,
+        val roomName: String,
+        val stateId: String,
+        val stateCondition: String,
+        val layoutResourceId: String,
+        val sourceManaged: Boolean,
+        val widthBlocks: Int,
+        val heightBlocks: Int,
+        val tileset: Int,
+        val data: ByteArray,
+        val layer2Start: Int?,
+        val graphics: TileGraphics,
+    )
+
+    override fun roomTiles(
+        roomId: Int,
+        stateId: String?,
+        coordinates: List<SmeditRoomTileCoordinate>,
+    ): SmeditRoomTilesDetails? {
+        val context = roomTileContext(roomId, stateId) ?: return null
+        val tiles = coordinates.map { coordinate ->
+            decodeRoomTile(context, coordinate) ?: return null
+        }
+        return context.details(tiles)
+    }
+
+    override fun findRoomTiles(
+        roomId: Int,
+        stateId: String?,
+        layer: Int,
+        metatileIds: Set<Int>,
+        paletteRows: Set<Int>,
+        colorIndices: Set<Int>,
+        colorsBgr555: Set<Int>,
+        blockTypes: Set<Int>,
+        btsValues: Set<Int>,
+        limit: Int,
+    ): SmeditRoomTileSearchDetails? {
+        val context = roomTileContext(roomId, stateId) ?: return null
+        if (layer == 2 && context.layer2Start == null) return null
+        if (layer == 2 && (blockTypes.isNotEmpty() || btsValues.isNotEmpty())) return null
+        val metatileCache = mutableMapOf<Int, SmeditMetatileDetails>()
+        val matches = mutableListOf<SmeditRoomTileSearchMatch>()
+        var totalMatches = 0
+        for (y in 0 until context.heightBlocks) for (x in 0 until context.widthBlocks) {
+            val word = roomBlockWord(context, x, y, layer) ?: continue
+            val metatileId = word and 0x3FF
+            if (metatileIds.isNotEmpty() && metatileId !in metatileIds) continue
+            val blockType = if (layer == 1) (word ushr 12) and 0xF else null
+            if (blockTypes.isNotEmpty() && blockType !in blockTypes) continue
+            val bts = if (layer == 1) roomBts(context, x, y) else null
+            if (btsValues.isNotEmpty() && bts !in btsValues) continue
+            val metatile = metatileCache.getOrPut(metatileId) {
+                metatileDetails(context.graphics, context.tileset, metatileId) ?: return null
+            }
+            val rows = metatile.subtiles.map(SmeditMetatileSubtileDetails::paletteRow).distinct().sorted()
+            if (paletteRows.isNotEmpty() && rows.none { it in paletteRows }) continue
+            val colors = metatile.subtiles.flatMap(SmeditMetatileSubtileDetails::usedColors)
+                .distinctBy(SmeditTilePaletteColor::paletteIndex)
+            if (colorIndices.isNotEmpty() && colors.none { it.colorIndex in colorIndices }) continue
+            if (colorsBgr555.isNotEmpty() && colors.none { it.bgr555 in colorsBgr555 }) continue
+            totalMatches++
+            if (matches.size >= limit) continue
+            matches += SmeditRoomTileSearchMatch(
+                x = x,
+                y = y,
+                layer = layer,
+                blockWord = word,
+                blockWordHex = formatWord(word),
+                metatileId = metatileId,
+                metatileIdHex = formatMetatile(metatileId),
+                blockType = blockType,
+                bts = bts,
+                hFlip = word and 0x400 != 0,
+                vFlip = word and 0x800 != 0,
+                paletteRows = rows,
+                usedPaletteIndices = colors.map(SmeditTilePaletteColor::paletteIndex).sorted(),
+                usedColorsBgr555 = colors.map(SmeditTilePaletteColor::bgr555).distinct().sorted(),
+            )
+        }
+        return SmeditRoomTileSearchDetails(
+            roomId = formatRoomId(context.roomId),
+            roomName = context.roomName,
+            stateId = context.stateId,
+            stateCondition = context.stateCondition,
+            layoutResourceId = context.layoutResourceId,
+            sourceManaged = context.sourceManaged,
+            widthBlocks = context.widthBlocks,
+            heightBlocks = context.heightBlocks,
+            tileset = context.tileset,
+            tilesetPaletteId = "tileset:${context.tileset}",
+            hasLayer2 = context.layer2Start != null,
+            totalMatches = totalMatches,
+            truncated = totalMatches > matches.size,
+            matches = matches,
+        )
+    }
+
+    override fun tilesetMetatile(tileset: Int, metatileId: Int): SmeditMetatileDetails? {
+        val currentParser = parser() ?: return null
+        val graphics = TileGraphics(currentParser)
+        if (!graphics.loadTileset(tileset)) return null
+        editorState.applyCustomGfxToTileGraphics(graphics, tileset)
+        return metatileDetails(graphics, tileset, metatileId)
+    }
+
+    private fun roomTileContext(roomId: Int, requestedStateId: String?): RoomTileContext? {
+        val currentParser = parser() ?: return null
+        val header = currentParser.readRoomHeader(roomId) ?: return null
+        val details = room(roomId) ?: return null
+        val live = editorState.project.rooms[editorState.project.roomKey(roomId)]
+        val room = snapshotRoomForResize(live ?: RoomEdits(roomId))
+        if (room.states.isEmpty()) room.ensureStateManifest(currentParser)
+        val state = if (requestedStateId != null) {
+            room.states.singleOrNull { it.id == requestedStateId } ?: return null
+        } else {
+            room.states.singleOrNull {
+                it.effectiveCondition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+            } ?: return null
+        }
+        val stateDetails = details.states.singleOrNull { it.id == state.id } ?: return null
+        val tileset = stateDetails.tileset ?: details.tileset
+        val data = runCatching { editorState.effectiveLevelDataForAi(room, state, currentParser) }.getOrNull() ?: return null
+        val widthBlocks = details.widthScreens * 16
+        val heightBlocks = details.heightScreens * 16
+        val layer2Start = embeddedLayer2StartOffset(data, widthBlocks * heightBlocks)
+        val graphics = TileGraphics(currentParser)
+        if (!graphics.loadTileset(tileset)) return null
+        editorState.applyCustomGfxToTileGraphics(graphics, tileset)
+        return RoomTileContext(
+            roomId = roomId,
+            roomName = details.name.ifBlank { header.name },
+            stateId = state.id,
+            stateCondition = stateDetails.condition,
+            layoutResourceId = state.resources.level,
+            sourceManaged = room.asmLayoutSourceVersion != 0,
+            widthBlocks = widthBlocks,
+            heightBlocks = heightBlocks,
+            tileset = tileset,
+            data = data,
+            layer2Start = layer2Start,
+            graphics = graphics,
+        )
+    }
+
+    private fun RoomTileContext.details(tiles: List<SmeditRoomTileDetails>) = SmeditRoomTilesDetails(
+        roomId = formatRoomId(roomId),
+        roomName = roomName,
+        stateId = stateId,
+        stateCondition = stateCondition,
+        layoutResourceId = layoutResourceId,
+        sourceManaged = sourceManaged,
+        widthBlocks = widthBlocks,
+        heightBlocks = heightBlocks,
+        tileset = tileset,
+        tilesetPaletteId = "tileset:$tileset",
+        hasLayer2 = layer2Start != null,
+        tiles = tiles,
+    )
+
+    private fun decodeRoomTile(
+        context: RoomTileContext,
+        coordinate: SmeditRoomTileCoordinate,
+    ): SmeditRoomTileDetails? {
+        val word = roomBlockWord(context, coordinate.x, coordinate.y, coordinate.layer) ?: return null
+        val metatileId = word and 0x3FF
+        val metatile = metatileDetails(context.graphics, context.tileset, metatileId) ?: return null
+        val sampled = coordinate.pixelX?.let { requestedX ->
+            val requestedY = coordinate.pixelY ?: return null
+            val sourceX = if (word and 0x400 != 0) 15 - requestedX else requestedX
+            val sourceY = if (word and 0x800 != 0) 15 - requestedY else requestedY
+            val quadrantIndex = sourceX / 8 + 2 * (sourceY / 8)
+            val subtile = metatile.subtiles[quadrantIndex]
+            val colorIndex = context.graphics.readMetatilePixel(metatileId, sourceX, sourceY)
+            SmeditSampledTilePixel(
+                requestedPixelX = requestedX,
+                requestedPixelY = requestedY,
+                sourcePixelX = sourceX,
+                sourcePixelY = sourceY,
+                quadrant = subtile.quadrant,
+                tileNumber = subtile.tileNumber,
+                paletteRow = subtile.paletteRow,
+                color = paletteColor(context.graphics, subtile.paletteRow, colorIndex),
+            )
+        }
+        val bts = if (coordinate.layer == 1) roomBts(context, coordinate.x, coordinate.y) else null
+        return SmeditRoomTileDetails(
+            x = coordinate.x,
+            y = coordinate.y,
+            layer = coordinate.layer,
+            blockWord = word,
+            blockWordHex = formatWord(word),
+            metatileId = metatileId,
+            metatileIdHex = formatMetatile(metatileId),
+            blockType = if (coordinate.layer == 1) (word ushr 12) and 0xF else null,
+            bts = bts,
+            btsHex = bts?.let(::formatByte),
+            hFlip = word and 0x400 != 0,
+            vFlip = word and 0x800 != 0,
+            metatile = metatile,
+            sampledPixel = sampled,
+        )
+    }
+
+    private fun metatileDetails(
+        graphics: TileGraphics,
+        tileset: Int,
+        metatileId: Int,
+    ): SmeditMetatileDetails? {
+        val words = graphics.getMetatileWords(metatileId) ?: return null
+        val quadrants = listOf("top_left", "top_right", "bottom_left", "bottom_right")
+        return SmeditMetatileDetails(
+            tileset = tileset,
+            metatileId = metatileId,
+            metatileIdHex = formatMetatile(metatileId),
+            tableSource = graphics.metatileTableSourceLabel(metatileId),
+            placeholder = graphics.isPlaceholderMetatile(metatileId),
+            subtiles = words.mapIndexed { index, word ->
+                val decoded = TileGraphics.decodeMetatileWord(word)
+                val usedIndices = graphics.readTileIndices(decoded.tileNum)?.toSet()?.sorted().orEmpty()
+                SmeditMetatileSubtileDetails(
+                    quadrant = quadrants[index],
+                    word = word,
+                    wordHex = formatWord(word),
+                    tileNumber = decoded.tileNum,
+                    tileNumberHex = formatMetatile(decoded.tileNum),
+                    tileSource = graphics.tileSourceLabel(decoded.tileNum),
+                    paletteRow = decoded.palette,
+                    priority = decoded.priority,
+                    hFlip = decoded.hFlip,
+                    vFlip = decoded.vFlip,
+                    usedColorIndices = usedIndices,
+                    usedColors = usedIndices.map { paletteColor(graphics, decoded.palette, it) },
+                )
+            },
+        )
+    }
+
+    private fun paletteColor(graphics: TileGraphics, row: Int, colorIndex: Int): SmeditTilePaletteColor {
+        val bgr555 = graphics.getSnesBgr555(row, colorIndex)
+        return SmeditTilePaletteColor(
+            colorIndex = colorIndex,
+            paletteIndex = row * 16 + colorIndex,
+            bgr555 = bgr555,
+            bgr555Hex = formatWord(bgr555),
+            rgbHex = bgr555ToRgbHex(bgr555),
+        )
+    }
+
+    private fun roomBlockWord(context: RoomTileContext, x: Int, y: Int, layer: Int): Int? {
+        if (x !in 0 until context.widthBlocks || y !in 0 until context.heightBlocks) return null
+        val index = y * context.widthBlocks + x
+        val offset = if (layer == 1) 2 + index * 2 else (context.layer2Start ?: return null) + index * 2
+        if (offset + 1 !in context.data.indices) return null
+        return (context.data[offset].toInt() and 0xFF) or ((context.data[offset + 1].toInt() and 0xFF) shl 8)
+    }
+
+    private fun roomBts(context: RoomTileContext, x: Int, y: Int): Int? {
+        if (x !in 0 until context.widthBlocks || y !in 0 until context.heightBlocks || context.data.size < 2) return null
+        val layer1Size = (context.data[0].toInt() and 0xFF) or ((context.data[1].toInt() and 0xFF) shl 8)
+        val offset = 2 + layer1Size + y * context.widthBlocks + x
+        return context.data.getOrNull(offset)?.toInt()?.and(0xFF)
+    }
+
     override fun editorSettings(): SmeditEditorSettingsSummary {
         val settings = AppConfig.load()
         val selectedProvider = AiProviderId.fromConfigId(settings.aiSelectedProvider)
@@ -569,6 +835,8 @@ internal class DesktopSmeditWorkspaceAccess(
 
     private fun formatRoomId(roomId: Int): String = "0x" + roomId.toString(16).uppercase().padStart(4, '0')
     private fun formatWord(value: Int): String = "0x" + value.toString(16).uppercase().padStart(4, '0')
+    private fun formatMetatile(value: Int): String = "0x" + value.toString(16).uppercase().padStart(3, '0')
+    private fun formatByte(value: Int): String = "0x" + value.toString(16).uppercase().padStart(2, '0')
 
     private fun applyPlmChanges(
         source: List<RomParser.PlmEntry>,

@@ -286,6 +286,132 @@ data class SmeditRoomItemsDetails(
 )
 
 @Serializable
+data class SmeditRoomTileCoordinate(
+    val x: Int,
+    val y: Int,
+    val layer: Int = 1,
+    val pixelX: Int? = null,
+    val pixelY: Int? = null,
+)
+
+@Serializable
+data class SmeditTilePaletteColor(
+    val colorIndex: Int,
+    val paletteIndex: Int,
+    val bgr555: Int,
+    val bgr555Hex: String,
+    val rgbHex: String,
+)
+
+@Serializable
+data class SmeditMetatileSubtileDetails(
+    val quadrant: String,
+    val word: Int,
+    val wordHex: String,
+    val tileNumber: Int,
+    val tileNumberHex: String,
+    val tileSource: String,
+    val paletteRow: Int,
+    val priority: Boolean,
+    val hFlip: Boolean,
+    val vFlip: Boolean,
+    val usedColorIndices: List<Int>,
+    val usedColors: List<SmeditTilePaletteColor>,
+)
+
+@Serializable
+data class SmeditMetatileDetails(
+    val tileset: Int,
+    val metatileId: Int,
+    val metatileIdHex: String,
+    val tableSource: String,
+    val placeholder: Boolean,
+    val subtiles: List<SmeditMetatileSubtileDetails>,
+)
+
+@Serializable
+data class SmeditSampledTilePixel(
+    val requestedPixelX: Int,
+    val requestedPixelY: Int,
+    val sourcePixelX: Int,
+    val sourcePixelY: Int,
+    val quadrant: String,
+    val tileNumber: Int,
+    val paletteRow: Int,
+    val color: SmeditTilePaletteColor,
+)
+
+@Serializable
+data class SmeditRoomTileDetails(
+    val x: Int,
+    val y: Int,
+    val layer: Int,
+    val blockWord: Int,
+    val blockWordHex: String,
+    val metatileId: Int,
+    val metatileIdHex: String,
+    val blockType: Int? = null,
+    val bts: Int? = null,
+    val btsHex: String? = null,
+    val hFlip: Boolean,
+    val vFlip: Boolean,
+    val metatile: SmeditMetatileDetails,
+    val sampledPixel: SmeditSampledTilePixel? = null,
+)
+
+@Serializable
+data class SmeditRoomTilesDetails(
+    val roomId: String,
+    val roomName: String,
+    val stateId: String,
+    val stateCondition: String,
+    val layoutResourceId: String,
+    val sourceManaged: Boolean,
+    val widthBlocks: Int,
+    val heightBlocks: Int,
+    val tileset: Int,
+    val tilesetPaletteId: String,
+    val hasLayer2: Boolean,
+    val tiles: List<SmeditRoomTileDetails>,
+)
+
+@Serializable
+data class SmeditRoomTileSearchMatch(
+    val x: Int,
+    val y: Int,
+    val layer: Int,
+    val blockWord: Int,
+    val blockWordHex: String,
+    val metatileId: Int,
+    val metatileIdHex: String,
+    val blockType: Int? = null,
+    val bts: Int? = null,
+    val hFlip: Boolean,
+    val vFlip: Boolean,
+    val paletteRows: List<Int>,
+    val usedPaletteIndices: List<Int>,
+    val usedColorsBgr555: List<Int>,
+)
+
+@Serializable
+data class SmeditRoomTileSearchDetails(
+    val roomId: String,
+    val roomName: String,
+    val stateId: String,
+    val stateCondition: String,
+    val layoutResourceId: String,
+    val sourceManaged: Boolean,
+    val widthBlocks: Int,
+    val heightBlocks: Int,
+    val tileset: Int,
+    val tilesetPaletteId: String,
+    val hasLayer2: Boolean,
+    val totalMatches: Int,
+    val truncated: Boolean,
+    val matches: List<SmeditRoomTileSearchMatch>,
+)
+
+@Serializable
 data class SmeditEditorSettingsSummary(
     val theme: String,
     val fontSize: String,
@@ -334,6 +460,24 @@ interface SmeditWorkspaceAccess {
     fun palette(identifier: String): SmeditPaletteDetails? = null
     fun itemTypes(): List<SmeditItemType> = emptyList()
     fun roomItems(roomId: Int): SmeditRoomItemsDetails? = null
+    fun roomTiles(
+        roomId: Int,
+        stateId: String?,
+        coordinates: List<SmeditRoomTileCoordinate>,
+    ): SmeditRoomTilesDetails? = null
+    fun findRoomTiles(
+        roomId: Int,
+        stateId: String?,
+        layer: Int,
+        metatileIds: Set<Int>,
+        paletteRows: Set<Int>,
+        colorIndices: Set<Int>,
+        colorsBgr555: Set<Int>,
+        blockTypes: Set<Int>,
+        btsValues: Set<Int>,
+        limit: Int,
+    ): SmeditRoomTileSearchDetails? = null
+    fun tilesetMetatile(tileset: Int, metatileId: Int): SmeditMetatileDetails? = null
     fun editorSettings(): SmeditEditorSettingsSummary
     fun searchDocs(query: String, limit: Int): List<SmeditDocumentationMatch> = emptyList()
     fun readDoc(path: String, startLine: Int, maxLines: Int): SmeditDocumentationExcerpt? = null
@@ -447,6 +591,51 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             inputSchema = objectSchema(
                 properties = mapOf("room_id" to stringSchema("Room id in hexadecimal, such as 91F8, 0x91F8, or $91F8.")),
                 required = listOf("room_id"),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "inspect_room_tiles",
+            description = "Decode exact effective room blocks for one state. Returns block word/type/BTS, room flips, all four 8x8 metatile words, tile sources, palette rows, used color indices, and current project BGR555/RGB colors. Optional pixel_x/pixel_y samples the exact rendered color within a 16x16 block. Use this instead of guessing which palette ramp a visible tile uses.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "room_id" to stringSchema("Room id in hexadecimal."),
+                    "state_id" to stringSchema("Optional stable state id. Omit to inspect the default state."),
+                    "coordinates" to roomTileCoordinatesSchema(),
+                ),
+                required = listOf("room_id", "coordinates"),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "find_room_tiles",
+            description = "Search every effective block in one room state by metatile id, palette row, used 4bpp color index, exact current BGR555 color, block type, or BTS. Filters from different categories are combined with AND. Use the returned coordinates with inspect_room_tiles for full decoding.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "room_id" to stringSchema("Room id in hexadecimal."),
+                    "state_id" to stringSchema("Optional stable state id. Omit to search the default state."),
+                    "layer" to integerSchema("Room layer: 1 or 2.", 1, 2),
+                    "metatile_ids" to integerArraySchema("Optional metatile ids from 0 through 1023.", 0, 0x3FF),
+                    "palette_rows" to integerArraySchema("Optional palette rows from 0 through 7.", 0, 7),
+                    "color_indices" to integerArraySchema("Optional used 4bpp color indices from 0 through 15.", 0, 15),
+                    "colors_bgr555" to integerArraySchema("Optional exact current SNES BGR555 colors from 0 through 32767.", 0, 0x7FFF),
+                    "block_types" to integerArraySchema("Optional Layer 1 block types from 0 through 15.", 0, 15),
+                    "bts_values" to integerArraySchema("Optional Layer 1 BTS bytes from 0 through 255.", 0, 255),
+                    "limit" to integerSchema("Maximum returned coordinates, from 1 through 100.", 1, 100),
+                ),
+                required = listOf("room_id"),
+            ),
+            effect = SmeditToolEffect.READ_ONLY,
+        ),
+        SmeditToolDefinition(
+            name = "get_tileset_metatile",
+            description = "Decode one tileset metatile definition, including all four 8x8 tile words, source tables, palette rows, used color indices, and exact current project colors. Tileset metatiles are shared assets; this read does not imply that changing one room block changes the definition.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "tileset" to integerSchema("Tileset id from 0 through 28.", 0, 28),
+                    "metatile_id" to integerSchema("Metatile id from 0 through 1023.", 0, 0x3FF),
+                ),
+                required = listOf("tileset", "metatile_id"),
             ),
             effect = SmeditToolEffect.READ_ONLY,
         ),
@@ -596,6 +785,20 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             ),
             effect = SmeditToolEffect.MUTATION,
         ),
+        SmeditToolDefinition(
+            name = "set_room_tiles",
+            description = "Stage exact room block changes for explicit approval. Unspecified metatile, block type, BTS, and room-flip fields are preserved independently in each targeted state. all_states edits every distinct layout resource; single_state safely forks a shared layout before editing it. This changes room layout blocks, not the globally shared tileset metatile definition. ASM-source-owned layouts are rejected until source-backed tile writes are available.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "room_id" to stringSchema("Target room id in hexadecimal."),
+                    "state_scope" to enumSchema("Whether to edit every state or exactly one state.", listOf("all_states", "single_state")),
+                    "state_id" to stringSchema("Stable state id; required for single_state."),
+                    "tile_edits" to roomTileEditsSchema(),
+                ),
+                required = listOf("room_id", "state_scope", "tile_edits"),
+            ),
+            effect = SmeditToolEffect.MUTATION,
+        ),
     )
 
     private val definitionsByName = definitions.associateBy(SmeditToolDefinition::name)
@@ -715,6 +918,66 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                         ?: return failure("room_not_found", "No readable room exists at ${formatRoomId(roomId)}.")
                     success(json.encodeToJsonElement(SmeditRoomItemsDetails.serializer(), details))
                 }
+                "inspect_room_tiles" -> {
+                    val rawId = arguments.string("room_id")
+                        ?: return failure("invalid_arguments", "room_id is required.")
+                    val roomId = parseRoomId(rawId)
+                        ?: return failure("invalid_room_id", "'$rawId' is not a 16-bit hexadecimal room id.")
+                    val stateId = arguments.string("state_id")?.trim()?.takeIf(String::isNotEmpty)
+                    val coordinates = arguments.roomTileCoordinates()
+                        ?: return failure(
+                            "invalid_arguments",
+                            "coordinates must contain 1 through 64 objects with x/y block coordinates, optional layer 1/2, and an optional complete pixel_x/pixel_y pair from 0 through 15.",
+                        )
+                    val details = access.roomTiles(roomId, stateId, coordinates)
+                        ?: return failure("room_tiles_unavailable", "The requested room state or tile data is not readable.")
+                    success(json.encodeToJsonElement(SmeditRoomTilesDetails.serializer(), details))
+                }
+                "find_room_tiles" -> {
+                    val rawId = arguments.string("room_id")
+                        ?: return failure("invalid_arguments", "room_id is required.")
+                    val roomId = parseRoomId(rawId)
+                        ?: return failure("invalid_room_id", "'$rawId' is not a 16-bit hexadecimal room id.")
+                    val stateId = arguments.string("state_id")?.trim()?.takeIf(String::isNotEmpty)
+                    val layer = arguments.optionalInt("layer") ?: 1
+                    if (layer !in 1..2) return failure("invalid_arguments", "layer must be 1 or 2.")
+                    val metatileIds = arguments.intSet("metatile_ids", 0, 0x3FF)
+                        ?: return failure("invalid_arguments", "metatile_ids must contain integers from 0 through 1023.")
+                    val paletteRows = arguments.intSet("palette_rows", 0, 7)
+                        ?: return failure("invalid_arguments", "palette_rows must contain integers from 0 through 7.")
+                    val colorIndices = arguments.intSet("color_indices", 0, 15)
+                        ?: return failure("invalid_arguments", "color_indices must contain integers from 0 through 15.")
+                    val colorsBgr555 = arguments.intSet("colors_bgr555", 0, 0x7FFF)
+                        ?: return failure("invalid_arguments", "colors_bgr555 must contain integers from 0 through 32767.")
+                    val blockTypes = arguments.intSet("block_types", 0, 15)
+                        ?: return failure("invalid_arguments", "block_types must contain integers from 0 through 15.")
+                    val btsValues = arguments.intSet("bts_values", 0, 255)
+                        ?: return failure("invalid_arguments", "bts_values must contain integers from 0 through 255.")
+                    val details = access.findRoomTiles(
+                        roomId = roomId,
+                        stateId = stateId,
+                        layer = layer,
+                        metatileIds = metatileIds,
+                        paletteRows = paletteRows,
+                        colorIndices = colorIndices,
+                        colorsBgr555 = colorsBgr555,
+                        blockTypes = blockTypes,
+                        btsValues = btsValues,
+                        limit = arguments.limit(),
+                    ) ?: return failure("room_tiles_unavailable", "The requested room state or layer is not readable.")
+                    success(json.encodeToJsonElement(SmeditRoomTileSearchDetails.serializer(), details))
+                }
+                "get_tileset_metatile" -> {
+                    val tileset = arguments.optionalInt("tileset")
+                        ?.takeIf { it in 0 until 29 }
+                        ?: return failure("invalid_arguments", "tileset must be an integer from 0 through 28.")
+                    val metatileId = arguments.optionalInt("metatile_id")
+                        ?.takeIf { it in 0..0x3FF }
+                        ?: return failure("invalid_arguments", "metatile_id must be an integer from 0 through 1023.")
+                    val details = access.tilesetMetatile(tileset, metatileId)
+                        ?: return failure("metatile_unavailable", "Tileset $tileset metatile $metatileId is not readable.")
+                    success(json.encodeToJsonElement(SmeditMetatileDetails.serializer(), details))
+                }
                 "get_editor_settings" -> success(
                     json.encodeToJsonElement(SmeditEditorSettingsSummary.serializer(), access.editorSettings()),
                 )
@@ -793,6 +1056,32 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
         return (value as? JsonPrimitive)?.intOrNull?.takeIf { it in 1..maximum }
     }
 
+    private fun JsonObject.optionalInt(name: String): Int? =
+        (get(name) as? JsonPrimitive)?.intOrNull
+
+    private fun JsonObject.intSet(name: String, minimum: Int, maximum: Int): Set<Int>? {
+        val value = get(name) ?: return emptySet()
+        return (value as? JsonArray)?.map { element ->
+            (element as? JsonPrimitive)?.intOrNull?.takeIf { it in minimum..maximum } ?: return null
+        }?.toSet()
+    }
+
+    private fun JsonObject.roomTileCoordinates(): List<SmeditRoomTileCoordinate>? {
+        val values = get("coordinates") as? JsonArray ?: return null
+        if (values.size !in 1..64) return null
+        return values.map { element ->
+            val coordinate = element as? JsonObject ?: return null
+            val x = (coordinate["x"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 } ?: return null
+            val y = (coordinate["y"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 } ?: return null
+            val layer = (coordinate["layer"] as? JsonPrimitive)?.intOrNull ?: 1
+            if (layer !in 1..2) return null
+            val pixelX = (coordinate["pixel_x"] as? JsonPrimitive)?.intOrNull
+            val pixelY = (coordinate["pixel_y"] as? JsonPrimitive)?.intOrNull
+            if ((pixelX == null) != (pixelY == null) || pixelX != null && (pixelX !in 0..15 || pixelY !in 0..15)) return null
+            SmeditRoomTileCoordinate(x, y, layer, pixelX, pixelY)
+        }
+    }
+
     private fun parseRoomId(value: String): Int? {
         val normalized = value.trim().removePrefix("0x").removePrefix("0X").removePrefix("\$")
         return normalized.toIntOrNull(16)?.takeIf { it in 0..0xFFFF }
@@ -855,6 +1144,48 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                     put("changes", paletteChangesSchema())
                 })
                 put("required", JsonArray(listOf("palette", "changes").map(::JsonPrimitive)))
+                put("additionalProperties", false)
+            })
+        }
+
+        private fun roomTileCoordinatesSchema() = buildJsonObject {
+            put("type", "array")
+            put("description", "One through 64 zero-based room-block coordinates to decode.")
+            put("minItems", 1)
+            put("maxItems", 64)
+            put("items", buildJsonObject {
+                put("type", "object")
+                put("properties", buildJsonObject {
+                    put("x", integerSchema("Zero-based room-block X coordinate.", 0, 255))
+                    put("y", integerSchema("Zero-based room-block Y coordinate.", 0, 255))
+                    put("layer", integerSchema("Room layer: 1 or 2. Defaults to 1.", 1, 2))
+                    put("pixel_x", integerSchema("Optional rendered pixel X within the 16x16 block.", 0, 15))
+                    put("pixel_y", integerSchema("Optional rendered pixel Y within the 16x16 block.", 0, 15))
+                })
+                put("required", JsonArray(listOf("x", "y").map(::JsonPrimitive)))
+                put("additionalProperties", false)
+            })
+        }
+
+        private fun roomTileEditsSchema() = buildJsonObject {
+            put("type", "array")
+            put("description", "One through 256 explicit block edits. At least one of block_word, metatile_id, block_type, bts, h_flip, or v_flip must be supplied per entry.")
+            put("minItems", 1)
+            put("maxItems", 256)
+            put("items", buildJsonObject {
+                put("type", "object")
+                put("properties", buildJsonObject {
+                    put("x", integerSchema("Zero-based room-block X coordinate.", 0, 255))
+                    put("y", integerSchema("Zero-based room-block Y coordinate.", 0, 255))
+                    put("layer", integerSchema("Room layer: 1 or 2. Defaults to 1.", 1, 2))
+                    put("block_word", integerSchema("Optional exact 16-bit block word. Cannot be combined with metatile_id, block_type, h_flip, or v_flip.", 0, 0xFFFF))
+                    put("metatile_id", integerSchema("Optional metatile id from 0 through 1023.", 0, 0x3FF))
+                    put("block_type", integerSchema("Optional Layer 1 collision block type from 0 through 15.", 0, 15))
+                    put("bts", integerSchema("Optional Layer 1 BTS byte from 0 through 255.", 0, 255))
+                    put("h_flip", booleanSchema("Optional room-block horizontal flip."))
+                    put("v_flip", booleanSchema("Optional room-block vertical flip."))
+                })
+                put("required", JsonArray(listOf("x", "y").map(::JsonPrimitive)))
                 put("additionalProperties", false)
             })
         }

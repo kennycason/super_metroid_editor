@@ -9,6 +9,7 @@ import com.supermetroid.editor.data.RoomStateResourceLinks
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.NativeLiquidOptions
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.ensureStateManifest
@@ -747,6 +748,117 @@ class SmeditMutationControllerTest {
 
         assertEquals("item_catalog_incomplete", planning.errorCode())
         assertTrue(editor.project.rooms.isEmpty())
+    }
+
+    @Test
+    fun `single state room tile edit forks shared layout and is undoable`() {
+        val editor = editor()
+        val parser = RomParser(roomTileTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val planning = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "0x91F8")
+            put("state_scope", "single_state")
+            put("state_id", "state-1")
+            put("tile_edits", JsonArray(listOf(buildJsonObject {
+                put("x", 2)
+                put("y", 3)
+                put("metatile_id", 7)
+            })))
+        })
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(SmeditMutationPlanKind.ROOM_TILES, planning.plan?.kind)
+        assertEquals(listOf("state-1"), planning.plan?.roomTiles?.forkedStateIds)
+        assertTrue(editor.project.rooms.isEmpty(), "Planning must not materialize the room model")
+
+        controller.approve(planning.plan!!.id)
+        val edited = editor.project.rooms.getValue("91F8")
+        assertEquals("level-ai-1", edited.states.first().resources.level)
+        assertEquals("level-1", edited.states.last().resources.level)
+        assertEquals(0x8007, levelWord(editor.effectiveLevelDataForAi(edited, edited.states.first(), parser)!!, 2, 3))
+        assertEquals(0x8003, levelWord(editor.effectiveLevelDataForAi(edited, edited.states.last(), parser)!!, 2, 3))
+
+        controller.undo()
+        assertFalse(editor.project.rooms.containsKey("91F8"))
+        controller.redo()
+        assertEquals("level-ai-1", editor.project.rooms.getValue("91F8").states.first().resources.level)
+    }
+
+    @Test
+    fun `room tile writes reject conflicting duplicates and unavailable layer two`() {
+        val editor = editor()
+        val parser = RomParser(roomTileTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val duplicate = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "91F8")
+            put("state_scope", "all_states")
+            put("tile_edits", JsonArray(listOf(
+                buildJsonObject { put("x", 1); put("y", 1); put("metatile_id", 4) },
+                buildJsonObject { put("x", 1); put("y", 1); put("bts", 2) },
+            )))
+        })
+        assertEquals("invalid_arguments", duplicate.errorCode())
+
+        val layer2 = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "91F8")
+            put("state_scope", "all_states")
+            put("tile_edits", JsonArray(listOf(buildJsonObject {
+                put("x", 1); put("y", 1); put("layer", 2); put("metatile_id", 4)
+            })))
+        })
+        assertEquals("layer2_unavailable", layer2.errorCode())
+        assertTrue(editor.project.rooms.isEmpty())
+    }
+
+    @Test
+    fun `approved room tile changes refresh active canvas across undo and redo`() {
+        val editor = editor()
+        val parser = RomParser(roomTileTestRom())
+        editor.loadRoom(0x91F8, parser, parser.readRoomHeader(0x91F8)!!)
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val planning = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "91F8")
+            put("state_scope", "all_states")
+            put("tile_edits", JsonArray(listOf(buildJsonObject {
+                put("x", 2); put("y", 3); put("metatile_id", 9)
+            })))
+        })
+
+        controller.approve(planning.plan!!.id)
+        assertEquals(0x8009, editor.readBlockWord(2, 3))
+        controller.undo()
+        assertEquals(0x8003, editor.readBlockWord(2, 3))
+        assertFalse(editor.project.rooms.containsKey("91F8"))
+        controller.redo()
+        assertEquals(0x8009, editor.readBlockWord(2, 3))
+    }
+
+    private fun roomTileTestRom(): ByteArray = objectSourceTestRom().also { rom ->
+        val header = 0x791F8
+        rom[header + 4] = 1
+        rom[header + 5] = 1
+        val level = ByteArray(2 + 16 * 16 * 3)
+        level[0] = 0x00
+        level[1] = 0x02
+        repeat(16 * 16) { index ->
+            val offset = 2 + index * 2
+            level[offset] = 0x03
+            level[offset + 1] = 0x80.toByte()
+        }
+        val compressed = LZ5Compressor.compress(level)
+        compressed.copyInto(rom, 0x100000)
+        fun long(pc: Int, value: Int) {
+            rom[pc] = value.toByte()
+            rom[pc + 1] = (value ushr 8).toByte()
+            rom[pc + 2] = (value ushr 16).toByte()
+        }
+        long(0x7920A, 0xA08000)
+        long(0x79300, 0xA08000)
+    }
+
+    private fun levelWord(data: ByteArray, x: Int, y: Int): Int {
+        val offset = 2 + (y * 16 + x) * 2
+        return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
     }
 
     private fun bgr555Hex(color: Int): String {

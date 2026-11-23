@@ -10,6 +10,37 @@ import kotlin.test.assertTrue
 
 class DoorPlaceholderUiTest {
     @Test
+    fun `Tourian Elevator keeps zero destination slot and later save-room door healthy`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val roomId = 0xDAAE
+        val room = requireNotNull(parser.readRoomHeader(roomId))
+        val editor = EditorState()
+        editor.loadRoom(roomId, parser, room)
+
+        assertEquals(4, editor.doorEntries.size)
+        assertTrue(editor.doorEntries[2].isElevatorPlaceholder)
+        assertEquals(0xDF1B, editor.doorEntries[3].destRoomPtr)
+
+        val diagnostics = doorDiagnosticsForRoom(roomId, parser, editor, RoomRepository().getAllRooms())
+        assertFalse(2 in diagnostics)
+        assertFalse(requireNotNull(diagnostics[3]).hasError)
+        val relevantBts = buildSet {
+            for (y in 0 until editor.workingBlocksTall) {
+                for (x in 0 until editor.workingBlocksWide) {
+                    if (((editor.readBlockWord(x, y) ushr 12) and 0x0F) == 0x09) {
+                        val bts = editor.readBts(x, y)
+                        if ((bts and 0x7F) in 2..3) add(bts)
+                    }
+                }
+            }
+        }
+        assertTrue(relevantBts.isNotEmpty())
+        assertTrue(relevantBts.all {
+            doorTileWarningSeverity(it, editor.doorEntries, diagnostics) != DoorConnectionSeverity.ERROR
+        })
+    }
+
+    @Test
     fun `Business Center exposes later BTS connections and keeps placeholder read only`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val roomId = 0xA7DE

@@ -72,6 +72,8 @@ import com.supermetroid.editor.ai.StoredAiPaletteColorChange
 import com.supermetroid.editor.ai.StoredAiPaletteMutationPlan
 import com.supermetroid.editor.ai.StoredAiPaletteTargetMutationPlan
 import com.supermetroid.editor.ai.StoredAiItemMutationPlan
+import com.supermetroid.editor.ai.StoredAiRoomTileChangePlan
+import com.supermetroid.editor.ai.StoredAiRoomTilesMutationPlan
 import com.supermetroid.editor.api.SmeditToolRegistry
 import com.supermetroid.editor.api.SmeditToolEffect
 import com.supermetroid.editor.api.SmeditToolResult
@@ -85,6 +87,8 @@ import com.supermetroid.editor.api.SmeditPaletteColorChange
 import com.supermetroid.editor.api.SmeditPaletteMutationPlan
 import com.supermetroid.editor.api.SmeditPaletteTargetMutationPlan
 import com.supermetroid.editor.api.SmeditItemMutationPlan
+import com.supermetroid.editor.api.SmeditRoomTileChangePlan
+import com.supermetroid.editor.api.SmeditRoomTilesMutationPlan
 import com.supermetroid.editor.data.AppConfig
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -487,6 +491,28 @@ class AiWorkspaceState(
                 sourceManaged = item.sourceManaged,
             )
         },
+        roomTiles = roomTiles?.let { tiles ->
+            StoredAiRoomTilesMutationPlan(
+                roomId = tiles.roomId,
+                roomName = tiles.roomName,
+                stateScope = tiles.stateScope,
+                stateIds = tiles.stateIds,
+                forkedStateIds = tiles.forkedStateIds,
+                changes = tiles.changes.map { change ->
+                    StoredAiRoomTileChangePlan(
+                        stateId = change.stateId,
+                        layoutResourceId = change.layoutResourceId,
+                        x = change.x,
+                        y = change.y,
+                        layer = change.layer,
+                        beforeWordHex = change.beforeWordHex,
+                        afterWordHex = change.afterWordHex,
+                        beforeBtsHex = change.beforeBtsHex,
+                        afterBtsHex = change.afterBtsHex,
+                    )
+                },
+            )
+        },
     )
 
     private fun StoredAiMutationPlan.toRuntime() = SmeditMutationPlan(
@@ -569,6 +595,28 @@ class AiWorkspaceState(
                 stateScope = item.stateScope,
                 stateIds = item.stateIds,
                 sourceManaged = item.sourceManaged,
+            )
+        },
+        roomTiles = roomTiles?.let { tiles ->
+            SmeditRoomTilesMutationPlan(
+                roomId = tiles.roomId,
+                roomName = tiles.roomName,
+                stateScope = tiles.stateScope,
+                stateIds = tiles.stateIds,
+                forkedStateIds = tiles.forkedStateIds,
+                changes = tiles.changes.map { change ->
+                    SmeditRoomTileChangePlan(
+                        stateId = change.stateId,
+                        layoutResourceId = change.layoutResourceId,
+                        x = change.x,
+                        y = change.y,
+                        layer = change.layer,
+                        beforeWordHex = change.beforeWordHex,
+                        afterWordHex = change.afterWordHex,
+                        beforeBtsHex = change.beforeBtsHex,
+                        afterBtsHex = change.afterBtsHex,
+                    )
+                },
             )
         },
     )
@@ -1729,6 +1777,36 @@ private fun AiMutationApprovalCard(
                         if (item.sourceManaged) "Writes project ASM object source" else "Writes the project room model",
                         fontSize = fs.detail,
                     )
+                }
+                SmeditMutationPlanKind.ROOM_TILES -> plan.roomTiles?.let { tiles ->
+                    Text(
+                        "${tiles.roomName} · ${tiles.stateIds.size} state(s) · ${tiles.changes.size} previewed change(s)",
+                        fontSize = fs.detail,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        if (tiles.stateScope == "all_states") "Targets all room states" else "Targets state ${tiles.stateIds.joinToString()}",
+                        fontSize = fs.detail,
+                    )
+                    if (tiles.forkedStateIds.isNotEmpty()) {
+                        Text(
+                            "Creates an independent layout for: ${tiles.forkedStateIds.joinToString()}",
+                            fontSize = fs.detail,
+                        )
+                    }
+                    tiles.changes.take(20).forEach { change ->
+                        Text(
+                            "${change.stateId} · L${change.layer} (${change.x},${change.y}) " +
+                                "${change.beforeWordHex} → ${change.afterWordHex}" +
+                                if (change.beforeBtsHex != null && change.beforeBtsHex != change.afterBtsHex) {
+                                    " · BTS ${change.beforeBtsHex} → ${change.afterBtsHex}"
+                                } else "",
+                            fontSize = fs.detail,
+                        )
+                    }
+                    if (tiles.changes.size > 20) {
+                        Text("…and ${tiles.changes.size - 20} more previewed change(s)", fontSize = fs.detail)
+                    }
                 }
             }
             plan.warnings.forEach { warning ->

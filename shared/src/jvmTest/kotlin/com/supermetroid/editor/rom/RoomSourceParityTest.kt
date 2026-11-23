@@ -233,14 +233,14 @@ class RoomSourceParityTest {
 
         root.getValue("doors").jsonArray.map { it.jsonObject }.forEach { record ->
             val sourceEntries = record.getValue("entries").jsonArray.map { it.jsonObject }
-            // Door_VariousRooms_Elevator ($83:88FC) is a real indexed list slot whose
-            // two-byte body is zero; only a null list pointer terminates the list.
+            // Native elevator sentinels are real indexed slots whose two-byte bodies
+            // are zero; only a null list pointer terminates the list.
             val expected = sourceEntries.takeWhile { it.int("doorDefPtr") != 0 }
             val actual = parser.parseDoorList(record.int("snesAddress") and 0xFFFF)
             assertEquals(expected.size, actual.size, record.string("sourceLabel"))
             expected.zip(actual).forEach { (source, parsed) ->
                 assertEquals(source.int("doorDefPtr"), parsed.doorDefPtr)
-                if (source.int("doorDefPtr") == RomParser.ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR) {
+                if (source.int("destRoomPtr") == 0) {
                     assertTrue(parsed.isElevatorPlaceholder)
                 } else {
                     assertEquals(source.int("destRoomPtr"), parsed.destRoomPtr)

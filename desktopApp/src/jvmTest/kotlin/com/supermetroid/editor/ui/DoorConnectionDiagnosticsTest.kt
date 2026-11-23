@@ -21,6 +21,20 @@ class DoorConnectionDiagnosticsTest {
     }
 
     @Test
+    fun `tile warnings mask elevator flag and accept native placeholder slots`() {
+        val placeholder = door(destinationRoomId, direction = 0).copy(
+            destRoomPtr = 0,
+            kind = RomParser.DoorEntryKind.ELEVATOR_PLACEHOLDER,
+        )
+        val healthy = DoorConnectionDiagnostic(emptyList())
+        val slots = listOf(door(destinationRoomId, direction = 0), placeholder, door(destinationRoomId, direction = 0))
+
+        assertEquals(null, doorTileWarningSeverity(0x81, slots, mapOf(0 to healthy, 2 to healthy)))
+        assertEquals(null, doorTileWarningSeverity(0x82, slots, mapOf(0 to healthy, 2 to healthy)))
+        assertEquals(DoorConnectionSeverity.ERROR, doorTileWarningSeverity(0x83, slots, mapOf(0 to healthy, 2 to healthy)))
+    }
+
+    @Test
     fun `opposite-facing reciprocal door is healthy`() {
         val diagnostic = evaluateDoorConnection(
             sourceRoomId = sourceRoomId,

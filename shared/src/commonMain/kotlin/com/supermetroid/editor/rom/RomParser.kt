@@ -928,7 +928,7 @@ class RomParser(
      */
     enum class DoorEntryKind {
         CONNECTION,
-        /** Native door-list slot that points at Door_VariousRooms_Elevator ($83:88FC), not a 12-byte DoorDef. */
+        /** Native door-list slot whose target is only `dw $0000`, not a 12-byte DoorDef. */
         ELEVATOR_PLACEHOLDER,
     }
 
@@ -969,21 +969,14 @@ class RomParser(
         val entryPtr = readUInt16At(ptrOff)
         if (entryPtr < 0x8000) return null
         if (entryPtr == ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR) {
-            return DoorEntry(
-                destRoomPtr = 0,
-                bitflag = 0,
-                doorCapCode = 0,
-                screenX = 0,
-                screenY = 0,
-                distFromDoor = 0,
-                entryCode = 0,
-                doorDefPtr = entryPtr,
-                kind = DoorEntryKind.ELEVATOR_PLACEHOLDER,
-            )
+            return nativeElevatorPlaceholder(entryPtr)
         }
         val entryPc = snesToPc(BANK_FX or entryPtr)
         if (entryPc + 11 >= romData.size) return null
         val destRoom = readUInt16At(entryPc)
+        // Vanilla has a second shared elevator sentinel at $83:A18A. Recognize the
+        // record shape so relocated source builds preserve the slot as well.
+        if (destRoom == 0) return nativeElevatorPlaceholder(entryPtr)
         if (destRoom < 0x8000 || destRoom == 0xFFFF) return null
         return DoorEntry(
             destRoomPtr = destRoom,
@@ -996,6 +989,18 @@ class RomParser(
             doorDefPtr = entryPtr
         )
     }
+
+    private fun nativeElevatorPlaceholder(entryPtr: Int) = DoorEntry(
+        destRoomPtr = 0,
+        bitflag = 0,
+        doorCapCode = 0,
+        screenX = 0,
+        screenY = 0,
+        distFromDoor = 0,
+        entryCode = 0,
+        doorDefPtr = entryPtr,
+        kind = DoorEntryKind.ELEVATOR_PLACEHOLDER,
+    )
 
     /**
      * Parse all door-list slots for a room. Reads until an invalid pointer,
@@ -1227,13 +1232,8 @@ class RomParser(
      * Returns null if the door index is invalid.
      */
     fun doorEntryPcOffset(doorOutPtr: Int, doorIndex: Int): Int? {
-        if (doorOutPtr == 0 || doorOutPtr == 0xFFFF) return null
-        val listPc = snesToPc(BANK_ROOM_DATA or doorOutPtr)
-        val ptrOff = listPc + doorIndex * 2
-        if (ptrOff + 1 >= romData.size) return null
-        val entryPtr = readUInt16At(ptrOff)
-        if (entryPtr < 0x8000 || entryPtr == ELEVATOR_DOOR_LIST_PLACEHOLDER_PTR) return null
-        val entryPc = snesToPc(BANK_FX or entryPtr)
+        val entry = parseDoorEntry(doorOutPtr, doorIndex)?.takeIf(DoorEntry::isConnection) ?: return null
+        val entryPc = snesToPc(BANK_FX or entry.doorDefPtr)
         if (entryPc + 11 >= romData.size) return null
         return entryPc
     }

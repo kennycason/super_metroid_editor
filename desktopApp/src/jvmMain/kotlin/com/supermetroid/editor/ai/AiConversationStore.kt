@@ -78,6 +78,29 @@ data class StoredAiItemMutationPlan(
 )
 
 @Serializable
+data class StoredAiRoomTileChangePlan(
+    val stateId: String,
+    val layoutResourceId: String,
+    val x: Int,
+    val y: Int,
+    val layer: Int,
+    val beforeWordHex: String,
+    val afterWordHex: String,
+    val beforeBtsHex: String? = null,
+    val afterBtsHex: String? = null,
+)
+
+@Serializable
+data class StoredAiRoomTilesMutationPlan(
+    val roomId: String,
+    val roomName: String,
+    val stateScope: String,
+    val stateIds: List<String> = emptyList(),
+    val forkedStateIds: List<String> = emptyList(),
+    val changes: List<StoredAiRoomTileChangePlan> = emptyList(),
+)
+
+@Serializable
 data class StoredAiMutationPlan(
     val id: String,
     val toolName: String,
@@ -97,6 +120,7 @@ data class StoredAiMutationPlan(
     val fx: StoredAiRoomFxMutationPlan? = null,
     val palette: StoredAiPaletteMutationPlan? = null,
     val item: StoredAiItemMutationPlan? = null,
+    val roomTiles: StoredAiRoomTilesMutationPlan? = null,
 )
 
 @Serializable

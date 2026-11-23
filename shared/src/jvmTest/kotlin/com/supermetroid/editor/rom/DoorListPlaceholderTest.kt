@@ -15,6 +15,55 @@ class DoorListPlaceholderTest {
     private val businessCenter = 0xA7DE
 
     @Test
+    fun `zero destination elevator sentinel preserves later door slots`() {
+        val rom = ByteArray(0x300000)
+        val parser = RomParser(rom)
+        fun word(pc: Int, value: Int) {
+            rom[pc] = value.toByte()
+            rom[pc + 1] = (value ushr 8).toByte()
+        }
+        val doorListPtr = 0x9000
+        val listPc = parser.snesToPc(0x8F0000 or doorListPtr)
+        val sentinelPtr = 0xA18A
+        val connectionPtr = 0x9000
+        word(listPc, sentinelPtr)
+        word(listPc + 2, connectionPtr)
+        word(listPc + 4, 0)
+        word(parser.snesToPc(0x830000 or sentinelPtr), 0)
+        val connectionPc = parser.snesToPc(0x830000 or connectionPtr)
+        word(connectionPc, 0x91F8)
+        word(connectionPc + 2, 0x0004)
+        word(connectionPc + 4, 0x0601)
+        word(connectionPc + 8, 0x8000)
+
+        val slots = parser.parseDoorList(doorListPtr)
+
+        assertEquals(2, slots.size)
+        assertTrue(slots[0].isElevatorPlaceholder)
+        assertEquals(sentinelPtr, slots[0].doorDefPtr)
+        assertEquals(0x91F8, slots[1].destRoomPtr)
+        assertEquals(null, parser.doorEntryPcOffset(doorListPtr, 0))
+        assertEquals(connectionPc, parser.doorEntryPcOffset(doorListPtr, 1))
+    }
+
+    @Test
+    fun `Tourian and Maridia elevators preserve shared zero destination slot`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val tourian = requireNotNull(parser.readRoomHeader(0xDAAE))
+        val tourianSlots = parser.parseDoorList(tourian.doorOut)
+        assertEquals(4, tourianSlots.size)
+        assertTrue(tourianSlots[2].isElevatorPlaceholder)
+        assertEquals(0xA18A, tourianSlots[2].doorDefPtr)
+        assertEquals(0xDF1B, tourianSlots[3].destRoomPtr)
+
+        val maridia = requireNotNull(parser.readRoomHeader(0xD30B))
+        val maridiaSlots = parser.parseDoorList(maridia.doorOut)
+        assertEquals(4, maridiaSlots.size)
+        assertTrue(maridiaSlots[3].isElevatorPlaceholder)
+        assertEquals(0xA18A, maridiaSlots[3].doorDefPtr)
+    }
+
+    @Test
     fun `Business Center preserves native elevator slot and parses later BTS connections`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val room = requireNotNull(parser.readRoomHeader(businessCenter))

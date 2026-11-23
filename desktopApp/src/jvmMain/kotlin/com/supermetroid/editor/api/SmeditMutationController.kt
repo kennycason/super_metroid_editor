@@ -2,12 +2,16 @@ package com.supermetroid.editor.api
 
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.FxChange
+import com.supermetroid.editor.data.EditOperation
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.StateDataChange
+import com.supermetroid.editor.data.TILE_EDIT_LAYER_1
+import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
+import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.headless.BOMB_CONFIG_TYPE
 import com.supermetroid.editor.headless.BOMB_COOLDOWN_FRAMES_KEY
 import com.supermetroid.editor.headless.BOMB_MAX_ACTIVE_KEY
@@ -25,6 +29,7 @@ import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
 import com.supermetroid.editor.rom.ensureStateManifest
+import com.supermetroid.editor.rom.embeddedLayer2StartOffset
 import com.supermetroid.editor.rom.withFxChange
 import com.supermetroid.editor.asm.snapshotRoomForResize
 import com.supermetroid.editor.ui.EditorState
@@ -39,7 +44,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
-enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH, ROOM_FX, PALETTE, ITEM }
+enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH, ROOM_FX, PALETTE, ITEM, ROOM_TILES }
 
 data class SmeditPatchValueChange(
     val key: String,
@@ -103,6 +108,27 @@ data class SmeditItemMutationPlan(
     val sourceManaged: Boolean,
 )
 
+data class SmeditRoomTileChangePlan(
+    val stateId: String,
+    val layoutResourceId: String,
+    val x: Int,
+    val y: Int,
+    val layer: Int,
+    val beforeWordHex: String,
+    val afterWordHex: String,
+    val beforeBtsHex: String? = null,
+    val afterBtsHex: String? = null,
+)
+
+data class SmeditRoomTilesMutationPlan(
+    val roomId: String,
+    val roomName: String,
+    val stateScope: String,
+    val stateIds: List<String>,
+    val forkedStateIds: List<String>,
+    val changes: List<SmeditRoomTileChangePlan>,
+)
+
 data class SmeditMutationPlan(
     val id: String,
     val toolName: String,
@@ -122,6 +148,7 @@ data class SmeditMutationPlan(
     val fx: SmeditRoomFxMutationPlan? = null,
     val palette: SmeditPaletteMutationPlan? = null,
     val item: SmeditItemMutationPlan? = null,
+    val roomTiles: SmeditRoomTilesMutationPlan? = null,
 )
 
 data class SmeditMutationPlanningResult(
@@ -261,6 +288,21 @@ internal class DesktopSmeditMutationController(
         override val projectId: String get() = plan.projectId
     }
 
+    private data class RoomTilesPlan(
+        override val presentation: SmeditMutationPlan,
+        override val projectId: String,
+        val roomId: Int,
+        val before: RoomModelSnapshot,
+        val after: RoomModelSnapshot,
+    ) : PendingPlan
+
+    private data class AppliedRoomTilesAction(
+        val plan: RoomTilesPlan,
+    ) : AppliedAction {
+        override val presentation: SmeditMutationPlan get() = plan.presentation
+        override val projectId: String get() = plan.projectId
+    }
+
     private var pending: PendingPlan? = null
     private val undoStack = mutableListOf<AppliedAction>()
     private val redoStack = mutableListOf<AppliedAction>()
@@ -276,6 +318,7 @@ internal class DesktopSmeditMutationController(
             SET_ROOM_FX -> planRoomFx(arguments)
             SET_PALETTE_COLORS -> planPalette(arguments)
             PLACE_ITEM -> planItem(arguments)
+            SET_ROOM_TILES -> planRoomTiles(arguments)
             else -> failure("unknown_mutation", "SMEDIT does not expose a mutation named '$toolName'.")
         }
     }
@@ -1307,6 +1350,244 @@ internal class DesktopSmeditMutationController(
         )
     }
 
+    private data class RequestedRoomTileEdit(
+        val x: Int,
+        val y: Int,
+        val layer: Int,
+        val blockWord: Int?,
+        val metatileId: Int?,
+        val blockType: Int?,
+        val bts: Int?,
+        val hFlip: Boolean?,
+        val vFlip: Boolean?,
+    )
+
+    private fun planRoomTiles(arguments: JsonObject): SmeditMutationPlanningResult {
+        val rawRoomId = arguments.string("room_id")
+            ?: return failure("invalid_arguments", "room_id is required.")
+        val roomId = parseRoomId(rawRoomId)
+            ?: return failure("invalid_room_id", "'$rawRoomId' is not a 16-bit hexadecimal room id.")
+        val scope = arguments.string("state_scope")
+            ?: return failure("invalid_arguments", "state_scope is required.")
+        if (scope !in setOf("all_states", "single_state")) {
+            return failure("invalid_arguments", "state_scope must be all_states or single_state.")
+        }
+        val requestedStateId = arguments.string("state_id")?.trim()?.takeIf(String::isNotEmpty)
+        if (scope == "single_state" && requestedStateId == null) {
+            return failure("invalid_arguments", "state_id is required for single_state.")
+        }
+        if (scope == "all_states" && requestedStateId != null) {
+            return failure("invalid_arguments", "state_id must be omitted for all_states.")
+        }
+        val requestedEdits = parseRoomTileEdits(arguments)
+            ?: return failure(
+                "invalid_arguments",
+                "tile_edits must contain 1 through 256 unique coordinates with valid fields. Layer 2 does not support block_type/BTS or words above 0x0FFF.",
+            )
+        val currentParser = parser()
+            ?: return failure("workspace_unavailable", "Open a project or editable ROM before changing room tiles.")
+        val summary = workspace.workspaceSummary()
+        if (summary.readOnly) return failure("workspace_read_only", "The current room catalog is read-only.")
+        val roomDetails = workspace.room(roomId)
+            ?: return failure("room_not_found", "No readable room exists at ${formatRoomId(roomId)}.")
+        val project = editorState.project
+        val key = project.roomKey(roomId)
+        val live = project.rooms[key]
+        if ((live?.asmLayoutSourceVersion ?: 0) != 0) {
+            return failure(
+                "asm_source_unsupported",
+                "This room's layout is owned by ASM source. AI source-backed tile writes are not available yet, so no layout was staged.",
+            )
+        }
+        val staged = snapshotRoomForResize(live ?: RoomEdits(roomId))
+        if (staged.states.isEmpty()) {
+            try {
+                staged.ensureStateManifest(currentParser)
+            } catch (problem: Exception) {
+                return failure("state_graph_unreadable", problem.message ?: "The room state graph is not editable.")
+            }
+        }
+        val targets = if (scope == "all_states") {
+            staged.states.toList()
+        } else {
+            listOfNotNull(staged.states.singleOrNull { it.id == requestedStateId })
+        }
+        if (targets.isEmpty()) return failure("state_not_found", "State '$requestedStateId' does not exist in ${formatRoomId(roomId)}.")
+
+        val forkedStateIds = mutableListOf<String>()
+        if (scope == "single_state") {
+            val state = targets.single()
+            val oldResource = state.resources.level
+            if (staged.states.count { it.resources.level == oldResource } > 1) {
+                val newResource = nextAiLevelResourceId(staged)
+                staged.levelResourceOperations[oldResource]?.let { operations ->
+                    staged.levelResourceOperations[newResource] = operations.toMutableList()
+                }
+                state.resources = state.resources.copy(level = newResource)
+                state.levelResourceChanged = false
+                forkedStateIds += state.id
+            }
+        }
+
+        val widthBlocks = roomDetails.widthScreens * 16
+        val heightBlocks = roomDetails.heightScreens * 16
+        val affectedStates = mutableSetOf<String>()
+        val changePreview = mutableListOf<SmeditRoomTileChangePlan>()
+        var changedBlockCount = 0
+        for ((resourceId, resourceStates) in targets.groupBy { it.resources.level }) {
+            val representative = resourceStates.first()
+            val data = runCatching {
+                editorState.effectiveLevelDataForAi(staged, representative, currentParser)
+            }.getOrNull() ?: return failure(
+                "layout_unreadable",
+                "Could not read layout resource '$resourceId' for state ${representative.id}.",
+            )
+            val hasLayer2 = embeddedLayer2StartOffset(data, widthBlocks * heightBlocks) != null
+            val edits = mutableListOf<TileEdit>()
+            for (request in requestedEdits) {
+                if (request.x !in 0 until widthBlocks || request.y !in 0 until heightBlocks) {
+                    return failure(
+                        "tile_out_of_bounds",
+                        "Tile (${request.x},${request.y}) is outside ${roomDetails.name}'s ${widthBlocks}x${heightBlocks} block bounds.",
+                    )
+                }
+                if (request.layer == TILE_EDIT_LAYER_2 && !hasLayer2) {
+                    return failure("layer2_unavailable", "${roomDetails.name} state ${representative.id} has no embedded Layer 2 layout.")
+                }
+                val oldWord = levelWord(data, request.x, request.y, request.layer, widthBlocks, heightBlocks)
+                    ?: return failure("layout_unreadable", "Could not read tile (${request.x},${request.y}) on layer ${request.layer}.")
+                val oldBts = if (request.layer == TILE_EDIT_LAYER_1) {
+                    levelBts(data, request.x, request.y, widthBlocks) ?: return failure("layout_unreadable", "Could not read BTS at (${request.x},${request.y}).")
+                } else 0
+                var newWord = request.blockWord ?: oldWord
+                if (request.blockWord == null) {
+                    request.metatileId?.let { newWord = (newWord and 0xFC00) or it }
+                    request.hFlip?.let { newWord = if (it) newWord or 0x0400 else newWord and 0x0400.inv() }
+                    request.vFlip?.let { newWord = if (it) newWord or 0x0800 else newWord and 0x0800.inv() }
+                    request.blockType?.let { newWord = (newWord and 0x0FFF) or (it shl 12) }
+                }
+                val newBts = request.bts ?: oldBts
+                if (newWord == oldWord && newBts == oldBts) continue
+                edits += TileEdit(request.x, request.y, oldWord, newWord, oldBts, newBts, request.layer)
+                changedBlockCount++
+                resourceStates.forEach { state ->
+                    affectedStates += state.id
+                    if (changePreview.size < 40) {
+                        changePreview += SmeditRoomTileChangePlan(
+                            stateId = state.id,
+                            layoutResourceId = resourceId,
+                            x = request.x,
+                            y = request.y,
+                            layer = request.layer,
+                            beforeWordHex = formatWord(oldWord),
+                            afterWordHex = formatWord(newWord),
+                            beforeBtsHex = oldBts.takeIf { request.layer == TILE_EDIT_LAYER_1 }?.let(::formatByte),
+                            afterBtsHex = newBts.takeIf { request.layer == TILE_EDIT_LAYER_1 }?.let(::formatByte),
+                        )
+                    }
+                }
+            }
+            if (edits.isNotEmpty()) {
+                staged.levelResourceOperations.getOrPut(resourceId, ::mutableListOf).add(
+                    EditOperation("AI edit ${edits.size} room tile(s)", edits),
+                )
+            }
+        }
+        if (changedBlockCount == 0) return failure("no_changes", "Every targeted tile already has the requested values.")
+
+        val before = RoomModelSnapshot(roomId, live?.let(::snapshotRoomForResize))
+        val after = RoomModelSnapshot(roomId, staged)
+        val presentation = SmeditMutationPlan(
+            id = UUID.randomUUID().toString(),
+            toolName = SET_ROOM_TILES,
+            title = "Edit room tiles in ${roomDetails.name}",
+            musicData = 0,
+            musicTrack = 0,
+            affectedRoomCount = 1,
+            affectedStateCount = affectedStates.size,
+            affectedRoomPreview = listOf("${roomDetails.name} (${formatRoomId(roomId)})"),
+            excludedRoomIds = emptyList(),
+            excludedAreas = emptyList(),
+            warnings = buildList {
+                if (forkedStateIds.isNotEmpty()) {
+                    add("Forks the shared layout for ${forkedStateIds.joinToString()} so other states remain unchanged.")
+                }
+                if (changePreview.size < changedBlockCount) add("The approval card shows only the first ${changePreview.size} changed state/block entries.")
+            },
+            kind = SmeditMutationPlanKind.ROOM_TILES,
+            roomTiles = SmeditRoomTilesMutationPlan(
+                roomId = formatRoomId(roomId),
+                roomName = roomDetails.name,
+                stateScope = scope,
+                stateIds = affectedStates.toList(),
+                forkedStateIds = forkedStateIds,
+                changes = changePreview,
+            ),
+        )
+        pending = RoomTilesPlan(presentation, project.projectId, roomId, before, after)
+        return SmeditMutationPlanningResult(
+            result = SmeditToolResult(buildJsonObject {
+                put("ok", true)
+                put("status", "approval_required")
+                put("plan_id", presentation.id)
+                put("tool", SET_ROOM_TILES)
+                put("room_id", formatRoomId(roomId))
+                put("affected_state_count", affectedStates.size)
+                put("changed_block_count", changedBlockCount)
+                put("message", "The exact room-tile changes are waiting for user approval. No project data has changed.")
+            }, isError = false),
+            plan = presentation,
+        )
+    }
+
+    private fun parseRoomTileEdits(arguments: JsonObject): List<RequestedRoomTileEdit>? {
+        val values = arguments["tile_edits"] as? JsonArray ?: return null
+        if (values.size !in 1..256) return null
+        val result = values.map { element ->
+            val item = element as? JsonObject ?: return null
+            val x = (item["x"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 } ?: return null
+            val y = (item["y"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 } ?: return null
+            val layer = (item["layer"] as? JsonPrimitive)?.intOrNull ?: TILE_EDIT_LAYER_1
+            if (layer !in TILE_EDIT_LAYER_1..TILE_EDIT_LAYER_2) return null
+            val blockWord = item.intIn("block_word", 0, 0xFFFF) ?: if ("block_word" in item) return null else null
+            val metatileId = item.intIn("metatile_id", 0, 0x3FF) ?: if ("metatile_id" in item) return null else null
+            val blockType = item.intIn("block_type", 0, 15) ?: if ("block_type" in item) return null else null
+            val bts = item.intIn("bts", 0, 255) ?: if ("bts" in item) return null else null
+            val hFlip = item.optionalBoolean("h_flip") ?: if ("h_flip" in item) return null else null
+            val vFlip = item.optionalBoolean("v_flip") ?: if ("v_flip" in item) return null else null
+            if (listOf(metatileId, blockType, hFlip, vFlip).any { it != null } && blockWord != null) return null
+            if (listOf(blockWord, metatileId, blockType, bts, hFlip, vFlip).all { it == null }) return null
+            if (layer == TILE_EDIT_LAYER_2 && (blockType != null || bts != null || blockWord != null && blockWord > 0x0FFF)) return null
+            RequestedRoomTileEdit(x, y, layer, blockWord, metatileId, blockType, bts, hFlip, vFlip)
+        }
+        if (result.map { Triple(it.x, it.y, it.layer) }.distinct().size != result.size) return null
+        return result
+    }
+
+    private fun nextAiLevelResourceId(room: RoomEdits): String {
+        var ordinal = 1
+        while (true) {
+            val candidate = "level-ai-$ordinal"
+            if (room.states.none { it.resources.level == candidate } && candidate !in room.levelResourceOperations) return candidate
+            ordinal++
+        }
+    }
+
+    private fun levelWord(data: ByteArray, x: Int, y: Int, layer: Int, width: Int, height: Int): Int? {
+        if (x !in 0 until width || y !in 0 until height || data.size < 2) return null
+        val index = y * width + x
+        val offset = if (layer == TILE_EDIT_LAYER_1) 2 + index * 2
+        else (embeddedLayer2StartOffset(data, width * height) ?: return null) + index * 2
+        if (offset + 1 !in data.indices) return null
+        return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
+    }
+
+    private fun levelBts(data: ByteArray, x: Int, y: Int, width: Int): Int? {
+        if (x < 0 || y < 0 || x >= width || data.size < 2) return null
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        return data.getOrNull(2 + layer1Size + y * width + x)?.toInt()?.and(0xFF)
+    }
+
     override fun approve(planId: String): SmeditMutationTransition {
         val plan = pending?.takeIf { it.presentation.id == planId }
             ?: error("The pending AI plan is no longer available.")
@@ -1390,6 +1671,22 @@ internal class DesktopSmeditMutationController(
                 editorState.recordExternalItemMutation(plan.roomId)
                 transition(plan.presentation, "Applied")
             }
+            is RoomTilesPlan -> {
+                requireProject(plan.projectId)
+                requireRoomModels(listOf(plan.before), "approval")
+                val rollback = modelSnapshot(plan.roomId)
+                try {
+                    restoreRoomModels(listOf(plan.after))
+                } catch (problem: Throwable) {
+                    restoreRoomModels(listOf(rollback))
+                    throw problem
+                }
+                undoStack += AppliedRoomTilesAction(plan)
+                redoStack.clear()
+                pending = null
+                editorState.recordExternalRoomLayoutMutation(plan.roomId)
+                transition(plan.presentation, "Applied")
+            }
         }
     }
 
@@ -1457,6 +1754,18 @@ internal class DesktopSmeditMutationController(
                 }
                 editorState.recordExternalItemMutation(plan.roomId)
             }
+            is AppliedRoomTilesAction -> {
+                requireProject(action.projectId)
+                requireRoomModels(listOf(action.plan.after), "undo")
+                val rollback = modelSnapshot(action.plan.roomId)
+                try {
+                    restoreRoomModels(listOf(action.plan.before))
+                } catch (problem: Throwable) {
+                    restoreRoomModels(listOf(rollback))
+                    throw problem
+                }
+                editorState.recordExternalRoomLayoutMutation(action.plan.roomId)
+            }
         }
         undoStack.removeAt(undoStack.lastIndex)
         redoStack += action
@@ -1519,6 +1828,18 @@ internal class DesktopSmeditMutationController(
                     restoreRoomModels(listOf(requireNotNull(plan.after)))
                 }
                 editorState.recordExternalItemMutation(plan.roomId)
+            }
+            is AppliedRoomTilesAction -> {
+                requireProject(action.projectId)
+                requireRoomModels(listOf(action.plan.before), "redo")
+                val rollback = modelSnapshot(action.plan.roomId)
+                try {
+                    restoreRoomModels(listOf(action.plan.after))
+                } catch (problem: Throwable) {
+                    restoreRoomModels(listOf(rollback))
+                    throw problem
+                }
+                editorState.recordExternalRoomLayoutMutation(action.plan.roomId)
             }
         }
         redoStack.removeAt(redoStack.lastIndex)
@@ -1671,6 +1992,8 @@ internal class DesktopSmeditMutationController(
             SmeditMutationPlanKind.PALETTE -> "$verb ${plan.title.lowercase()}."
             SmeditMutationPlanKind.ITEM ->
                 "$verb ${plan.title.lowercase()} for ${plan.affectedStateCount} state(s)."
+            SmeditMutationPlanKind.ROOM_TILES ->
+                "$verb room tile edits for ${plan.affectedStateCount} state(s)."
         },
     )
 
@@ -1740,6 +2063,9 @@ internal class DesktopSmeditMutationController(
 
     private fun JsonObject.optionalBoolean(name: String): Boolean? =
         (get(name) as? JsonPrimitive)?.booleanOrNull
+
+    private fun JsonObject.intIn(name: String, minimum: Int, maximum: Int): Int? =
+        (get(name) as? JsonPrimitive)?.intOrNull?.takeIf { it in minimum..maximum }
 
     private fun JsonObject.integerMap(name: String): Map<String, Int>? {
         val value = get(name) ?: return emptyMap()
@@ -1829,6 +2155,7 @@ internal class DesktopSmeditMutationController(
         const val SET_ROOM_FX = "set_room_fx"
         const val SET_PALETTE_COLORS = "set_palette_colors"
         const val PLACE_ITEM = "place_item"
+        const val SET_ROOM_TILES = "set_room_tiles"
         const val TOURIAN_AREA = "Tourian"
         const val MOTHER_BRAIN_RUNTIME_FX_POINTER = 0xA0A4
         val CONFIG_VALUE_ALIASES = setOf("seconds", "total_seconds", "totalSeconds")

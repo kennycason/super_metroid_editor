@@ -24,7 +24,8 @@ class SmeditToolRegistryTest {
                 "get_workspace_summary", "list_rooms", "get_room", "list_patches", "get_patch",
                 "list_room_fx", "get_editor_settings", "search_docs", "read_doc", "search_asm",
                 "list_palettes", "get_palette", "list_item_types", "list_room_items",
-                "set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item",
+                "inspect_room_tiles", "find_room_tiles", "get_tileset_metatile",
+                "set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item", "set_room_tiles",
             ),
             registry.definitions.mapTo(mutableSetOf(), SmeditToolDefinition::name),
         )
@@ -33,6 +34,7 @@ class SmeditToolRegistryTest {
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_fx")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_palette_colors")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("place_item")?.effect)
+        assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_tiles")?.effect)
         assertEquals(
             listOf("update_fields"),
             registry.definition("set_room_fx")!!.inputSchema.getValue("required").jsonArray
@@ -54,7 +56,7 @@ class SmeditToolRegistryTest {
         )
         assertTrue(
             registry.definitions.filterNot {
-                it.name in setOf("set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item")
+                it.name in setOf("set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item", "set_room_tiles")
             }
                 .all { it.effect == SmeditToolEffect.READ_ONLY },
         )
@@ -116,6 +118,36 @@ class SmeditToolRegistryTest {
         val invalid = registry.execute("get_room", buildJsonObject { put("room_id", "not-a-room") })
         assertTrue(invalid.isError)
         assertEquals("invalid_room_id", invalid.errorCode())
+    }
+
+    @Test
+    fun `tile tools expose exact palette provenance and validate coordinates`() {
+        val inspected = registry.execute("inspect_room_tiles", Json.parseToJsonElement(
+            """{"room_id":"91F8","coordinates":[{"x":4,"y":5,"pixel_x":2,"pixel_y":3}]}""",
+        ).jsonObject)
+        assertFalse(inspected.isError)
+        val tile = inspected.output.getValue("data").jsonObject.getValue("tiles").jsonArray.single().jsonObject
+        assertEquals(3, tile.getValue("metatileId").jsonPrimitive.content.toInt())
+        assertEquals(1, tile.getValue("metatile").jsonObject.getValue("subtiles").jsonArray.single().jsonObject
+            .getValue("paletteRow").jsonPrimitive.content.toInt())
+
+        val found = registry.execute("find_room_tiles", Json.parseToJsonElement(
+            """{"room_id":"91F8","palette_rows":[1],"colors_bgr555":[31]}""",
+        ).jsonObject)
+        assertFalse(found.isError)
+        assertEquals(1, found.output.getValue("data").jsonObject.getValue("totalMatches").jsonPrimitive.content.toInt())
+
+        val metatile = registry.execute("get_tileset_metatile", buildJsonObject {
+            put("tileset", 0)
+            put("metatile_id", 3)
+        })
+        assertFalse(metatile.isError)
+
+        val invalid = registry.execute("inspect_room_tiles", Json.parseToJsonElement(
+            """{"room_id":"91F8","coordinates":[{"x":4,"y":5,"pixel_x":2}]}""",
+        ).jsonObject)
+        assertTrue(invalid.isError)
+        assertEquals("invalid_arguments", invalid.errorCode())
     }
 
     @Test
@@ -315,6 +347,95 @@ class SmeditToolRegistryTest {
                 states = listOf(SmeditRoomItemState("state-1", 0, "Default", emptyList())),
             )
         } else null
+
+        private fun metatile() = SmeditMetatileDetails(
+            tileset = 0,
+            metatileId = 3,
+            metatileIdHex = "0x003",
+            tableSource = "Tileset-local variable metatile table",
+            placeholder = false,
+            subtiles = listOf(
+                SmeditMetatileSubtileDetails(
+                    quadrant = "top_left",
+                    word = 0x0401,
+                    wordHex = "0x0401",
+                    tileNumber = 1,
+                    tileNumberHex = "0x001",
+                    tileSource = "Area",
+                    paletteRow = 1,
+                    priority = false,
+                    hFlip = false,
+                    vFlip = false,
+                    usedColorIndices = listOf(1),
+                    usedColors = listOf(SmeditTilePaletteColor(1, 17, 31, "0x001F", "#FF0000")),
+                ),
+            ),
+        )
+
+        override fun roomTiles(
+            roomId: Int,
+            stateId: String?,
+            coordinates: List<SmeditRoomTileCoordinate>,
+        ) = SmeditRoomTilesDetails(
+            roomId = "0x91F8",
+            roomName = "Landing Site",
+            stateId = "state-1",
+            stateCondition = "Default",
+            layoutResourceId = "level-1",
+            sourceManaged = false,
+            widthBlocks = 80,
+            heightBlocks = 32,
+            tileset = 0,
+            tilesetPaletteId = "tileset:0",
+            hasLayer2 = false,
+            tiles = coordinates.map { coordinate ->
+                SmeditRoomTileDetails(
+                    x = coordinate.x,
+                    y = coordinate.y,
+                    layer = coordinate.layer,
+                    blockWord = 0x8003,
+                    blockWordHex = "0x8003",
+                    metatileId = 3,
+                    metatileIdHex = "0x003",
+                    blockType = 8,
+                    bts = 0,
+                    btsHex = "0x00",
+                    hFlip = false,
+                    vFlip = false,
+                    metatile = metatile(),
+                )
+            },
+        )
+
+        override fun findRoomTiles(
+            roomId: Int,
+            stateId: String?,
+            layer: Int,
+            metatileIds: Set<Int>,
+            paletteRows: Set<Int>,
+            colorIndices: Set<Int>,
+            colorsBgr555: Set<Int>,
+            blockTypes: Set<Int>,
+            btsValues: Set<Int>,
+            limit: Int,
+        ) = SmeditRoomTileSearchDetails(
+            roomId = "0x91F8",
+            roomName = "Landing Site",
+            stateId = "state-1",
+            stateCondition = "Default",
+            layoutResourceId = "level-1",
+            sourceManaged = false,
+            widthBlocks = 80,
+            heightBlocks = 32,
+            tileset = 0,
+            tilesetPaletteId = "tileset:0",
+            hasLayer2 = false,
+            totalMatches = 1,
+            truncated = false,
+            matches = listOf(SmeditRoomTileSearchMatch(4, 5, 1, 0x8003, "0x8003", 3, "0x003", 8, 0, false, false, listOf(1), listOf(17), listOf(31))),
+        )
+
+        override fun tilesetMetatile(tileset: Int, metatileId: Int) = metatile()
 
         override fun editorSettings() = SmeditEditorSettingsSummary(
             theme = "DARK",

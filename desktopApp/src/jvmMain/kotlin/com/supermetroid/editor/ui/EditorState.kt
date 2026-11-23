@@ -651,6 +651,22 @@ class EditorState(
         }
     }
 
+    /** Refresh the active canvas after an approved external room-layout transition. */
+    internal fun recordExternalRoomLayoutMutation(roomId: Int) {
+        recordExternalRoomMutation(listOf(roomId))
+        if (currentRoomId != roomId) return
+        val parser = currentRomParser ?: return
+        val key = project.roomKey(roomId)
+        val hadRoomModel = project.rooms.containsKey(key)
+        val stateId = currentStateId
+            ?: project.rooms[key]?.stateEditsForSourceIndex(currentStateIndex)?.id
+            ?: return
+        switchRoomState(stateId, parser)
+        if (!hadRoomModel && project.rooms[key]?.hasEdits == false) {
+            project.rooms.remove(key)
+        }
+    }
+
     internal fun updateAsmDebugWatches(watches: List<com.supermetroid.editor.data.ProjectAsmDebugWatch>): Boolean {
         if (project.asmWorkspace.debugWatches == watches) return false
         project.asmWorkspace.debugWatches.clear()
@@ -7261,6 +7277,12 @@ class EditorState(
             if (index >= 0) operations.removeAt(index)
         }
     }
+
+    internal fun effectiveLevelDataForAi(
+        roomEdits: RoomEdits,
+        state: RoomStateEdits,
+        romParser: RomParser,
+    ): ByteArray? = effectiveLevelDataForState(roomEdits, state, romParser)
 
     private fun effectiveLevelDataForState(
         roomEdits: RoomEdits,

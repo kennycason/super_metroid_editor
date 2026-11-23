@@ -31,6 +31,23 @@ internal data class DoorConnectionDiagnostic(
     val hasError: Boolean get() = issues.any { it.severity == DoorConnectionSeverity.ERROR }
 }
 
+/** Resolve a type-9 tile's BTS to its semantic door slot without treating bit 7 as an index bit. */
+internal fun doorTileWarningSeverity(
+    bts: Int,
+    doorSlots: List<RomParser.DoorEntry>,
+    diagnostics: Map<Int, DoorConnectionDiagnostic>,
+): DoorConnectionSeverity? {
+    val connectionIndex = bts and 0x7F
+    val slot = doorSlots.getOrNull(connectionIndex) ?: return DoorConnectionSeverity.ERROR
+    if (!slot.isConnection) return null
+    val diagnostic = diagnostics[connectionIndex] ?: return DoorConnectionSeverity.ERROR
+    return when {
+        !diagnostic.needsAttention -> null
+        diagnostic.hasError -> DoorConnectionSeverity.ERROR
+        else -> DoorConnectionSeverity.WARNING
+    }
+}
+
 /** One contiguous type-9 opening on the edge used by an incoming door. */
 internal data class DoorwayOpening(
     val roomId: Int,
