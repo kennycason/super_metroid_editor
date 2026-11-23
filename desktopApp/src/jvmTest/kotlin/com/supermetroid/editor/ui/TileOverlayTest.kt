@@ -333,7 +333,7 @@ class TileOverlayTest {
         @Test
         fun `LAYER3 overlay exists with correct properties`() {
             val l3 = TileOverlay.LAYER3
-            assertEquals("Layer 3", l3.label)
+            assertEquals("FX Layer (L3)", l3.label)
             assertEquals("L3", l3.shortLabel)
             assertTrue(l3.color != 0L)
         }

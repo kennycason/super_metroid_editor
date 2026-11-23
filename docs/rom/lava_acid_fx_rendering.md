@@ -35,6 +35,11 @@ different Layer 3 texture. A faithful editor preview therefore has to warp the
 already-rendered BG2 image per scanline; drawing another translucent Layer 3
 overlay cannot reproduce the native result.
 
+SMEDIT's `FX Layer (L3)` display toggle controls only the first system. For
+lava, acid, and water it is positioned and clipped at the effective liquid
+surface. A signed/offscreen liquid height such as `$FFFF` suppresses L3 while
+leaving the independently configured BG2 shimmer visible.
+
 The vertical `BG Animate` displacement repeats:
 
 ```text

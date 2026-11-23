@@ -168,14 +168,18 @@ These meanings come from the native bank `$88` handlers, not the historical
 SMILE labels. See [lava_acid_fx_rendering.md](lava_acid_fx_rendering.md) for the
 rendering and tide behavior.
 
-### Layer 3 Replacement GFX (from SMILE Layer3Editor.frm)
+### Layer 3 Replacement GFX
 
-| fxType | ROM PC | Effect |
-|--------|--------|--------|
-| `0x02` (Lava) | `$3A564` | Replaces tiles 0-3 with lava surface |
-| `0x04` (Acid) | `$3A6A4` | Replaces tiles 0-3 with acid surface |
-| `0x08` (Spores) | `$3A7E4` | Replaces tiles 0-3 with spore particles |
-| `0x0A` (Rain) | `$3A974` | Replaces tiles 0-3 with rain streaks |
+| fxType | Frame 0 ROM PC | BG3 tiles | Effect |
+|--------|----------------|-----------|--------|
+| `0x02` (Lava) | `$3A564` | `$50`–`$53` | Lava surface/body |
+| `0x04` (Acid) | `$3A6A4` | `$50`–`$53` | Acid surface/body |
+| `0x08` (Spores) | `$3A7E4` | `$50`–`$52` | Spore particles |
+| `0x0A` (Rain) | `$3A874` | `$50`–`$54` | Rain streaks |
+
+These destinations come from the animated-tile objects in bank `$87`. The FX
+Layer preview uses frame zero; lava/acid frame animation remains separate from
+the BG2 shimmer controlled by `fxBitC`.
 
 ## Sources
 

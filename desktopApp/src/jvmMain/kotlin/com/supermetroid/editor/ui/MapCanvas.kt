@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
@@ -589,7 +590,7 @@ fun MapCanvas(
                             TileOverlay.values().forEach { overlay ->
                                 val isOn = overlayToggles[overlay] ?: false
                                 DropdownMenuItem(
-                                    modifier = Modifier.height(32.dp),
+                                    modifier = Modifier.height(if (overlay == TileOverlay.LAYER3) 42.dp else 32.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                     text = {
                                         Row(
@@ -603,7 +604,18 @@ fun MapCanvas(
                                                 modifier = Modifier.size(20.dp),
                                             )
                                             TileMetaIcon(overlay = overlay, sizeDp = 14.dp, borderDp = 2.dp, fontSize = 7.sp)
-                                            Text(overlay.label, fontSize = 12.sp)
+                                            if (overlay == TileOverlay.LAYER3) {
+                                                Column {
+                                                    Text(overlay.label, fontSize = 12.sp)
+                                                    Text(
+                                                        "Liquid, fog, and rain; not BG2 shimmer",
+                                                        fontSize = 8.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            } else {
+                                                Text(overlay.label, fontSize = 12.sp)
+                                            }
                                         }
                                     },
                                     onClick = {
@@ -1047,7 +1059,10 @@ fun MapCanvas(
                                 if (!activeOverlays.contains(TileOverlay.LAYER3)) null
                                 else {
                                     val fxType = defaultFx?.fxType ?: 0
-                                    if (fxType == 0) null
+                                    if (!shouldRenderLayer3Fx(
+                                            fxType,
+                                            defaultFx?.liquidSurfaceStart ?: 0xFFFF,
+                                        )) null
                                     else romParser.renderLayer3Image(fxType, layer3Palette(fxType))
                                         ?.let { pixels -> Triple(pixels, fxType, defaultFx) }
                                 }
@@ -1438,6 +1453,10 @@ fun MapCanvas(
                                     if (layer3Info != null) {
                                         val l3Pixels = layer3Info.first
                                         val l3FxType = layer3Info.second
+                                        val l3LiquidSurfaceRow = nativeLiquidLayer3SurfaceRow(l3FxType)
+                                        val l3LiquidSurfaceY = l3LiquidSurfaceRow?.let {
+                                            layer3Info.third?.liquidSurfaceStart
+                                        }
                                         val l3SrcW = 256
                                         val l3SrcH = 264
                                         // Use full 256x264 tile — BG3 nametable is 32x33 rows
@@ -1497,31 +1516,49 @@ fun MapCanvas(
                                                 val ox = (l3OffsetX % l3TileW) * scaleX
                                                 val oy = (l3OffsetY % l3TileH) * scaleY
                                                 val startX = ox - scaledW
-                                                val startY = oy - scaledH
-                                                var ty = startY
-                                                var rowIdx = 0
-                                                while (ty < size.height) {
-                                                    var tx = startX
-                                                    // For water: alternate V-flipped rows for seamless tessellation
-                                                    val bmp = if (l3BitmapFlipped != null && rowIdx % 2 == 1) l3BitmapFlipped else l3Bitmap
-                                                    while (tx < size.width) {
-                                                        val dstW = kotlin.math.ceil(scaledW).toInt()
-                                                        val dstH = kotlin.math.ceil(scaledH).toInt()
-                                                        val ix = tx.toInt()
-                                                        val iy = ty.toInt()
-                                                        if (ix + dstW > 0 && iy + dstH > 0 &&
-                                                            ix < size.width.toInt() && iy < size.height.toInt()) {
-                                                            drawImage(
-                                                                image = bmp,
-                                                                dstOffset = androidx.compose.ui.unit.IntOffset(ix, iy),
-                                                                dstSize = androidx.compose.ui.unit.IntSize(dstW, dstH),
-                                                                filterQuality = androidx.compose.ui.graphics.FilterQuality.None
-                                                            )
+                                                val surfacePixelY = l3LiquidSurfaceY?.let { it * scaleY }
+                                                val sourceSurfacePixelY = (l3LiquidSurfaceRow ?: 0) * 8f * scaleY
+                                                val startY = surfacePixelY?.let { it - sourceSurfacePixelY + oy }
+                                                    ?: (oy - scaledH)
+
+                                                val drawTiledLayer: DrawScope.() -> Unit = {
+                                                    var ty = startY
+                                                    var rowIdx = 0
+                                                    while (ty < size.height) {
+                                                        var tx = startX
+                                                        // For water: alternate V-flipped rows for seamless tessellation
+                                                        val bmp = if (l3BitmapFlipped != null && rowIdx % 2 == 1) l3BitmapFlipped else l3Bitmap
+                                                        while (tx < size.width) {
+                                                            val dstW = kotlin.math.ceil(scaledW).toInt()
+                                                            val dstH = kotlin.math.ceil(scaledH).toInt()
+                                                            val ix = tx.toInt()
+                                                            val iy = ty.toInt()
+                                                            if (ix + dstW > 0 && iy + dstH > 0 &&
+                                                                ix < size.width.toInt() && iy < size.height.toInt()) {
+                                                                drawImage(
+                                                                    image = bmp,
+                                                                    dstOffset = androidx.compose.ui.unit.IntOffset(ix, iy),
+                                                                    dstSize = androidx.compose.ui.unit.IntSize(dstW, dstH),
+                                                                    filterQuality = androidx.compose.ui.graphics.FilterQuality.None
+                                                                )
+                                                            }
+                                                            tx += scaledW
                                                         }
-                                                        tx += scaledW
+                                                        ty += scaledH
+                                                        rowIdx++
                                                     }
-                                                    ty += scaledH
-                                                    rowIdx++
+                                                }
+
+                                                if (surfacePixelY != null) {
+                                                    val clipTop = nativeLiquidLayer3ClipTop(
+                                                        surfacePixelY,
+                                                        size.height,
+                                                    ) ?: return@Canvas
+                                                    clipRect(top = clipTop) {
+                                                        drawTiledLayer()
+                                                    }
+                                                } else {
+                                                    drawTiledLayer()
                                                 }
                                             }
                                     }

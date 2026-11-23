@@ -1,8 +1,10 @@
 package com.supermetroid.editor.ui
 import com.supermetroid.editor.rom.TestRomHelper
 
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -15,7 +17,7 @@ class Layer3RenderTest {
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
-    fun `Cathedral L3 lava haze produces visible pixels`() {
+    fun `lava Layer 3 source produces visible pixels`() {
         val parser = loadTestRom() ?: return
         val room = parser.readRoomHeader(0xA788)
         assertNotNull(room)
@@ -129,6 +131,44 @@ class Layer3RenderTest {
         assertEquals(2, liquidPhysicsIndex(0x04), "Acid (0x04) → physics 2")
         assertEquals(3, liquidPhysicsIndex(0x06), "Water (0x06) → physics 3")
         assertEquals(0, liquidPhysicsIndex(0x00), "None (0x00) → physics 0")
+    }
+
+    @Test
+    fun `offscreen liquid height hides only the Layer 3 liquid`() {
+        for (fxType in listOf(0x02, 0x04, 0x06)) {
+            assertFalse(shouldRenderLayer3Fx(fxType, 0xFFFF))
+            assertFalse(shouldRenderLayer3Fx(fxType, 0x8000))
+            assertTrue(shouldRenderLayer3Fx(fxType, 0x0200))
+        }
+        assertTrue(shouldRenderLayer3Fx(0x0A, 0xFFFF), "Rain is not positioned by liquid height")
+    }
+
+    @Test
+    fun `native liquid tilemaps identify their surface row`() {
+        assertEquals(0, nativeLiquidLayer3SurfaceRow(0x02))
+        assertEquals(1, nativeLiquidLayer3SurfaceRow(0x04))
+        assertEquals(1, nativeLiquidLayer3SurfaceRow(0x06))
+        assertEquals(null, nativeLiquidLayer3SurfaceRow(0x0A))
+    }
+
+    @Test
+    fun `liquid Layer 3 skips a surface below the room canvas`() {
+        assertEquals(null, nativeLiquidLayer3ClipTop(1514.9062f, 1469f))
+        assertEquals(null, nativeLiquidLayer3ClipTop(1469f, 1469f))
+        assertEquals(433f, nativeLiquidLayer3ClipTop(433f, 1469f))
+        assertEquals(0f, nativeLiquidLayer3ClipTop(-1f, 1469f))
+    }
+
+    @Test
+    fun `animated FX frame zero targets native BG3 tile range`() {
+        assertEquals(
+            RomConstants.Layer3ReplacementGfx(0x3A564, 0x50, 4),
+            RomConstants.L3_REPLACEMENT_GFX.getValue(0x02),
+        )
+        assertEquals(
+            RomConstants.Layer3ReplacementGfx(0x3A874, 0x50, 5),
+            RomConstants.L3_REPLACEMENT_GFX.getValue(0x0A),
+        )
     }
 
     @Test

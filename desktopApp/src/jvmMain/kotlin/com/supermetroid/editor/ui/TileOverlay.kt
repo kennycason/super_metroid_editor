@@ -32,7 +32,7 @@ enum class TileOverlay(val label: String, val shortLabel: String, val color: Lon
     // Layer 2 background (BG data tilemap or embedded L2)
     LAYER2("Layer 2", "L2", 0x6088AACC),
     // Layer 3 visual (fog, rain, spores, liquid surface)
-    LAYER3("Layer 3", "L3", 0x60AACCFF),
+    LAYER3("FX Layer (L3)", "L3", 0x60AACCFF),
     // Lighten: brighten dark rooms (Fireflea, etc.)
     LIGHTEN("Lighten", "L", 0x00FFFFFF),
 }

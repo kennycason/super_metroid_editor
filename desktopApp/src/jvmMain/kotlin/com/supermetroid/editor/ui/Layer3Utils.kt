@@ -2,6 +2,24 @@ package com.supermetroid.editor.ui
 
 internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
 
+/** Row containing the native liquid surface in the 32x33 BG3 source tilemap. */
+internal fun nativeLiquidLayer3SurfaceRow(fxType: Int): Int? = when (fxType) {
+    0x02 -> 0 // Lava
+    0x04, 0x06 -> 1 // Acid and water have one transparent padding row
+    else -> null
+}
+
+/**
+ * Liquid BG3 is a real surface/body layer, not the BG2 heat-wave switch.
+ * Native liquid positions with the sign bit set (normally $FFFF) are offscreen.
+ */
+internal fun shouldRenderLayer3Fx(fxType: Int, liquidSurfaceStart: Int): Boolean =
+    fxType != 0 && (nativeLiquidLayer3SurfaceRow(fxType) == null || liquidSurfaceStart and 0x8000 == 0)
+
+/** A liquid surface at or below the canvas has no visible L3 pixels to clip. */
+internal fun nativeLiquidLayer3ClipTop(surfacePixelY: Float, canvasHeight: Float): Float? =
+    surfacePixelY.coerceAtLeast(0f).takeIf { canvasHeight > 0f && it < canvasHeight }
+
 /** Per-frame scroll speed (dx, dy) in pixels for L3 overlay animation by fxType. */
 internal fun layer3ScrollSpeed(fxType: Int): Pair<Float, Float> = when (fxType) {
     0x02 -> Pair(0.0f, 0.0f)      // Lava — static (surface at liquid level)

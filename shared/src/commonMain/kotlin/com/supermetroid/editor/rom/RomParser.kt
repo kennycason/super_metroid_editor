@@ -1555,13 +1555,13 @@ class RomParser(
             )
         }
 
-        // Apply fxType-specific replacement tiles (overwrite first 4)
-        val replacementAddr = RomConstants.L3_REPLACEMENT_GFX[fxType]
-        if (replacementAddr != null) {
-            for (t in 0 until 4) {
-                baseTiles[t] = tileDecoder.decode2bppTileIndices(
+        // Apply the first native animated-FX frame at its actual BG3 VRAM tile range.
+        val replacement = RomConstants.L3_REPLACEMENT_GFX[fxType]
+        if (replacement != null) {
+            for (t in 0 until replacement.tileCount) {
+                baseTiles[replacement.firstTile + t] = tileDecoder.decode2bppTileIndices(
                     romData,
-                    romStartOffset + replacementAddr + t * 16,
+                    romStartOffset + replacement.firstFramePc + t * 16,
                 )
             }
         }

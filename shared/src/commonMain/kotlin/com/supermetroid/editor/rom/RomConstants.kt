@@ -81,12 +81,18 @@ object RomConstants {
     const val L3_TILEMAP_ROWS = 33
     const val L3_TILEMAP_SIZE = L3_TILEMAP_COLS * L3_TILEMAP_ROWS  // 1056
 
-    /** Per-fxType replacement GFX addresses (ROM PC) — first 4 tiles replaced */
-    val L3_REPLACEMENT_GFX: Map<Int, Int> = mapOf(
-        0x02 to 0x3A564,  // Lava
-        0x04 to 0x3A6A4,  // Acid
-        0x08 to 0x3A7E4,  // Spores
-        0x0A to 0x3A974,  // Rain
+    data class Layer3ReplacementGfx(
+        val firstFramePc: Int,
+        val firstTile: Int,
+        val tileCount: Int,
+    )
+
+    /** Native animated-FX frame zero, uploaded to BG3 tiles $50 and above. */
+    val L3_REPLACEMENT_GFX: Map<Int, Layer3ReplacementGfx> = mapOf(
+        0x02 to Layer3ReplacementGfx(0x3A564, 0x50, 4), // Lava
+        0x04 to Layer3ReplacementGfx(0x3A6A4, 0x50, 4), // Acid
+        0x08 to Layer3ReplacementGfx(0x3A7E4, 0x50, 3), // Spores
+        0x0A to Layer3ReplacementGfx(0x3A874, 0x50, 5), // Rain
     )
 
     // ─── SPC Audio ───────────────────────────────────────────────────

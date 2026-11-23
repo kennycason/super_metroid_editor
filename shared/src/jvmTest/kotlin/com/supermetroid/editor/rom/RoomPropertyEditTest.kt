@@ -600,30 +600,30 @@ class RoomPropertyEditTest {
     // ─── Layer 3 tilemap parsing ─────────────────────────────────────
 
     @Test
-    fun `Layer 3 tilemap for water fxType returns 1056 entries`() {
+    fun `Layer 3 tilemap for acid fxType returns 1056 entries`() {
         val parser = loadTestRom() ?: return
         val tilemap = parser.readLayer3Tilemap(0x04)
-        assertNotNull(tilemap, "Water L3 tilemap should not be null")
+        assertNotNull(tilemap, "Acid L3 tilemap should not be null")
         assertEquals(1056, tilemap!!.size, "L3 tilemap should be 32×33 = 1056 entries")
     }
 
     @Test
-    fun `Layer 3 tilemap for fog uses tiles 0x50-0x52`() {
+    fun `Layer 3 tilemap for lava uses tiles 0x50-0x52`() {
         val parser = loadTestRom() ?: return
         val tilemap = parser.readLayer3Tilemap(0x02) ?: run { println("No tilemap"); return }
         val tileIndices = tilemap.map { it.tile }.toSet()
-        assertTrue(0x50 in tileIndices, "Fog tilemap should use tile 0x50")
-        assertTrue(0x51 in tileIndices, "Fog tilemap should use tile 0x51")
-        assertTrue(0x52 in tileIndices, "Fog tilemap should use tile 0x52")
+        assertTrue(0x50 in tileIndices, "Lava tilemap should use tile 0x50")
+        assertTrue(0x51 in tileIndices, "Lava tilemap should use tile 0x51")
+        assertTrue(0x52 in tileIndices, "Lava tilemap should use tile 0x52")
     }
 
     @Test
-    fun `Layer 3 tilemap for lava uses uniform tile 0x4E`() {
+    fun `Layer 3 tilemap for water starts with transparent tile 0x4E`() {
         val parser = loadTestRom() ?: return
         val tilemap = parser.readLayer3Tilemap(0x06) ?: run { println("No tilemap"); return }
         val firstTiles = tilemap.take(32)
         assertTrue(firstTiles.all { it.tile == 0x4E },
-            "Lava L3 first row should all be tile 0x4E, got ${firstTiles.map { it.tile }.toSet()}")
+            "Water L3 first row should all be tile 0x4E, got ${firstTiles.map { it.tile }.toSet()}")
     }
 
     @Test
