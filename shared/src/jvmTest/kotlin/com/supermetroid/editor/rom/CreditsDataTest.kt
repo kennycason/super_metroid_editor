@@ -168,6 +168,36 @@ class CreditsDataTest {
     }
 
     @Test
+    fun `custom credits move the native final blank flush after the last custom group`() {
+        val parser = loadParser() ?: return
+        val exportValue = CreditsData.buildCreditsExport(
+                parser,
+                listOf(
+                    CreditsData.CreditGroup("FIRST TEAM", listOf("SAMUS")),
+                    CreditsData.CreditGroup("LAST TEAM", listOf("METROID")),
+                ),
+                0x8CF3E8,
+            )
+        assertNotNull(exportValue)
+        val export = exportValue!!
+        val bytes = export.instListBytes
+        fun word(offset: Int): Int =
+            (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+
+        // Each one-name custom section is 28 bytes; the final End section is 12.
+        val firstCustom = bytes.size - 12 - 28 * 2
+        assertEquals(CreditsData.OP_TIMER_IN_Y, word(firstCustom - 4))
+        assertEquals(0x0010, word(firstCustom - 2), "The former final timer now spaces the first custom group")
+        assertEquals(CreditsData.OP_TIMER_IN_Y, word(firstCustom + 24))
+        assertEquals(0x0010, word(firstCustom + 26), "Intermediate custom groups use normal spacing")
+        assertEquals(CreditsData.OP_TIMER_IN_Y, word(firstCustom + 28 + 24))
+        assertTrue(
+            word(firstCustom + 28 + 26) >= 0x0022,
+            "The last custom group must flush at least the 32-row credits ring before EndCredits",
+        )
+    }
+
+    @Test
     fun `headered ROM uses physical offsets for every credits write`() {
         val body = TestRomHelper.requireRomBytes()
         val headered = ByteArray(body.size + 0x200) { 0x5A.toByte() }

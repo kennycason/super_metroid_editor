@@ -41,6 +41,8 @@ object CreditsData {
     const val TOTAL_ROWS = 128
     const val TILEMAP_SIZE = ROW_BYTES * TOTAL_ROWS  // 8192
     const val BLANK_ROW_OFFSET = 0x1FC0   // Row 127 = universal blank spacer
+    private const val SECTION_BLANK_ROWS = 0x0010
+    private const val MIN_FINAL_BLANK_ROWS = 0x0022
 
     // Font tile encoding
     const val SPACE_TILE = 0x4F
@@ -405,10 +407,11 @@ object CreditsData {
 
         // Read original instruction list bytes (minus the final End section)
         // Find the last TimerInY before the End section
-        val endSectionStart = findEndSectionStart(rom, originalInstListPc, originalInstListEndPc)
+        val endBoundary = findEndSectionBoundary(rom, originalInstListPc, originalInstListEndPc)
+            ?: return null
 
         // Copy everything up to and including the last section's TimerInY
-        val originalPrefix = rom.copyOfRange(originalInstListPc, endSectionStart)
+        val originalPrefix = rom.copyOfRange(originalInstListPc, endBoundary.endSectionStartPc)
 
         val newInstListSnes = relocatedInstListSnesAddr ?: parsed.instListSnesAddr
         if (newInstListSnes ushr 16 != INST_LIST_BANK || (newInstListSnes and 0xFFFF) < 0x8000) return null
@@ -423,10 +426,16 @@ object CreditsData {
         val oldBase = parsed.instListSnesAddr and 0xFFFF
         val newBase = newInstListSnes and 0xFFFF
         val rebasedPrefix = rebaseInstructionList(originalPrefix, oldBase, newBase)
+        // The native final section uses a longer delay to replace every visible
+        // credits-ring row with blanks before the post-credits screen appears.
+        // This timer now leads into the first custom section, so make it an
+        // ordinary inter-section delay and move the native final flush to the
+        // last custom section below.
+        writeWord(rebasedPrefix, rebasedPrefix.size - 2, SECTION_BLANK_ROWS)
         instList.addAll(rebasedPrefix.toList())
 
         // Add new custom sections
-        for (assignment in groupRowAssignments) {
+        for ((assignmentIndex, assignment) in groupRowAssignments.withIndex()) {
             val sectionOffset = instList.size
             val sectionSnesLow = newBase + sectionOffset
 
@@ -454,9 +463,19 @@ object CreditsData {
                 addWord(instList, bottomIdx * ROW_BYTES)
             }
 
-            // Timer for next section
+            // Intermediate groups use the normal spacing. The final group must
+            // retain the native end delay (at least 34 blank rows) so its text
+            // has completely scrolled out of the 32-row ring before EndCredits
+            // switches to the post-credits screen.
             addWord(instList, OP_TIMER_IN_Y)
-            addWord(instList, 0x0010)
+            addWord(
+                instList,
+                if (assignmentIndex == groupRowAssignments.lastIndex) {
+                    maxOf(endBoundary.finalBlankRows, MIN_FINAL_BLANK_ROWS)
+                } else {
+                    SECTION_BLANK_ROWS
+                },
+            )
         }
 
         // Final end section
@@ -480,11 +499,15 @@ object CreditsData {
         )
     }
 
-    /** Find the PC offset where the final "End" section begins in the instruction list. */
-    private fun findEndSectionStart(rom: ByteArray, startPc: Int, endPc: Int): Int {
-        // Walk backwards from the end to find the last TimerInY before EndCredits
+    private data class EndSectionBoundary(
+        val endSectionStartPc: Int,
+        val finalBlankRows: Int,
+    )
+
+    /** Find the final blank-flush timer immediately before the End section. */
+    private fun findEndSectionBoundary(rom: ByteArray, startPc: Int, endPc: Int): EndSectionBoundary? {
         var pos = startPc
-        var lastTimerPos = startPc
+        var lastTimerPos = -1
 
         while (pos + 1 < endPc && pos + 1 < rom.size) {
             val word = readWordRom(rom, pos)
@@ -496,9 +519,13 @@ object CreditsData {
                         pos += 4
                     }
                     OP_END_CREDITS, OP_DELETE -> {
-                        // Found the end — the last TimerInY before this was the
-                        // last real section's timer. The end section starts AFTER it.
-                        return lastTimerPos + 4
+                        if (lastTimerPos < startPc || lastTimerPos + 3 >= endPc) return null
+                        // The last TimerInY before EndCredits controls how many
+                        // blank rows flush the ring before the ending transition.
+                        return EndSectionBoundary(
+                            endSectionStartPc = lastTimerPos + 4,
+                            finalBlankRows = readWordRom(rom, lastTimerPos + 2),
+                        )
                     }
                     else -> pos += if (opcode == OP_DEC_TIMER_GOTO) 4 else 2
                 }
@@ -506,7 +533,7 @@ object CreditsData {
                 pos += 4
             }
         }
-        return endPc
+        return null
     }
 
     /**
