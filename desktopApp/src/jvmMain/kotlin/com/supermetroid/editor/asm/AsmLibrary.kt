@@ -1437,7 +1437,7 @@ internal object AsmLibrary {
                 AsmLibrarySection(
                     "Intentional boundary",
                     listOf(
-                        "The reciprocal editor appends up to five English NTSC custom groups using the native small header and large name fonts. Existing Nintendo sections remain intact and are not generalized into editable cinematic programs.",
+                        "The reciprocal editor shows existing Nintendo sections read-only, then appends up to five English NTSC custom groups using the native small header and large name fonts. Native sections remain intact and are not generalized into editable cinematic programs.",
                         "Unsupported glyphs, arbitrary credits instructions, a moved/custom payload shape, and PAL or other regional branches remain ASM only. Fixed native capacity is a tested safety boundary, not an automatic relocation promise.",
                     ),
                 ),

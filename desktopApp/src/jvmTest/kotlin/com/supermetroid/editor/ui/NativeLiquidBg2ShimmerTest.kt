@@ -14,6 +14,11 @@ class NativeLiquidBg2ShimmerTest {
             nativeLiquidBg2ShimmerMode(0x02, NativeLiquidOptions.BG_ANIMATE),
         )
         assertEquals(
+            NativeLiquidBg2ShimmerMode.VERTICAL,
+            nativeLiquidBg2ShimmerMode(0x04, NativeLiquidOptions.BG_ANIMATE),
+            "Acid uses the same native BG Animate shimmer as lava",
+        )
+        assertEquals(
             NativeLiquidBg2ShimmerMode.HORIZONTAL,
             nativeLiquidBg2ShimmerMode(0x04, NativeLiquidOptions.BG_LIQUID),
         )

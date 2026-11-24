@@ -4724,10 +4724,11 @@ audit. Save/reopen and cache-free compiler proofs reparse the live compiled
 pointer. Headered ROMs use physical offsets consistently, and unsupported
 headless ROM export rejects credit groups rather than dropping them.
 
-This contract appends English NTSC custom groups using the native small header
-and large name fonts. Original Nintendo sections, arbitrary instruction
-programs, unsupported glyphs, custom payload shapes, and PAL/regional branches
-remain ASM only.
+This contract displays original Nintendo sections read-only, marks the exact
+custom insertion boundary, and appends English NTSC custom groups using the
+native small header and large name fonts. Editing native sections, arbitrary
+instruction programs, unsupported glyphs, custom payload shapes, and
+PAL/regional branches remains ASM only.
 
 ## Compiled Output Inspector
 

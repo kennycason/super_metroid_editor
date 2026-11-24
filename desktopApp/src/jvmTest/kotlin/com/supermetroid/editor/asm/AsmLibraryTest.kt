@@ -148,6 +148,7 @@ class AsmLibraryTest {
         assertTrue("CREDIT GROUP" in creditsText)
         assertTrue("last valid model" in creditsText)
         assertTrue("Save and Build fail closed" in creditsText)
+        assertTrue("shows existing Nintendo sections read-only" in creditsText)
         assertTrue("PAL or other regional branches remain ASM only" in creditsText)
         val demoGuide = AsmLibrary.guide("checked-hook-demo")!!
         val demoText = demoGuide.sections.joinToString("\n") { section ->
