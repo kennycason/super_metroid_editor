@@ -25,11 +25,12 @@ class SmeditToolRegistryTest {
                 "list_room_fx", "get_editor_settings", "search_docs", "read_doc", "search_asm",
                 "list_palettes", "get_palette", "list_item_types", "list_room_items",
                 "inspect_room_tiles", "find_room_tiles", "get_tileset_metatile",
-                "set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item", "set_room_tiles",
+                "set_room_music", "set_room_state_fields", "configure_patch", "set_room_fx", "set_palette_colors", "place_item", "set_room_tiles",
             ),
             registry.definitions.mapTo(mutableSetOf(), SmeditToolDefinition::name),
         )
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_music")?.effect)
+        assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_state_fields")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("configure_patch")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_fx")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_palette_colors")?.effect)
@@ -45,6 +46,11 @@ class SmeditToolRegistryTest {
                 .inputSchema.getValue("properties").jsonObject,
         )
         assertEquals(
+            listOf("room_id", "state_id", "update_fields"),
+            registry.definition("set_room_state_fields")!!.inputSchema.getValue("required").jsonArray
+                .map { it.jsonPrimitive.content },
+        )
+        assertEquals(
             setOf("palette_edits"),
             registry.definition("set_palette_colors")!!.inputSchema
                 .getValue("properties").jsonObject.keys,
@@ -56,7 +62,7 @@ class SmeditToolRegistryTest {
         )
         assertTrue(
             registry.definitions.filterNot {
-                it.name in setOf("set_room_music", "configure_patch", "set_room_fx", "set_palette_colors", "place_item", "set_room_tiles")
+                it.name in setOf("set_room_music", "set_room_state_fields", "configure_patch", "set_room_fx", "set_palette_colors", "place_item", "set_room_tiles")
             }
                 .all { it.effect == SmeditToolEffect.READ_ONLY },
         )

@@ -35,6 +35,8 @@ import com.supermetroid.editor.api.SmeditPatchMutationPlan
 import com.supermetroid.editor.api.SmeditPatchSummary
 import com.supermetroid.editor.api.SmeditPatchDetails
 import com.supermetroid.editor.api.SmeditPatchValueChange
+import com.supermetroid.editor.api.SmeditRoomStateFieldChange
+import com.supermetroid.editor.api.SmeditRoomStateFieldsMutationPlan
 import com.supermetroid.editor.api.SmeditPaletteColorChange
 import com.supermetroid.editor.api.SmeditPaletteMutationPlan
 import com.supermetroid.editor.api.SmeditPaletteTargetMutationPlan
@@ -289,6 +291,39 @@ class AiWorkspaceMutationTest {
         val palette = (restored.conversationItems.first() as AiMutationPlanMessage).plan.palette
         assertEquals("sprite:boss_kraid_health_bg", palette?.paletteId)
         assertEquals("sprite:boss_kraid_health_oam", palette?.additionalTargets?.single()?.paletteId)
+    }
+
+    @Test
+    fun `room state field approval details survive restart`() {
+        val registry = SmeditToolRegistry(EmptyWorkspace())
+        val state = AiWorkspaceState(
+            credentialStore = AiCredentialStore(temporary) { null },
+            conversationStore = AiConversationStore(temporary),
+            providerList = emptyList(),
+            toolRegistry = registry,
+            mutationController = FakeMutationController(),
+        )
+        state.executeToolCall(
+            registry,
+            AiToolCall("state-fields-call", "set_room_state_fields", buildJsonObject {}, "{}"),
+        )
+        runBlocking { state.approvePendingMutation() }
+
+        val restored = AiWorkspaceState(
+            credentialStore = AiCredentialStore(temporary) { null },
+            conversationStore = AiConversationStore(temporary),
+            providerList = emptyList(),
+            toolRegistry = registry,
+            mutationController = FakeMutationController(),
+        )
+        val message = restored.conversationItems.first() as AiMutationPlanMessage
+        val fields = message.plan.roomStateFields
+
+        assertEquals(SmeditMutationPlanKind.ROOM_STATE_FIELDS, message.plan.kind)
+        assertEquals("state-1", fields?.stateId)
+        assertEquals("Music data", fields?.changes?.first()?.label)
+        assertEquals(0x24, fields?.changes?.first()?.after)
+        assertEquals(AiToolActivityStatus.APPLIED, message.status)
     }
 
     @Test
@@ -724,6 +759,21 @@ class AiWorkspaceMutationTest {
                         stateScope = "all_states",
                         stateIds = listOf("state-1", "state-2"),
                         sourceManaged = false,
+                    ),
+                )
+                "set_room_state_fields" -> base.copy(
+                    title = "Edit Landing Site · state-1",
+                    kind = SmeditMutationPlanKind.ROOM_STATE_FIELDS,
+                    roomStateFields = SmeditRoomStateFieldsMutationPlan(
+                        roomId = "0x91F8",
+                        roomName = "Landing Site",
+                        stateId = "state-1",
+                        stateCondition = "Event 0 set",
+                        sourceManaged = false,
+                        changes = listOf(
+                            SmeditRoomStateFieldChange("music_data", "Music data", 0, 0x24),
+                            SmeditRoomStateFieldChange("music_track", "Music track", 0, 3),
+                        ),
                     ),
                 )
                 else -> base

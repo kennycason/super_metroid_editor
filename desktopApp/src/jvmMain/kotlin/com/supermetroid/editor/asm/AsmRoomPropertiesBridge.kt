@@ -34,6 +34,7 @@ internal class AsmRoomPropertiesBridge(
         room.ensureStateManifest(parser)
     }
     fun document(text: String) = AsmRoomPropertiesSource(text, AsmRoomPropertiesSource.projectIdentities(project()))
+    fun sourceText(): String = workspace.projectSourceText(PLM_SOURCE_FILE)
     private fun source(): AsmRoomPropertiesSource {
         val text = workspace.projectSourceText(PLM_SOURCE_FILE)
         val key = Revision(text, AsmRoomPropertiesSource.projectIdentities(project()))
@@ -215,6 +216,18 @@ internal class AsmRoomPropertiesBridge(
         require(view(roomId).problem == null) { view(roomId).problem ?: "Invalid room properties." }
         val current = source()
         workspace.replaceProjectSource(PLM_SOURCE_FILE, current.text, current.editStates(room, mapOf(stateId to nativeState(room, stateId).over(change))))
+        refreshAll()
+    }
+    /** Build a checked full-source replacement without mutating the workspace. */
+    fun planStateEdit(roomId: Int, stateId: String, change: StateDataChange): String {
+        val room = project().rooms.getValue(project().roomKey(roomId))
+        require(view(roomId).problem == null) { view(roomId).problem ?: "Invalid room properties." }
+        return source().editStates(room, mapOf(stateId to nativeState(room, stateId).over(change)))
+    }
+    /** Publish a previously planned transition with optimistic stale-source protection. */
+    fun applyPlannedStateEdit(expected: String, replacement: String) {
+        require(sourceText() == expected) { "Room-property source changed after the AI plan was created. Nothing was changed." }
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, expected, replacement)
         refreshAll()
     }
     fun cloneState(roomId: Int, template: String, newId: String) {

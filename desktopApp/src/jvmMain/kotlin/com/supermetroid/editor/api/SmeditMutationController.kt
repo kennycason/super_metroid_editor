@@ -44,7 +44,23 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
-enum class SmeditMutationPlanKind { ROOM_MUSIC, PATCH, ROOM_FX, PALETTE, ITEM, ROOM_TILES }
+enum class SmeditMutationPlanKind { ROOM_MUSIC, ROOM_STATE_FIELDS, PATCH, ROOM_FX, PALETTE, ITEM, ROOM_TILES }
+
+data class SmeditRoomStateFieldChange(
+    val field: String,
+    val label: String,
+    val before: Int,
+    val after: Int,
+)
+
+data class SmeditRoomStateFieldsMutationPlan(
+    val roomId: String,
+    val roomName: String,
+    val stateId: String,
+    val stateCondition: String,
+    val sourceManaged: Boolean,
+    val changes: List<SmeditRoomStateFieldChange>,
+)
 
 data class SmeditPatchValueChange(
     val key: String,
@@ -144,6 +160,7 @@ data class SmeditMutationPlan(
     val protectedRoomIds: List<String> = emptyList(),
     val protectedRoomPreview: List<String> = emptyList(),
     val kind: SmeditMutationPlanKind = SmeditMutationPlanKind.ROOM_MUSIC,
+    val roomStateFields: SmeditRoomStateFieldsMutationPlan? = null,
     val patch: SmeditPatchMutationPlan? = null,
     val fx: SmeditRoomFxMutationPlan? = null,
     val palette: SmeditPaletteMutationPlan? = null,
@@ -207,6 +224,23 @@ internal class DesktopSmeditMutationController(
     private data class AppliedRoomMusicAction(
         val plan: RoomMusicPlan,
         val after: List<RoomMusicSnapshot>,
+    ) : AppliedAction {
+        override val presentation: SmeditMutationPlan get() = plan.presentation
+        override val projectId: String get() = plan.projectId
+    }
+
+    private data class RoomStateFieldsPlan(
+        override val presentation: SmeditMutationPlan,
+        override val projectId: String,
+        val roomId: Int,
+        val before: RoomModelSnapshot?,
+        val after: RoomModelSnapshot?,
+        val sourceBefore: String?,
+        val sourceAfter: String?,
+    ) : PendingPlan
+
+    private data class AppliedRoomStateFieldsAction(
+        val plan: RoomStateFieldsPlan,
     ) : AppliedAction {
         override val presentation: SmeditMutationPlan get() = plan.presentation
         override val projectId: String get() = plan.projectId
@@ -314,6 +348,7 @@ internal class DesktopSmeditMutationController(
         if (pending != null) return failure("pending_approval_exists", "Approve or reject the existing AI plan before staging another write.")
         return when (toolName) {
             SET_ROOM_MUSIC -> planRoomMusic(arguments)
+            SET_ROOM_STATE_FIELDS -> planRoomStateFields(arguments)
             CONFIGURE_PATCH -> planPatch(arguments)
             SET_ROOM_FX -> planRoomFx(arguments)
             SET_PALETTE_COLORS -> planPalette(arguments)
@@ -482,6 +517,204 @@ internal class DesktopSmeditMutationController(
                 },
                 isError = false,
             ),
+        )
+    }
+
+    private fun planRoomStateFields(arguments: JsonObject): SmeditMutationPlanningResult = try {
+        planRoomStateFieldsChecked(arguments)
+    } catch (problem: Exception) {
+        failure("state_fields_plan_failed", problem.message ?: "The room-state field plan could not be created.")
+    }
+
+    private fun planRoomStateFieldsChecked(arguments: JsonObject): SmeditMutationPlanningResult {
+        val summary = workspace.workspaceSummary()
+        if (!summary.projectLoaded) return failure("workspace_unavailable", "Open a project or editable ROM before changing room-state fields.")
+        if (summary.readOnly) return failure("workspace_read_only", "The current workspace is read-only.")
+        val rawRoomId = arguments.string("room_id")
+            ?: return failure("invalid_arguments", "room_id is required.")
+        val roomId = parseRoomId(rawRoomId)
+            ?: return failure("invalid_arguments", "room_id must be a 16-bit hexadecimal room id.")
+        val stateId = arguments.string("state_id")?.trim()?.takeIf(String::isNotEmpty)
+            ?: return failure("invalid_arguments", "state_id is required.")
+        val room = workspace.room(roomId)
+            ?: return failure("room_not_found", "No readable room exists at ${formatRoomId(roomId)}.")
+        val state = room.states.singleOrNull { it.id == stateId }
+            ?: return failure("state_not_found", "No state '$stateId' exists in ${room.name}.")
+        if (!state.readable) {
+            return failure("state_unreadable", "State '$stateId' in ${room.name} does not expose safely readable scalar fields.")
+        }
+
+        val updateFields = arguments.stringList("update_fields")
+            ?: return failure("invalid_arguments", "update_fields must be an array of canonical state-field names.")
+        if (updateFields.isEmpty()) {
+            return failure("invalid_arguments", "update_fields must name at least one state field to change.")
+        }
+        if (updateFields.distinct().size != updateFields.size) {
+            return failure("invalid_arguments", "update_fields must not contain duplicate field names.")
+        }
+        val ranges = linkedMapOf(
+            "tileset" to 0..28,
+            "music_data" to 0..0xFF,
+            "music_track" to 0..0xFF,
+            "bg_scrolling" to 0..0xFFFF,
+        )
+        val unknownFields = updateFields.toSet() - ranges.keys
+        if (unknownFields.isNotEmpty()) {
+            return failure("invalid_arguments", "Unknown update_fields value(s): ${unknownFields.sorted().joinToString()}.")
+        }
+        val requested = linkedMapOf<String, Int>()
+        for (field in updateFields) {
+            val range = ranges.getValue(field)
+            val value = (arguments[field] as? JsonPrimitive)?.intOrNull
+                ?: return failure("invalid_arguments", "$field must be an integer from ${range.first} through ${range.last}.")
+            if (value !in range) {
+                return failure("invalid_arguments", "$field must be an integer from ${range.first} through ${range.last}.")
+            }
+            requested[field] = value
+        }
+        val overwriteAudioSensitiveMusic = arguments.optionalBoolean("overwrite_audio_sensitive_music")
+            ?: if ("overwrite_audio_sensitive_music" in arguments) {
+                return failure("invalid_arguments", "overwrite_audio_sensitive_music must be true or false.")
+            } else false
+
+        fun currentValue(field: String): Int? = when (field) {
+            "tileset" -> state.tileset
+            "music_data" -> state.musicData
+            "music_track" -> state.musicTrack
+            "bg_scrolling" -> state.bgScrolling
+            else -> null
+        }
+        val labels = mapOf(
+            "tileset" to "Tileset",
+            "music_data" to "Music data",
+            "music_track" to "Music track",
+            "bg_scrolling" to "Layer 2 scrolling",
+        )
+        val changes = updateFields.mapNotNull { field ->
+            val before = currentValue(field)
+                ?: return failure("state_unreadable", "${labels.getValue(field)} is unavailable for state '$stateId'.")
+            val after = requested.getValue(field)
+            SmeditRoomStateFieldChange(field, labels.getValue(field), before, after).takeIf { before != after }
+        }
+        if (changes.isEmpty()) return failure("no_changes", "The target state already has every requested value.")
+
+        val changesMusic = changes.any { it.field == "music_data" || it.field == "music_track" }
+        val audioSensitive = room.area.equals(TOURIAN_AREA, ignoreCase = true)
+        if (changesMusic && audioSensitive && !overwriteAudioSensitiveMusic) {
+            return failure(
+                "protected_music",
+                "Tourian music is protected because Metroid, boss, and cutscene sounds depend on its native song instruments. " +
+                    "Set overwrite_audio_sensitive_music=true only after reviewing the exact state change.",
+            )
+        }
+
+        val currentParser = parser()
+            ?: return failure("workspace_unavailable", "The current ROM parser is unavailable. Reopen the project and try again.")
+        val project = editorState.project
+        val key = project.roomKey(roomId)
+        val liveRoom = project.rooms[key]
+        val sourceManaged = (liveRoom?.asmRoomPropertiesSourceVersion ?: 0) != 0
+        val before: RoomModelSnapshot?
+        val after: RoomModelSnapshot?
+        val sourceBefore: String?
+        val sourceAfter: String?
+        if (sourceManaged) {
+            val authoredRoom = liveRoom
+                ?: return failure("source_unavailable", "The source-managed room model is unavailable.")
+            val bridge = editorState.asmPlmSourceBridge
+                ?: return failure("source_unavailable", "Wait for the project ASM workspace, then try again.")
+            val properties = bridge.properties
+            val view = properties.view(roomId)
+            if (view.problem != null) return failure("source_invalid", view.problem)
+            val desired = StateDataChange(
+                tileset = requested["tileset"] ?: state.tileset,
+                musicData = requested["music_data"] ?: state.musicData,
+                musicTrack = requested["music_track"] ?: state.musicTrack,
+                bgScrolling = requested["bg_scrolling"] ?: state.bgScrolling,
+            )
+            if (listOf(desired.tileset, desired.musicData, desired.musicTrack, desired.bgScrolling).any { it == null }) {
+                return failure("state_unreadable", "The complete source-owned state fields are unavailable.")
+            }
+            sourceBefore = properties.sourceText()
+            sourceAfter = properties.planStateEdit(roomId, stateId, desired)
+            if (sourceBefore == sourceAfter) return failure("no_changes", "The target ASM state already has every requested value.")
+            before = null
+            after = null
+            check(authoredRoom.asmRoomPropertiesSourceVersion != 0)
+        } else {
+            if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+                return failure(
+                    "source_adoption_required",
+                    "Adopt ${room.name}'s room properties into project ASM before staging AI state-field changes.",
+                )
+            }
+            val staged = snapshotRoomForResize(liveRoom ?: RoomEdits(roomId))
+            if (staged.states.isEmpty()) staged.ensureStateManifest(currentParser)
+            val target = staged.effectiveStates.singleOrNull { it.id == stateId }
+                ?: return failure("state_not_found", "The target state changed while planning.")
+            val changedValues = changes.associate { it.field to it.after }
+            val existing = target.stateDataChange ?: StateDataChange()
+            target.stateDataChange = existing.copy(
+                tileset = changedValues["tileset"] ?: existing.tileset,
+                musicData = changedValues["music_data"] ?: existing.musicData,
+                musicTrack = changedValues["music_track"] ?: existing.musicTrack,
+                bgScrolling = changedValues["bg_scrolling"] ?: existing.bgScrolling,
+            ).takeIf { it != StateDataChange() }
+            before = RoomModelSnapshot(roomId, liveRoom?.let(::snapshotRoomForResize))
+            after = RoomModelSnapshot(roomId, staged)
+            sourceBefore = null
+            sourceAfter = null
+        }
+
+        val warnings = buildList {
+            if (!state.defaultState) add("This exact target is a conditional state: ${state.condition}.")
+            if (changesMusic && audioSensitive) {
+                add("Explicit override changes Tourian music; song-dependent sounds may glitch or deadlock door transitions.")
+            }
+        }
+        val presentation = SmeditMutationPlan(
+            id = UUID.randomUUID().toString(),
+            toolName = SET_ROOM_STATE_FIELDS,
+            title = "Edit ${room.name} · $stateId",
+            musicData = requested["music_data"] ?: state.musicData ?: 0,
+            musicTrack = requested["music_track"] ?: state.musicTrack ?: 0,
+            affectedRoomCount = 1,
+            affectedStateCount = 1,
+            affectedRoomPreview = listOf("${room.name} (${formatRoomId(roomId)}) · $stateId"),
+            excludedRoomIds = emptyList(),
+            excludedAreas = emptyList(),
+            warnings = warnings,
+            kind = SmeditMutationPlanKind.ROOM_STATE_FIELDS,
+            roomStateFields = SmeditRoomStateFieldsMutationPlan(
+                roomId = formatRoomId(roomId),
+                roomName = room.name,
+                stateId = stateId,
+                stateCondition = state.condition,
+                sourceManaged = sourceManaged,
+                changes = changes,
+            ),
+        )
+        pending = RoomStateFieldsPlan(
+            presentation,
+            project.projectId,
+            roomId,
+            before,
+            after,
+            sourceBefore,
+            sourceAfter,
+        )
+        return SmeditMutationPlanningResult(
+            result = SmeditToolResult(buildJsonObject {
+                put("ok", true)
+                put("status", "approval_required")
+                put("plan_id", presentation.id)
+                put("tool", SET_ROOM_STATE_FIELDS)
+                put("room_id", formatRoomId(roomId))
+                put("state_id", stateId)
+                put("changed_field_count", changes.size)
+                put("message", "The exact room-state field changes are waiting for user approval. No project or ASM source data has changed.")
+            }, isError = false),
+            plan = presentation,
         )
     }
 
@@ -1608,6 +1841,31 @@ internal class DesktopSmeditMutationController(
                 editorState.recordExternalRoomMutation(plan.roomIds)
                 transition(plan.presentation, "Applied")
             }
+            is RoomStateFieldsPlan -> {
+                requireProject(plan.projectId)
+                if (plan.sourceBefore != null) {
+                    val properties = requireNotNull(editorState.asmPlmSourceBridge) {
+                        "The ASM room-property workspace is unavailable."
+                    }.properties
+                    properties.applyPlannedStateEdit(plan.sourceBefore, requireNotNull(plan.sourceAfter))
+                } else {
+                    val before = requireNotNull(plan.before)
+                    val after = requireNotNull(plan.after)
+                    requireRoomModels(listOf(before), "approval")
+                    val rollback = modelSnapshot(plan.roomId)
+                    try {
+                        restoreRoomModels(listOf(after))
+                    } catch (problem: Throwable) {
+                        restoreRoomModels(listOf(rollback))
+                        throw problem
+                    }
+                }
+                undoStack += AppliedRoomStateFieldsAction(plan)
+                redoStack.clear()
+                pending = null
+                editorState.recordExternalRoomMutation(listOf(plan.roomId))
+                transition(plan.presentation, "Applied")
+            }
             is PatchPlan -> {
                 requireProject(plan.projectId)
                 requirePatchSnapshot(plan.before, "approval")
@@ -1712,6 +1970,28 @@ internal class DesktopSmeditMutationController(
                 }
                 editorState.recordExternalRoomMutation(action.plan.roomIds)
             }
+            is AppliedRoomStateFieldsAction -> {
+                requireProject(action.projectId)
+                val plan = action.plan
+                if (plan.sourceBefore != null) {
+                    val properties = requireNotNull(editorState.asmPlmSourceBridge) {
+                        "The ASM room-property workspace is unavailable."
+                    }.properties
+                    properties.applyPlannedStateEdit(requireNotNull(plan.sourceAfter), plan.sourceBefore)
+                } else {
+                    val before = requireNotNull(plan.before)
+                    val after = requireNotNull(plan.after)
+                    requireRoomModels(listOf(after), "undo")
+                    val rollback = modelSnapshot(plan.roomId)
+                    try {
+                        restoreRoomModels(listOf(before))
+                    } catch (problem: Throwable) {
+                        restoreRoomModels(listOf(rollback))
+                        throw problem
+                    }
+                }
+                editorState.recordExternalRoomMutation(listOf(plan.roomId))
+            }
             is AppliedPatchAction -> {
                 requireProject(action.projectId)
                 requirePatchSnapshot(action.plan.after, "undo")
@@ -1786,6 +2066,28 @@ internal class DesktopSmeditMutationController(
                     throw problem
                 }
                 editorState.recordExternalRoomMutation(action.plan.roomIds)
+            }
+            is AppliedRoomStateFieldsAction -> {
+                requireProject(action.projectId)
+                val plan = action.plan
+                if (plan.sourceBefore != null) {
+                    val properties = requireNotNull(editorState.asmPlmSourceBridge) {
+                        "The ASM room-property workspace is unavailable."
+                    }.properties
+                    properties.applyPlannedStateEdit(plan.sourceBefore, requireNotNull(plan.sourceAfter))
+                } else {
+                    val before = requireNotNull(plan.before)
+                    val after = requireNotNull(plan.after)
+                    requireRoomModels(listOf(before), "redo")
+                    val rollback = modelSnapshot(plan.roomId)
+                    try {
+                        restoreRoomModels(listOf(after))
+                    } catch (problem: Throwable) {
+                        restoreRoomModels(listOf(rollback))
+                        throw problem
+                    }
+                }
+                editorState.recordExternalRoomMutation(listOf(plan.roomId))
             }
             is AppliedPatchAction -> {
                 requireProject(action.projectId)
@@ -1986,6 +2288,8 @@ internal class DesktopSmeditMutationController(
         summary = when (plan.kind) {
             SmeditMutationPlanKind.ROOM_MUSIC ->
                 "$verb ${plan.title.lowercase()} for ${plan.affectedRoomCount} room(s) and ${plan.affectedStateCount} state(s)."
+            SmeditMutationPlanKind.ROOM_STATE_FIELDS ->
+                "$verb ${plan.title.lowercase()} with ${plan.roomStateFields?.changes?.size ?: 0} field change(s)."
             SmeditMutationPlanKind.PATCH -> "$verb ${plan.title.lowercase()}."
             SmeditMutationPlanKind.ROOM_FX ->
                 "$verb room FX for ${plan.affectedRoomCount} room(s) and ${plan.affectedStateCount} state(s)."
@@ -2151,6 +2455,7 @@ internal class DesktopSmeditMutationController(
 
     private companion object {
         const val SET_ROOM_MUSIC = "set_room_music"
+        const val SET_ROOM_STATE_FIELDS = "set_room_state_fields"
         const val CONFIGURE_PATCH = "configure_patch"
         const val SET_ROOM_FX = "set_room_fx"
         const val SET_PALETTE_COLORS = "set_palette_colors"

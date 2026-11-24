@@ -34,6 +34,24 @@ data class StoredAiRoomFxMutationPlan(
 )
 
 @Serializable
+data class StoredAiRoomStateFieldChange(
+    val field: String,
+    val label: String,
+    val before: Int,
+    val after: Int,
+)
+
+@Serializable
+data class StoredAiRoomStateFieldsMutationPlan(
+    val roomId: String,
+    val roomName: String,
+    val stateId: String,
+    val stateCondition: String,
+    val sourceManaged: Boolean,
+    val changes: List<StoredAiRoomStateFieldChange> = emptyList(),
+)
+
+@Serializable
 data class StoredAiPaletteColorChange(
     val index: Int,
     val row: Int,
@@ -116,6 +134,7 @@ data class StoredAiMutationPlan(
     val protectedRoomIds: List<String> = emptyList(),
     val protectedRoomPreview: List<String> = emptyList(),
     val kind: String = "ROOM_MUSIC",
+    val roomStateFields: StoredAiRoomStateFieldsMutationPlan? = null,
     val patch: StoredAiPatchMutationPlan? = null,
     val fx: StoredAiRoomFxMutationPlan? = null,
     val palette: StoredAiPaletteMutationPlan? = null,

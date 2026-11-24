@@ -33,6 +33,20 @@ doing so can glitch audio or deadlock a door transition.
 
 Documentation and model instructions explain this invariant, but correctness does not depend on the model remembering it. The mutation boundary enforces it deterministically.
 
+## Exact room-state scalar fields
+
+`set_room_state_fields` changes one stable state ID in one room. It can stage
+partial updates to tileset, music data, music track, and Layer 2 scrolling;
+unmentioned fields and sibling states remain unchanged. The approval card shows
+the effective before/after value for every changed field, and project-model or
+ASM-source application uses optimistic snapshots so a newer edit blocks the
+approval, undo, or redo.
+
+An exact state target does not flatten intentional boss/event music differences,
+but Tourian's song-dependent audio constraint still applies. Any Tourian music
+change requires `overwrite_audio_sensitive_music=true` and carries the same
+runtime warning as the bulk music tool.
+
 ## Room-state FX
 
 FX is state-scoped and one FX table can contain ordered incoming-door variants

@@ -53,6 +53,24 @@ class AsmRoomPropertiesSourceTest {
         return Fixture(workspace, bridge, project, editor, file)
     }
 
+    @Test fun `planned state edit is non mutating and rejects stale source`() = runBlocking {
+        val f = fixture()
+        f.adopt()
+        val stateId = f.room.states.first().id
+        val current = f.input().states.getValue(stateId)
+        val before = f.bridge.properties.sourceText()
+
+        val after = f.bridge.properties.planStateEdit(roomId = 0x91F8, stateId = stateId, change = current.copy(musicTrack = 7))
+
+        assertNotEquals(before, after)
+        assertEquals(before, f.bridge.properties.sourceText())
+        f.bridge.properties.applyPlannedStateEdit(before, after)
+        assertEquals(7, f.input().states.getValue(stateId).musicTrack)
+        assertFailsWith<IllegalArgumentException> {
+            f.bridge.properties.applyPlannedStateEdit(before, after)
+        }
+    }
+
     @Test fun `automatic scalar source is an editable overlay with no adoption build marker save or search side effects`() = runBlocking {
         val f = fixture(built = true)
         assertTrue(f.editor.saveProject())

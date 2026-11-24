@@ -118,6 +118,82 @@ class SmeditMutationControllerTest {
     }
 
     @Test
+    fun `exact room state fields stage apply undo and redo without changing sibling states`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val before = kotlinx.serialization.json.Json.encodeToString(
+            com.supermetroid.editor.data.SmEditProject.serializer(),
+            editor.project,
+        )
+
+        val planning = controller.plan(
+            "set_room_state_fields",
+            stateFieldArguments(
+                stateId = "state-1",
+                fields = mapOf("tileset" to 5, "music_data" to 0x24, "music_track" to 3, "bg_scrolling" to 0x0101),
+            ),
+        )
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        assertEquals(SmeditMutationPlanKind.ROOM_STATE_FIELDS, planning.plan?.kind)
+        assertEquals(4, planning.plan?.roomStateFields?.changes?.size)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(com.supermetroid.editor.data.SmEditProject.serializer(), editor.project))
+
+        controller.approve(planning.plan!!.id)
+        val room = editor.project.rooms.getValue("91F8")
+        assertEquals(StateDataChange(tileset = 5, musicData = 0x24, musicTrack = 3, bgScrolling = 0x0101), room.states[0].stateDataChange)
+        assertNull(room.states[1].stateDataChange)
+        assertNull(room.stateDataChange)
+
+        controller.undo()
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(com.supermetroid.editor.data.SmEditProject.serializer(), editor.project))
+        controller.redo()
+        assertEquals(0x24, editor.project.rooms.getValue("91F8").states[0].stateDataChange?.musicData)
+        assertNull(editor.project.rooms.getValue("91F8").states[1].stateDataChange)
+    }
+
+    @Test
+    fun `exact room state fields validate scope no-ops and Tourian music independently`() {
+        val editor = editor()
+        val parser = RomParser(objectSourceTestRom())
+        val controller = DesktopSmeditMutationController(
+            editor,
+            FakeWorkspace(roomAreaOverrides = mapOf(0x91F8 to "Tourian")),
+            parser = { parser },
+        )
+
+        assertEquals(
+            "no_changes",
+            controller.plan("set_room_state_fields", stateFieldArguments(fields = mapOf("tileset" to 0))).errorCode(),
+        )
+        assertEquals(
+            "invalid_arguments",
+            controller.plan("set_room_state_fields", stateFieldArguments(fields = mapOf("tileset" to 29))).errorCode(),
+        )
+        assertEquals(
+            "state_not_found",
+            controller.plan("set_room_state_fields", stateFieldArguments(stateId = "missing", fields = mapOf("tileset" to 1))).errorCode(),
+        )
+        assertEquals(
+            "protected_music",
+            controller.plan(
+                "set_room_state_fields",
+                stateFieldArguments(fields = mapOf("music_data" to 0x18)),
+            ).errorCode(),
+        )
+        val allowed = controller.plan(
+            "set_room_state_fields",
+            stateFieldArguments(
+                fields = mapOf("music_data" to 0x18),
+                overwriteAudioSensitiveMusic = true,
+            ),
+        )
+        assertFalse(allowed.result.isError, allowed.result.output.toString())
+        assertTrue(allowed.plan!!.warnings.single { it.contains("Tourian music") }.contains("deadlock"))
+    }
+
+    @Test
     fun `music bytes and ASM source mode fail closed`() {
         val editor = editor()
         val controller = DesktopSmeditMutationController(editor, FakeWorkspace())
@@ -893,6 +969,19 @@ class SmeditMutationControllerTest {
         overwriteAudioSensitiveMusic?.let { put("overwrite_audio_sensitive_music", it) }
     }
 
+    private fun stateFieldArguments(
+        roomId: String = "91F8",
+        stateId: String = "state-1",
+        fields: Map<String, Int>,
+        overwriteAudioSensitiveMusic: Boolean? = null,
+    ) = buildJsonObject {
+        put("room_id", roomId)
+        put("state_id", stateId)
+        put("update_fields", JsonArray(fields.keys.map(::JsonPrimitive)))
+        fields.forEach { (field, value) -> put(field, value) }
+        overwriteAudioSensitiveMusic?.let { put("overwrite_audio_sensitive_music", it) }
+    }
+
     private fun patchArguments(
         patch: String,
         enabled: Boolean? = null,
@@ -940,11 +1029,12 @@ class SmeditMutationControllerTest {
         private val distinctMusicRoomIds: Set<Int> = emptySet(),
         includeTourianRoom: Boolean = false,
         private val unreadableItemRoomIds: Set<Int> = emptySet(),
+        private val roomAreaOverrides: Map<Int, String> = emptyMap(),
     ) : SmeditWorkspaceAccess {
         private val roomList = buildList {
-            add(SmeditRoomSummary("0x91F8", "Landing Site", area = "Crateria"))
-            add(SmeditRoomSummary("0x9AD9", "Green Brinstar", area = "Brinstar"))
-            add(SmeditRoomSummary("0xDF45", "Ceres Elevator", area = "Ceres"))
+            add(SmeditRoomSummary("0x91F8", "Landing Site", area = roomAreaOverrides[0x91F8] ?: "Crateria"))
+            add(SmeditRoomSummary("0x9AD9", "Green Brinstar", area = roomAreaOverrides[0x9AD9] ?: "Brinstar"))
+            add(SmeditRoomSummary("0xDF45", "Ceres Elevator", area = roomAreaOverrides[0xDF45] ?: "Ceres"))
             if (includeTourianRoom) add(SmeditRoomSummary("0xDCB1", "Baby Metroid Room", area = "Tourian"))
         }
         private val stateCounts = buildMap {
@@ -995,6 +1085,10 @@ class SmeditMutationControllerTest {
                         projectEdited = false,
                         projectFxEdited = false,
                         fxSourceManaged = false,
+                        tileset = 0,
+                        musicData = if (roomId in distinctMusicRoomIds && index == 0) 0x24 else 0,
+                        musicTrack = if (roomId in distinctMusicRoomIds && index == 0) 3 else 0,
+                        bgScrolling = 0,
                     )
                 },
             )

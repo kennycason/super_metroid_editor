@@ -68,6 +68,8 @@ import com.supermetroid.editor.ai.StoredAiMutationPlan
 import com.supermetroid.editor.ai.StoredAiPatchMutationPlan
 import com.supermetroid.editor.ai.StoredAiPatchValueChange
 import com.supermetroid.editor.ai.StoredAiRoomFxMutationPlan
+import com.supermetroid.editor.ai.StoredAiRoomStateFieldChange
+import com.supermetroid.editor.ai.StoredAiRoomStateFieldsMutationPlan
 import com.supermetroid.editor.ai.StoredAiPaletteColorChange
 import com.supermetroid.editor.ai.StoredAiPaletteMutationPlan
 import com.supermetroid.editor.ai.StoredAiPaletteTargetMutationPlan
@@ -83,6 +85,8 @@ import com.supermetroid.editor.api.SmeditMutationPlan
 import com.supermetroid.editor.api.SmeditPatchMutationPlan
 import com.supermetroid.editor.api.SmeditPatchValueChange
 import com.supermetroid.editor.api.SmeditRoomFxMutationPlan
+import com.supermetroid.editor.api.SmeditRoomStateFieldChange
+import com.supermetroid.editor.api.SmeditRoomStateFieldsMutationPlan
 import com.supermetroid.editor.api.SmeditPaletteColorChange
 import com.supermetroid.editor.api.SmeditPaletteMutationPlan
 import com.supermetroid.editor.api.SmeditPaletteTargetMutationPlan
@@ -425,6 +429,23 @@ class AiWorkspaceState(
         protectedRoomIds = protectedRoomIds,
         protectedRoomPreview = protectedRoomPreview,
         kind = kind.name,
+        roomStateFields = roomStateFields?.let { fields ->
+            StoredAiRoomStateFieldsMutationPlan(
+                roomId = fields.roomId,
+                roomName = fields.roomName,
+                stateId = fields.stateId,
+                stateCondition = fields.stateCondition,
+                sourceManaged = fields.sourceManaged,
+                changes = fields.changes.map { change ->
+                    StoredAiRoomStateFieldChange(
+                        change.field,
+                        change.label,
+                        change.before,
+                        change.after,
+                    )
+                },
+            )
+        },
         patch = patch?.let { patch ->
             StoredAiPatchMutationPlan(
                 patchId = patch.patchId,
@@ -531,6 +552,23 @@ class AiWorkspaceState(
         protectedRoomPreview = protectedRoomPreview,
         kind = SmeditMutationPlanKind.entries.firstOrNull { it.name == kind }
             ?: SmeditMutationPlanKind.ROOM_MUSIC,
+        roomStateFields = roomStateFields?.let { fields ->
+            SmeditRoomStateFieldsMutationPlan(
+                roomId = fields.roomId,
+                roomName = fields.roomName,
+                stateId = fields.stateId,
+                stateCondition = fields.stateCondition,
+                sourceManaged = fields.sourceManaged,
+                changes = fields.changes.map { change ->
+                    SmeditRoomStateFieldChange(
+                        change.field,
+                        change.label,
+                        change.before,
+                        change.after,
+                    )
+                },
+            )
+        },
         patch = patch?.let { patch ->
             SmeditPatchMutationPlan(
                 patchId = patch.patchId,
@@ -1683,6 +1721,29 @@ private fun AiMutationApprovalCard(
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
+                }
+                SmeditMutationPlanKind.ROOM_STATE_FIELDS -> plan.roomStateFields?.let { fields ->
+                    Text(
+                        "${fields.roomName} (${fields.roomId}) · ${fields.stateId}",
+                        fontSize = fs.detail,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(fields.stateCondition, fontSize = fs.detail)
+                    fields.changes.forEach { change ->
+                        fun formatted(value: Int): String = when (change.field) {
+                            "music_data", "music_track" -> "0x${value.toString(16).uppercase().padStart(2, '0')}"
+                            "bg_scrolling" -> "0x${value.toString(16).uppercase().padStart(4, '0')}"
+                            else -> value.toString()
+                        }
+                        Text(
+                            "${change.label}: ${formatted(change.before)} → ${formatted(change.after)}",
+                            fontSize = fs.detail,
+                        )
+                    }
+                    Text(
+                        if (fields.sourceManaged) "Writes project ASM room-property source" else "Writes the project room model",
+                        fontSize = fs.detail,
+                    )
                 }
                 SmeditMutationPlanKind.PATCH -> plan.patch?.let { patch ->
                     Text(

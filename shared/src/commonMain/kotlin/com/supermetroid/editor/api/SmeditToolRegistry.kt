@@ -704,6 +704,29 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
             effect = SmeditToolEffect.MUTATION,
         ),
         SmeditToolDefinition(
+            name = "set_room_state_fields",
+            description = "Stage exact scalar changes to one stable room state for explicit approval. Use get_room first. Only fields named in update_fields are changed; sibling states and unmentioned fields are preserved. Music changes in Tourian require overwrite_audio_sensitive_music=true because native enemy, boss, and cutscene sounds depend on the Tourian song instruments.",
+            inputSchema = objectSchema(
+                properties = mapOf(
+                    "room_id" to stringSchema("Target room id in hexadecimal."),
+                    "state_id" to stringSchema("Exact stable state id returned by get_room."),
+                    "update_fields" to enumArraySchema(
+                        "Exact state fields to modify. List only fields intentionally requested.",
+                        listOf("tileset", "music_data", "music_track", "bg_scrolling"),
+                    ),
+                    "tileset" to integerSchema("Optional tileset id from 0 through 28.", 0, 28),
+                    "music_data" to integerSchema("Optional music data/song-set byte from 0 through 255.", 0, 255),
+                    "music_track" to integerSchema("Optional music track/play-index byte from 0 through 255.", 0, 255),
+                    "bg_scrolling" to integerSchema("Optional Layer 2 scrolling word from 0 through 65535.", 0, 0xFFFF),
+                    "overwrite_audio_sensitive_music" to booleanSchema(
+                        "Explicit opt-in to change music in Tourian. This can glitch Metroid/boss/cutscene sounds or deadlock door transitions. Defaults to false.",
+                    ),
+                ),
+                required = listOf("room_id", "state_id", "update_fields"),
+            ),
+            effect = SmeditToolEffect.MUTATION,
+        ),
+        SmeditToolDefinition(
             name = "configure_patch",
             description = "Stage enabling, disabling, or configuring one existing patch for explicit user approval. Use get_patch first and send canonical configuration keys. This never applies the change itself.",
             inputSchema = objectSchema(
