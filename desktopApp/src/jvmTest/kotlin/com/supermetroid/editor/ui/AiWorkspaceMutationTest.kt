@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ComposeScene
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -57,6 +58,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -534,7 +536,7 @@ class AiWorkspaceMutationTest {
 
     @Test
     @OptIn(ExperimentalComposeUiApi::class)
-    fun `rendered approve button applies its pending plan`() {
+    fun `rendered approve button applies its pending plan`() = runBlocking {
         val registry = SmeditToolRegistry(EmptyWorkspace())
         val mutations = FakeMutationController()
         val state = AiWorkspaceState(
@@ -558,7 +560,7 @@ class AiWorkspaceMutationTest {
         )
         val listState = LazyListState()
 
-        val scene = ComposeScene()
+        val scene = ComposeScene(coroutineContext = coroutineContext)
         val surface = Surface.makeRasterN32Premul(900, 600)
         try {
             scene.constraints = Constraints.fixed(900, 600)
@@ -572,10 +574,13 @@ class AiWorkspaceMutationTest {
                 }
             }
             var frameTime = System.nanoTime()
-            fun render() {
+            suspend fun render() {
                 repeat(16) {
+                    Snapshot.sendApplyNotifications()
+                    yield()
                     frameTime += 16_666_667
                     scene.render(surface.canvas, frameTime)
+                    delay(1)
                 }
             }
 
@@ -597,7 +602,7 @@ class AiWorkspaceMutationTest {
             scene.sendPointerEvent(PointerEventType.Press, clickPosition, button = PointerButton.Primary)
             scene.sendPointerEvent(PointerEventType.Release, clickPosition, button = PointerButton.Primary)
             render()
-            runBlocking { delay(50) }
+            delay(50)
             render()
 
             assertEquals(1, mutations.approvals)
