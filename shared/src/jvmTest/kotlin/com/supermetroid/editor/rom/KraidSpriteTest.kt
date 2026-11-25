@@ -154,6 +154,49 @@ class KraidSpriteTest {
     }
 
     @Test
+    fun `spawn and runtime previews use their independently owned Kraid palettes`() {
+        val rp = loadTestRom() ?: return
+        val kraid = KraidSpritemap(rp)
+        assertTrue(kraid.load())
+        val blue = 0x7C00
+        repeat(16) { column ->
+            kraid.getTileGraphics()!!.setPaletteEntry(KraidSpritemap.BODY_PALETTE_ROW, column, blue)
+        }
+        val base = IntArray(48) { blue }
+        val runtimeBg = IntArray(160)
+        val runtimeOam = IntArray(144)
+        repeat(16) { column ->
+            runtimeBg[8 * 16 + column] = 0x001F
+            runtimeOam[8 * 16 + column] = 0x03E0
+        }
+        kraid.applyPaletteRegionOverrides(
+            mapOf(
+                "boss_kraid" to base,
+                "boss_kraid_health_bg" to runtimeBg,
+                "boss_kraid_health_oam" to runtimeOam,
+            ),
+        )
+
+        val full = KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" }
+        assertEquals(EnemySpriteGraphics.snesColorToArgb(blue), kraid.getPalette()!![1])
+        assertEquals(EnemySpriteGraphics.snesColorToArgb(blue), kraid.readSpawnOamPalette()!![1])
+        assertEquals(0xFFFF0000.toInt(), kraid.readBgPalette(full)!![1])
+        assertEquals(0xFF00FF00.toInt(), kraid.readOamPalette(full)!![1])
+
+        val spawn = kraid.renderCompleteBody(
+            paletteStage = full,
+            paletteMode = KraidSpritemap.PreviewPaletteMode.SPAWN,
+        )
+        val runtime = kraid.renderCompleteBody(
+            paletteStage = full,
+            paletteMode = KraidSpritemap.PreviewPaletteMode.RUNTIME,
+        )
+        assertNotNull(spawn)
+        assertNotNull(runtime)
+        assertTrue(!spawn!!.pixels.contentEquals(runtime!!.pixels))
+    }
+
+    @Test
     fun `kraid exposes the four exact source head maps`() {
         assertEquals(
             listOf(0xA797C8, 0xA79AC8, 0xA79DC8, 0xA7A0C8),

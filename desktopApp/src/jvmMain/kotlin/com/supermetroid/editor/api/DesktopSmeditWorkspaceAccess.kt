@@ -14,6 +14,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.NativeLiquidOptions
+import com.supermetroid.editor.rom.DraygonSpritemap
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.baseSourceStateIndex
@@ -296,27 +297,69 @@ internal class DesktopSmeditWorkspaceAccess(
                 description = "Tileset $tilesetId palette (8 rows × 16 colors).",
                 colorCount = 128,
                 rowCount = 8,
+                colorsPerRow = 16,
                 editable = status.editable && editorState.readTilesetPalette(tilesetId, currentParser) != null,
                 sourceManaged = status.sourceManaged,
                 modified = editorState.hasCustomPalette(tilesetId),
                 affectedPaletteIds = status.affectedTilesetIds.filterNot { it == tilesetId }.map { "tileset:$it" },
+                relatedPaletteIds = when (tilesetId) {
+                    TileGraphics.KRAID_TILESET -> listOf(
+                        "sprite:boss_kraid",
+                        "sprite:boss_kraid_health_bg",
+                        "sprite:boss_kraid_health_oam",
+                    )
+                    DraygonSpritemap.TILESET_ID -> listOf(
+                        "sprite:boss_draygon",
+                        "sprite:boss_draygon_health",
+                    )
+                    else -> emptyList()
+                },
+                usage = when (tilesetId) {
+                    TileGraphics.KRAID_TILESET ->
+                        "Kraid's spawn-state BG2 body uses row 7 (indices 112–127); keep it aligned with Kraid health-BG row 8."
+                    DraygonSpritemap.TILESET_ID ->
+                        "Draygon's spawn-state BG2 body uses tileset 28 (\$1C) row 5 (indices 80–95); keep it aligned with Draygon's runtime BG row 5."
+                    else -> null
+                },
                 message = status.message,
             )
         }
         val sprites = SpritePalettes.REGIONS.map { region ->
             val related = when (region.id) {
-                "boss_kraid" -> listOf("boss_kraid_health_bg", "boss_kraid_health_oam")
-                "boss_kraid_health_bg" -> listOf("boss_kraid", "boss_kraid_health_oam")
-                "boss_kraid_health_oam" -> listOf("boss_kraid", "boss_kraid_health_bg")
-                "boss_phantoon" -> listOf("boss_phantoon_health")
-                "boss_phantoon_health" -> listOf("boss_phantoon")
+                "boss_kraid" -> listOf(
+                    "sprite:boss_kraid_health_bg",
+                    "sprite:boss_kraid_health_oam",
+                    "tileset:${TileGraphics.KRAID_TILESET}",
+                )
+                "boss_kraid_health_bg" -> listOf(
+                    "sprite:boss_kraid",
+                    "sprite:boss_kraid_health_oam",
+                    "tileset:${TileGraphics.KRAID_TILESET}",
+                )
+                "boss_kraid_health_oam" -> listOf(
+                    "sprite:boss_kraid",
+                    "sprite:boss_kraid_health_bg",
+                    "tileset:${TileGraphics.KRAID_TILESET}",
+                )
+                "boss_draygon" -> listOf(
+                    "sprite:boss_draygon_health",
+                    "tileset:${DraygonSpritemap.TILESET_ID}",
+                )
+                "boss_draygon_health" -> listOf(
+                    "sprite:boss_draygon",
+                    "tileset:${DraygonSpritemap.TILESET_ID}",
+                )
+                "boss_phantoon" -> listOf("sprite:boss_phantoon_health")
+                "boss_phantoon_health" -> listOf("sprite:boss_phantoon")
                 else -> emptyList()
-            }.map { "sprite:$it" }
+            }
             val usage = when (region.id) {
-                "boss_kraid" -> "Initial/base Kraid rows. The runtime health handler replaces the assembled body with the health-stage BG and OAM tables."
+                "boss_kraid" -> "Initial Kraid OBJ rows. Row 0 (indices 0–15) colors the linked hand/foot parts before the first hit."
                 "boss_kraid_bg" -> "Kraid room background environment colors; this is not Kraid's body palette."
-                "boss_kraid_health_bg" -> "Kraid BG2 body runtime stages. Row 8 (indices 128–143) drives the default full-health assembled preview."
-                "boss_kraid_health_oam" -> "Kraid arm, foot, lint, and nail runtime stages. Row 8 (indices 128–143) drives the default full-health assembled preview."
+                "boss_kraid_health_bg" -> "Kraid BG2 body runtime stages. Row 8 (indices 128–143) is full health and should match tileset 26 row 7 for a seamless spawn state."
+                "boss_kraid_health_oam" -> "Kraid arm, foot, lint, and nail runtime stages. Row 8 (indices 128–143) is the full-health post-hit OBJ state."
+                "boss_draygon" -> "Rows 0–3 are OBJ palettes; row 4 (indices 64–79) is runtime BG row 5 and should match tileset 28 (\$1C) row 5 at spawn; row 5 is hurt flash."
+                "boss_draygon_health" -> "Eight four-color health stages. Each row replaces BG row 5 columns 9–12 after Draygon's palette handler runs."
                 "boss_phantoon" -> "Phantoon's initial/base rows. The fight's health handler replaces these with the separate runtime health-stage table."
                 "boss_phantoon_health" -> "Phantoon's eight runtime health stages. Row 7 (indices 112–127) drives the default full-health assembled preview."
                 else -> null
@@ -329,6 +372,7 @@ internal class DesktopSmeditWorkspaceAccess(
                 description = region.description,
                 colorCount = region.colorCount,
                 rowCount = region.rowCount,
+                colorsPerRow = region.colorsPerRow,
                 editable = editorState.readSpritePalette(region.id, currentParser) != null,
                 sourceManaged = false,
                 modified = editorState.hasSpritePaletteOverride(region.id),
@@ -360,6 +404,7 @@ internal class DesktopSmeditWorkspaceAccess(
             description = summary.description,
             colorCount = summary.colorCount,
             rowCount = summary.rowCount,
+            colorsPerRow = summary.colorsPerRow,
             editable = summary.editable,
             sourceManaged = summary.sourceManaged,
             modified = summary.modified,

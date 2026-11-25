@@ -85,6 +85,10 @@ class EnemySpritemap(private val romParser: RomParser) {
         val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
         val oamTileNumberBase: Int = 0,
         val oamPaletteRows: Map<Int, IntArray> = emptyMap(),
+        /** BG palette rows are a separate CGRAM owner from identically numbered OBJ rows. */
+        val extendedTilemapPaletteRows: Map<Int, IntArray> = emptyMap(),
+        /** Fallback palette for extended BG tilemaps when their row is not explicitly supplied. */
+        val extendedTilemapPalette: IntArray? = null,
         val extendedOamOriginX: Int = 0,
         val extendedOamOriginY: Int = 0,
         val preserveExtendedChildDrawOrder: Boolean = false,
@@ -896,8 +900,18 @@ class EnemySpritemap(private val romParser: RomParser) {
 
         fun renderLayer(layer: TileDrawLayer) {
             val data = if (layer.usesExtendedTilemapData) tilemapData else tileData
+            val layerPalette = if (layer.usesExtendedTilemapData) {
+                options.extendedTilemapPalette ?: palette
+            } else {
+                palette
+            }
+            val layerPaletteRows = if (layer.usesExtendedTilemapData) {
+                options.extendedTilemapPaletteRows
+            } else {
+                options.oamPaletteRows
+            }
             for (cmd in layer.commands) {
-                renderTileCommand(pixels, w, h, minX, minY, cmd, data, palette, options.oamPaletteRows)
+                renderTileCommand(pixels, w, h, minX, minY, cmd, data, layerPalette, layerPaletteRows)
             }
         }
 
@@ -1033,7 +1047,7 @@ class EnemySpritemap(private val romParser: RomParser) {
                     hFlip = (tileWord shr 14) and 1 != 0,
                     vFlip = (tileWord shr 15) and 1 != 0,
                     is16x16 = false,
-                    paletteRow = 0
+                    paletteRow = (tileWord shr 10) and 0x7
                 )
             }
         }

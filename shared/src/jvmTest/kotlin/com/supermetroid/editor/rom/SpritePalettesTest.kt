@@ -15,7 +15,9 @@ class SpritePalettesTest {
         for (region in SpritePalettes.REGIONS) {
             assert(region.colorCount > 0) { "${region.id} has zero colors" }
             assert(region.offset > 0) { "${region.id} has zero offset" }
-            assert(region.colorCount % 16 == 0) { "${region.id} color count not multiple of 16" }
+            assert(region.colorCount % region.colorsPerRow == 0) {
+                "${region.id} color count not multiple of ${region.colorsPerRow}"
+            }
             assertEquals(region.colorCount * 2, region.byteSize)
         }
     }
@@ -27,6 +29,7 @@ class SpritePalettesTest {
         assertNotNull(SpritePalettes.findRegion("beam_standard"))
         assertNotNull(SpritePalettes.findRegion("boss_ridley"))
         assertNotNull(SpritePalettes.findRegion("boss_mother_brain"))
+        assertNotNull(SpritePalettes.findRegion("boss_draygon_health"))
         assertNotNull(SpritePalettes.findRegion("enemy_space_pirate_gold"))
         assertNotNull(SpritePalettes.findRegion("enemy_escape_etecoon"))
         assertEquals(null, SpritePalettes.findRegion("nonexistent"))
@@ -36,9 +39,9 @@ class SpritePalettesTest {
     fun `region catalog includes colorizer boss and enemy categories`() {
         assertEquals(4, SpritePalettes.SAMUS_REGIONS.size)
         assertEquals(1, SpritePalettes.BEAM_REGIONS.size)
-        assertEquals(19, SpritePalettes.BOSSES_REGIONS.size)
+        assertEquals(20, SpritePalettes.BOSSES_REGIONS.size)
         assertEquals(71, SpritePalettes.ENEMIES_REGIONS.size)
-        assertEquals(95, SpritePalettes.REGIONS.size)
+        assertEquals(96, SpritePalettes.REGIONS.size)
     }
 
     @Test
@@ -71,6 +74,15 @@ class SpritePalettesTest {
         for (i in 0 until 16) {
             assertEquals(full[i], row0[i], "Row 0 color $i mismatch")
         }
+    }
+
+    @Test
+    fun `Draygon health rows expose four colors per health stage`() {
+        val rom = loadRom() ?: run { assumeTrue(false, "ROM not found"); return }
+        val region = SpritePalettes.findRegion("boss_draygon_health")!!
+        assertEquals(8, region.rowCount)
+        assertEquals(4, region.colorsPerRow)
+        assertEquals(4, SpritePalettes.readRow(rom, region, 0)?.size)
     }
 
     @Test

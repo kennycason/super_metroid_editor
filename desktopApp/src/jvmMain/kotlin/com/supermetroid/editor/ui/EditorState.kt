@@ -869,6 +869,7 @@ class EditorState(
     )
 
     val draygonSprite = DraygonSpriteEditorState(
+        customGfx = { project.customGfx },
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
     )
@@ -3503,6 +3504,7 @@ class EditorState(
         project.customGfx.spritePalettes[regionId] = java.util.Base64.getEncoder().encodeToString(bytes)
         phantoonSprite.invalidate()
         kraidSprite.invalidate()
+        draygonSprite.invalidate()
         dirty = true
         paletteVersion++
     }
@@ -3514,6 +3516,7 @@ class EditorState(
         if (removedPalette || removedEffect) {
             phantoonSprite.invalidate()
             kraidSprite.invalidate()
+            draygonSprite.invalidate()
             dirty = true
             paletteVersion++
             return true
@@ -3735,6 +3738,7 @@ class EditorState(
         else project.customGfx.paletteEffects[target.effectKey] = target.effectValue
         phantoonSprite.invalidate()
         kraidSprite.invalidate()
+        draygonSprite.invalidate()
         target.affectedTilesetIds.takeIf { it.isNotEmpty() }?.let { affected ->
             if (parser != null && currentTilesetId in affected) reloadCurrentRoomTileGraphics(parser)
             if (parser != null && editorTilesetId in affected) loadEditorTileset(editorTilesetId, parser)
@@ -4181,18 +4185,24 @@ class EditorState(
         romParser: RomParser,
         def: com.supermetroid.editor.rom.DraygonSpritemap.CompositionDef,
         palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
-    ) = draygonSprite.renderComposition(romParser, def, palette)
+        paletteMode: com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = draygonSprite.renderComposition(romParser, def, palette, paletteMode)
     fun renderDraygonComponent(
         romParser: RomParser,
         def: com.supermetroid.editor.rom.DraygonSpritemap.ComponentDef,
         side: com.supermetroid.editor.rom.DraygonSpritemap.Side,
         palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
-    ) = draygonSprite.renderComponent(romParser, def, side, palette)
+        paletteMode: com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = draygonSprite.renderComponent(romParser, def, side, palette, paletteMode)
     fun renderDraygonAnimation(
         romParser: RomParser,
         def: com.supermetroid.editor.rom.DraygonSpritemap.AnimationDef,
         palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
-    ) = draygonSprite.renderAnimation(romParser, def, palette)
+        paletteMode: com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = draygonSprite.renderAnimation(romParser, def, palette, paletteMode)
     fun loadDraygonObjSheet(romParser: RomParser) = draygonSprite.loadObjSheet(romParser)
     fun renderEditedDraygonObjCompositions(
         romParser: RomParser,
@@ -4200,7 +4210,9 @@ class EditorState(
         width: Int,
         height: Int,
         palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
-    ) = draygonSprite.renderEditedObjCompositions(romParser, pixels, width, height, palette)
+        paletteMode: com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.DraygonSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = draygonSprite.renderEditedObjCompositions(romParser, pixels, width, height, palette, paletteMode)
     fun applyDraygonObjSheetEdits(
         romParser: RomParser,
         pixels: IntArray,
@@ -4638,19 +4650,25 @@ class EditorState(
             com.supermetroid.editor.rom.KraidSpritemap.HEAD_TILEMAPS.first(),
         paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef =
             com.supermetroid.editor.rom.KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" },
-    ) = kraidSprite.renderFullBody(romParser, head, paletteStage)
+        paletteMode: com.supermetroid.editor.rom.KraidSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.KraidSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = kraidSprite.renderFullBody(romParser, head, paletteStage, paletteMode)
     fun renderKraidFullBodyAnimation(
         romParser: RomParser,
         def: com.supermetroid.editor.rom.KraidSpritemap.HeadSequenceDef,
         paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef,
-    ) = kraidSprite.renderFullBodyAnimation(romParser, def, paletteStage)
+        paletteMode: com.supermetroid.editor.rom.KraidSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.KraidSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = kraidSprite.renderFullBodyAnimation(romParser, def, paletteStage, paletteMode)
     fun renderKraidOamAnimation(
         romParser: RomParser,
         def: com.supermetroid.editor.rom.KraidSpritemap.OamSequenceDef,
         paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef,
+        paletteMode: com.supermetroid.editor.rom.KraidSpritemap.PreviewPaletteMode =
+            com.supermetroid.editor.rom.KraidSpritemap.PreviewPaletteMode.RUNTIME,
     ): com.supermetroid.editor.rom.SpriteAnimation? {
         val tileData = loadEnemyTileData(romParser, def.speciesId) ?: return null
-        return kraidSprite.renderOamAnimation(romParser, def, tileData, paletteStage)
+        return kraidSprite.renderOamAnimation(romParser, def, tileData, paletteStage, paletteMode)
     }
     fun renderKraidHeadTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.HeadTilemapDef) = kraidSprite.renderHeadTilemap(romParser, def)
     fun applyKraidHeadEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite, editedPixels: IntArray) = kraidSprite.applyHeadEdits(romParser, sprite, editedPixels)

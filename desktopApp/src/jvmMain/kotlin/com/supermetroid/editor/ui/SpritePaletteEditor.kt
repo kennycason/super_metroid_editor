@@ -267,7 +267,9 @@ fun SpritePaletteEditor(
                 Spacer(modifier = Modifier.height(8.dp))
                 Divider()
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Edit Color — ${region.name} #$selectedColorIdx",
+                Text(
+                    "Edit Color — ${region.name} " +
+                        "[${selectedColorIdx / region.colorsPerRow},${selectedColorIdx % region.colorsPerRow}]",
                     fontSize = fs.body, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -331,30 +333,56 @@ private fun PaletteRegionCard(
                 }
             }
 
-            // Show first 16 colors (row 0 = base palette)
+            Text(
+                region.description,
+                fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            // Keep the catalog compact, but expose every source row when selected so
+            // runtime health/flash tables are manually editable rather than hidden.
             if (colors != null) {
-                val previewColors = colors.take(16)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(1.dp),
-                    modifier = Modifier.padding(top = 4.dp)
+                val columns = region.colorsPerRow
+                val displayed = if (isSelected) colors.toList() else colors.take(columns)
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.padding(top = 4.dp),
                 ) {
-                    for ((i, bgr555) in previewColors.withIndex()) {
-                        val argb = SpritePalettes.bgr555ToArgb(bgr555)
-                        val r = (argb shr 16) and 0xFF
-                        val g = (argb shr 8) and 0xFF
-                        val b = argb and 0xFF
-                        val isSelectedColor = i == selectedColorIdx
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .background(Color(r, g, b), RoundedCornerShape(2.dp))
-                                .then(
-                                    if (isSelectedColor)
-                                        Modifier.border(2.dp, Color.White, RoundedCornerShape(2.dp))
-                                    else Modifier
+                    displayed.chunked(columns).forEachIndexed { rowIndex, rowColors ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(1.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (isSelected && region.rowCount > 1) {
+                                Text(
+                                    rowIndex.toString().padStart(2, '0'),
+                                    fontSize = fs.detail,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.width(20.dp),
                                 )
-                                .clickable { onColorClick(i) }
-                        )
+                            }
+                            rowColors.forEachIndexed { columnIndex, bgr555 ->
+                                val colorIndex = rowIndex * columns + columnIndex
+                                val argb = SpritePalettes.bgr555ToArgb(bgr555)
+                                val r = (argb shr 16) and 0xFF
+                                val g = (argb shr 8) and 0xFF
+                                val b = argb and 0xFF
+                                val isSelectedColor = colorIndex == selectedColorIdx
+                                Box(
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .background(Color(r, g, b), RoundedCornerShape(2.dp))
+                                        .then(
+                                            if (isSelectedColor) {
+                                                Modifier.border(2.dp, Color.White, RoundedCornerShape(2.dp))
+                                            } else {
+                                                Modifier
+                                            }
+                                        )
+                                        .clickable { onColorClick(colorIndex) }
+                                )
+                            }
+                        }
                     }
                 }
             }

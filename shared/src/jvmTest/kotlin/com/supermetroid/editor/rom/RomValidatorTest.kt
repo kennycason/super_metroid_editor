@@ -7,9 +7,12 @@ import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.RoomEdits
+import com.supermetroid.editor.data.RoomStateEdits
+import com.supermetroid.editor.data.RoomStateResourceLinks
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
@@ -556,6 +559,64 @@ class RomValidatorTest {
                 },
                 "Wrong-sized enemy sprite palette should be reported"
             )
+        }
+
+        @Test
+        fun `boss palette validation reports spawn and runtime row divergence`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            val kraidRegion = SpritePalettes.findRegion("boss_kraid_health_bg")!!
+            val kraid = SpritePalettes.readColors(parser.getRomData(), kraidRegion)!!
+            kraid[8 * 16 + 1] = kraid[8 * 16 + 1] xor 0x001F
+            project.customGfx.spritePalettes[kraidRegion.id] = Base64.getEncoder()
+                .encodeToString(SpritePalettes.colorsToBytes(kraid))
+            val draygonRegion = SpritePalettes.findRegion("boss_draygon")!!
+            val draygon = SpritePalettes.readColors(parser.getRomData(), draygonRegion)!!
+            draygon[4 * 16 + 1] = draygon[4 * 16 + 1] xor 0x03E0
+            project.customGfx.spritePalettes[draygonRegion.id] = Base64.getEncoder()
+                .encodeToString(SpritePalettes.colorsToBytes(draygon))
+
+            val issues = RomValidator.checkProjectSpritePalettes(parser, project)
+
+            assertTrue(issues.any { it.category == "Boss Palettes" && it.roomName == "Kraid's Room" })
+            assertTrue(issues.any { it.category == "Boss Palettes" && it.roomName == "Draygon's Room" })
+        }
+
+        @Test
+        fun `Kraid living state rejects FX that overwrite its BG2 body`() {
+            val project = SmEditProject(romPath = "test.smc")
+            val room = project.getOrCreateRoom(KraidSpritemap.KRAID_ROOM_SNES and 0xFFFF)
+            val condition = projectRoomStateCondition(ProjectRoomStateConditionKind.DEFAULT)
+            val living = RoomStateEdits(
+                id = "state-2",
+                sourceStateIndex = 1,
+                sourceCondition = condition,
+                condition = condition,
+                resources = RoomStateResourceLinks(
+                    level = "level-1",
+                    effects = "effects-1",
+                    enemies = "enemies-1",
+                    enemyGraphics = "enemy-gfx-1",
+                    scrolling = "scrolls-1",
+                    placedObjects = "plms-1",
+                    background = "background-2",
+                    specialXray = "xray-1",
+                ),
+            )
+            room.states += living
+
+            for (fxType in listOf(0x02, 0x04, 0x08, 0x0A)) {
+                living.fxChange = com.supermetroid.editor.data.FxChange(fxType = fxType)
+
+                val issue = RomValidator.checkProjectBossFxConflicts(project).single()
+
+                assertEquals(RomValidator.Severity.ERROR, issue.severity)
+                assertEquals("Boss FX", issue.category)
+                assertTrue(issue.message.contains("VRAM \$4280"))
+            }
+
+            living.fxChange = com.supermetroid.editor.data.FxChange(fxType = 0)
+            assertTrue(RomValidator.checkProjectBossFxConflicts(project).isEmpty())
         }
     }
 }

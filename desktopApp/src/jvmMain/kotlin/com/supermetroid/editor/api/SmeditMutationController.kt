@@ -1321,8 +1321,8 @@ internal class DesktopSmeditMutationController(
             val preview = effectiveChanges.map { change ->
                 SmeditPaletteColorChange(
                     index = change.index,
-                    row = change.index / 16,
-                    column = change.index % 16,
+                    row = change.index / details.colorsPerRow,
+                    column = change.index % details.colorsPerRow,
                     beforeRgb = details.colorsRgbHex.getOrNull(change.index)
                         ?: bgr555ToRgbHex(details.colorsBgr555[change.index]),
                     afterRgb = change.rgb,
@@ -1373,12 +1373,25 @@ internal class DesktopSmeditMutationController(
                 "sprite:boss_kraid",
                 "sprite:boss_kraid_health_bg",
                 "sprite:boss_kraid_health_oam",
+                "tileset:${com.supermetroid.editor.rom.TileGraphics.KRAID_TILESET}",
             )
             if ((targetIds intersect kraidRuntimeSet).isNotEmpty() && !targetIds.containsAll(kraidRuntimeSet)) {
                 add(
                     "A complete Kraid-wide recolor normally includes ${
                         (kraidRuntimeSet - targetIds).sorted().joinToString()
-                    }; those related runtime palettes are not changed by this plan.",
+                    }; tileset row 7 is the spawn-state BG row and the related runtime palettes are not changed by this plan.",
+                )
+            }
+            val draygonRuntimeSet = setOf(
+                "sprite:boss_draygon",
+                "sprite:boss_draygon_health",
+                "tileset:${com.supermetroid.editor.rom.DraygonSpritemap.TILESET_ID}",
+            )
+            if ((targetIds intersect draygonRuntimeSet).isNotEmpty() && !targetIds.containsAll(draygonRuntimeSet)) {
+                add(
+                    "A complete Draygon-wide recolor normally includes ${
+                        (draygonRuntimeSet - targetIds).sorted().joinToString()
+                    }; tileset row 5 is the spawn-state BG row and the bank-A5 rows drive post-hit states.",
                 )
             }
         }

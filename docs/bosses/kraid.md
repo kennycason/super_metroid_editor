@@ -106,6 +106,12 @@ sequence. Those lists contain 173 rendered frame occurrences. The focused linked
 canvases remain intentional: the runtime advances those enemy slots independently and
 does not provide one canonical synchronized whole-boss timeline.
 
+The editor's palette-mode control makes the palette handoff explicit. **Spawn / room-loaded**
+uses tileset `$1A` row 7 for the BG2 body and `$A7:8687` for the linked OBJ pieces.
+**Runtime / after hit** uses the paired health-stage BG and OBJ tables. All three owners
+are independently editable and cross-linked in the palette catalog, so a full recolor
+must update the spawn and runtime owners rather than only the health table.
+
 `./gradlew parityKraid` regenerates the ignored `parity/reports/kraid.json` proof;
 the strict `parityReport` additionally checks production head/composite pixel hashes
 and a complete-resource edit round trip. It also hashes every rendered frame from the

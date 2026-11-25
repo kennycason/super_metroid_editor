@@ -75,10 +75,12 @@ fun DraygonSpriteEditor(
 ) {
     var activeTab by remember { mutableStateOf(defaultDraygonEditorTab()) }
     var selectedPalette by remember { mutableStateOf(DraygonSpritemap.PALETTE_STAGES.first()) }
+    var previewMode by remember { mutableStateOf(DraygonSpritemap.PreviewPaletteMode.SPAWN) }
     val palettes = remember { DraygonSpritemap.PALETTE_STAGES + DraygonSpritemap.WHITE_FLASH }
     var refreshKey by remember { mutableStateOf(0) }
     var editingSheet by remember { mutableStateOf<DraygonSpriteEditorState.EditableObjSheet?>(null) }
     var editingPalette by remember { mutableStateOf(DraygonSpritemap.PALETTE_STAGES.first()) }
+    var editingPreviewMode by remember { mutableStateOf(DraygonSpritemap.PreviewPaletteMode.SPAWN) }
 
     editingSheet?.let { sheet ->
         val parser = romParser
@@ -96,6 +98,7 @@ fun DraygonSpriteEditor(
                     width,
                     height,
                     editingPalette,
+                    editingPreviewMode,
                 ).map { it.toBitmap() }
             },
             onApply = { pixels ->
@@ -140,6 +143,15 @@ fun DraygonSpriteEditor(
                         modifier = Modifier.height(28.dp),
                     )
                 }
+                Spacer(Modifier.width(8.dp))
+                DraygonSpritemap.PreviewPaletteMode.values().forEach { mode ->
+                    FilterChip(
+                        selected = previewMode == mode,
+                        onClick = { previewMode = mode },
+                        label = { Text(mode.displayName, fontSize = 9.sp) },
+                        modifier = Modifier.height(28.dp),
+                    )
+                }
                 if (romParser == null) {
                     Text(
                         "(load a ROM to view source poses)",
@@ -155,6 +167,7 @@ fun DraygonSpriteEditor(
                 editorState,
                 romParser,
                 selectedPalette,
+                previewMode,
                 refreshKey,
                 { activeTab = DraygonEditorTab.SOURCES },
                 Modifier.weight(1f),
@@ -163,6 +176,7 @@ fun DraygonSpriteEditor(
                 editorState,
                 romParser,
                 selectedPalette,
+                previewMode,
                 palettes,
                 { selectedPalette = it },
                 refreshKey,
@@ -172,6 +186,7 @@ fun DraygonSpriteEditor(
                 editorState,
                 romParser,
                 selectedPalette,
+                previewMode,
                 palettes,
                 { selectedPalette = it },
                 refreshKey,
@@ -183,6 +198,7 @@ fun DraygonSpriteEditor(
                 refreshKey = refreshKey,
                 onEdit = { sheet ->
                     editingPalette = selectedPalette
+                    editingPreviewMode = previewMode
                     editingSheet = sheet
                 },
                 onReset = {
@@ -201,15 +217,24 @@ private fun DraygonComponentsTab(
     editorState: EditorState,
     romParser: RomParser?,
     palette: DraygonSpritemap.PaletteStageDef,
+    previewMode: DraygonSpritemap.PreviewPaletteMode,
     refreshKey: Int,
     onOpenSources: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var selected by remember { mutableStateOf(DraygonSpritemap.COMPONENTS.first()) }
     var selectedSide by remember { mutableStateOf(DraygonSpritemap.Side.LEFT) }
-    val bitmap by produceState<ImageBitmap?>(null, selected, selectedSide, romParser, palette, refreshKey) {
+    val bitmap by produceState<ImageBitmap?>(
+        null,
+        selected,
+        selectedSide,
+        romParser,
+        palette,
+        previewMode,
+        refreshKey,
+    ) {
         value = romParser?.let {
-            editorState.renderDraygonComponent(it, selected, selectedSide, palette)?.toBitmap()
+            editorState.renderDraygonComponent(it, selected, selectedSide, palette, previewMode)?.toBitmap()
         }
     }
 
@@ -270,6 +295,7 @@ private fun DraygonComponentsTab(
                 fontWeight = FontWeight.Bold,
             )
             Text(selected.detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(previewMode.detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
                 "Isolated ${selectedSide.displayName.lowercase()} runtime frame · " +
                     "\$${selected.frameSnes(selectedSide).toString(16).uppercase()}",
@@ -307,6 +333,7 @@ private fun DraygonCompositionsTab(
     editorState: EditorState,
     romParser: RomParser?,
     palette: DraygonSpritemap.PaletteStageDef,
+    previewMode: DraygonSpritemap.PreviewPaletteMode,
     palettes: List<DraygonSpritemap.PaletteStageDef>,
     onPaletteSelected: (DraygonSpritemap.PaletteStageDef) -> Unit,
     refreshKey: Int,
@@ -317,9 +344,9 @@ private fun DraygonCompositionsTab(
     val selected = DraygonSpritemap.COMPOSITIONS.first {
         it.side == selectedSide && it.key.endsWith(selectedPose.keySuffix)
     }
-    val bitmap by produceState<ImageBitmap?>(null, selected, palette, romParser, refreshKey) {
+    val bitmap by produceState<ImageBitmap?>(null, selected, palette, previewMode, romParser, refreshKey) {
         value = romParser?.let { parser ->
-            editorState.renderDraygonComposition(parser, selected, palette)?.toBitmap()
+            editorState.renderDraygonComposition(parser, selected, palette, previewMode)?.toBitmap()
         }
     }
 
@@ -379,6 +406,7 @@ private fun DraygonCompositionsTab(
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(previewMode.detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             DraygonPreview(bitmap, romParser != null, "Complete Draygon composition", Modifier.weight(1f))
         }
     }
@@ -410,6 +438,7 @@ private fun DraygonAnimationsTab(
     editorState: EditorState,
     romParser: RomParser?,
     palette: DraygonSpritemap.PaletteStageDef,
+    previewMode: DraygonSpritemap.PreviewPaletteMode,
     palettes: List<DraygonSpritemap.PaletteStageDef>,
     onPaletteSelected: (DraygonSpritemap.PaletteStageDef) -> Unit,
     refreshKey: Int,
@@ -429,10 +458,11 @@ private fun DraygonAnimationsTab(
         null,
         selected,
         palette,
+        previewMode,
         romParser,
         refreshKey,
     ) {
-        value = romParser?.let { editorState.renderDraygonAnimation(it, selected, palette) }
+        value = romParser?.let { editorState.renderDraygonAnimation(it, selected, palette, previewMode) }
     }
 
     Row(modifier = modifier.fillMaxSize()) {
@@ -506,6 +536,7 @@ private fun DraygonAnimationsTab(
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(previewMode.detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             NativeSpriteAnimationPlayer(animation, Modifier.weight(1f), previewSize = 440)
         }
     }

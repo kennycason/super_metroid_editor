@@ -23,10 +23,17 @@ object SpritePalettes {
         val description: String,
         val offset: Int,
         val colorCount: Int,
-        val category: String
+        val category: String,
+        val colorsPerRow: Int = 16,
     ) {
+        init {
+            require(colorsPerRow > 0 && colorCount % colorsPerRow == 0) {
+                "$id must contain complete $colorsPerRow-color rows"
+            }
+        }
+
         val byteSize: Int get() = colorCount * 2
-        val rowCount: Int get() = colorCount / 16
+        val rowCount: Int get() = colorCount / colorsPerRow
     }
 
     private fun region(
@@ -36,7 +43,8 @@ object SpritePalettes {
         offset: Int,
         colorCount: Int,
         category: String,
-    ) = PaletteRegion(id, name, description, offset, colorCount, category)
+        colorsPerRow: Int = 16,
+    ) = PaletteRegion(id, name, description, offset, colorCount, category, colorsPerRow)
 
     val SAMUS_POWER = region("samus_power", "Power Suit", "Default suit (all animation frames)", 0x0D9400, 528, "samus")
     val SAMUS_VARIA = region("samus_varia", "Varia Suit", "Varia suit (all animation frames)", 0x0D9820, 528, "samus")
@@ -53,7 +61,23 @@ object SpritePalettes {
         region("boss_kraid_health_oam", "Kraid (health stages · OAM)", "Kraid arm, foot, lint, and nail palettes: hurt and health 1–8", 0x13B513, 144, "bosses"),
         region("boss_phantoon", "Phantoon", "Phantoon initial/base rows; runtime health palettes replace these during the fight", 0x13CA01, 32, "bosses"),
         region("boss_phantoon_health", "Phantoon (health stages)", "Phantoon runtime health palettes from health 1/8 through full health", 0x13CB41, 128, "bosses"),
-        region("boss_draygon", "Draygon", "Draygon palettes (all rows)", 0x12A1F7, 96, "bosses"),
+        region(
+            "boss_draygon",
+            "Draygon",
+            "OBJ rows 7/1/2/3, runtime BG row 5, and hurt flash; BG row 5 should match tileset 28 (\$1C) row 5 at spawn",
+            0x12A1F7,
+            96,
+            "bosses",
+        ),
+        region(
+            "boss_draygon_health",
+            "Draygon (health stages · BG)",
+            "Eight health stages × four colors; replaces BG row 5 columns 9–12 after palette updates",
+            0x1296AF,
+            32,
+            "bosses",
+            colorsPerRow = 4,
+        ),
         region("boss_crocomire", "Crocomire", "Crocomire palettes (all rows)", 0x12387D, 96, "bosses"),
         region("boss_mother_brain", "Mother Brain", "Mother Brain palettes (all rows)", 0x149472, 112, "bosses"),
         region("boss_botwoon", "Botwoon", "Botwoon palette", 0x199319, 16, "bosses"),
@@ -170,15 +194,16 @@ object SpritePalettes {
     }
 
     /**
-     * Read a single 16-color palette row from a region.
+     * Read a single logical palette row from a region.
      * Row 0 is the "base" palette displayed in the editor preview.
      */
     fun readRow(romData: ByteArray, region: PaletteRegion, row: Int): IntArray? {
         if (row < 0 || row >= region.rowCount) return null
-        val offset = region.offset + row * 32
-        if (offset + 32 > romData.size) return null
-        val colors = IntArray(16)
-        for (i in 0 until 16) {
+        val rowByteSize = region.colorsPerRow * 2
+        val offset = region.offset + row * rowByteSize
+        if (offset + rowByteSize > romData.size) return null
+        val colors = IntArray(region.colorsPerRow)
+        for (i in 0 until region.colorsPerRow) {
             val addr = offset + i * 2
             colors[i] = (romData[addr].toInt() and 0xFF) or
                     ((romData[addr + 1].toInt() and 0xFF) shl 8)

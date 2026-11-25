@@ -102,6 +102,7 @@ fun KraidSpriteEditor(
     modifier: Modifier = Modifier
 ) {
     var activeTab by remember { mutableStateOf(defaultKraidTab()) }
+    var previewMode by remember { mutableStateOf(KraidSpritemap.PreviewPaletteMode.SPAWN) }
     var selectedComponent by remember { mutableStateOf<KraidComponent>(
         KraidComponent.Head(KraidSpritemap.HEAD_TILEMAPS[0])
     ) }
@@ -184,6 +185,15 @@ fun KraidSpriteEditor(
                     },
                     modifier = Modifier.height(28.dp)
                 )
+                Spacer(Modifier.width(8.dp))
+                KraidSpritemap.PreviewPaletteMode.values().forEach { mode ->
+                    FilterChip(
+                        selected = previewMode == mode,
+                        onClick = { previewMode = mode },
+                        label = { Text(mode.displayName, fontSize = 9.sp) },
+                        modifier = Modifier.height(28.dp),
+                    )
+                }
                 if (romParser == null) {
                     Text("(load a ROM to enable editing)",
                         fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -198,6 +208,7 @@ fun KraidSpriteEditor(
                 selectedComponent = selectedComponent,
                 onSelectComponent = { selectedComponent = it },
                 compositionsOnly = false,
+                previewMode = previewMode,
                 refreshKey = renderRefreshKey,
                 onEditHead = { component ->
                     val rp = romParser ?: return@KraidComponentsTab
@@ -217,6 +228,7 @@ fun KraidSpriteEditor(
                 selectedComponent = selectedComposition,
                 onSelectComponent = { selectedComposition = it },
                 compositionsOnly = true,
+                previewMode = previewMode,
                 refreshKey = renderRefreshKey,
                 onEditHead = {},
                 modifier = Modifier.weight(1f),
@@ -226,6 +238,7 @@ fun KraidSpriteEditor(
                 editorState = editorState,
                 romParser = romParser,
                 refreshKey = renderRefreshKey,
+                previewMode = previewMode,
                 modifier = Modifier.weight(1f),
             )
 
@@ -244,24 +257,30 @@ fun KraidSpriteEditor(
 private fun renderKraidComponent(
     editorState: EditorState,
     romParser: RomParser,
-    comp: KraidComponent
+    comp: KraidComponent,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
 ): KraidSpritemap.AssembledSprite? = when (comp) {
-    is KraidComponent.FullBody -> editorState.renderKraidFullBody(romParser, comp.head)
+    is KraidComponent.FullBody -> editorState.renderKraidFullBody(
+        romParser,
+        comp.head,
+        paletteMode = previewMode,
+    )
     is KraidComponent.Head -> editorState.renderKraidHeadTilemap(romParser, comp.def)
-    is KraidComponent.OamEntity -> renderKraidOamEntity(editorState, romParser, comp)
+    is KraidComponent.OamEntity -> renderKraidOamEntity(editorState, romParser, comp, previewMode)
 }
 
 private fun renderKraidOamEntity(
     editorState: EditorState,
     romParser: RomParser,
-    comp: KraidComponent.OamEntity
+    comp: KraidComponent.OamEntity,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
 ): KraidSpritemap.AssembledSprite? {
-    val tileData = editorState.loadEnemyTileData(romParser, comp.speciesId) ?: return null
     val definition = KraidSpritemap.OAM_SEQUENCES.firstOrNull {
         it.key == comp.representativeSequenceKey
     } ?: return null
-    val frame = KraidSpritemap(romParser)
-        .renderOamAnimation(definition, tileData)
+    val fullHealth = KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" }
+    val frame = editorState
+        .renderKraidOamAnimation(romParser, definition, fullHealth, previewMode)
         ?.frames
         ?.firstOrNull()
         ?: return null
@@ -283,6 +302,7 @@ private fun KraidComponentsTab(
     selectedComponent: KraidComponent,
     onSelectComponent: (KraidComponent) -> Unit,
     compositionsOnly: Boolean,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
     refreshKey: Int,
     onEditHead: (KraidComponent.Head) -> Unit,
     modifier: Modifier = Modifier
@@ -311,13 +331,13 @@ private fun KraidComponentsTab(
                 Text("Complete BG2 Body States", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 KraidSpritemap.HEAD_TILEMAPS.forEach { def ->
-                    KraidComponentItem(KraidComponent.FullBody(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    KraidComponentItem(KraidComponent.FullBody(def), selectedComponent, editorState, romParser, previewMode, refreshKey, onSelectComponent)
                 }
             } else {
                 Text("Editable Head Tilemaps", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 KraidSpritemap.HEAD_TILEMAPS.forEach { def ->
-                    KraidComponentItem(KraidComponent.Head(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    KraidComponentItem(KraidComponent.Head(def), selectedComponent, editorState, romParser, previewMode, refreshKey, onSelectComponent)
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -325,7 +345,7 @@ private fun KraidComponentsTab(
                 Text("Linked OAM Components", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 KRAID_OAM_ENTITIES.forEach { entity ->
-                    KraidComponentItem(entity, selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    KraidComponentItem(entity, selectedComponent, editorState, romParser, previewMode, refreshKey, onSelectComponent)
                 }
             }
         }
@@ -336,6 +356,7 @@ private fun KraidComponentsTab(
             comp = selectedComponent,
             editorState = editorState,
             romParser = romParser,
+            previewMode = previewMode,
             refreshKey = refreshKey,
             onEditHead = onEditHead,
             modifier = Modifier.weight(1f).fillMaxHeight()
@@ -349,6 +370,7 @@ private fun KraidComponentItem(
     selected: KraidComponent,
     editorState: EditorState,
     romParser: RomParser?,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
     refreshKey: Int,
     onSelect: (KraidComponent) -> Unit
 ) {
@@ -364,7 +386,7 @@ private fun KraidComponentItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            KraidThumb(comp, editorState, romParser, refreshKey, size = 28)
+            KraidThumb(comp, editorState, romParser, previewMode, refreshKey, size = 28)
             Column(modifier = Modifier.weight(1f)) {
                 Text(comp.displayName, fontSize = 10.sp, fontWeight = FontWeight.Medium,
                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
@@ -387,13 +409,14 @@ private fun KraidThumb(
     comp: KraidComponent,
     editorState: EditorState,
     romParser: RomParser?,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
     refreshKey: Int,
     size: Int
 ) {
-    val bitmap by produceState<ImageBitmap?>(null, comp.displayName, refreshKey) {
+    val bitmap by produceState<ImageBitmap?>(null, comp.displayName, previewMode, refreshKey) {
         value = try {
             val rp = romParser ?: return@produceState
-            val sprite = renderKraidComponent(editorState, rp, comp) ?: return@produceState
+            val sprite = renderKraidComponent(editorState, rp, comp, previewMode) ?: return@produceState
             sprite.toPreviewBitmap()
         } catch (_: Exception) { null }
     }
@@ -423,6 +446,7 @@ private fun KraidComponentDetail(
     comp: KraidComponent,
     editorState: EditorState,
     romParser: RomParser?,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
     refreshKey: Int,
     onEditHead: (KraidComponent.Head) -> Unit,
     modifier: Modifier = Modifier
@@ -430,7 +454,7 @@ private fun KraidComponentDetail(
     Column(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            KraidThumb(comp, editorState, romParser, refreshKey, size = 56)
+            KraidThumb(comp, editorState, romParser, previewMode, refreshKey, size = 56)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(comp.displayName, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface)
@@ -471,7 +495,7 @@ private fun KraidComponentDetail(
             OutlinedButton(
                 onClick = {
                     val rp = romParser ?: return@OutlinedButton
-                    val sprite = renderKraidComponent(editorState, rp, comp) ?: return@OutlinedButton
+                    val sprite = renderKraidComponent(editorState, rp, comp, previewMode) ?: return@OutlinedButton
                     val dialog = FileDialog(null as Frame?, "Export ${comp.displayName} PNG", FileDialog.SAVE)
                     dialog.file = "kraid_${comp.displayName.lowercase().replace(" ", "_").replace("(", "").replace(")", "")}.png"
                     dialog.isVisible = true
@@ -496,8 +520,7 @@ private fun KraidComponentDetail(
             ) {
                 Text("Source-backed complete composition: the two upper and two lower BG2 screen " +
                     "blocks with ${comp.head.name}, plus representative linked arm/claw and front-foot " +
-                    "OAM at their live body-relative AI anchors. This view uses Health 8/8 from " +
-                    "Kraid (health stages · BG/OAM); the base Kraid palette is replaced by the runtime health handler.",
+                    "OAM at their live body-relative AI anchors. ${previewMode.detail}.",
                     fontSize = 9.sp, color = Color(0xFF88CC88),
                     lineHeight = 12.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
@@ -552,11 +575,11 @@ private fun KraidComponentDetail(
 
         val rp = romParser
         if (rp != null) {
-            var spriteBitmap by remember(comp.displayName, refreshKey) { mutableStateOf<ImageBitmap?>(null) }
-            var spriteLoaded by remember(comp.displayName, refreshKey) { mutableStateOf(false) }
-            LaunchedEffect(comp.displayName, refreshKey) {
+            var spriteBitmap by remember(comp.displayName, previewMode, refreshKey) { mutableStateOf<ImageBitmap?>(null) }
+            var spriteLoaded by remember(comp.displayName, previewMode, refreshKey) { mutableStateOf(false) }
+            LaunchedEffect(comp.displayName, previewMode, refreshKey) {
                 spriteLoaded = false
-                    val sprite = renderKraidComponent(editorState, rp, comp)
+                val sprite = renderKraidComponent(editorState, rp, comp, previewMode)
                 spriteBitmap = sprite?.toPreviewBitmap()
                 spriteLoaded = true
             }
@@ -617,6 +640,7 @@ private fun KraidAnimationsTab(
     editorState: EditorState,
     romParser: RomParser?,
     refreshKey: Int,
+    previewMode: KraidSpritemap.PreviewPaletteMode,
     modifier: Modifier = Modifier,
 ) {
     var selectedChoice by remember {
@@ -630,6 +654,7 @@ private fun KraidAnimationsTab(
         initialValue = null,
         selectedChoice,
         selectedPalette,
+        previewMode,
         refreshKey,
         romParser,
     ) {
@@ -639,9 +664,9 @@ private fun KraidAnimationsTab(
         } else {
             when (val choice = selectedChoice) {
                 is KraidAnimationChoice.Head ->
-                    editorState.renderKraidFullBodyAnimation(rp, choice.def, selectedPalette)
+                    editorState.renderKraidFullBodyAnimation(rp, choice.def, selectedPalette, previewMode)
                 is KraidAnimationChoice.Oam ->
-                    editorState.renderKraidOamAnimation(rp, choice.def, selectedPalette)
+                    editorState.renderKraidOamAnimation(rp, choice.def, selectedPalette, previewMode)
             }
         }
     }
@@ -653,7 +678,8 @@ private fun KraidAnimationsTab(
         modifier = modifier.fillMaxSize().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Runtime Palette", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text("Health stage (used in runtime mode)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(previewMode.detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(5.dp),

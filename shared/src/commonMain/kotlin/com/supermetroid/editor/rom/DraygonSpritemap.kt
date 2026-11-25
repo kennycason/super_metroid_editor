@@ -21,6 +21,9 @@ class DraygonSpritemap(private val romParser: RomParser) {
         const val BASE_PALETTE_SNES = 0xA5A1F7
         const val HEALTH_TABLE_SNES = 0xA596AF
         const val WHITE_FLASH_PALETTE_SNES = 0xA5A297
+        const val OBJ_PALETTE_ROW = 7
+        const val BG_PALETTE_ROW = 5
+        private const val BG_RUNTIME_PALETTE_SNES = BASE_PALETTE_SNES + 4 * 0x20
 
         private val LEFT_DEFAULTS = SlotFrames(
             body = 0xA5A3BB,
@@ -155,6 +158,17 @@ class DraygonSpritemap(private val romParser: RomParser) {
         val minimumHealth: Int?,
     )
 
+    enum class PreviewPaletteMode(val displayName: String, val detail: String) {
+        SPAWN(
+            "Spawn / room-loaded",
+            "BG2 uses tileset 28 (\$1C) row 5 before Draygon's hurt AI installs its runtime row",
+        ),
+        RUNTIME(
+            "Runtime / after hit",
+            "BG2 uses Draygon's bank-A5 row 5 plus the selected health-stage colors",
+        ),
+    }
+
     data class CompositionDef(
         val key: String,
         val name: String,
@@ -196,6 +210,7 @@ class DraygonSpritemap(private val romParser: RomParser) {
 
     private val scanner = BossPoseScanner(romParser)
     private val tileGraphics = TileGraphics(romParser)
+    private val paletteOverrides = mutableMapOf<Int, IntArray>()
     private var rawEnemyTileData: ByteArray? = null
     private var renderTileData: ByteArray? = null
 
@@ -215,28 +230,57 @@ class DraygonSpritemap(private val romParser: RomParser) {
     fun getRawEnemyTileData(): ByteArray? = rawEnemyTileData?.copyOf()
     fun getRoomTileData(): ByteArray? = tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
 
-    fun readPalette(stage: PaletteStageDef): IntArray? {
+    /** Runtime BG1/2 row 5 after Draygon's hurt/health code has installed it. */
+    fun readPalette(stage: PaletteStageDef): IntArray? = readRuntimeBgPalette(stage)
+
+    fun readRuntimeBgPalette(stage: PaletteStageDef): IntArray? {
         if (stage == WHITE_FLASH) return readPaletteAt(WHITE_FLASH_PALETTE_SNES)
-        val palette = readPaletteAt(BASE_PALETTE_SNES) ?: return null
+        val palette = readPaletteAt(BG_RUNTIME_PALETTE_SNES) ?: return null
         val tableIndex = stage.healthTableIndex ?: return palette
-        val rom = romParser.getRomData()
-        val pc = romParser.snesToPc(HEALTH_TABLE_SNES + tableIndex * 8)
-        if (pc < 0 || pc + 8 > rom.size) return null
+        val healthColors = readHealthPaletteRow(tableIndex) ?: return null
         for (index in 0 until 4) {
-            palette[9 + index] = EnemySpriteGraphics.snesColorToArgb(readWord(rom, pc + index * 2))
+            palette[9 + index] = EnemySpriteGraphics.snesColorToArgb(healthColors[index])
         }
         return palette
+    }
+
+    /** OBJ palette 7 is installed independently and is not modified by the health table. */
+    fun readObjPalette(stage: PaletteStageDef = PALETTE_STAGES.first()): IntArray? =
+        readPaletteAt(if (stage == WHITE_FLASH) WHITE_FLASH_PALETTE_SNES else BASE_PALETTE_SNES)
+
+    fun readSpawnBgPalette(): IntArray? = tileGraphics.getPalettes()
+        ?.getOrNull(BG_PALETTE_ROW)
+        ?.copyOf()
+        ?.also { it[0] = 0 }
+
+    fun applyPaletteRegionOverrides(overrides: Map<String, IntArray>) {
+        paletteOverrides.clear()
+
+        fun mapRows(regionId: String, startSnes: Int, rowCount: Int, colorsPerRow: Int) {
+            val colors = overrides[regionId] ?: return
+            if (colors.size < rowCount * colorsPerRow) return
+            repeat(rowCount) { row ->
+                val start = row * colorsPerRow
+                paletteOverrides[startSnes + row * colorsPerRow * 2] =
+                    colors.copyOfRange(start, start + colorsPerRow)
+            }
+        }
+
+        mapRows("boss_draygon", BASE_PALETTE_SNES, rowCount = 6, colorsPerRow = 16)
+        mapRows("boss_draygon_health", HEALTH_TABLE_SNES, rowCount = 8, colorsPerRow = 4)
     }
 
     fun renderComposition(
         def: CompositionDef,
         paletteStage: PaletteStageDef = PALETTE_STAGES.first(),
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): EnemySpritemap.AssembledSprite? {
         val defaults = defaults(def.side)
         return renderFrames(
             def.name,
             listOf(defaults.body, def.eyeFrameSnes, defaults.tail, defaults.arms),
             paletteStage,
+            paletteMode,
         )
     }
 
@@ -245,10 +289,12 @@ class DraygonSpritemap(private val romParser: RomParser) {
         def: ComponentDef,
         side: Side,
         paletteStage: PaletteStageDef = PALETTE_STAGES.first(),
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): EnemySpritemap.AssembledSprite? = renderFrames(
         "${def.name} · facing ${side.displayName.lowercase()}",
         listOf(def.frameSnes(side)),
         paletteStage,
+        paletteMode,
     )
 
     fun loadAnimation(def: AnimationDef): SourceAnimation? {
@@ -279,6 +325,7 @@ class DraygonSpritemap(private val romParser: RomParser) {
     fun renderAnimation(
         def: AnimationDef,
         paletteStage: PaletteStageDef = PALETTE_STAGES.first(),
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): SpriteAnimation? {
         val source = loadAnimation(def) ?: return null
         val rendered = source.frames.mapIndexed { index, frame ->
@@ -286,6 +333,7 @@ class DraygonSpritemap(private val romParser: RomParser) {
                 "${def.side.displayName} · ${def.name} ${index + 1}",
                 compositionFrames(def, frame.spritemapSnes),
                 paletteStage,
+                paletteMode,
             ) ?: return null
             frame to sprite
         }
@@ -341,11 +389,37 @@ class DraygonSpritemap(private val romParser: RomParser) {
         name: String,
         addresses: List<Int>,
         paletteStage: PaletteStageDef,
+        paletteMode: PreviewPaletteMode,
     ): EnemySpritemap.AssembledSprite? {
         val tiles = renderTileData ?: return null
         val roomTiles = getRoomTileData() ?: return null
-        val palette = readPalette(paletteStage) ?: return null
-        return scanner.renderDraygonComposition(name, addresses, tiles, palette, roomTiles)
+        val objPaletteRows = readObjPaletteRows(paletteStage) ?: return null
+        val objPalette = objPaletteRows[OBJ_PALETTE_ROW] ?: return null
+        val bgPalette = when (paletteMode) {
+            PreviewPaletteMode.SPAWN -> readSpawnBgPalette()
+            PreviewPaletteMode.RUNTIME -> readRuntimeBgPalette(paletteStage)
+        } ?: return null
+        return scanner.renderDraygonComposition(
+            name = "$name · ${paletteMode.displayName}",
+            frameAddresses = addresses,
+            tileData = tiles,
+            palette = objPalette,
+            roomTileData = roomTiles,
+            oamPaletteRows = objPaletteRows,
+            bgPaletteRows = mapOf(BG_PALETTE_ROW to bgPalette),
+            bgPalette = bgPalette,
+        )
+    }
+
+    private fun readObjPaletteRows(stage: PaletteStageDef): Map<Int, IntArray>? {
+        val rows = linkedMapOf<Int, IntArray>()
+        listOf(OBJ_PALETTE_ROW, 1, 2, 3).forEachIndexed { sourceIndex, paletteRow ->
+            rows[paletteRow] = readPaletteAt(BASE_PALETTE_SNES + sourceIndex * 0x20) ?: return null
+        }
+        if (stage == WHITE_FLASH) {
+            rows[OBJ_PALETTE_ROW] = readPaletteAt(WHITE_FLASH_PALETTE_SNES) ?: return null
+        }
+        return rows
     }
 
     private fun compositionFrames(def: AnimationDef, frameSnes: Int): List<Int> {
@@ -362,12 +436,29 @@ class DraygonSpritemap(private val romParser: RomParser) {
     private fun defaults(side: Side): SlotFrames = if (side == Side.LEFT) LEFT_DEFAULTS else RIGHT_DEFAULTS
 
     private fun readPaletteAt(snesAddress: Int): IntArray? {
+        paletteOverrides[snesAddress]?.let { row ->
+            if (row.size != 16) return null
+            return IntArray(16) { index ->
+                if (index == 0) 0 else EnemySpriteGraphics.snesColorToArgb(row[index])
+            }
+        }
         val rom = romParser.getRomData()
         val pc = romParser.snesToPc(snesAddress)
         if (pc < 0 || pc + 32 > rom.size) return null
         return IntArray(16) { index ->
             if (index == 0) 0x00000000 else EnemySpriteGraphics.snesColorToArgb(readWord(rom, pc + index * 2))
         }
+    }
+
+    private fun readHealthPaletteRow(tableIndex: Int): IntArray? {
+        val snesAddress = HEALTH_TABLE_SNES + tableIndex * 8
+        paletteOverrides[snesAddress]?.let { row ->
+            return row.takeIf { it.size == 4 }?.copyOf()
+        }
+        val rom = romParser.getRomData()
+        val pc = romParser.snesToPc(snesAddress)
+        if (pc < 0 || pc + 8 > rom.size) return null
+        return IntArray(4) { index -> readWord(rom, pc + index * 2) }
     }
 
     private fun readWord(data: ByteArray, offset: Int): Int =

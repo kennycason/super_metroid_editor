@@ -106,6 +106,7 @@ object RomValidator {
             issues.addAll(checkProjectCustomItemDependencies(project))
             issues.addAll(checkProjectRoomHeaders(parser, project, rooms))
             issues.addAll(checkProjectRoomStates(parser, project, rooms))
+            issues.addAll(checkProjectBossFxConflicts(project))
             issues.addAll(checkProjectMinimapEdits(project))
             issues.addAll(checkProjectSaveStationSpawns(parser, project, rooms))
             issues.addAll(checkProjectGraphicsExportFit(parser, project))
@@ -512,6 +513,61 @@ object RomValidator {
             }
         }
         return issues
+    }
+
+    /**
+     * Kraid's live BG2 map occupies VRAM starting at $4000. These native FX
+     * types animate tiles by DMAing $40 bytes to $4280, exactly overlapping
+     * row 20 of that map. The room therefore cannot safely use them while the
+     * living Kraid state is active.
+     */
+    fun checkProjectBossFxConflicts(project: SmEditProject): List<Issue> {
+        val kraidRoomId = KraidSpritemap.KRAID_ROOM_SNES and 0xFFFF
+        val edits = project.rooms[project.roomKey(kraidRoomId)] ?: return emptyList()
+        val conflictingFx = mapOf(
+            0x02 to "Lava",
+            0x04 to "Acid",
+            0x08 to "Spores",
+            0x0A to "Rain",
+        )
+        val livingStates = edits.effectiveStates.filter { state ->
+            state.baseSourceStateIndex() == 1 ||
+                state.effectiveCondition.kind ==
+                com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+        }
+        val conflicts = linkedMapOf<String, Int>()
+
+        if (livingStates.isEmpty()) {
+            edits.fxChange?.fxType?.takeIf(conflictingFx::containsKey)?.let {
+                conflicts["room-wide default"] = it
+            }
+        } else {
+            for (state in livingStates) {
+                val defaultType = state.fxChange?.fxType ?: edits.fxChange?.fxType
+                defaultType?.takeIf(conflictingFx::containsKey)?.let {
+                    conflicts["state '${state.id}' default"] = it
+                }
+                for ((door, change) in state.doorFxChanges) {
+                    val doorType = change.fxType ?: defaultType
+                    doorType?.takeIf(conflictingFx::containsKey)?.let {
+                        conflicts["state '${state.id}' door \$$door"] = it
+                    }
+                }
+            }
+        }
+
+        return conflicts.map { (scope, fxType) ->
+            val typeHex = fxType.toString(16).uppercase().padStart(2, '0')
+            Issue(
+                Severity.ERROR,
+                "Boss FX",
+                kraidRoomId,
+                "Kraid's Room",
+                "$scope uses ${conflictingFx.getValue(fxType)} FX (type \$$typeHex). Its animated-tile " +
+                    "DMA writes VRAM \$4280, overlapping row 20 of Kraid's live BG2 body. " +
+                    "Use No FX (type \$00) for Kraid's living state.",
+            )
+        }
     }
 
     fun checkProjectMinimapEdits(project: SmEditProject): List<Issue> {
@@ -1048,7 +1104,62 @@ object RomValidator {
                 }
             }
         }
+        addBossPaletteOwnershipWarnings(parser, project, issues)
         return issues
+    }
+
+    private fun addBossPaletteOwnershipWarnings(
+        parser: RomParser,
+        project: SmEditProject,
+        issues: MutableList<Issue>,
+    ) {
+        fun sprite(regionId: String): IntArray? {
+            val region = SpritePalettes.findRegion(regionId) ?: return null
+            val override = project.customGfx.spritePalettes[regionId]
+            if (override != null) {
+                val raw = runCatching { Base64.decode(override) }.getOrNull()
+                if (raw != null && raw.size == region.byteSize) return SpritePalettes.bytesToColors(raw)
+            }
+            return SpritePalettes.readColors(parser.getRomData(), region)
+        }
+
+        fun tileset(tilesetId: Int): IntArray? {
+            project.customGfx.palettes[tilesetId.toString()]?.let { encoded ->
+                val raw = runCatching { Base64.decode(encoded) }.getOrNull()
+                if (raw != null && raw.size == 8 * 16 * 2) return SpritePalettes.bytesToColors(raw)
+            }
+            val graphics = TileGraphics(parser)
+            if (!graphics.loadTileset(tilesetId)) return null
+            return graphics.getRawPaletteData()?.let(SpritePalettes::bytesToColors)
+        }
+
+        val kraidSpawn = tileset(TileGraphics.KRAID_TILESET)
+            ?.copyOfRange(KraidSpritemap.BODY_PALETTE_ROW * 16, (KraidSpritemap.BODY_PALETTE_ROW + 1) * 16)
+        val kraidRuntime = sprite("boss_kraid_health_bg")?.copyOfRange(8 * 16, 9 * 16)
+        if (kraidSpawn != null && kraidRuntime != null && !kraidSpawn.contentEquals(kraidRuntime)) {
+            issues += Issue(
+                Severity.WARNING,
+                "Boss Palettes",
+                KraidSpritemap.KRAID_ROOM_SNES and 0xFFFF,
+                "Kraid's Room",
+                "Kraid spawn BG palette (tileset 26 row 7) differs from the full-health runtime BG palette " +
+                    "(Kraid health-BG row 8). The body can change color after the first hit.",
+            )
+        }
+
+        val draygonSpawn = tileset(DraygonSpritemap.TILESET_ID)
+            ?.copyOfRange(DraygonSpritemap.BG_PALETTE_ROW * 16, (DraygonSpritemap.BG_PALETTE_ROW + 1) * 16)
+        val draygonRuntime = sprite("boss_draygon")?.copyOfRange(4 * 16, 5 * 16)
+        if (draygonSpawn != null && draygonRuntime != null && !draygonSpawn.contentEquals(draygonRuntime)) {
+            issues += Issue(
+                Severity.WARNING,
+                "Boss Palettes",
+                DraygonSpritemap.ROOM_SNES and 0xFFFF,
+                "Draygon's Room",
+                "Draygon spawn BG palette (tileset 28 / \$1C row 5) differs from the bank-A5 runtime BG row " +
+                    "(Draygon row 4 / indices 64–79). The body can change color when Draygon is hurt.",
+            )
+        }
     }
 
     fun checkProjectNativeSpriteEdits(parser: RomParser, project: SmEditProject): List<Issue> =

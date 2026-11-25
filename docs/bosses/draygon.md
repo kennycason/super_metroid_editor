@@ -68,8 +68,10 @@ rather than body replacements.
 
 Bank `$A5` declares six complete palettes: sprite rows 7, 1, 2, and 3; BG1/2 row 5;
 and the all-white hurt flash. `DraygonHealthBasedPaletteTable` at `$A5:96AF` contains
-eight rows of four colors. They replace sprite-palette indexes 9–12 at health
+eight rows of four colors. They replace BG row 5 columns 9–12 at health
 thresholds 5250, 4500, 3750, 3000, 2250, 1500, 750, and 0. The terminator is `$FFFF`.
+SMEDIT exposes this as an editable 8×4 palette region instead of incorrectly treating
+it as eight full 16-color rows.
 
 ## Editor and export boundary
 
@@ -81,6 +83,12 @@ editable there and saves as `spriteTileBlocks["enemy:DE3F"]`. While painting, th
 reference panel reassembles every named Draygon pose from the in-progress bytes. A
 stable full-health palette is used for the indexed 4bpp round trip; the runtime health
 and hurt palettes remain preview choices.
+
+The palette-mode control separates **Spawn / room-loaded** from **Runtime / after hit**.
+Spawn BG2 uses tileset `$1C` row 5, while the runtime body uses the bank `$A5` BG row
+plus the selected four-color health-table stage. OBJ rows 7, 1, 2, and 3 remain a
+separate owner in both modes. The renderer and project overrides preserve that BG/OBJ
+split even when an extended spritemap contains both kinds of child.
 
 BG2/OBJ placement, instruction records, hitboxes, and flattened composite pixel
 editing remain read-only. This includes the isolated component previews: an extended

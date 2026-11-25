@@ -87,12 +87,56 @@ class DraygonSpriteTest {
     }
 
     @Test
+    fun `project palettes keep spawn BG runtime BG and OBJ owners independent`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val draygon = DraygonSpritemap(parser)
+        assertTrue(draygon.load())
+
+        val red = 0x001F
+        val blue = 0x7C00
+        val objAndBg = IntArray(96)
+        repeat(4) { sourceRow ->
+            repeat(16) { column -> objAndBg[sourceRow * 16 + column] = red }
+        }
+        repeat(16) { column -> objAndBg[4 * 16 + column] = blue }
+        repeat(16) { column -> objAndBg[5 * 16 + column] = 0x7FFF }
+        val health = IntArray(32) { blue }
+
+        draygon.applyPaletteRegionOverrides(
+            mapOf(
+                "boss_draygon" to objAndBg,
+                "boss_draygon_health" to health,
+            ),
+        )
+
+        val full = DraygonSpritemap.PALETTE_STAGES.first()
+        val obj = assertNotNull(draygon.readObjPalette(full))
+        val runtimeBg = assertNotNull(draygon.readRuntimeBgPalette(full))
+        val spawnBg = assertNotNull(draygon.readSpawnBgPalette())
+        assertEquals(EnemySpriteGraphics.snesColorToArgb(red), obj[1])
+        assertEquals(EnemySpriteGraphics.snesColorToArgb(blue), runtimeBg[1])
+        assertEquals(EnemySpriteGraphics.snesColorToArgb(blue), runtimeBg[9])
+        assertTrue(!spawnBg.contentEquals(runtimeBg))
+
+        val definition = DraygonSpritemap.COMPOSITIONS.first()
+        val spawn = assertNotNull(
+            draygon.renderComposition(definition, full, DraygonSpritemap.PreviewPaletteMode.SPAWN),
+        )
+        val runtime = assertNotNull(
+            draygon.renderComposition(definition, full, DraygonSpritemap.PreviewPaletteMode.RUNTIME),
+        )
+        assertTrue(!spawn.pixels.contentEquals(runtime.pixels))
+        assertTrue(runtime.pixels.contains(EnemySpriteGraphics.snesColorToArgb(red)))
+        assertTrue(runtime.pixels.contains(EnemySpriteGraphics.snesColorToArgb(blue)))
+    }
+
+    @Test
     fun `full health palette round trips the editable OBJ sheet byte exactly`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val draygon = DraygonSpritemap(parser)
         assertTrue(draygon.load())
         val raw = assertNotNull(draygon.getRawEnemyTileData())
-        val palette = assertNotNull(draygon.readPalette(DraygonSpritemap.PALETTE_STAGES.first()))
+        val palette = assertNotNull(draygon.readObjPalette(DraygonSpritemap.PALETTE_STAGES.first()))
         val gfx = EnemySpriteGraphics(parser)
         gfx.loadFromRaw(listOf(raw))
         val (pixels, width, height) = assertNotNull(gfx.renderSheet(palette, cols = 16))

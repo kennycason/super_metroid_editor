@@ -30,6 +30,7 @@ class KraidSpritemap(private val romParser: RomParser) {
         const val NAMETABLE_PC = LOWER_BG2_TILEMAP_PC
         /** Palette_KraidRoomBackground — loaded to BG palette row 6 during the fight. */
         const val PALETTE_SNES = 0xA786C7
+        const val BASE_OAM_PALETTE_SNES = 0xA78687
         const val PALETTE_ROW = 6
         /** Kraid's head/body words use BG palette row 7 from the room tileset. */
         const val BODY_PALETTE_ROW = 7
@@ -140,6 +141,17 @@ class KraidSpritemap(private val romParser: RomParser) {
         val bgPaletteSnes: Int,
         val oamPaletteSnes: Int,
     )
+
+    enum class PreviewPaletteMode(val displayName: String, val detail: String) {
+        SPAWN(
+            "Spawn / room-loaded",
+            "BG2 uses tileset 26 row 7 and linked parts use Kraid's initial OBJ row",
+        ),
+        RUNTIME(
+            "Runtime / after hit",
+            "BG2 and linked parts use the selected paired hurt/health tables",
+        ),
+    }
 
     data class OamSequenceDef(
         val key: String,
@@ -318,6 +330,8 @@ class KraidSpritemap(private val romParser: RomParser) {
 
     fun getPalette(): IntArray? = cachedTileGfx?.let(::extractInGamePalette) ?: palette?.copyOf()
 
+    fun readSpawnOamPalette(): IntArray? = readPalette(BASE_OAM_PALETTE_SNES)
+
     fun readBgPalette(stage: PaletteStageDef): IntArray? = readPalette(stage.bgPaletteSnes)
 
     fun readOamPalette(stage: PaletteStageDef): IntArray? = readPalette(stage.oamPaletteSnes)
@@ -353,6 +367,7 @@ class KraidSpritemap(private val romParser: RomParser) {
     fun renderFullBody(
         head: HeadTilemapDef = HEAD_TILEMAPS.first(),
         paletteStage: PaletteStageDef = PALETTE_STAGES.first { it.key == "health-8" },
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): AssembledSprite? {
         val tg = cachedTileGfx ?: return null
         val upper = romParser.decompressLZ5AtPc(romParser.snesToPc(UPPER_BG2_TILEMAP_SNES))
@@ -366,13 +381,16 @@ class KraidSpritemap(private val romParser: RomParser) {
         val linearData = ByteArray(BG2_STRIDE * BG2_STRIDE * 2)
         copyScreenPairToLinear(upper, linearData, destinationRow = 0)
         copyScreenPairToLinear(lower, linearData, destinationRow = 32)
-        val bodyPalette = readBgPalette(paletteStage) ?: return null
+        val bodyPalette = when (paletteMode) {
+            PreviewPaletteMode.SPAWN -> getPalette()
+            PreviewPaletteMode.RUNTIME -> readBgPalette(paletteStage)
+        } ?: return null
         return renderFromTilemap(
             tg,
             linearData,
             BG2_STRIDE,
             BG2_STRIDE,
-            "Live BG2 · ${head.name} · ${paletteStage.name}",
+            "Live BG2 · ${head.name} · ${paletteMode.displayName} · ${paletteStage.name}",
             paletteOverrides = mapOf(BODY_PALETTE_ROW to bodyPalette),
         )
     }
@@ -388,13 +406,14 @@ class KraidSpritemap(private val romParser: RomParser) {
         head: HeadTilemapDef = HEAD_TILEMAPS.first(),
         paletteStage: PaletteStageDef = PALETTE_STAGES.first { it.key == "health-8" },
         oamTileData: ByteArray? = null,
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): AssembledSprite? {
-        val body = renderFullBody(head, paletteStage) ?: return null
+        val body = renderFullBody(head, paletteStage, paletteMode) ?: return null
         val tiles = oamTileData
             ?: EnemySpriteGraphics.loadEnemyTileData(romParser, OAM_SEQUENCES.first().speciesId)
             ?: return body
-        val arm = renderRepresentativeOamPart("arm-normal", tiles, paletteStage)
-        val foot = renderRepresentativeOamPart("foot-neutral", tiles, paletteStage)
+        val arm = renderRepresentativeOamPart("arm-normal", tiles, paletteStage, paletteMode)
+        val foot = renderRepresentativeOamPart("foot-neutral", tiles, paletteStage, paletteMode)
         val positionedParts = listOfNotNull(
             arm?.let {
                 PositionedOamPart(
@@ -428,7 +447,7 @@ class KraidSpritemap(private val romParser: RomParser) {
         }
 
         return body.copy(
-            name = "Complete boss · ${head.name} · arm/claw + foot · ${paletteStage.name}",
+            name = "Complete boss · ${head.name} · arm/claw + foot · ${paletteMode.displayName} · ${paletteStage.name}",
             width = width,
             height = height,
             pixels = output,
@@ -497,10 +516,11 @@ class KraidSpritemap(private val romParser: RomParser) {
         def: HeadSequenceDef,
         paletteStage: PaletteStageDef = PALETTE_STAGES.first { it.key == "health-8" },
         oamTileData: ByteArray? = null,
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): SpriteAnimation? {
         val animation = loadHeadAnimation(def) ?: return null
         val frames = animation.frames.mapIndexedNotNull { index, frame ->
-            val body = renderCompleteBody(frame.tilemap, paletteStage, oamTileData)
+            val body = renderCompleteBody(frame.tilemap, paletteStage, oamTileData, paletteMode)
                 ?: return@mapIndexedNotNull null
             SpriteAnimationFrame(
                 pixels = body.pixels,
@@ -519,10 +539,14 @@ class KraidSpritemap(private val romParser: RomParser) {
         sequenceKey: String,
         tileData: ByteArray,
         paletteStage: PaletteStageDef,
+        paletteMode: PreviewPaletteMode,
     ): EnemySpritemap.AssembledSprite? {
         val definition = OAM_SEQUENCES.firstOrNull { it.key == sequenceKey } ?: return null
         val frame = loadOamAnimation(definition)?.frames?.firstOrNull() ?: return null
-        val partPalette = readOamPalette(paletteStage) ?: return null
+        val partPalette = when (paletteMode) {
+            PreviewPaletteMode.SPAWN -> readSpawnOamPalette()
+            PreviewPaletteMode.RUNTIME -> readOamPalette(paletteStage)
+        } ?: return null
         return EnemySpritemap(romParser).renderRenderableFrame(
             frame.renderableFrame,
             tileData,
@@ -619,9 +643,13 @@ class KraidSpritemap(private val romParser: RomParser) {
         def: OamSequenceDef,
         tileData: ByteArray,
         paletteStage: PaletteStageDef = PALETTE_STAGES.first { it.key == "health-8" },
+        paletteMode: PreviewPaletteMode = PreviewPaletteMode.RUNTIME,
     ): SpriteAnimation? {
         val animation = loadOamAnimation(def) ?: return null
-        val palette = readOamPalette(paletteStage) ?: return null
+        val palette = when (paletteMode) {
+            PreviewPaletteMode.SPAWN -> readSpawnOamPalette()
+            PreviewPaletteMode.RUNTIME -> readOamPalette(paletteStage)
+        } ?: return null
         val renderer = EnemySpritemap(romParser)
         val rendered = animation.frames.mapNotNull { frame ->
             renderer.renderRenderableFrame(frame.renderableFrame, tileData, palette)?.let { frame to it }

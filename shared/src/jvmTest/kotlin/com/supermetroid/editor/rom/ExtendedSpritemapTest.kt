@@ -542,6 +542,41 @@ class ExtendedSpritemapTest {
     }
 
     @Test
+    fun `extended BG tilemaps decode their own palette row bits`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = ByteArray(RomConstants.BYTES_PER_4BPP_TILE).also { fillSolidTile(it, 0, 1) }
+        val fallback = IntArray(16).also { it[1] = 0xFFFF0000.toInt() }
+        val bgRow5 = IntArray(16).also { it[1] = 0xFF0000FF.toInt() }
+        val tilemap = EnemySpritemap.ExtendedTilemap(
+            runs = listOf(
+                EnemySpritemap.ExtendedTilemapRun(
+                    dest = 0,
+                    tiles = listOf((5 shl 10) or 0),
+                ),
+            ),
+            snesAddress = 0,
+        )
+        val frame = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(EnemySpritemap.ExtendedChild.Tilemap(0, 0, tilemap, 0)),
+            snesAddress = 0,
+        )
+
+        val rendered = smap.renderExtendedSpritemap(
+            frame,
+            tileData,
+            fallback,
+            EnemySpritemap.RenderOptions(
+                extendedTilemapPaletteRows = mapOf(5 to bgRow5),
+                extendedTilemapPalette = fallback,
+            ),
+        )
+        assertNotNull(rendered)
+        assertTrue(rendered!!.pixels.any { it == 0xFF0000FF.toInt() })
+        assertTrue(rendered.pixels.none { it == 0xFFFF0000.toInt() })
+    }
+
+    @Test
     fun `extended OAM can preserve game tile base bits`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)

@@ -46,21 +46,25 @@ class KraidSpriteEditorState(
         head: KraidSpritemap.HeadTilemapDef = KraidSpritemap.HEAD_TILEMAPS.first(),
         paletteStage: KraidSpritemap.PaletteStageDef =
             KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" },
+        paletteMode: KraidSpritemap.PreviewPaletteMode = KraidSpritemap.PreviewPaletteMode.RUNTIME,
     ): KraidSpritemap.AssembledSprite? =
         getSpritemap(romParser)?.renderCompleteBody(
             head,
             paletteStage,
             loadEnemyTileData(romParser, KraidSpritemap.OAM_SEQUENCES.first().speciesId),
+            paletteMode,
         )
 
     fun renderFullBodyAnimation(
         romParser: RomParser,
         def: KraidSpritemap.HeadSequenceDef,
         paletteStage: KraidSpritemap.PaletteStageDef,
+        paletteMode: KraidSpritemap.PreviewPaletteMode = KraidSpritemap.PreviewPaletteMode.RUNTIME,
     ) = getSpritemap(romParser)?.renderFullBodyAnimation(
         def,
         paletteStage,
         loadEnemyTileData(romParser, KraidSpritemap.OAM_SEQUENCES.first().speciesId),
+        paletteMode,
     )
 
     fun renderOamAnimation(
@@ -68,7 +72,8 @@ class KraidSpriteEditorState(
         def: KraidSpritemap.OamSequenceDef,
         tileData: ByteArray,
         paletteStage: KraidSpritemap.PaletteStageDef,
-    ) = getSpritemap(romParser)?.renderOamAnimation(def, tileData, paletteStage)
+        paletteMode: KraidSpritemap.PreviewPaletteMode = KraidSpritemap.PreviewPaletteMode.RUNTIME,
+    ) = getSpritemap(romParser)?.renderOamAnimation(def, tileData, paletteStage, paletteMode)
 
     fun renderHeadTilemap(
         romParser: RomParser,

@@ -990,13 +990,27 @@ class BossPoseScanner(private val romParser: RomParser) {
         tileData: ByteArray,
         palette: IntArray,
         roomTileData: ByteArray? = null,
+        oamPaletteRows: Map<Int, IntArray> = emptyMap(),
+        bgPaletteRows: Map<Int, IntArray> = emptyMap(),
+        bgPalette: IntArray? = null,
     ): EnemySpritemap.AssembledSprite? {
-        val pose = createDraygonCompositePose(
+        val sourcePose = createDraygonCompositePose(
             label = name,
             durationTicks = 1,
             frameAddresses = frameAddresses,
             minEntries = 1,
         ) ?: return null
+        fun withPalettes(options: EnemySpritemap.RenderOptions) = options.copy(
+            oamPaletteRows = oamPaletteRows,
+            extendedTilemapPaletteRows = bgPaletteRows,
+            extendedTilemapPalette = bgPalette,
+        )
+        val pose = sourcePose.copy(
+            renderOptions = withPalettes(sourcePose.renderOptions),
+            compositeParts = sourcePose.compositeParts.map { part ->
+                part.copy(renderOptions = withPalettes(part.renderOptions))
+            },
+        )
         return renderPose(pose, tileData, palette, roomTileData)
     }
 
