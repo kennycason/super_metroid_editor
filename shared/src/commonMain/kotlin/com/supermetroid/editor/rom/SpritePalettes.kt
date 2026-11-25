@@ -61,7 +61,7 @@ object SpritePalettes {
         region("boss_torizo", "Torizo", "Torizo palettes (all rows)", 0x150687, 160, "bosses"),
         region("boss_golden_torizo_1", "Golden Torizo (palette 1)", "GT health-based palette set 1", 0x020032, 128, "bosses"),
         region("boss_golden_torizo_2", "Golden Torizo (palette 2)", "GT health-based palette set 2", 0x020132, 128, "bosses"),
-        region("boss_big_metroid", "Big Metroid", "Baby Metroid (end-game) palette", 0x14F8E6, 16, "bosses"),
+        region("boss_big_metroid", "Baby Metroid (end-game)", "End-game Baby Metroid palette", 0x14F8E6, 16, "bosses"),
         region("boss_mini_kraid", "Mini Kraid", "Mini Kraid palette", 0x13198C, 16, "bosses"),
         region("boss_zebetites", "Zebetites", "Zebetites palette", 0x14D6BC, 16, "bosses"),
     )

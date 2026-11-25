@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.SuitPatches
 
@@ -402,6 +403,7 @@ internal val DEDICATED_EDITOR_CONFIG_TYPES = setOf(
     "enemy_stats",
     "enemy_drops",
     "enemy_vuln",
+    BabyMetroidPatch.CONFIG_TYPE,
     "boss_stats",
     "boss_defeated",
     "phantoon",
@@ -445,6 +447,16 @@ val ENEMY_VULNERABILITY_PATCH = SmPatch(
     configType = "enemy_vuln"
 )
 
+/** Managed combat and movement patch for the end-game Baby Metroid. */
+val BABY_METROID_PATCH = SmPatch(
+    id = BabyMetroidPatch.PATCH_ID,
+    name = "Baby Metroid",
+    description = "Safely make the end-game Baby mortal/freezable and tune its missile vulnerability and flight behavior.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = BabyMetroidPatch.CONFIG_TYPE,
+)
+
 /** Config patch: Samus Physics overrides. Stores movement/gravity/speed values in configData. */
 val SAMUS_PHYSICS_PATCH = SmPatch(
     id = "config_samus_physics",
@@ -455,11 +467,11 @@ val SAMUS_PHYSICS_PATCH = SmPatch(
     configType = "samus_physics"
 )
 
-/** Config patch: global or per-area heated-room, lava, and acid base damage rates. */
+/** Config patch: global or per-region heated-room, lava, and acid base damage rates. */
 val ENVIRONMENTAL_DAMAGE_PATCH = SmPatch(
     id = "config_environmental_damage",
     name = "Environmental Damage",
-    description = "Set global or per-area heated-room, lava, and acid damage rates in energy per second.",
+    description = "Set global or per-region heated-room, lava, and acid damage rates, including separate Upper and Lower Norfair values.",
     enabled = false,
     writes = mutableListOf(),
     configType = EnvironmentalDamagePatch.CONFIG_TYPE,
@@ -589,6 +601,7 @@ internal val GUI_CONFIG_PATCHES = listOf(
     ENEMY_STATS_PATCH,
     ENEMY_DROP_RATE_PATCH,
     ENEMY_VULNERABILITY_PATCH,
+    BABY_METROID_PATCH,
     SAMUS_PHYSICS_PATCH,
     ENVIRONMENTAL_DAMAGE_PATCH,
     BOMBS_PATCH,

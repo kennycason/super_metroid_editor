@@ -12,6 +12,7 @@ import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.enabledPatchIncompatibilities
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.BossSpriteExportSafety
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.rom.CommunitySamusSourceCodec
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.SuitPatches
@@ -1305,15 +1306,20 @@ internal class RomExporter(
                 onLog("[EXPORT]   Enemy drop rates: $modCount values modified")
             } else if (patch.configType == "enemy_vuln") {
                 val data = patch.configData ?: continue
+                require(data.keys.none { it.startsWith("metroid_vuln") }) {
+                    "${patch.name}: Baby Metroid vulnerabilities must use the dedicated Baby Metroid editor; " +
+                        "its vanilla table is shared with corpse enemies."
+                }
                 validateConfigKeys(
                     data,
-                    ENEMY_DEFS.flatMapTo(mutableSetOf()) { enemy ->
-                        (0..21).map { index -> "${enemy.key}_vuln$index" }
-                    },
+                    ENEMY_DEFS.filterNot { it.speciesId == BabyMetroidPatch.SPECIES_ID }
+                        .flatMapTo(mutableSetOf()) { enemy ->
+                            (0..21).map { index -> "${enemy.key}_vuln$index" }
+                        },
                     patch,
                 )
                 var modCount = 0
-                for (e in ENEMY_DEFS) {
+                for (e in ENEMY_DEFS.filterNot { it.speciesId == BabyMetroidPatch.SPECIES_ID }) {
                     val requested = (0..21).mapNotNull { index ->
                         data["${e.key}_vuln$index"]?.let { index to it }
                     }
@@ -1340,6 +1346,23 @@ internal class RomExporter(
                     }
                 }
                 onLog("[EXPORT]   Enemy vulnerabilities: $modCount values modified")
+            } else if (patch.configType == BabyMetroidPatch.CONFIG_TYPE) {
+                val data = patch.configData
+                if (data.isNullOrEmpty()) continue
+                validateConfigKeys(data, BabyMetroidPatch.CONFIG_KEYS, patch)
+                val result = BabyMetroidPatch.install(
+                    config = data,
+                    parser = RomParser(writePlan.romData),
+                    writePlan = writePlan,
+                    freeSpaceAllocator = freeSpaceAllocator,
+                    owner = "patch:${patch.id}",
+                    label = patch.name,
+                )
+                onLog(
+                    "[EXPORT]   Baby Metroid: mortal=${result.mortalInstalled}, " +
+                        "movement operands=${result.movementWordsWritten}" +
+                        (result.shotShimSnes?.let { ", guarded shot AI at \$${it.toString(16).uppercase()}" } ?: "")
+                )
             } else if (patch.configType == "samus_physics") {
                 val data = patch.configData ?: continue
                 validateConfigKeys(data, ALL_PHYSICS_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)
@@ -1355,7 +1378,7 @@ internal class RomExporter(
                 val data = patch.configData ?: continue
                 validateConfigKeys(
                     data,
-                    EnvironmentalDamagePatch.CONFIG_KEYS,
+                    EnvironmentalDamagePatch.ACCEPTED_CONFIG_KEYS,
                     patch,
                 )
                 val perAreaRates = requireConfigRange(
@@ -1373,6 +1396,9 @@ internal class RomExporter(
                             value,
                             EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND..EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
                         )
+                    } else if (key == EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY ||
+                        key == EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY) {
+                        requireConfigRange(patch, key, value, 0..1)
                     }
                 }
                 var modCount = 0
@@ -1439,6 +1465,79 @@ internal class RomExporter(
                             overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
                         )
                     }
+                    val heatedRegionIndexes = EnvironmentalDamagePatch.heatedRateRegionIndexes(
+                        config = data,
+                        fallbackRates = fallbackRates,
+                    )
+                    if (heatedRegionIndexes.isNotEmpty()) {
+                        val runtimeParser = RomParser(romData)
+                        fun compiledRuntimePc(key: String): Int = requireNotNull(
+                            compiledAsmBase?.patchDataLocations?.get(
+                                com.supermetroid.editor.asm.environmentalHeatRuntimeSourceKey(key)
+                            )
+                        ) { "Per-area heat: no checked ASM runtime location for $key." }.lowPc
+                        fun compiledRuntimeSnes(key: String): Int =
+                            runtimeParser.pcToSnes(writePlan.headerSize + compiledRuntimePc(key))
+
+                        val fxLoaderSnes = if (compiledAsmBase == null) {
+                            EnvironmentalDamagePatch.NATIVE_FX_LOADER_SNES
+                        } else compiledRuntimeSnes("fx_loader")
+                        val paletteFxSpawnerSnes = if (compiledAsmBase == null) {
+                            EnvironmentalDamagePatch.NATIVE_PALETTE_FX_SPAWNER_SNES
+                        } else compiledRuntimeSnes("palette_fx_spawner")
+                        val heatObjectId = if (compiledAsmBase == null) {
+                            EnvironmentalDamagePatch.NATIVE_HEAT_OBJECT_ID
+                        } else compiledRuntimeSnes("heat_object").also {
+                            require(it ushr 16 == paletteFxSpawnerSnes ushr 16) {
+                                "Per-area heat object and palette-FX spawner must remain in the same bank."
+                            }
+                        } and 0xFFFF
+                        val roomLoadHooks = if (compiledAsmBase == null) {
+                            EnvironmentalDamagePatch.NATIVE_ROOM_LOAD_HOOKS
+                        } else {
+                            List(2) { index ->
+                                val pc = compiledRuntimePc("room_load_$index")
+                                val fileOffset = writePlan.headerSize + pc
+                                require(fileOffset >= 0 && fileOffset + 4 <= romData.size) {
+                                    "Per-area heat room-load hook $index is outside the ROM."
+                                }
+                                val actual = (fileOffset until fileOffset + 4).map { romData[it].toInt() and 0xFF }
+                                val expected = listOf(
+                                    0x22,
+                                    fxLoaderSnes and 0xFF,
+                                    fxLoaderSnes ushr 8 and 0xFF,
+                                    fxLoaderSnes ushr 16 and 0xFF,
+                                )
+                                require(actual == expected) {
+                                    "Per-area heat room-load hook $index no longer calls the checked FX loader."
+                                }
+                                EnvironmentalDamagePatch.RoomLoadHook(pc, actual)
+                            }
+                        }
+                        for (write in EnvironmentalDamagePatch.perAreaHeatCheckedWrites(
+                            heatedRegionIndexes = heatedRegionIndexes,
+                            noHeatBabyToMotherBrain = EnvironmentalDamagePatch.tourianNoHeatBabyToMotherBrain(data),
+                            noHeatDuringEscape = EnvironmentalDamagePatch.tourianNoHeatDuringEscape(data),
+                            hooks = roomLoadHooks,
+                            nativeFxLoaderSnes = fxLoaderSnes,
+                            paletteFxSpawnerSnes = paletteFxSpawnerSnes,
+                            heatObjectId = heatObjectId,
+                        )) {
+                            writePlan.add(
+                                owner = "patch:${patch.id}",
+                                label = "${patch.name} · per-area heat scope",
+                                offset = write.pcOffset,
+                                bytes = write.bytes,
+                                kind = RomWriteKind.CONFIG,
+                                expectedBefore = write.expectedBytes,
+                                overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
+                            )
+                        }
+                        val heatedLabels = EnvironmentalDamagePatch.RATE_REGIONS
+                            .filter { it.index in heatedRegionIndexes }
+                            .joinToString { it.label }
+                        onLog("[EXPORT]   Environmental damage: room-wide heat enabled in $heatedLabels")
+                    }
                     modCount = EnvironmentalDamagePatch.AREA_RATE_FIELDS.size
                 } else {
                     for (field in EnvironmentalDamagePatch.FIELDS) {
@@ -1450,29 +1549,6 @@ internal class RomExporter(
                         patchWord(writePlan.headerSize + locations.highPc, fixedRate.highWord, "${patch.name} · ${field.key} whole")
                         modCount++
                     }
-                }
-                val allRoomsHeated = requireConfigRange(
-                    patch,
-                    EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
-                    data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY] ?: 0,
-                    0..1,
-                ) == 1
-                if (allRoomsHeated) {
-                    require(compiledAsmBase == null) {
-                        "All Non-Tourian Rooms Heated currently requires patched-ROM mode; no ASM-source hooks were applied."
-                    }
-                    for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
-                        writePlan.add(
-                            owner = "patch:${patch.id}",
-                            label = "${patch.name} · all non-Tourian rooms heated",
-                            offset = write.pcOffset,
-                            bytes = write.bytes,
-                            kind = RomWriteKind.CONFIG,
-                            expectedBefore = write.expectedBytes,
-                            overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
-                        )
-                    }
-                    onLog("[EXPORT]   Environmental damage: native heat effect enabled outside Tourian")
                 }
                 onLog("[EXPORT]   Environmental damage: $modCount ${if (perAreaRates) "area rates generated" else "rates modified"}")
             } else if (patch.configType == BOMB_CONFIG_TYPE) {

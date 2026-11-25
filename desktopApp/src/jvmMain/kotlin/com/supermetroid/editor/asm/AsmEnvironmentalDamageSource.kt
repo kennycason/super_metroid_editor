@@ -10,6 +10,8 @@ internal const val ENVIRONMENT_LIQUID_FILE = "bank_90.asm"
 internal val ENVIRONMENT_SOURCE_FILES = setOf(ENVIRONMENT_HEAT_FILE, ENVIRONMENT_LIQUID_FILE)
 internal fun environmentalSourceKey(key: String) = "${EnvironmentalDamagePatch.CONFIG_TYPE}:$key"
 internal fun environmentalHookSourceKey(key: String) = "${EnvironmentalDamagePatch.CONFIG_TYPE}:hook:$key"
+internal fun environmentalHeatRuntimeSourceKey(key: String) =
+    "${EnvironmentalDamagePatch.CONFIG_TYPE}:heat_runtime:$key"
 private fun environmentalOpcodes(heat: Boolean) = mapOf(0 to 0xAD, 3 to 0x18, 4 to if (heat) 0x69 else 0x6D,
     7 to 0x8D, 10 to 0xAD, 13 to if (heat) 0x69 else 0x6D, 16 to 0x8D)
 
@@ -212,7 +214,7 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
     val owned = project.asmWorkspace.patchSourceKeys.filter { it.startsWith(EnvironmentalDamagePatch.CONFIG_TYPE + ":") }.toSet()
     val allConfigs = project.patches.filter { it.enabled && it.configType == EnvironmentalDamagePatch.CONFIG_TYPE }
         .flatMap { it.configData.orEmpty().entries }.groupBy { it.key }
-    require(allConfigs.keys.all { it in EnvironmentalDamagePatch.CONFIG_KEYS }) { "Unknown environmental patch-data identities." }
+    require(allConfigs.keys.all { it in EnvironmentalDamagePatch.ACCEPTED_CONFIG_KEYS }) { "Unknown environmental patch-data identities." }
     require(allConfigs.values.all { group -> group.map { it.value }.distinct().size == 1 }) {
         "Environmental patch values must agree across enabled patches."
     }
@@ -225,6 +227,14 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
     val areaValues = allConfigs.filterKeys { key -> EnvironmentalDamagePatch.AREA_RATE_FIELDS.any { it.key == key } }
     require(areaValues.values.flatten().all { it.value in 0..9999 }) {
         "Per-area environmental damage must fit 0–9999 energy/sec."
+    }
+    listOf(
+        EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY,
+        EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY,
+    ).forEach { key ->
+        require(allConfigs[key].orEmpty().all { it.value in 0..1 }) {
+            "$key must be disabled (0) or enabled (1)."
+        }
     }
     require(catalog != null || owned.isEmpty() && configs.isEmpty() && !perArea) { "Environmental damage requires its native ASM sources." }
     if (catalog == null) return compiled
@@ -280,6 +290,55 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
             if (heat) listOf(0 to 5, 7 to 7, 16 to 3).forEach { (offset, size) -> claims[(corePc + offset - header) to size] = field.file }
             else claims[(corePc - header) to 19] = field.file
         }
+    }
+    if (perArea) {
+        fun labelAddress(name: String, bank: Int): Int {
+            val address = requireNotNull(labels[name]) { "Per-area heat: missing compiled symbol $name." }
+            require(address in (bank + 0x8000)..(bank + 0xFFFF)) {
+                "Per-area heat: $name must remain inside bank ${bank.toString(16).uppercase()}."
+            }
+            return address
+        }
+        fun headerlessPc(address: Int): Int = parser.snesToPc(address) - header
+
+        val fxLoader = labelAddress("Load_FX_Header", 0x890000)
+        val spawner = labelAddress("Spawn_PaletteFXObject", 0x8D0000)
+        val heatObject = labelAddress("PaletteFXObjects_Norfair1_Tourian1", 0x8D0000)
+        locations[environmentalHeatRuntimeSourceKey("fx_loader")] =
+            AsmPatchWordLocations(headerlessPc(fxLoader), headerlessPc(fxLoader))
+        locations[environmentalHeatRuntimeSourceKey("palette_fx_spawner")] =
+            AsmPatchWordLocations(headerlessPc(spawner), headerlessPc(spawner))
+        locations[environmentalHeatRuntimeSourceKey("heat_object")] =
+            AsmPatchWordLocations(headerlessPc(heatObject), headerlessPc(heatObject))
+
+        val callBytes = listOf(
+            0x22,
+            fxLoader and 0xFF,
+            fxLoader ushr 8 and 0xFF,
+            fxLoader ushr 16 and 0xFF,
+        )
+        fun resolveRoomLoadHook(symbol: String, bank: Int, file: String, index: Int) {
+            val start = labelAddress(symbol, bank)
+            val startPc = parser.snesToPc(start)
+            val bankEndPc = parser.snesToPc(bank or 0xFFFF) + 1
+            val endPc = minOf(startPc + 0x200, bankEndPc, compiled.romBytes.size)
+            val matches = (startPc..(endPc - callBytes.size)).filter { pc ->
+                callBytes.indices.all { offset -> compiled.romBytes[pc + offset].toInt() and 0xFF == callBytes[offset] }
+            }
+            require(matches.size == 1) {
+                "Per-area heat: $symbol must contain exactly one checked call to Load_FX_Header."
+            }
+            val pc = matches.single() - header
+            locations[environmentalHeatRuntimeSourceKey("room_load_$index")] = AsmPatchWordLocations(pc, pc)
+            hookCores[pc to 4] = file
+        }
+        resolveRoomLoadHook("StartGameplay", 0x800000, "bank_80.asm", 0)
+        resolveRoomLoadHook(
+            "DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM",
+            0x820000,
+            "bank_82.asm",
+            1,
+        )
     }
     val writes = configs.flatMap { (key, group) ->
         val loc = locations.getValue(environmentalSourceKey(key)); val rate = EnvironmentalDamagePatch.encodeEnergyPerSecond(group.first().value)

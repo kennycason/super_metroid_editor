@@ -101,7 +101,7 @@ val ENEMY_DEFS = listOf(
     EnemyDef("pirate_mk2_tourian", "Space Pirate Mk.II (Tourian)", 0xF613, 1200, 70, "Pirate"),
 
     // ── Special ──
-    EnemyDef("metroid", "Big Metroid", 0xEEBF, 1, 0, "Special"),
+    EnemyDef("metroid", "Baby Metroid (end-game)", 0xEEBF, 3200, 40, "Special"),
     EnemyDef("fireflea", "Fireflea", 0xD6BF, 1, 0, "Special"),
     EnemyDef("cacatac", "Cacatac", 0xCFFF, 200, 20, "Special"),
     EnemyDef("magdollite", "Magdollite", 0xE83F, 20, 40, "Special"),

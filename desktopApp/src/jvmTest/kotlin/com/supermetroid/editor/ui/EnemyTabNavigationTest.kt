@@ -27,6 +27,11 @@ class EnemyTabNavigationTest {
             withSidebar(editor, font, opened::add) { nodes ->
                 val links = nodes.filter { text(it) == "ASM" }.sortedBy { it.boundsInRoot.top }
                 assertEquals(3, links.size)
+                val babyMetroid = nodes.single { text(it) == "Baby Metroid" }
+                assertTrue(
+                    babyMetroid.boundsInRoot.top > nodes.single { text(it) == "Vulnerabilities" }.boundsInRoot.top,
+                    "$font Baby Metroid must appear as the fourth dedicated editor",
+                )
                 val labels = listOf("Stats", "Drop Rates", "Vulnerabilities")
                 links.zip(labels).forEach { (link, label) ->
                     val category = nodes.single { text(it) == label }

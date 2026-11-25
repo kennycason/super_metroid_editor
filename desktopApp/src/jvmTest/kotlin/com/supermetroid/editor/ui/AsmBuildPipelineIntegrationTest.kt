@@ -544,6 +544,50 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(fixture.rom, fixture.romFile.readBytes())
     }
 
+    @Test fun `per-area regional heat resolves checked ASM room-load runtime`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val model = com.supermetroid.editor.rom.EnvironmentalDamagePatch
+        project.patches += SmPatch(
+            id = "tourian-heat",
+            name = "Regional Heat",
+            enabled = true,
+            configType = model.CONFIG_TYPE,
+            configData = mutableMapOf(
+                model.PER_AREA_RATES_KEY to 1,
+                model.areaRateKey("tourian", model.HEAT_KEY) to 20,
+                model.TOURIAN_NO_HEAT_BABY_TO_MB_KEY to 1,
+                model.TOURIAN_NO_HEAT_ESCAPE_KEY to 1,
+                model.LEGACY_ALL_ROOMS_HEATED_KEY to 1,
+            ),
+        )
+        assertTrue(workspace.saveAllSources(), workspace.error)
+        val logs = mutableListOf<String>()
+        val result = assertNotNull(
+            ProjectFileService.buildRom(project, parser, logs::add, logs::add, fixture.projectFile.path),
+            logs.joinToString("\n"),
+        )
+
+        val expected = model.perAreaCheckedWrites(project.patches.last().configData!!) +
+            model.perAreaHeatCheckedWrites(
+                heatedRegionIndexes = model.heatedRateRegionIndexes(project.patches.last().configData.orEmpty()),
+                noHeatDuringEscape = true,
+            )
+        expected.forEach { write ->
+            assertEquals(
+                write.bytes,
+                result.resultRom.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
+                    .map { it.toInt() and 0xFF },
+                "checked per-area heat runtime at PC ${write.pcOffset.toString(16)}",
+            )
+        }
+    }
+
     @Test fun `new room reciprocal resources selectors and symbolic doors survive checked Asar and cold relocated rebuilds`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory)

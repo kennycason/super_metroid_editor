@@ -2,7 +2,9 @@
 
 SMEDIT's **Patches → Environmental Damage** editor controls the base damage from
 heated rooms, lava, and acid. Values are shown as whole energy per second; `0`
-keeps the room effect, animation, and drain sounds while removing its damage.
+keeps existing native room effects, animations, and drain sounds while removing
+their damage. In per-area mode, a positive regional heat value adds the native
+heat effect throughout that region; a value of `0` does not add it.
 
 ## Vanilla rates and suits
 
@@ -81,23 +83,38 @@ matching routines in the local Super Metroid disassembly:
 
 ## Per-area rates
 
-Enable **Per-Area Rates** to replace the three global controls with an eight-row
-Crateria/Brinstar/Norfair/Wrecked Ship/Maridia/Tourian/Ceres/Debug table. Every
-row has independent Heat, Lava, and Acid values. Missing area values inherit the
-corresponding global/source value, and **Copy current defaults to all areas**
-materializes those inherited values when an explicit table is desired.
-Exact fractional ASM source values are copied into inherited table entries without
-rounding; the copy button is disabled until all three defaults are whole GUI values.
+Enable **Per-Area Rates** to replace the three global controls with a nine-row
+Crateria/Brinstar/Upper Norfair/Lower Norfair/Wrecked Ship/Maridia/Tourian/Ceres/Debug
+table. Every row has independent Heat, Lava, and Acid values. Missing area values
+independently inherit the corresponding global/source value. Upper and Lower
+Norfair never inherit from one another, so editing either row leaves the other
+unchanged.
 
-This mode changes the rate only. Native room FX still determine whether a room
-is heated or contains lava/acid; `all_rooms_heated` remains a separate option.
-Native suit checks and liquid movement also remain outside the new hooks.
+The engine exposes only one Norfair area index, so the runtime additionally reads
+`RoomIndex` at `$7E:079D`. Lava Dive (`$25`) remains Upper Norfair. The Lower
+Norfair elevator (`$26`) and the Lower Norfair block beginning with its elevator
+save room (`$34+`) use the Lower Norfair row; the intervening native room indexes
+`$27-$33` remain Upper Norfair.
+Exact fractional ASM source values flow into inherited table entries without
+rounding; affected GUI inputs remain read-only when a value cannot be represented
+as a whole energy-per-second rate.
+
+For every region, a positive heat rate creates the native heat effect throughout
+that region while preserving its existing room FX. A heat rate of `0` does not add
+the effect; any native heated-room FX remains present but deals zero damage. Lava
+and acid presence still comes from native room FX. Tourian additionally observes
+the two safety exclusions below. Native suit checks and liquid movement remain
+outside the new hooks.
 
 At runtime, three checked 19-byte accumulator blocks call compact routines in
 vanilla free space at `$DF:FE00`. The routines use the current engine
-`AreaIndex` at `$7E:079F` to select 16.16 values from three eight-entry tables.
-The generated routines and tables occupy 210 bytes and end before the separate
-all-rooms-heat helper at `$DF:FF00`. The heat-palette suit synchronization helper
+`AreaIndex` at `$7E:079F` and `RoomIndex` at `$7E:079D` to select 16.16 values from
+three nine-entry region tables. The generated routines, shared region classifier,
+and tables occupy 236 bytes and end before the separate per-area heat helper at
+`$DF:FF00`. When any regional heat value is positive, compiler/native-resolved
+room-load calls use that helper to run the native FX loader and add the heat object
+only in regions with positive heat, subject to Tourian's exclusions. The
+heat-palette suit synchronization helper
 uses the preceding checked range at `$DF:FD80`; it does not overlap the per-area
 runtime at `$DF:FE00`. Invalid area indexes safely use Crateria's entry.
 
@@ -123,8 +140,8 @@ The config type is `environmental_damage` and supports patch-only IPS builds.
 
 Accepted values are `0`–`9999` energy per second for each field.
 
-The optional `per_area_rates` field accepts `0` or `1`. Area keys use the stable
-form `<hazard>_<area>_per_second`, for example:
+The optional `per_area_rates` field accepts `0` or `1`. Region keys use the stable
+form `<hazard>_<region>_per_second`, for example:
 
 ```json
 {
@@ -135,6 +152,7 @@ form `<hazard>_<area>_per_second`, for example:
       "config": {
         "per_area_rates": 1,
         "heat_norfair_per_second": 60,
+        "heat_lower_norfair_per_second": 90,
         "lava_maridia_per_second": 12,
         "acid_tourian_per_second": 0
       }
@@ -143,29 +161,29 @@ form `<hazard>_<area>_per_second`, for example:
 }
 ```
 
-Supported area names are `crateria`, `brinstar`, `norfair`, `wrecked_ship`,
-`maridia`, `tourian`, `ceres`, and `debug`. Per-area mode supports patched-ROM,
-patch-only, and compiler-checked ASM-source builds.
+Supported region names are `crateria`, `brinstar`, `norfair` (Upper Norfair),
+`lower_norfair`, `wrecked_ship`, `maridia`, `tourian`, `ceres`, and `debug`.
+Per-area mode supports patched-ROM, patch-only, and compiler-checked ASM-source
+builds.
 
-### All non-Tourian rooms heated
+### Tourian heat safety
 
-The optional `all_rooms_heated` field accepts `0` or `1`. When enabled, SMEDIT
-uses checked vanilla room-load hooks to spawn the native heated-room palette FX
-object after every non-Tourian room load. Existing room FX always load first, and
-rooms that already spawned the heat object are detected so their damage is not
-doubled.
+A positive `heat_tourian_per_second` value automatically heats Tourian. Two
+optional `0`/`1` fields control its exclusions:
 
-Tourian (area index `5`) is deliberately excluded. Mother Brain's phase transition
-and the escape use special runtime-indexed FX and palette state; injecting an extra
-heat palette-FX object there can consume or conflict with that state and freeze the
-phase-1-to-phase-2 transition. The exclusion covers every Tourian room, so both the
-battle and the timed escape retain their native FX behavior. Per-area damage rates
-remain independent: Tourian's heat/lava/acid table values are still available for
-native hazards, but `all_rooms_heated` never creates a new heat hazard there.
+- `tourian_no_heat_baby_to_mb` defaults to `1`. It protects room indexes `$07-$0C`:
+  Big Boy/Baby Metroid, Seaweed, Tourian Recharge, Mother Brain, Tourian Eye Door,
+  and Rinka Shaft. Early Tourian through Dust Torizo remains heated.
+- `tourian_no_heat_during_escape` defaults to `0`. Set it to `1` to exclude all four
+  timed Tourian escape rooms (`$0E-$11`). Lower Tourian Save (`$0D`) remains heated.
 
-This is intentionally a global hook rather than a bulk edit of each room's
-palette-FX bitset. Those bits are area-specific: the same bit that means heat in
-Norfair can mean lightning, spores, or another effect elsewhere.
+Existing room FX always load first, and the helper detects an existing heat object
+so damage is never doubled. The default behavior therefore protects the one-energy
+Baby Skip route and Mother Brain while keeping the escape heated.
+
+Older project files may still contain the retired `all_rooms_heated` field. It is
+accepted for compatibility but ignored; it is not exposed by the editor, schema,
+or AI tools.
 
 ```json
 {
@@ -174,16 +192,19 @@ Norfair can mean lightning, spores, or another effect elsewhere.
     "environmental_damage": {
       "enabled": true,
       "config": {
-        "heat_per_second": 1,
-        "all_rooms_heated": 1
+        "per_area_rates": 1,
+        "heat_tourian_per_second": 20,
+        "tourian_no_heat_baby_to_mb": 1,
+        "tourian_no_heat_during_escape": 0
       }
     }
   }
 }
 ```
 
-The non-Tourian hook is currently supported in patched-ROM and patch-only builds.
-ASM-source projects fail closed rather than receiving fixed-address hooks.
+The per-area heat helper supports patched-ROM, patch-only, and compiler-checked ASM-source
+builds. Source builds resolve and verify the room-load calls, native FX loader,
+palette-FX spawner, and heat object from compiler symbols before writing hooks.
 
 ## ASM ↔ visual editing
 

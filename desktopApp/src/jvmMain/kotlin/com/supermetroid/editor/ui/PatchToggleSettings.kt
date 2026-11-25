@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.asm.DATA_PATCH_DEFINITIONS
 import com.supermetroid.editor.asm.DATA_PATCH_TYPES
 import com.supermetroid.editor.rom.ControllerBindings
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
@@ -56,8 +57,7 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
         val rom = parser.getRomData()
         val header = if (rom.size % 0x8000 == 512) 512 else 0
         fun pcWord(pc: Int) = if (pc + header + 1 < rom.size) (rom[pc + header].toInt() and 255) or ((rom[pc + header + 1].toInt() and 255) shl 8) else null
-        if (data[EnvironmentalDamagePatch.PER_AREA_RATES_KEY] == 1 ||
-            data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY] == 1) return true
+        if (data[EnvironmentalDamagePatch.PER_AREA_RATES_KEY] == 1) return true
         val scalarDiffers = EnvironmentalDamagePatch.FIELDS.any { field ->
             val value = data[field.key] ?: return@any false
             if (value !in EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND..EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND) return@any true
@@ -68,7 +68,9 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
         return data.keys.any { key ->
             key !in EnvironmentalDamagePatch.FIELDS.map { it.key } &&
                 key != EnvironmentalDamagePatch.PER_AREA_RATES_KEY &&
-                key != EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY &&
+                key != EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY &&
+                key != EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY &&
+                key != EnvironmentalDamagePatch.LEGACY_ALL_ROOMS_HEATED_KEY &&
                 key !in EnvironmentalDamagePatch.AREA_RATE_FIELDS.map { it.key }
         }
     }
@@ -100,6 +102,15 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
             val table = readResistanceTable(parser, enemy.speciesId)
             WEAPON_SLOTS.map { "${enemy.key}_vuln${it.index}" to (table?.get(it.index) ?: 2) }
         }.toMap()
+        BabyMetroidPatch.CONFIG_TYPE -> buildMap {
+            put(BabyMetroidPatch.MORTAL_KEY, BabyMetroidPatch.DEFAULT_MORTAL)
+            put(BabyMetroidPatch.FREEZABLE_KEY, BabyMetroidPatch.DEFAULT_FREEZABLE)
+            put(BabyMetroidPatch.MISSILE_VULNERABILITY_KEY, BabyMetroidPatch.DEFAULT_MISSILE_VULNERABILITY)
+            put(BabyMetroidPatch.SUPER_VULNERABILITY_KEY, BabyMetroidPatch.DEFAULT_SUPER_VULNERABILITY)
+            BabyMetroidPatch.MOVEMENT_FIELDS.forEach { field ->
+                put(field.key, word(field.operandSnesAddresses.first()) ?: field.defaultValue)
+            }
+        }
         else -> BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE[patch.configType]?.associate {
             it.key to (readBossBehaviorFromRom(parser, it) ?: it.defaultValue)
         }.orEmpty()

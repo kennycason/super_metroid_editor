@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SuitPatches
 
@@ -122,6 +123,7 @@ object SmeditPatchCatalog {
             ROOM_NAME_PAUSE_MAP_CONFIG_TYPE,
             SAMUS_PHYSICS_CONFIG_TYPE,
             CONTROLLER_CONFIG_TYPE,
+            BabyMetroidPatch.CONFIG_TYPE,
             EnvironmentalDamagePatch.CONFIG_TYPE,
         ) + HEADLESS_BOSS_BEHAVIOR_CONFIG_TYPES
 
@@ -142,6 +144,7 @@ object SmeditPatchCatalog {
             roomNamePauseMapSchema(),
             samusPhysicsSchema(),
             controllerConfigSchema(),
+            babyMetroidSchema(),
             environmentalDamageSchema(),
         ) + HEADLESS_BOSS_BEHAVIOR_DEFINITIONS.map(::bossBehaviorSchema)
 
@@ -506,6 +509,13 @@ object SmeditPatchCatalog {
             configType = ENEMY_VULN_CONFIG_TYPE,
         ),
         SmPatch(
+            id = BabyMetroidPatch.PATCH_ID,
+            name = "Baby Metroid",
+            description = "Safely make the end-game Baby mortal/freezable and tune its missile vulnerability and flight behavior.",
+            enabled = false,
+            configType = BabyMetroidPatch.CONFIG_TYPE,
+        ),
+        SmPatch(
             id = "config_boss_stats",
             name = "Boss Stats",
             description = "Set HP and contact/projectile damage fields for major and mini-boss enemy headers.",
@@ -543,7 +553,7 @@ object SmeditPatchCatalog {
         SmPatch(
             id = "config_environmental_damage",
             name = "Environmental Damage",
-            description = "Set global or per-area heated-room, lava, and acid damage rates in energy per second.",
+            description = "Set global or per-region heated-room, lava, and acid damage rates, including separate Upper and Lower Norfair values.",
             enabled = false,
             configType = EnvironmentalDamagePatch.CONFIG_TYPE,
         ),
@@ -753,7 +763,9 @@ object SmeditPatchCatalog {
             headlessSupported = true,
             supportsPatchOnly = false,
             requiresRom = true,
-            fields = HEADLESS_ENEMY_DEFS.flatMap { enemy ->
+            fields = HEADLESS_ENEMY_DEFS.filterNot {
+                it.speciesId == BabyMetroidPatch.SPECIES_ID
+            }.flatMap { enemy ->
                 HEADLESS_WEAPON_SLOTS.map { weapon ->
                     intField(
                         key = "${enemy.key}_vuln${weapon.index}",
@@ -880,12 +892,86 @@ object SmeditPatchCatalog {
             },
         )
 
+    private fun babyMetroidSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = BabyMetroidPatch.CONFIG_TYPE,
+            patchId = BabyMetroidPatch.PATCH_ID,
+            name = "Baby Metroid",
+            description = "Install a guarded end-game Baby Metroid combat hook with private Ice/missile vulnerabilities and local movement tuning.",
+            headlessSupported = true,
+            supportsPatchOnly = false,
+            requiresRom = true,
+            fields = listOf(
+                SmeditConfigFieldSchema(
+                    key = BabyMetroidPatch.MORTAL_KEY,
+                    label = "Mortal",
+                    type = "enum",
+                    min = 0,
+                    max = 1,
+                    defaultValue = BabyMetroidPatch.DEFAULT_MORTAL,
+                    description = "Disable the per-frame health restore and enable guarded normal shot damage after the corpse sequence.",
+                    category = "Combat",
+                    choices = listOf(
+                        SmeditConfigChoiceSchema("Invincible", 0),
+                        SmeditConfigChoiceSchema("Mortal", 1),
+                    ),
+                    requiresRom = true,
+                ),
+                SmeditConfigFieldSchema(
+                    key = BabyMetroidPatch.FREEZABLE_KEY,
+                    label = "Freezable by Ice",
+                    type = "enum",
+                    min = 0,
+                    max = 1,
+                    defaultValue = BabyMetroidPatch.DEFAULT_FREEZABLE,
+                    description = "Set every Ice Beam combination, including charged shots, to freeze without damage.",
+                    category = "Combat",
+                    choices = listOf(
+                        SmeditConfigChoiceSchema("Disabled", 0),
+                        SmeditConfigChoiceSchema("Enabled", 1),
+                    ),
+                    requiresRom = true,
+                ),
+                intField(
+                    BabyMetroidPatch.MISSILE_VULNERABILITY_KEY,
+                    "Missile Vulnerability",
+                    0,
+                    15,
+                    BabyMetroidPatch.DEFAULT_MISSILE_VULNERABILITY,
+                    "Combat",
+                    "Raw Super Metroid multiplier: 2 is normal damage.",
+                    requiresRom = true,
+                ),
+                intField(
+                    BabyMetroidPatch.SUPER_VULNERABILITY_KEY,
+                    "Super Vulnerability",
+                    0,
+                    15,
+                    BabyMetroidPatch.DEFAULT_SUPER_VULNERABILITY,
+                    "Combat",
+                    "Raw Super Metroid multiplier: 2 is normal damage.",
+                    requiresRom = true,
+                ),
+            ) + BabyMetroidPatch.MOVEMENT_FIELDS.map { field ->
+                intField(
+                    key = field.key,
+                    label = field.label,
+                    min = 0,
+                    max = 15,
+                    defaultValue = field.defaultValue,
+                    category = "Movement",
+                    description = field.description,
+                    requiresRom = true,
+                )
+            },
+        )
+
     private fun environmentalDamageSchema(): SmeditConfigSchema =
         SmeditConfigSchema(
             configType = EnvironmentalDamagePatch.CONFIG_TYPE,
             patchId = "config_environmental_damage",
             name = "Environmental Damage",
-            description = "Sets heated-room, lava, and acid damage globally or independently for each game area.",
+            description = "Sets heated-room, lava, and acid damage globally or independently for each game region, including separate Upper and Lower Norfair rates.",
             headlessSupported = true,
             supportsPatchOnly = true,
             requiresRom = false,
@@ -905,21 +991,34 @@ object SmeditPatchCatalog {
                 min = 0,
                 max = 1,
                 defaultValue = 0,
-                description = "Use the area-specific heat, lava, and acid table instead of the three global rates.",
+                description = "Use region-specific heat, lava, and acid tables instead of the three global rates. Positive heat applies throughout its region; Upper and Lower Norfair are independent.",
                 category = "Scope",
                 choices = listOf(
                     SmeditConfigChoiceSchema("Disabled", 0),
                     SmeditConfigChoiceSchema("Enabled", 1),
                 ),
             ) + SmeditConfigFieldSchema(
-                key = EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
-                label = "All Non-Tourian Rooms Heated",
+                key = EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY,
+                label = "No Tourian Heat: Baby to Mother Brain",
+                type = "enum",
+                min = 0,
+                max = 1,
+                defaultValue = 1,
+                description = "When Tourian heat is positive, protect Big Boy/Baby Metroid, Seaweed, Recharge, Mother Brain, Eye Door, and Rinka Shaft.",
+                category = "Tourian Heat Safety",
+                choices = listOf(
+                    SmeditConfigChoiceSchema("Disabled", 0),
+                    SmeditConfigChoiceSchema("Enabled", 1),
+                ),
+            ) + SmeditConfigFieldSchema(
+                key = EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY,
+                label = "No Tourian Heat During Escape",
                 type = "enum",
                 min = 0,
                 max = 1,
                 defaultValue = 0,
-                description = "Spawn the native heated-room effect after non-Tourian room loads while preserving existing room FX. Tourian is excluded for Mother Brain and escape safety.",
-                category = "Scope",
+                description = "When enabled, disable heat in all four timed Tourian escape rooms.",
+                category = "Tourian Heat Safety",
                 choices = listOf(
                     SmeditConfigChoiceSchema("Disabled", 0),
                     SmeditConfigChoiceSchema("Enabled", 1),

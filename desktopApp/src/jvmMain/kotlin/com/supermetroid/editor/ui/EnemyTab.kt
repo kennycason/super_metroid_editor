@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.asm.AsmEnemyTuningSection
 
 // Shared sub-tab state (survives recomposition across sidebar/canvas)
@@ -56,9 +57,12 @@ internal fun EnemyTabSidebar(
     onNavigateToAsm: ((AsmEnemyTuningSection) -> Unit)? = null,
 ) {
     var subTab by enemySubTab
-    val subTabs = listOf("Stats" to AsmEnemyTuningSection.STATS,
+    val subTabs = listOf(
+        "Stats" to AsmEnemyTuningSection.STATS,
         "Drop Rates" to AsmEnemyTuningSection.DROPS,
-        "Vulnerabilities" to AsmEnemyTuningSection.VULNERABILITIES)
+        "Vulnerabilities" to AsmEnemyTuningSection.VULNERABILITIES,
+        "Baby Metroid" to null,
+    )
 
     Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
         subTabs.forEachIndexed { idx, (name, section) ->
@@ -80,7 +84,7 @@ internal fun EnemyTabSidebar(
                     fontWeight = if (subTab == idx) FontWeight.Bold else FontWeight.Normal,
                     modifier = Modifier.weight(1f),
                 )
-                if (editorState.asmNavigationEnabled && onNavigateToAsm != null) Text(
+                if (section != null && editorState.asmNavigationEnabled && onNavigateToAsm != null) Text(
                     "ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.clickable(onClickLabel = "Open $name ASM") { onNavigateToAsm(section) }
@@ -99,12 +103,26 @@ fun EnemyTabCanvas(
     onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val subTab by enemySubTab
-    val configType = when (subTab) { 0 -> "enemy_stats"; 1 -> "enemy_drops"; 2 -> "enemy_vuln"; else -> "enemy_stats" }
+    val configType = when (subTab) {
+        0 -> "enemy_stats"
+        1 -> "enemy_drops"
+        2 -> "enemy_vuln"
+        3 -> BabyMetroidPatch.CONFIG_TYPE
+        else -> "enemy_stats"
+    }
     val patch = remember(editorState.project.projectId, configType) { editorState.findOrCreateConfigPatch(configType) }
 
     when (subTab) {
         0 -> EnemyStatsEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
         1 -> EnemyDropRateEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
         2 -> EnemyVulnerabilityEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
+        3 -> BabyMetroidEditor(
+            behaviorPatch = patch,
+            statsPatch = editorState.findOrCreateConfigPatch("enemy_stats"),
+            editorState = editorState,
+            romParser = romParser,
+            modifier = modifier,
+            onNavigateToAsm = onNavigateToAsm,
+        )
     }
 }

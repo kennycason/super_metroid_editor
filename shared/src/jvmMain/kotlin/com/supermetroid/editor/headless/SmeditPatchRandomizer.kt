@@ -1,5 +1,6 @@
 package com.supermetroid.editor.headless
 
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import kotlinx.serialization.Serializable
 import kotlin.math.floor
 import kotlin.math.ln
@@ -687,7 +688,7 @@ object SmeditPatchRandomizer {
                 includeEnemyCategories = config.includeEnemyCategories,
                 excludeEnemyCategories = config.excludeEnemyCategories,
             ),
-        )
+        ).filterNot { it.speciesId == BabyMetroidPatch.SPECIES_ID }
 
     private fun selectEnemies(
         scope: String,

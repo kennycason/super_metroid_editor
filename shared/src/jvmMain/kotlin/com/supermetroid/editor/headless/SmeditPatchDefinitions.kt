@@ -119,7 +119,7 @@ internal val HEADLESS_ENEMY_DEFS = listOf(
     HeadlessEnemyDef("pirate_tourian", "Space Pirate (Tourian)", 0xF493, 800, 50, "Pirate"),
     HeadlessEnemyDef("pirate_mk2_norfair", "Space Pirate Mk.II (Norfair)", 0xF593, 1000, 60, "Pirate"),
     HeadlessEnemyDef("pirate_mk2_tourian", "Space Pirate Mk.II (Tourian)", 0xF613, 1200, 70, "Pirate"),
-    HeadlessEnemyDef("metroid", "Big Metroid", 0xEEBF, 1, 0, "Special"),
+    HeadlessEnemyDef("metroid", "Baby Metroid (end-game)", 0xEEBF, 3200, 40, "Special"),
     HeadlessEnemyDef("fireflea", "Fireflea", 0xD6BF, 1, 0, "Special"),
     HeadlessEnemyDef("cacatac", "Cacatac", 0xCFFF, 200, 20, "Special"),
     HeadlessEnemyDef("magdollite", "Magdollite", 0xE83F, 20, 40, "Special"),

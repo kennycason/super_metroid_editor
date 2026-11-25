@@ -9,6 +9,7 @@ import com.supermetroid.editor.data.ProjectCreditsGroup
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.PaletteEffects
@@ -259,7 +260,7 @@ class SmeditBuildServiceTest {
     }
 
     @Test
-    fun `environmental damage config produces standalone fixed point writes`() {
+    fun `global environmental damage config produces standalone fixed point writes only`() {
         val addressSpace = ByteArray(0x300000)
         val result = SmeditBuildService().buildPatch(
             SmeditBuildRequest(
@@ -269,7 +270,7 @@ class SmeditBuildServiceTest {
                             EnvironmentalDamagePatch.HEAT_KEY to 0,
                             EnvironmentalDamagePatch.LAVA_KEY to 45,
                             EnvironmentalDamagePatch.ACID_KEY to 120,
-                            EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY to 1,
+                            EnvironmentalDamagePatch.LEGACY_ALL_ROOMS_HEATED_KEY to 1,
                         )
                     )
                 )
@@ -287,14 +288,10 @@ class SmeditBuildServiceTest {
         assertEquals(0x0000, addressSpace.readWord(lava.highWordPc))
         assertEquals(0x0000, addressSpace.readWord(acid.lowWordPc))
         assertEquals(0x0002, addressSpace.readWord(acid.highWordPc))
-        for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
-            assertEquals(
-                write.bytes,
-                addressSpace.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
-                    .map { it.toInt() and 0xFF },
-            )
+        EnvironmentalDamagePatch.NATIVE_ROOM_LOAD_HOOKS.forEach { hook ->
+            assertTrue(addressSpace.copyOfRange(hook.pcOffset, hook.pcOffset + 4).all { it == 0.toByte() })
         }
-        assertTrue(result.report.warnings.any { it.contains("cannot verify the target ROM bytes") })
+        assertTrue(result.report.warnings.none { it.contains(EnvironmentalDamagePatch.LEGACY_ALL_ROOMS_HEATED_KEY) })
         assertTrue(result.report.applied.any { it.configType == EnvironmentalDamagePatch.CONFIG_TYPE })
     }
 
@@ -308,6 +305,7 @@ class SmeditBuildServiceTest {
             EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1,
             EnvironmentalDamagePatch.areaRateKey("norfair", EnvironmentalDamagePatch.HEAT_KEY) to 60,
             EnvironmentalDamagePatch.areaRateKey("maridia", EnvironmentalDamagePatch.LAVA_KEY) to 12,
+            EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY to 1,
         )
         val result = SmeditBuildService().buildPatch(
             SmeditBuildRequest(patches = mapOf(
@@ -324,7 +322,46 @@ class SmeditBuildServiceTest {
                     .map { it.toInt() and 0xFF },
             )
         }
+        EnvironmentalDamagePatch.perAreaHeatCheckedWrites(
+            heatedRegionIndexes = EnvironmentalDamagePatch.heatedRateRegionIndexes(config),
+            noHeatDuringEscape = true,
+        ).forEach { write ->
+            assertEquals(
+                write.bytes,
+                addressSpace.copyOfRange(write.pcOffset, write.pcOffset + write.bytes.size)
+                    .map { it.toInt() and 0xFF },
+            )
+        }
         assertTrue(result.report.warnings.any { it.contains("cannot verify the target ROM bytes") })
+    }
+
+    @Test
+    fun `zero heat in every region does not install per-area room-load hooks`() {
+        val addressSpace = ByteArray(0x300000) { 0xFF.toByte() }
+        EnvironmentalDamagePatch.NATIVE_DAMAGE_HOOKS.forEach { hook ->
+            hook.expectedBytes.forEachIndexed { index, byte -> addressSpace[hook.pcOffset + index] = byte.toByte() }
+        }
+        val config = mapOf(
+            EnvironmentalDamagePatch.PER_AREA_RATES_KEY to 1,
+            EnvironmentalDamagePatch.HEAT_KEY to 0,
+            EnvironmentalDamagePatch.areaRateKey("tourian", EnvironmentalDamagePatch.HEAT_KEY) to 0,
+        )
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(patches = mapOf(
+                EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(config = config),
+            )),
+        )
+
+        applyIps(addressSpace, result.ipsPatchBytes)
+
+        EnvironmentalDamagePatch.NATIVE_ROOM_LOAD_HOOKS.forEach { hook ->
+            assertEquals(List(4) { 0xFF },
+                addressSpace.copyOfRange(hook.pcOffset, hook.pcOffset + 4).map { it.toInt() and 0xFF })
+        }
+        assertEquals(List(16) { 0xFF }, addressSpace.copyOfRange(
+            EnvironmentalDamagePatch.PER_AREA_HEAT_HELPER_PC,
+            EnvironmentalDamagePatch.PER_AREA_HEAT_HELPER_PC + 16,
+        ).map { it.toInt() and 0xFF })
     }
 
     @Test
@@ -351,7 +388,7 @@ class SmeditBuildServiceTest {
         }, "Simple mode must not install JSL damage hooks")
         assertTrue(addressSpace.copyOfRange(
             EnvironmentalDamagePatch.PER_AREA_CODE_PC,
-            EnvironmentalDamagePatch.PER_AREA_CODE_PC + 210,
+            EnvironmentalDamagePatch.PER_AREA_CODE_PC + 236,
         ).all { it == 0.toByte() })
     }
 
@@ -845,6 +882,83 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `rom build installs guarded mortal Baby Metroid patch and patch only fails clearly`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+        val request = SmeditBuildRequest(
+            patches = mapOf(
+                BabyMetroidPatch.CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf(
+                        BabyMetroidPatch.MORTAL_KEY to 1,
+                        BabyMetroidPatch.FREEZABLE_KEY to 1,
+                        BabyMetroidPatch.MISSILE_VULNERABILITY_KEY to 2,
+                        BabyMetroidPatch.SUPER_VULNERABILITY_KEY to 2,
+                        "samus_chase_agility" to 12,
+                    ),
+                ),
+            ),
+        )
+
+        val result = SmeditBuildService().build(original, request)
+        fun word(snes: Int): Int = result.romBytes.readWord(parser.snesToPc(snes))
+
+        val healthRestorePc = parser.snesToPc(0xA9EFC8)
+        assertContentEquals(
+            ByteArray(6) { 0xEA.toByte() },
+            result.romBytes.copyOfRange(healthRestorePc, healthRestorePc + 6),
+        )
+        assertEquals(0xA0, result.romBytes[parser.snesToPc(0xA9F1EA)].toInt() and 0xFF)
+        assertEquals(12, word(0xA9F1EB))
+
+        val shotShimSnes = 0xA90000 or word(0xA0EEF1)
+        val vulnerabilityTableSnes = 0xB40000 or word(0xA0EEFB)
+        assertEquals(0xA9, shotShimSnes ushr 16)
+        assertEquals(0xB4, vulnerabilityTableSnes ushr 16)
+        assertContentEquals(
+            byteArrayOf(
+                0xAE.toByte(), 0x54, 0x0E,
+                0xBD.toByte(), 0xB6.toByte(), 0x0F,
+                0xF0.toByte(), 0x08,
+                0x22, 0x42, 0xF8.toByte(), 0xA9.toByte(),
+                0x22, 0x3D, 0xA6.toByte(), 0xA0.toByte(),
+                0x6B,
+            ),
+            result.romBytes.copyOfRange(
+                parser.snesToPc(shotShimSnes),
+                parser.snesToPc(shotShimSnes) + 17,
+            ),
+        )
+        assertContentEquals(
+            BabyMetroidPatch.buildVulnerabilityTable(true, 2, 2),
+            result.romBytes.copyOfRange(
+                parser.snesToPc(vulnerabilityTableSnes),
+                parser.snesToPc(vulnerabilityTableSnes) + 22,
+            ),
+        )
+        assertTrue(result.report.applied.any { it.configType == BabyMetroidPatch.CONFIG_TYPE })
+
+        val patchOnlyFailure = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(request)
+        }
+        assertTrue(patchOnlyFailure.message.orEmpty().contains("requires --rom"))
+
+        val sharedTableFailure = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().build(
+                original,
+                SmeditBuildRequest(
+                    strictConfigValidation = false,
+                    patches = mapOf(
+                        ENEMY_VULN_CONFIG_TYPE to SmeditPatchRequest(
+                            config = mapOf("metroid_vuln12" to 2),
+                        ),
+                    ),
+                ),
+            )
+        }
+        assertTrue(sharedTableFailure.message.orEmpty().contains("shared with corpse enemies"))
+    }
+
+    @Test
     fun `patch only enemy pointer tables warn without rom`() {
         val result = SmeditBuildService().buildPatch(
             SmeditBuildRequest(
@@ -1202,10 +1316,16 @@ class SmeditBuildServiceTest {
         val zebesEscape = SmeditPatchCatalog.configSchema(ZEBES_ESCAPE_CONFIG_TYPE)!!
         val shortCharge = SmeditPatchCatalog.configSchema(SHORT_CHARGE_CONFIG_TYPE)!!
         val environmentalDamage = SmeditPatchCatalog.configSchema(EnvironmentalDamagePatch.CONFIG_TYPE)!!
+        val babyMetroid = SmeditPatchCatalog.configSchema(BabyMetroidPatch.CONFIG_TYPE)!!
 
         assertTrue(enemyStats.supportsPatchOnly)
         assertTrue(enemyStats.fields.any { it.key == "zoomer_hp" && it.defaultValue == 15 })
+        assertTrue(enemyStats.fields.any { it.key == "metroid_hp" && it.defaultValue == 3200 })
+        assertTrue(enemyStats.fields.any { it.key == "metroid_dmg" && it.defaultValue == 40 })
         assertTrue(enemyStats.fields.any { it.key == "zoomer_touchAi" })
+        assertTrue(SmeditPatchCatalog.configSchema(ENEMY_VULN_CONFIG_TYPE)!!.fields.none {
+            it.key.startsWith("metroid_vuln")
+        })
         assertEquals(CONTROLLER_CONFIG_TYPE, controller.configType)
         assertTrue(controller.fields.first { it.key == "jump" }.choices.any { it.label == "Y" && it.value == 0x4000 })
         assertTrue(phantoon.supportsPatchOnly)
@@ -1225,24 +1345,37 @@ class SmeditBuildServiceTest {
             90,
             environmentalDamage.fields.first { it.key == EnvironmentalDamagePatch.ACID_KEY }.defaultValue,
         )
-        val allRoomsHeated = environmentalDamage.fields.first {
-            it.key == EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY
+        assertTrue(babyMetroid.requiresRom)
+        assertTrue(!babyMetroid.supportsPatchOnly)
+        assertEquals(0, babyMetroid.fields.first { it.key == BabyMetroidPatch.MORTAL_KEY }.defaultValue)
+        assertEquals(15, babyMetroid.fields.first { it.key == "opening_rush_agility" }.max)
+        val noBabyHeat = environmentalDamage.fields.first {
+            it.key == EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY
         }
-        assertEquals(0, allRoomsHeated.defaultValue)
-        assertEquals(listOf("Disabled", "Enabled"), allRoomsHeated.choices.map { it.label })
-        assertTrue(allRoomsHeated.label.contains("Non-Tourian"))
-        assertTrue(allRoomsHeated.description.contains("Mother Brain"))
+        assertEquals(1, noBabyHeat.defaultValue)
+        assertEquals(listOf("Disabled", "Enabled"), noBabyHeat.choices.map { it.label })
+        assertTrue(noBabyHeat.description.contains("Big Boy/Baby Metroid"))
+        assertTrue(noBabyHeat.description.contains("Seaweed"))
+        val noEscapeHeat = environmentalDamage.fields.first {
+            it.key == EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY
+        }
+        assertEquals(0, noEscapeHeat.defaultValue)
+        assertTrue(noEscapeHeat.description.contains("four timed Tourian escape rooms"))
         val perAreaRates = environmentalDamage.fields.first {
             it.key == EnvironmentalDamagePatch.PER_AREA_RATES_KEY
         }
         assertEquals(0, perAreaRates.defaultValue)
         assertEquals(listOf("Disabled", "Enabled"), perAreaRates.choices.map { it.label })
         assertEquals(
-            24,
+            27,
             environmentalDamage.fields.count { field ->
                 EnvironmentalDamagePatch.AREA_RATE_FIELDS.any { it.key == field.key }
             },
         )
+        assertTrue(environmentalDamage.fields.any {
+            it.key == EnvironmentalDamagePatch.areaRateKey("lower_norfair", EnvironmentalDamagePatch.HEAT_KEY) &&
+                it.category == "Lower Norfair"
+        })
         assertTrue(environmentalDamage.supportsPatchOnly)
         assertEquals("config_zebes_escape_time", SmeditPatchCatalog.resolvePatchKey("end_game_escape_timer"))
         assertEquals("config_short_charge", SmeditPatchCatalog.resolvePatchKey("short_charge"))

@@ -110,10 +110,10 @@ fun EnvironmentalDamageEditor(
             ),
         )
     }
-    fun applyAllRoomsHeated(enabled: Boolean) {
+    fun applyTourianOption(key: String, enabled: Boolean) {
         editorState.setPatchConfigData(
             patch.id,
-            EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY,
+            key,
             if (enabled) 1 else 0,
         )
     }
@@ -124,13 +124,12 @@ fun EnvironmentalDamageEditor(
             if (enabled) 1 else 0,
         )
     }
-    fun scalarValue(field: EnvironmentalDamagePatch.Field): Int? =
-        if (sourceMode) sourceViews[field.key]?.value else currentValue(field.key)
     fun scalarDisplay(field: EnvironmentalDamagePatch.Field): String =
         if (sourceMode) sourceViews[field.key]?.display ?: "—" else currentValue(field.key).toString()
-    fun areaDisplay(area: EnvironmentalDamagePatch.Area, field: EnvironmentalDamagePatch.Field): String =
-        patch.configData?.get(EnvironmentalDamagePatch.areaRateKey(area, field))?.toString() ?: scalarDisplay(field)
-    fun applyArea(area: EnvironmentalDamagePatch.Area, field: EnvironmentalDamagePatch.Field, value: Int) {
+    fun areaDisplay(area: EnvironmentalDamagePatch.RateRegion, field: EnvironmentalDamagePatch.Field): String =
+        patch.configData?.get(EnvironmentalDamagePatch.areaRateKey(area, field))?.toString()
+            ?: scalarDisplay(field)
+    fun applyArea(area: EnvironmentalDamagePatch.RateRegion, field: EnvironmentalDamagePatch.Field, value: Int) {
         apply(EnvironmentalDamagePatch.areaRateKey(area, field), value)
     }
     fun openSource(key: String? = null) {
@@ -152,7 +151,7 @@ fun EnvironmentalDamageEditor(
                 Text("Environmental Damage", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Base energy drained each second. Set a rate to 0 to keep the effect but remove its damage.",
+                    "Base energy drained each second. In per-area mode, a positive regional heat rate heats that whole region; 0 disables its added heat damage.",
                     fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -167,7 +166,14 @@ fun EnvironmentalDamageEditor(
                         apply(field.key, field.defaultEnergyPerSecond)
                     }
                     applyPerAreaRates(false)
-                    if (!sourceMode) applyAllRoomsHeated(false)
+                    applyTourianOption(
+                        EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY,
+                        EnvironmentalDamagePatch.DEFAULT_TOURIAN_NO_HEAT_BABY_TO_MB,
+                    )
+                    applyTourianOption(
+                        EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY,
+                        EnvironmentalDamagePatch.DEFAULT_TOURIAN_NO_HEAT_ESCAPE,
+                    )
                 },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp),
@@ -192,7 +198,7 @@ fun EnvironmentalDamageEditor(
                 Column(Modifier.weight(1f)) {
                     Text("Per-Area Rates", fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Give each game area its own heat, lava, and acid rate. Room FX still decide which hazards are present.",
+                        "Give each game region its own heat, lava, and acid rate. A positive heat rate automatically heats that region while preserving its existing room FX.",
                         fontSize = LocalEditorTheme.current.fontSize.value.body,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -251,7 +257,7 @@ fun EnvironmentalDamageEditor(
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Area", modifier = Modifier.width(116.dp), fontWeight = FontWeight.SemiBold)
+                        Text("Region", modifier = Modifier.width(116.dp), fontWeight = FontWeight.SemiBold)
                         EnvironmentalDamagePatch.FIELDS.forEach { field ->
                             Text(
                                 field.label,
@@ -262,7 +268,7 @@ fun EnvironmentalDamageEditor(
                             )
                         }
                     }
-                    EnvironmentalDamagePatch.AREAS.forEach { area ->
+                    EnvironmentalDamagePatch.DISPLAY_RATE_REGIONS.forEach { area ->
                         Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
                         Row(
                             modifier = Modifier.fillMaxWidth().testTag("environmental-area-${area.key}"),
@@ -282,53 +288,43 @@ fun EnvironmentalDamageEditor(
                             }
                         }
                     }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        OutlinedButton(
-                            enabled = EnvironmentalDamagePatch.FIELDS.all { scalarValue(it) != null },
-                            onClick = {
-                                EnvironmentalDamagePatch.AREAS.forEach { area ->
-                                    EnvironmentalDamagePatch.FIELDS.forEach { field ->
-                                        scalarValue(field)?.let { applyArea(area, field, it) }
-                                    }
-                                }
-                            },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(30.dp).testTag("environmental-copy-defaults"),
-                        ) {
-                            Text("Copy current defaults to all areas", fontSize = LocalEditorTheme.current.fontSize.value.body)
-                        }
-                    }
                 }
             }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            Spacer(Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("All Non-Tourian Rooms Heated", fontWeight = FontWeight.SemiBold)
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Text("Tourian Heat Safety", fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (sourceMode) "Available in patched-ROM mode."
-                        else "Spawn the native heated-room effect without replacing existing FX. Tourian is always excluded to protect Mother Brain and the escape.",
+                        "These exclusions apply whenever the Tourian heat rate is above 0.",
                         fontSize = LocalEditorTheme.current.fontSize.value.body,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(8.dp))
+                    TourianHeatOptionRow(
+                        label = "No heat from Baby to Mother Brain",
+                        detail = "Protect Big Boy/Baby Metroid, Seaweed, Recharge, Mother Brain, Eye Door, and Rinka Shaft.",
+                        checked = EnvironmentalDamagePatch.tourianNoHeatBabyToMotherBrain(patch.configData.orEmpty()),
+                        onCheckedChange = {
+                            applyTourianOption(EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY, it)
+                        },
+                        testTag = "environmental-tourian-no-heat-baby-mb",
+                    )
+                    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                    TourianHeatOptionRow(
+                        label = "No heat during escape",
+                        detail = "Disable heat in all four timed Tourian escape rooms.",
+                        checked = EnvironmentalDamagePatch.tourianNoHeatDuringEscape(patch.configData.orEmpty()),
+                        onCheckedChange = {
+                            applyTourianOption(EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY, it)
+                        },
+                        testTag = "environmental-tourian-no-heat-escape",
+                    )
                 }
-                Switch(
-                    checked = patch.configData?.get(EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY) == 1,
-                    onCheckedChange = ::applyAllRoomsHeated,
-                    enabled = !sourceMode,
-                    modifier = Modifier.testTag("environmental-all-rooms-heated"),
-                )
             }
         }
 
@@ -341,6 +337,35 @@ fun EnvironmentalDamageEditor(
             },
             fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+        )
+    }
+}
+
+@Composable
+private fun TourianHeatOptionRow(
+    label: String,
+    detail: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    testTag: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.Medium)
+            Text(
+                detail,
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.testTag(testTag),
         )
     }
 }

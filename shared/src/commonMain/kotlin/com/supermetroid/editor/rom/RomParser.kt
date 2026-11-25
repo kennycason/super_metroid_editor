@@ -2220,7 +2220,7 @@ class RomParser(
             // ── Special / Remains ──
             0xED3F to "Torizo Corpse",
             0xED7F to "Sidehopper Corpse",
-            0xEEBF to "Big Metroid",
+            0xEEBF to "Baby Metroid (end-game)",
             0xEEFF to "Torizo",
             0xEF3F to "Torizo (orbs)",
             0xEF7F to "Torizo (gold)",

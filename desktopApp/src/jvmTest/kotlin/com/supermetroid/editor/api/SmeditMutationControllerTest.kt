@@ -287,7 +287,7 @@ class SmeditMutationControllerTest {
                     EnvironmentalDamagePatch.HEAT_KEY to 1,
                     EnvironmentalDamagePatch.LAVA_KEY to 5,
                     EnvironmentalDamagePatch.ACID_KEY to 10,
-                    EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY to 1,
+                    EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY to 0,
                 ),
             ),
         )
@@ -305,7 +305,7 @@ class SmeditMutationControllerTest {
                 EnvironmentalDamagePatch.HEAT_KEY to 1,
                 EnvironmentalDamagePatch.LAVA_KEY to 5,
                 EnvironmentalDamagePatch.ACID_KEY to 10,
-                EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY to 1,
+                EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY to 0,
             ),
             patch.configData?.toMap(),
         )

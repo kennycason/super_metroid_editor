@@ -11,6 +11,7 @@ import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.enabledPatchIncompatibilities
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import com.supermetroid.editor.rom.SuitPatches
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
@@ -1414,6 +1415,10 @@ class SmeditBuildService(
                 applyEnemyVulnerabilityPatch(patch, context)
                 ENEMY_VULN_CONFIG_TYPE
             }
+            BabyMetroidPatch.CONFIG_TYPE -> {
+                applyBabyMetroidPatch(patch, context)
+                BabyMetroidPatch.CONFIG_TYPE
+            }
             BOSS_STATS_CONFIG_TYPE -> {
                 applyBossStatsPatch(patch, context)
                 BOSS_STATS_CONFIG_TYPE
@@ -1451,7 +1456,12 @@ class SmeditBuildService(
 
         val schema = SmeditPatchCatalog.configSchema(configType) ?: return
         val fieldsByKey = schema.fields.associateBy { it.key }
-        val unknownKeys = data.keys.filter { it !in fieldsByKey }.sorted()
+        val ignoredLegacyKeys = if (configType == EnvironmentalDamagePatch.CONFIG_TYPE) {
+            setOf(EnvironmentalDamagePatch.LEGACY_ALL_ROOMS_HEATED_KEY)
+        } else {
+            emptySet()
+        }
+        val unknownKeys = data.keys.filter { it !in fieldsByKey && it !in ignoredLegacyKeys }.sorted()
         if (unknownKeys.isNotEmpty()) {
             reportConfigValidationIssue(
                 context,
@@ -1599,6 +1609,10 @@ class SmeditBuildService(
                             EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
                         )
                     }
+                listOf(
+                    EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY,
+                    EnvironmentalDamagePatch.TOURIAN_NO_HEAT_ESCAPE_KEY,
+                ).forEach { key -> this[key]?.let { this[key] = it.coerceIn(0, 1) } }
             }
             val fallbackFixedRates = EnvironmentalDamagePatch.FIELDS.associate { field ->
                 val low = context.readWordOrNull(field.lowWordPc)
@@ -1644,6 +1658,30 @@ class SmeditBuildService(
                     context.appliedWriteCount++
                 }
             }
+            val heatedRegionIndexes = EnvironmentalDamagePatch.heatedRateRegionIndexes(
+                config = normalizedData,
+                fallbackRates = fallbackRates,
+            )
+            if (heatedRegionIndexes.isNotEmpty()) {
+                if (context.outputRom == null) {
+                    context.warnings += "Positive per-area heat uses checked vanilla room-load hooks; patch-only mode cannot verify the target ROM bytes."
+                }
+                for (write in EnvironmentalDamagePatch.perAreaHeatCheckedWrites(
+                    heatedRegionIndexes = heatedRegionIndexes,
+                    noHeatBabyToMotherBrain = EnvironmentalDamagePatch.tourianNoHeatBabyToMotherBrain(normalizedData),
+                    noHeatDuringEscape = EnvironmentalDamagePatch.tourianNoHeatDuringEscape(normalizedData),
+                )) {
+                    if (writeBytes(
+                            context = context,
+                            offset = write.pcOffset,
+                            bytes = write.bytes,
+                            label = "Environmental damage per-area heat scope",
+                            expectedBefore = write.expectedBytes,
+                        )) {
+                        context.appliedWriteCount++
+                    }
+                }
+            }
         } else {
             for (field in EnvironmentalDamagePatch.FIELDS) {
                 val energyPerSecond = data[field.key]?.coerceIn(
@@ -1663,23 +1701,6 @@ class SmeditBuildService(
                     fixedRate.highWord,
                     "Environmental damage ${field.key} whole",
                 )
-            }
-        }
-        val allRoomsHeated = data[EnvironmentalDamagePatch.ALL_ROOMS_HEATED_KEY]
-            ?.coerceIn(0, 1) == 1
-        if (allRoomsHeated) {
-            if (context.outputRom == null) {
-                context.warnings += "All Non-Tourian Rooms Heated uses checked vanilla room-load hooks; patch-only mode cannot verify the target ROM bytes."
-            }
-            for (write in EnvironmentalDamagePatch.ALL_ROOMS_HEATED_WRITES) {
-                val wrote = writeBytes(
-                    context = context,
-                    offset = write.pcOffset,
-                    bytes = write.bytes,
-                    label = "Environmental damage non-Tourian heat hook",
-                    expectedBefore = write.expectedBytes,
-                )
-                if (wrote) context.appliedWriteCount++
             }
         }
     }
@@ -1702,6 +1723,47 @@ class SmeditBuildService(
                     "Boss behavior ${definition.configType}.${field.key}",
                 )
             }
+        }
+    }
+
+    private fun applyBabyMetroidPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        if (data.isEmpty()) return
+        val rom = requireNotNull(context.outputRom) {
+            "Baby Metroid uses checked free-space allocations and requires --rom; patch-only output is not supported."
+        }
+        val parser = requireNotNull(context.parser)
+        val allocator = requireNotNull(context.freeSpaceAllocator)
+        val before = rom.copyOf()
+        BabyMetroidPatch.install(
+            config = data,
+            parser = parser,
+            writePlan = context.writePlan,
+            freeSpaceAllocator = allocator,
+            owner = context.currentOwner,
+            label = patch.name,
+        )
+
+        // The managed installer writes through RomWritePlan directly. Mirror
+        // its contiguous diff into the headless patch-byte report without
+        // replaying or weakening those checked writes.
+        var index = context.romHeaderOffset
+        while (index < rom.size) {
+            if (before[index] == rom[index]) {
+                index++
+                continue
+            }
+            val start = index
+            while (index < rom.size && before[index] != rom[index]) index++
+            context.patchWrites += PatchWrite(
+                offset = (start - context.romHeaderOffset).toLong(),
+                bytes = (start until index).map { rom[it].toInt() and 0xFF },
+                expectedBytes = (start until index).map { before[it].toInt() and 0xFF },
+            )
+            context.appliedWriteCount++
         }
     }
 
@@ -1945,7 +2007,11 @@ class SmeditBuildService(
         context: ApplyContext,
     ) {
         val data = patch.configData ?: return
-        for (enemy in HEADLESS_ENEMY_DEFS) {
+        require(data.keys.none { it.startsWith("metroid_vuln") }) {
+            "Baby Metroid vulnerabilities must use the dedicated baby_metroid config; " +
+                "its vanilla table is shared with corpse enemies."
+        }
+        for (enemy in HEADLESS_ENEMY_DEFS.filterNot { it.speciesId == BabyMetroidPatch.SPECIES_ID }) {
             val vulnerabilityTablePc = resolveEnemyBankB4TablePc(
                 context = context,
                 enemy = enemy,

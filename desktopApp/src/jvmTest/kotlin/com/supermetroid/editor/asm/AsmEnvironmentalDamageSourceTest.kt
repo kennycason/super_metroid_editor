@@ -241,6 +241,11 @@ class AsmEnvironmentalDamageSourceTest {
         "SamusPhysicsConstants_LavaSubDamagePerFrame" to 0x909E8B, "SamusPhysicsConstants_LavaDamagePerFrame" to 0x909E8D,
         "SamusPhysicsConstants_AcidSubDamagePerFrame" to 0x909E8F, "SamusPhysicsConstants_AcidDamagePerFrame" to 0x909E91,
         "PeriodicSubDamage" to 0xA4E, "PeriodicDamage" to 0xA50,
+        "StartGameplay" to 0x80A07B,
+        "DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM" to 0x82E4A9,
+        "Load_FX_Header" to 0x89AB82,
+        "Spawn_PaletteFXObject" to 0x8DC4E9,
+        "PaletteFXObjects_Norfair1_Tourian1" to 0x8DF761,
     )
     private fun emitted(texts: Map<String, String> = originals, labels: Map<String, Int> = nativeSymbols()): ByteArray {
         val bytes = ByteArray(0x300000); val parser = RomParser(bytes); val catalog = AsmEnvironmentalDamageSource(originals)
@@ -253,6 +258,12 @@ class AsmEnvironmentalDamageSourceTest {
             for ((offset, name) in listOf(1 to "PeriodicSubDamage", 8 to "PeriodicSubDamage", 11 to "PeriodicDamage", 17 to "PeriodicDamage")) word(bytes, pc + offset, labels.getValue(name))
             if (!heat) { word(bytes, pc + 5, labels.getValue(field.words[0].symbol)); word(bytes, pc + 14, labels.getValue(field.words[1].symbol)) }
             words.forEachIndexed { i, where -> word(bytes, where, field.words[i].value) }
+        }
+        val loader = labels.getValue("Load_FX_Header")
+        listOf(0x80A0E5, 0x82E4C5).forEach { address ->
+            val pc = parser.snesToPc(address)
+            listOf(0x22, loader and 0xFF, loader ushr 8 and 0xFF, loader ushr 16 and 0xFF)
+                .forEachIndexed { index, value -> bytes[pc + index] = value.toByte() }
         }
         return bytes
     }
@@ -425,6 +436,17 @@ class AsmEnvironmentalDamageSourceTest {
             val norfairHeat = tag("environmental-area-norfair-${Rates.HEAT_KEY}")
             assertTrue(norfairHeat.config[SemanticsActions.SetText].action!!.invoke(AnnotatedString("60"))); render()
             assertEquals(60, patch.configData?.get(Rates.areaRateKey("norfair", Rates.HEAT_KEY)))
+            val lowerNorfairHeat = tag("environmental-area-lower_norfair-${Rates.HEAT_KEY}")
+            assertEquals("15", lowerNorfairHeat.config[SemanticsProperties.EditableText].text,
+                "Upper and Lower Norfair inputs must remain independent")
+            assertTrue(tag("environmental-tourian-no-heat-baby-mb").config[SemanticsActions.OnClick].action!!.invoke()); render()
+            assertEquals(0, patch.configData?.get(Rates.TOURIAN_NO_HEAT_BABY_TO_MB_KEY))
+            assertTrue(tag("environmental-tourian-no-heat-escape").config[SemanticsActions.OnClick].action!!.invoke()); render()
+            assertEquals(1, patch.configData?.get(Rates.TOURIAN_NO_HEAT_ESCAPE_KEY))
+            assertTrue(nodes().none { it.config.getOrNull(SemanticsProperties.TestTag) in setOf(
+                "environmental-copy-defaults",
+                "environmental-all-rooms-heated",
+            ) })
             assertEquals(beforeAreaEdit, f.workspace.sourceBufferRevision, "Area table edits stay in project config")
         } finally { scene.close(); surface.close(); selectEnvironmentalDamage(null) }
     }

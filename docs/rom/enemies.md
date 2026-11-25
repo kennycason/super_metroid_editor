@@ -37,6 +37,10 @@ Space Jump. The low seven bits store twice the damage multiplier (`2` = 1× and
 `4` = 2×). Bit 7 normally prevents freezing, so `130` (`$82`) means normal
 damage without freezing. `$FF` is the special freeze-without-damage value.
 
+The end-game Baby Metroid (`$EEBF`) shares its vanilla table with corpse
+enemies, so SMEDIT manages its mortal/freezable behavior through a private
+relocated table. See [Baby Metroid patch](baby_metroid.md).
+
 ## Enemy Population Set (Bank $A1)
 
 Each room state references an enemy population set. Each entry is 16 bytes:

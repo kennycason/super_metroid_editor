@@ -1,5 +1,6 @@
 package com.supermetroid.editor.headless
 
+import com.supermetroid.editor.rom.BabyMetroidPatch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -124,11 +125,12 @@ class SmeditPatchRandomizerTest {
         )
         val config = result.build.patches.getValue(ENEMY_VULN_CONFIG_TYPE).config
 
-        for (enemy in HEADLESS_ENEMY_DEFS) {
+        for (enemy in HEADLESS_ENEMY_DEFS.filterNot { it.speciesId == BabyMetroidPatch.SPECIES_ID }) {
             val values = HEADLESS_WEAPON_SLOTS.map { weapon -> config.getValue("${enemy.key}_vuln${weapon.index}") }
             assertTrue(values.all { it in setOf(0, 2, 4) })
             assertTrue(values.any { it != 0 }, "at least one effective weapon for ${enemy.key}")
         }
+        assertTrue(config.keys.none { it.startsWith("metroid_vuln") })
     }
 
     @Test
