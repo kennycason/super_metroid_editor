@@ -861,6 +861,58 @@ class SmeditMutationControllerTest {
     }
 
     @Test
+    fun `exact room tile copies accept matching inspected components and preserve BTS`() {
+        val editor = editor()
+        val parser = RomParser(roomTileTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val planning = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "91F8")
+            put("state_scope", "all_states")
+            put("tile_edits", JsonArray(listOf(buildJsonObject {
+                put("x", 2)
+                put("y", 3)
+                put("layer", 1)
+                put("block_word", 0xD807)
+                put("metatile_id", 7)
+                put("block_type", 13)
+                put("bts", 0x22)
+                put("h_flip", false)
+                put("v_flip", true)
+            })))
+        })
+
+        assertFalse(planning.result.isError, planning.result.output.toString())
+        controller.approve(planning.plan!!.id)
+        val edited = editor.project.rooms.getValue("91F8")
+        val data = editor.effectiveLevelDataForAi(edited, edited.states.first(), parser)!!
+        assertEquals(0xD807, levelWord(data, 2, 3))
+        assertEquals(0x22, levelBts(data, 2, 3))
+    }
+
+    @Test
+    fun `room tile validation identifies the exact conflicting decoded field`() {
+        val editor = editor()
+        val parser = RomParser(roomTileTestRom())
+        val controller = DesktopSmeditMutationController(editor, FakeWorkspace(), parser = { parser })
+        val planning = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "91F8")
+            put("state_scope", "all_states")
+            put("tile_edits", JsonArray(listOf(buildJsonObject {
+                put("x", 2)
+                put("y", 3)
+                put("block_word", 0xD807)
+                put("metatile_id", 8)
+            })))
+        })
+
+        assertEquals("invalid_arguments", planning.errorCode())
+        val message = planning.result.output.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
+        assertTrue(message.contains("tile_edits[0].metatile_id"), message)
+        assertTrue(message.contains("block_word encodes 7"), message)
+        assertTrue(editor.project.rooms.isEmpty())
+    }
+
+    @Test
     fun `room tile writes reject conflicting duplicates and unavailable layer two`() {
         val editor = editor()
         val parser = RomParser(roomTileTestRom())
@@ -874,6 +926,19 @@ class SmeditMutationControllerTest {
             )))
         })
         assertEquals("invalid_arguments", duplicate.errorCode())
+        val duplicateMessage = duplicate.result.output.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
+        assertTrue(duplicateMessage.contains("tile_edits[1] duplicates tile_edits[0]"), duplicateMessage)
+
+        val invalidLayer2 = controller.plan("set_room_tiles", buildJsonObject {
+            put("room_id", "91F8")
+            put("state_scope", "all_states")
+            put("tile_edits", JsonArray(listOf(buildJsonObject {
+                put("x", 1); put("y", 1); put("layer", 2); put("block_type", 8)
+            })))
+        })
+        assertEquals("invalid_arguments", invalidLayer2.errorCode())
+        val layer2Message = invalidLayer2.result.output.getValue("error").jsonObject.getValue("message").jsonPrimitive.content
+        assertEquals("tile_edits[0].block_type is unavailable on Layer 2.", layer2Message)
 
         val layer2 = controller.plan("set_room_tiles", buildJsonObject {
             put("room_id", "91F8")
@@ -935,6 +1000,11 @@ class SmeditMutationControllerTest {
     private fun levelWord(data: ByteArray, x: Int, y: Int): Int {
         val offset = 2 + (y * 16 + x) * 2
         return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
+    }
+
+    private fun levelBts(data: ByteArray, x: Int, y: Int): Int {
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        return data[2 + layer1Size + y * 16 + x].toInt() and 0xFF
     }
 
     private fun bgr555Hex(color: Int): String {

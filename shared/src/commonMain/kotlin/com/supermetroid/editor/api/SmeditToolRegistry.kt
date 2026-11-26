@@ -812,7 +812,7 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
         ),
         SmeditToolDefinition(
             name = "set_room_tiles",
-            description = "Stage exact room block changes for explicit approval. Unspecified metatile, block type, BTS, and room-flip fields are preserved independently in each targeted state. all_states edits every distinct layout resource; single_state safely forks a shared layout before editing it. This changes room layout blocks, not the globally shared tileset metatile definition. ASM-source-owned layouts are rejected until source-backed tile writes are available.",
+            description = "Stage exact room block changes for explicit approval. For a lossless donor-tile copy from inspect_room_tiles, send x, y, layer, block_word, and optional bts; omit metatile_id, block_type, h_flip, and v_flip. Matching redundant decoded fields are accepted, but conflicting values are rejected with the exact edit index. For component edits, omit block_word and supply only the components to change; all other components are preserved. all_states edits every distinct layout resource; single_state safely forks a shared layout before editing it. This changes room layout blocks, not the globally shared tileset metatile definition. ASM-source-owned layouts are rejected until source-backed tile writes are available.",
             inputSchema = objectSchema(
                 properties = mapOf(
                     "room_id" to stringSchema("Target room id in hexadecimal."),
@@ -1194,7 +1194,7 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
 
         private fun roomTileEditsSchema() = buildJsonObject {
             put("type", "array")
-            put("description", "One through 256 explicit block edits. At least one of block_word, metatile_id, block_type, bts, h_flip, or v_flip must be supplied per entry.")
+            put("description", "One through 256 explicit block edits. Exact-copy mode uses block_word plus optional bts. Component mode omits block_word and supplies at least one of metatile_id, block_type, bts, h_flip, or v_flip. Do not copy every decoded inspect_room_tiles field into an exact edit.")
             put("minItems", 1)
             put("maxItems", 256)
             put("items", buildJsonObject {
@@ -1203,7 +1203,7 @@ class SmeditToolRegistry(private val access: SmeditWorkspaceAccess) {
                     put("x", integerSchema("Zero-based room-block X coordinate.", 0, 255))
                     put("y", integerSchema("Zero-based room-block Y coordinate.", 0, 255))
                     put("layer", integerSchema("Room layer: 1 or 2. Defaults to 1.", 1, 2))
-                    put("block_word", integerSchema("Optional exact 16-bit block word. Cannot be combined with metatile_id, block_type, h_flip, or v_flip.", 0, 0xFFFF))
+                    put("block_word", integerSchema("Optional exact 16-bit block word for lossless donor copies. Send it with optional bts only. Redundant metatile_id, block_type, h_flip, or v_flip values are accepted only when they match the encoded word.", 0, 0xFFFF))
                     put("metatile_id", integerSchema("Optional metatile id from 0 through 1023.", 0, 0x3FF))
                     put("block_type", integerSchema("Optional Layer 1 collision block type from 0 through 15.", 0, 15))
                     put("bts", integerSchema("Optional Layer 1 BTS byte from 0 through 255.", 0, 255))

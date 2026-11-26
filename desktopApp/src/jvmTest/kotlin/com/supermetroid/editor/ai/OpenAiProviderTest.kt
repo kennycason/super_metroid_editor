@@ -145,6 +145,7 @@ class OpenAiProviderTest {
         assertEquals(2, transport.requests.size)
         val firstPayload = Json.parseToJsonElement(transport.requests[0].body!!).jsonObject
         assertEquals("get_room", firstPayload.getValue("tools").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content)
+        assertTrue(firstPayload.getValue("instructions").jsonPrimitive.content.contains("lossless set_room_tiles donor copies"))
         val continuation = Json.parseToJsonElement(transport.requests[1].body!!).jsonObject
         assertEquals("resp_tool", continuation.getValue("previous_response_id").jsonPrimitive.content)
         val output = continuation.getValue("input").jsonArray.single().jsonObject

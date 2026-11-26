@@ -1608,6 +1608,11 @@ internal class DesktopSmeditMutationController(
         val vFlip: Boolean?,
     )
 
+    private data class ParsedRoomTileEdits(
+        val edits: List<RequestedRoomTileEdit> = emptyList(),
+        val error: String? = null,
+    )
+
     private fun planRoomTiles(arguments: JsonObject): SmeditMutationPlanningResult {
         val rawRoomId = arguments.string("room_id")
             ?: return failure("invalid_arguments", "room_id is required.")
@@ -1625,11 +1630,9 @@ internal class DesktopSmeditMutationController(
         if (scope == "all_states" && requestedStateId != null) {
             return failure("invalid_arguments", "state_id must be omitted for all_states.")
         }
-        val requestedEdits = parseRoomTileEdits(arguments)
-            ?: return failure(
-                "invalid_arguments",
-                "tile_edits must contain 1 through 256 unique coordinates with valid fields. Layer 2 does not support block_type/BTS or words above 0x0FFF.",
-            )
+        val parsedEdits = parseRoomTileEdits(arguments)
+        parsedEdits.error?.let { return failure("invalid_arguments", it) }
+        val requestedEdits = parsedEdits.edits
         val currentParser = parser()
             ?: return failure("workspace_unavailable", "Open a project or editable ROM before changing room tiles.")
         val summary = workspace.workspaceSummary()
@@ -1786,28 +1789,116 @@ internal class DesktopSmeditMutationController(
         )
     }
 
-    private fun parseRoomTileEdits(arguments: JsonObject): List<RequestedRoomTileEdit>? {
-        val values = arguments["tile_edits"] as? JsonArray ?: return null
-        if (values.size !in 1..256) return null
-        val result = values.map { element ->
-            val item = element as? JsonObject ?: return null
-            val x = (item["x"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 } ?: return null
-            val y = (item["y"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 } ?: return null
-            val layer = (item["layer"] as? JsonPrimitive)?.intOrNull ?: TILE_EDIT_LAYER_1
-            if (layer !in TILE_EDIT_LAYER_1..TILE_EDIT_LAYER_2) return null
-            val blockWord = item.intIn("block_word", 0, 0xFFFF) ?: if ("block_word" in item) return null else null
-            val metatileId = item.intIn("metatile_id", 0, 0x3FF) ?: if ("metatile_id" in item) return null else null
-            val blockType = item.intIn("block_type", 0, 15) ?: if ("block_type" in item) return null else null
-            val bts = item.intIn("bts", 0, 255) ?: if ("bts" in item) return null else null
-            val hFlip = item.optionalBoolean("h_flip") ?: if ("h_flip" in item) return null else null
-            val vFlip = item.optionalBoolean("v_flip") ?: if ("v_flip" in item) return null else null
-            if (listOf(metatileId, blockType, hFlip, vFlip).any { it != null } && blockWord != null) return null
-            if (listOf(blockWord, metatileId, blockType, bts, hFlip, vFlip).all { it == null }) return null
-            if (layer == TILE_EDIT_LAYER_2 && (blockType != null || bts != null || blockWord != null && blockWord > 0x0FFF)) return null
-            RequestedRoomTileEdit(x, y, layer, blockWord, metatileId, blockType, bts, hFlip, vFlip)
+    private fun parseRoomTileEdits(arguments: JsonObject): ParsedRoomTileEdits {
+        fun invalid(message: String) = ParsedRoomTileEdits(error = message)
+        val values = arguments["tile_edits"] as? JsonArray
+            ?: return invalid("tile_edits must be an array containing 1 through 256 edits.")
+        if (values.size !in 1..256) {
+            return invalid("tile_edits contains ${values.size} entries; expected 1 through 256.")
         }
-        if (result.map { Triple(it.x, it.y, it.layer) }.distinct().size != result.size) return null
-        return result
+
+        val allowedFields = setOf(
+            "x", "y", "layer", "block_word", "metatile_id", "block_type", "bts", "h_flip", "v_flip",
+        )
+        val coordinates = mutableMapOf<Triple<Int, Int, Int>, Int>()
+        val result = mutableListOf<RequestedRoomTileEdit>()
+        values.forEachIndexed { index, element ->
+            val label = "tile_edits[$index]"
+            val item = element as? JsonObject ?: return invalid("$label must be an object.")
+            val unknown = item.keys - allowedFields
+            if (unknown.isNotEmpty()) {
+                return invalid("$label contains unsupported field(s): ${unknown.sorted().joinToString()}.")
+            }
+
+            fun integer(name: String, range: IntRange): Int? {
+                val value = item[name] ?: return null
+                return (value as? JsonPrimitive)?.intOrNull?.takeIf { it in range }
+            }
+            fun boolean(name: String): Boolean? {
+                val value = item[name] ?: return null
+                return (value as? JsonPrimitive)?.booleanOrNull
+            }
+            fun invalidInteger(name: String, range: IntRange): ParsedRoomTileEdits =
+                invalid("$label.$name must be an integer from ${range.first} through ${range.last}.")
+
+            val x = integer("x", 0..255) ?: return invalidInteger("x", 0..255)
+            val y = integer("y", 0..255) ?: return invalidInteger("y", 0..255)
+            val layer = if ("layer" in item) {
+                integer("layer", TILE_EDIT_LAYER_1..TILE_EDIT_LAYER_2)
+                    ?: return invalidInteger("layer", TILE_EDIT_LAYER_1..TILE_EDIT_LAYER_2)
+            } else {
+                TILE_EDIT_LAYER_1
+            }
+
+            val blockWord = if ("block_word" in item) {
+                integer("block_word", 0..0xFFFF) ?: return invalidInteger("block_word", 0..0xFFFF)
+            } else null
+            val metatileId = if ("metatile_id" in item) {
+                integer("metatile_id", 0..0x3FF) ?: return invalidInteger("metatile_id", 0..0x3FF)
+            } else null
+            val blockType = if ("block_type" in item) {
+                integer("block_type", 0..15) ?: return invalidInteger("block_type", 0..15)
+            } else null
+            val bts = if ("bts" in item) {
+                integer("bts", 0..255) ?: return invalidInteger("bts", 0..255)
+            } else null
+            val hFlip = if ("h_flip" in item) {
+                boolean("h_flip") ?: return invalid("$label.h_flip must be true or false.")
+            } else null
+            val vFlip = if ("v_flip" in item) {
+                boolean("v_flip") ?: return invalid("$label.v_flip must be true or false.")
+            } else null
+
+            if (listOf(blockWord, metatileId, blockType, bts, hFlip, vFlip).all { it == null }) {
+                return invalid(
+                    "$label must provide block_word (with optional bts) or at least one component field: " +
+                        "metatile_id, block_type, bts, h_flip, or v_flip.",
+                )
+            }
+            if (layer == TILE_EDIT_LAYER_2) {
+                if (blockType != null) return invalid("$label.block_type is unavailable on Layer 2.")
+                if (bts != null) return invalid("$label.bts is unavailable on Layer 2.")
+                if (blockWord != null && blockWord > 0x0FFF) {
+                    return invalid("$label.block_word is 0x${blockWord.toString(16).uppercase()}; Layer 2 words must be 0x0000 through 0x0FFF.")
+                }
+            }
+
+            if (blockWord != null) {
+                val decodedMetatile = blockWord and 0x3FF
+                val decodedBlockType = blockWord ushr 12 and 0xF
+                val decodedHFlip = blockWord and 0x0400 != 0
+                val decodedVFlip = blockWord and 0x0800 != 0
+                if (metatileId != null && metatileId != decodedMetatile) {
+                    return invalid("$label.metatile_id is $metatileId but block_word encodes $decodedMetatile; omit the decoded field or make it match.")
+                }
+                if (blockType != null && blockType != decodedBlockType) {
+                    return invalid("$label.block_type is $blockType but block_word encodes $decodedBlockType; omit the decoded field or make it match.")
+                }
+                if (hFlip != null && hFlip != decodedHFlip) {
+                    return invalid("$label.h_flip is $hFlip but block_word encodes $decodedHFlip; omit the decoded field or make it match.")
+                }
+                if (vFlip != null && vFlip != decodedVFlip) {
+                    return invalid("$label.v_flip is $vFlip but block_word encodes $decodedVFlip; omit the decoded field or make it match.")
+                }
+            }
+
+            val coordinate = Triple(x, y, layer)
+            coordinates.put(coordinate, index)?.let { previous ->
+                return invalid("$label duplicates tile_edits[$previous] at ($x,$y) on Layer $layer; combine the fields into one edit.")
+            }
+            result += RequestedRoomTileEdit(
+                x = x,
+                y = y,
+                layer = layer,
+                blockWord = blockWord,
+                metatileId = metatileId.takeIf { blockWord == null },
+                blockType = blockType.takeIf { blockWord == null },
+                bts = bts,
+                hFlip = hFlip.takeIf { blockWord == null },
+                vFlip = vFlip.takeIf { blockWord == null },
+            )
+        }
+        return ParsedRoomTileEdits(edits = result)
     }
 
     private fun nextAiLevelResourceId(room: RoomEdits): String {

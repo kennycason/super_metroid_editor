@@ -36,6 +36,12 @@ class SmeditToolRegistryTest {
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_palette_colors")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("place_item")?.effect)
         assertEquals(SmeditToolEffect.MUTATION, registry.definition("set_room_tiles")?.effect)
+        assertTrue(registry.definition("set_room_tiles")!!.description.contains("lossless donor-tile copy"))
+        assertTrue(
+            registry.definition("set_room_tiles")!!.inputSchema.getValue("properties").jsonObject
+                .getValue("tile_edits").jsonObject.getValue("description").jsonPrimitive.content
+                .contains("Exact-copy mode"),
+        )
         assertEquals(
             listOf("update_fields"),
             registry.definition("set_room_fx")!!.inputSchema.getValue("required").jsonArray
