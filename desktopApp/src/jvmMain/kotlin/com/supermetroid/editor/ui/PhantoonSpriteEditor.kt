@@ -402,7 +402,7 @@ private fun ComponentThumb(
     refreshKey: Int,
     size: Int
 ) {
-    val bitmap by produceState<ImageBitmap?>(null, def.tilemapSnes, refreshKey) {
+    val bitmap by produceState<ImageBitmap?>(null, def.tilemapSnes, romParser, refreshKey) {
         value = try {
             val rp = romParser ?: return@produceState
             val sprite = editorState.renderPhantoonComponent(rp, def) ?: return@produceState

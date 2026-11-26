@@ -103,6 +103,12 @@ fun EnemySpriteViewer(
     var editingReferenceFrames by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }
     var editingTileData by remember { mutableStateOf<ByteArray?>(null) }
     var refreshKey by remember { mutableStateOf(0) }
+    val spriteVersion = editorState.spriteVersion
+    val paletteVersion = editorState.paletteVersion
+    val asmVisualSourceRevision = editorState.asmVisualSourceRevision
+    val previewRp = remember(rp, spriteVersion, paletteVersion, asmVisualSourceRevision) {
+        runCatching { editorState.nativeSprites.previewParser(rp) }.getOrDefault(rp)
+    }
 
     // If pixel editor is open, show it full-screen
     val ep = editingPixels
@@ -122,7 +128,7 @@ fun EnemySpriteViewer(
                     emptyList()
                 } else {
                     enemyLiveReferenceFrames(
-                        rp = rp,
+                        rp = previewRp,
                         speciesId = entry.speciesId,
                         speciesName = entry.name,
                         palette = pal,
@@ -156,15 +162,11 @@ fun EnemySpriteViewer(
     val stats = remember(entry.speciesId) {
         EnemySpriteGraphics.readSpeciesStats(rp, entry.speciesId)
     }
-    val previewPaletteSource = remember(entry.speciesId, paletteRefreshKey) {
-        EnemySpriteGraphics.loadEnemyPreviewPaletteSource(rp, entry.speciesId)
+    val previewPaletteSource = remember(entry.speciesId, paletteRefreshKey, previewRp) {
+        EnemySpriteGraphics.loadEnemyPreviewPaletteSource(previewRp, entry.speciesId)
     }
-    val palette = remember(entry.speciesId, paletteRefreshKey, previewPaletteSource) {
-        if (previewPaletteSource?.editable == true) {
-            editorState.loadEnemyPalette(rp, entry.speciesId)
-        } else {
-            previewPaletteSource?.colors
-        }
+    val palette = remember(entry.speciesId, paletteRefreshKey, previewPaletteSource, previewRp) {
+        previewPaletteSource?.colors
     }
     val gfxBlock = remember(entry.speciesId) {
         EnemySpriteGraphics.readGraphicsBlock(rp, entry.speciesId)
@@ -173,33 +175,33 @@ fun EnemySpriteViewer(
     val usesSpecialAssembledPreview = BossPoseScanner.usesSpecialAssembledPreview(entry.speciesId)
     val usesStaticAssembledPreviewOnly = BossPoseScanner.usesStaticAssembledPreviewOnly(entry.speciesId)
 
-    val tileData = remember(entry.speciesId, refreshKey) {
-        editorState.loadEnemyTileData(rp, entry.speciesId)
+    val tileData = remember(entry.speciesId, refreshKey, previewRp) {
+        editorState.loadEnemyTileData(previewRp, entry.speciesId)
     }
-    val previewTileSource = remember(entry.speciesId, refreshKey, tileData) {
-        EnemySpriteGraphics.loadEnemyPreviewTileSource(rp, entry.speciesId, tileData)
+    val previewTileSource = remember(entry.speciesId, refreshKey, tileData, previewRp) {
+        EnemySpriteGraphics.loadEnemyPreviewTileSource(previewRp, entry.speciesId, tileData)
     }
     val previewTileData = previewTileSource?.bytes
     val tileValidation = remember(entry.speciesId, refreshKey, tileData) {
         tileData?.let { EnemySpriteGraphics.validateEnemyTileEdit(rp, entry.speciesId, it) }
     }
 
-    val assembledSprite = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
+    val assembledSprite = remember(entry.speciesId, refreshKey, paletteRefreshKey, previewRp) {
         val pal = palette ?: return@remember null
         val td = previewTileData ?: return@remember null
         if (usesSpecialAssembledPreview) {
-            val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
-            val scanner = BossPoseScanner(rp)
+            val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(previewRp, entry.speciesId, td) ?: td
+            val scanner = BossPoseScanner(previewRp)
             val pose = scanner.scanPoses(entry.speciesId, minEntries = 3).firstOrNull() ?: return@remember null
             return@remember scanner.renderPose(pose, renderTileData, pal)
         }
 
-        val smap = EnemySpritemap(rp)
+        val smap = EnemySpritemap(previewRp)
         smap.renderSpecialEnemyPreview(entry.speciesId, td, pal)?.let { return@remember it }
         val defaultSmap = smap.findDefaultSpritemap(entry.speciesId)
             ?: smap.findAnimationFrames(entry.speciesId, maxFrames = 1).firstOrNull()?.spritemap
             ?: return@remember null
-        val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(rp, entry.speciesId, td) ?: td
+        val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(previewRp, entry.speciesId, td) ?: td
         val result = smap.renderSpritemap(defaultSmap, renderTileData, pal) ?: return@remember null
         val totalPixels = result.width * result.height
         val nonTransparent = result.pixels.count { (it ushr 24) > 0 }
@@ -207,12 +209,12 @@ fun EnemySpriteViewer(
         result
     }
 
-    val tileSheet = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
+    val tileSheet = remember(entry.speciesId, refreshKey, paletteRefreshKey, previewRp) {
         val pal = palette ?: return@remember null
         val td = tileData ?: return@remember null
-        val gfx = EnemySpriteGraphics(rp)
+        val gfx = EnemySpriteGraphics(previewRp)
         val sheetTiles = if (isMotherBrainBody) {
-            EnemySpriteGraphics.loadMotherBrainBodySourceTileData(rp, td) ?: td
+            EnemySpriteGraphics.loadMotherBrainBodySourceTileData(previewRp, td) ?: td
         } else {
             td
         }
@@ -286,7 +288,7 @@ fun EnemySpriteViewer(
         // Palette display + editor
         if (palette != null) {
             val paletteEditable = previewPaletteSource?.editable == true
-            val hasCustomPal = paletteEditable && editorState.hasCustomEnemyPalette(entry.speciesId)
+            val hasCustomPal = paletteEditable && editorState.hasCustomEnemyPalette(rp, entry.speciesId)
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp),
@@ -320,7 +322,7 @@ fun EnemySpriteViewer(
                         if (hasCustomPal) {
                             Button(
                                 onClick = {
-                                    editorState.resetEnemyPalette(entry.speciesId)
+                                    editorState.resetEnemyPalette(rp, entry.speciesId)
                                     editingColorIdx = -1
                                     paletteRefreshKey++
                                 },
@@ -384,7 +386,7 @@ fun EnemySpriteViewer(
                             onColorChanged = { newBgr ->
                                 val updatedPal = palette.copyOf()
                                 updatedPal[editingColorIdx] = EnemySpriteGraphics.snesColorToArgb(newBgr)
-                                editorState.applyEnemyPalette(entry.speciesId, updatedPal)
+                                editorState.applyEnemyPalette(rp, entry.speciesId, updatedPal)
                                 paletteRefreshKey++
                             },
                             modifier = Modifier.width(250.dp)
@@ -406,6 +408,7 @@ fun EnemySpriteViewer(
             entry.speciesId,
             refreshKey,
             paletteRefreshKey,
+            previewRp,
             sourceAnimationIndex,
             miniKraidSequenceIndex,
         ) {
@@ -418,15 +421,15 @@ fun EnemySpriteViewer(
                     sourceAnimationIndex.coerceIn(0, sourceAnimationDefs.lastIndex)
                 ]
                 val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(
-                    rp, entry.speciesId, td,
+                    previewRp, entry.speciesId, td,
                 ) ?: td
-                EnemySpritemap(rp).buildSourceAnimation(definition, renderTileData, pal)
+                EnemySpritemap(previewRp).buildSourceAnimation(definition, renderTileData, pal)
             } else if (isMiniKraid) {
                 val def = MiniKraidSpritemap.SEQUENCES[miniKraidSequenceIndex.coerceIn(0, MiniKraidSpritemap.SEQUENCES.lastIndex)]
-                MiniKraidSpritemap(rp).renderAnimation(def, td, pal)
+                MiniKraidSpritemap(previewRp).renderAnimation(def, td, pal)
             } else if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
-                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
-                val scanner = BossPoseScanner(rp)
+                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(previewRp, entry.speciesId, td) ?: td
+                val scanner = BossPoseScanner(previewRp)
                 val frames = scanner.scanPoses(entry.speciesId, minEntries = 3).mapNotNull { pose ->
                     val assembled = scanner.renderPose(pose, renderTileData, pal) ?: return@mapNotNull null
                     SpriteAnimationFrame(
@@ -444,9 +447,9 @@ fun EnemySpriteViewer(
                     null
                 }
             } else {
-                val smap = EnemySpritemap(rp)
+                val smap = EnemySpritemap(previewRp)
                 smap.buildSpecialEnemyAnimation(entry.speciesId, td, pal, entry.name)?.let { return@remember it }
-                val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(rp, entry.speciesId, td) ?: td
+                val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(previewRp, entry.speciesId, td) ?: td
                 smap.buildAnimation(entry.speciesId, renderTileData, pal, entry.name)
             }
         }
@@ -578,11 +581,11 @@ fun EnemySpriteViewer(
             !EnemySpritemap.hasSpecialEnemyPreview(entry.speciesId) &&
             BossPoseScanner.hasKnownPoses(entry.speciesId)
         if (isBoss) {
-            val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
+            val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey, previewRp) {
                 val pal = palette ?: return@remember emptyList()
                 val td = tileData ?: return@remember emptyList()
-                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
-                val scanner = BossPoseScanner(rp)
+                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(previewRp, entry.speciesId, td) ?: td
+                val scanner = BossPoseScanner(previewRp)
                 val poses = scanner.scanPoses(entry.speciesId, minEntries = 3)
                 poses.mapNotNull { pose ->
                     val rendered = scanner.renderPose(pose, renderTileData, pal) ?: return@mapNotNull null

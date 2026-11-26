@@ -847,7 +847,13 @@ class EditorState(
         restoreAsmPalette = ::restoreNativeSpritePalette,
         asmCinematicMapAccessAll = ::asmCinematicMapAccessAll,
         onBlocked = ::postStatus,
-        onDirty = { dirty = true; spriteVersion++; editVersion++; paletteVersion++ },
+        onDirty = {
+            invalidateSpriteEditorCaches()
+            dirty = true
+            spriteVersion++
+            editVersion++
+            paletteVersion++
+        },
     )
 
     internal val cinematicMaps = CinematicMapEditorState(
@@ -859,13 +865,24 @@ class EditorState(
 
     val enemySprite = EnemySpriteEditorState(
         customGfx = { project.customGfx },
-        onDirty = { dirty = true; spriteVersion++; editVersion++; paletteVersion++ },
+        onDirty = {
+            invalidateSpriteEditorCaches()
+            dirty = true
+            spriteVersion++
+            editVersion++
+            paletteVersion++
+        },
     )
 
     val phantoonSprite = PhantoonSpriteEditorState(
         customGfx = { project.customGfx },
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
-        onDirty = { dirty = true },
+        onDirty = {
+            invalidateSpriteEditorCaches()
+            dirty = true
+            spriteVersion++
+            editVersion++
+        },
     )
 
     val draygonSprite = DraygonSpriteEditorState(
@@ -908,8 +925,26 @@ class EditorState(
         customGfx = { project.customGfx },
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
-        onDirty = { dirty = true },
+        onDirty = {
+            invalidateSpriteEditorCaches()
+            dirty = true
+            spriteVersion++
+            editVersion++
+        },
     )
+
+    private fun invalidateSpriteEditorCaches() {
+        phantoonSprite.invalidate()
+        draygonSprite.invalidate()
+        crocomireSprite.invalidate()
+        sporeSpawnSprite.invalidate()
+        metroidSprite.invalidate()
+        botwoonSprite.invalidate()
+        torizoSprite.invalidate()
+        motherBrainSprite.invalidate()
+        ridleySprite.invalidate()
+        kraidSprite.invalidate()
+    }
 
     /** Incremented on every edit to trigger map re-render + update room edit order. */
     private val _editVersionState = mutableStateOf(0)
@@ -3502,9 +3537,7 @@ class EditorState(
         require(colors.size == region.colorCount)
         val bytes = com.supermetroid.editor.rom.SpritePalettes.colorsToBytes(colors)
         project.customGfx.spritePalettes[regionId] = java.util.Base64.getEncoder().encodeToString(bytes)
-        phantoonSprite.invalidate()
-        kraidSprite.invalidate()
-        draygonSprite.invalidate()
+        invalidateSpriteEditorCaches()
         dirty = true
         paletteVersion++
     }
@@ -3514,9 +3547,7 @@ class EditorState(
         val removedPalette = project.customGfx.spritePalettes.remove(regionId) != null
         val removedEffect = project.customGfx.paletteEffects.remove(regionId) != null
         if (removedPalette || removedEffect) {
-            phantoonSprite.invalidate()
-            kraidSprite.invalidate()
-            draygonSprite.invalidate()
+            invalidateSpriteEditorCaches()
             dirty = true
             paletteVersion++
             return true
@@ -3736,9 +3767,7 @@ class EditorState(
         else palettes[target.overrideKey] = target.overrideValue
         if (target.effectValue == null) project.customGfx.paletteEffects.remove(target.effectKey)
         else project.customGfx.paletteEffects[target.effectKey] = target.effectValue
-        phantoonSprite.invalidate()
-        kraidSprite.invalidate()
-        draygonSprite.invalidate()
+        invalidateSpriteEditorCaches()
         target.affectedTilesetIds.takeIf { it.isNotEmpty() }?.let { affected ->
             if (parser != null && currentTilesetId in affected) reloadCurrentRoomTileGraphics(parser)
             if (parser != null && editorTilesetId in affected) loadEditorTileset(editorTilesetId, parser)
@@ -4148,9 +4177,12 @@ class EditorState(
     fun hasCustomEnemyTiles(speciesId: Int) = enemySprite.hasCustomEnemyTiles(speciesId)
     fun resetEnemyTiles(speciesId: Int) = enemySprite.resetEnemyTiles(speciesId)
     fun loadEnemyPalette(romParser: RomParser, speciesId: Int) = enemySprite.loadEnemyPalette(romParser, speciesId)
-    fun applyEnemyPalette(speciesId: Int, palette: IntArray) = enemySprite.applyEnemyPalette(speciesId, palette)
-    fun hasCustomEnemyPalette(speciesId: Int) = enemySprite.hasCustomEnemyPalette(speciesId)
-    fun resetEnemyPalette(speciesId: Int) = enemySprite.resetEnemyPalette(speciesId)
+    fun applyEnemyPalette(romParser: RomParser, speciesId: Int, palette: IntArray) =
+        enemySprite.applyEnemyPalette(romParser, speciesId, palette)
+    fun hasCustomEnemyPalette(romParser: RomParser, speciesId: Int) =
+        enemySprite.hasCustomEnemyPalette(romParser, speciesId)
+    fun resetEnemyPalette(romParser: RomParser, speciesId: Int) =
+        enemySprite.resetEnemyPalette(romParser, speciesId)
 
     // ── Phantoon sprite delegates ─────────────────────────────────────────
 
@@ -7071,15 +7103,7 @@ class EditorState(
         patUndoVersion++
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
-        phantoonSprite.invalidate()
-        draygonSprite.invalidate()
-        crocomireSprite.invalidate()
-        sporeSpawnSprite.invalidate()
-        botwoonSprite.invalidate()
-        torizoSprite.invalidate()
-        motherBrainSprite.invalidate()
-        ridleySprite.invalidate()
-        kraidSprite.invalidate()
+        invalidateSpriteEditorCaches()
 
         _roomEditOrder.clear()
         _editCounter = 0L

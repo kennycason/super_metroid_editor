@@ -379,10 +379,12 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             }
 
             val header = readSpeciesHeader(romParser, speciesId) ?: return null
+            val displayAddress = torizoDisplayPaletteAddress(speciesId)
+                ?: ((header.aiBank shl 16) or header.palettePointer)
             val colors = readEnemyPalette(romParser, speciesId) ?: return null
             return EnemyPreviewPaletteSource(
                 colors = colors,
-                snesAddress = (header.aiBank shl 16) or header.palettePointer,
+                snesAddress = displayAddress,
                 label = "Species palette",
                 ownership = EnemyPreviewAssetOwnership.SPECIES_HEADER,
             )

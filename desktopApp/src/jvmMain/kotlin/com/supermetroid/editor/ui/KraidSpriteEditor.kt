@@ -115,7 +115,7 @@ fun KraidSpriteEditor(
     var editingPalette by remember { mutableStateOf<IntArray?>(null) }
     var editingLabel by remember { mutableStateOf("") }
     var refreshKey by remember { mutableStateOf(0) }
-    val renderRefreshKey = refreshKey * 31 + editorState.paletteVersion
+    val renderRefreshKey = (refreshKey * 31 + editorState.spriteVersion) * 31 + editorState.paletteVersion
 
     editingPixels?.let { pixels ->
         val sprite = editingSprite

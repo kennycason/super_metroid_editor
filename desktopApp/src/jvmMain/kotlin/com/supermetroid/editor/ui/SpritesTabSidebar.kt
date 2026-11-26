@@ -36,6 +36,11 @@ internal enum class SpriteSortMode(val label: String) {
     SPECIES_ID("ID"),
 }
 
+private val DEDICATED_SPRITE_PREVIEW_IDS = setOf(
+    0xE4BF, 0xE2BF, 0xDE3F, 0xDDBF, 0xDD7F,
+    0xDF3F, 0xF293, 0xEEFF, 0xEC3F, 0xE17F,
+)
+
 internal fun spriteMatchesQuery(
     entry: EnemySpriteGraphics.Companion.EnemySpriteEntry,
     query: String,
@@ -232,18 +237,32 @@ internal fun SpritesTabCanvas(
     } else {
         val entries = EnemySpriteGraphics.EDITOR_ENEMIES
         val selected = entries.getOrNull(selectedSpriteIdx) ?: entries.first()
+        val spriteVersion = editorState.spriteVersion
+        val paletteVersion = editorState.paletteVersion
+        val asmVisualSourceRevision = editorState.asmVisualSourceRevision
+        val previewRomParser = remember(
+            romParser,
+            selected.speciesId,
+            spriteVersion,
+            paletteVersion,
+            asmVisualSourceRevision,
+        ) {
+            romParser?.takeIf { selected.speciesId in DEDICATED_SPRITE_PREVIEW_IDS }?.let { parser ->
+                runCatching { editorState.nativeSprites.previewParser(parser) }.getOrDefault(parser)
+            } ?: romParser
+        }
         when (selected.speciesId) {
             0xD07F, 0xD0BF -> ShipSpriteViewer(romParser, editorState, modifier)
-            0xE4BF -> PhantoonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xE2BF -> KraidSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xDE3F -> DraygonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xDDBF -> CrocomireSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xDD7F -> MetroidSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xDF3F -> SporeSpawnSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xF293 -> BotwoonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xEEFF -> TorizoSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xEC3F -> MotherBrainSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xE17F -> RidleySpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xE4BF -> PhantoonSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xE2BF -> KraidSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xDE3F -> DraygonSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xDDBF -> CrocomireSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xDD7F -> MetroidSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xDF3F -> SporeSpawnSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xF293 -> BotwoonSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xEEFF -> TorizoSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xEC3F -> MotherBrainSpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
+            0xE17F -> RidleySpriteEditor(editorState = editorState, romParser = previewRomParser, modifier = modifier)
             else -> EnemySpriteViewer(
                 entry = selected,
                 romParser = romParser,

@@ -3,6 +3,8 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpritePalettes
+import java.util.Base64
 
 /**
  * Manages enemy sprite, tile-sheet, and palette overrides for the editor project.
@@ -66,32 +68,102 @@ class EnemySpriteEditorState(
     // ── Enemy palette ─────────────────────────────────────────────────────
 
     fun loadEnemyPalette(romParser: RomParser, speciesId: Int): IntArray? {
-        val b64 = customGfx().spritePalettes[enemyPalKey(speciesId)]
+        val palettes = customGfx().spritePalettes
+        val b64 = palettes[enemyPalKey(speciesId)]
         if (b64 != null) {
             try {
-                val raw = java.util.Base64.getDecoder().decode(b64)
+                val raw = Base64.getDecoder().decode(b64)
                 return enemyPalBytesToArgb(raw)
+            } catch (_: Exception) { /* fall through to ROM */ }
+        }
+        paletteRegionSlice(romParser, speciesId)?.let { slice ->
+            val encoded = palettes[slice.region.id] ?: return@let
+            try {
+                val raw = Base64.getDecoder().decode(encoded)
+                if (raw.size == slice.region.byteSize) {
+                    return enemyPalBytesToArgb(raw.copyOfRange(slice.byteOffset, slice.byteOffset + 32))
+                }
             } catch (_: Exception) { /* fall through to ROM */ }
         }
         return EnemySpriteGraphics.readEnemyPalette(romParser, speciesId)
     }
 
-    fun applyEnemyPalette(speciesId: Int, palette: IntArray) {
+    fun applyEnemyPalette(romParser: RomParser, speciesId: Int, palette: IntArray) {
         val raw = enemyPalArgbToBytes(palette)
-        customGfx().spritePalettes[enemyPalKey(speciesId)] =
-            java.util.Base64.getEncoder().encodeToString(raw)
+        val gfx = customGfx()
+        val legacyKey = enemyPalKey(speciesId)
+        val slice = paletteRegionSlice(romParser, speciesId)
+        if (slice == null) {
+            gfx.spritePalettes[legacyKey] = Base64.getEncoder().encodeToString(raw)
+        } else {
+            val original = romParser.getRomData().copyOfRange(
+                slice.region.offset,
+                slice.region.offset + slice.region.byteSize,
+            )
+            val current = gfx.spritePalettes[slice.region.id]?.let { encoded ->
+                runCatching { Base64.getDecoder().decode(encoded) }
+                    .getOrNull()
+                    ?.takeIf { it.size == slice.region.byteSize }
+            }?.copyOf() ?: original.copyOf()
+            raw.copyInto(current, slice.byteOffset)
+            if (current.contentEquals(original)) gfx.spritePalettes.remove(slice.region.id)
+            else gfx.spritePalettes[slice.region.id] = Base64.getEncoder().encodeToString(current)
+            gfx.spritePalettes.remove(legacyKey)
+            gfx.paletteEffects.remove(slice.region.id)
+        }
         onDirty()
     }
 
-    fun hasCustomEnemyPalette(speciesId: Int): Boolean =
-        customGfx().spritePalettes.containsKey(enemyPalKey(speciesId))
+    fun hasCustomEnemyPalette(romParser: RomParser, speciesId: Int): Boolean {
+        val gfx = customGfx()
+        if (gfx.spritePalettes.containsKey(enemyPalKey(speciesId))) return true
+        val regionId = paletteRegionSlice(romParser, speciesId)?.region?.id ?: return false
+        return gfx.spritePalettes.containsKey(regionId) || gfx.paletteEffects.containsKey(regionId)
+    }
 
-    fun resetEnemyPalette(speciesId: Int) {
-        customGfx().spritePalettes.remove(enemyPalKey(speciesId))
-        onDirty()
+    fun resetEnemyPalette(romParser: RomParser, speciesId: Int) {
+        val gfx = customGfx()
+        var changed = gfx.spritePalettes.remove(enemyPalKey(speciesId)) != null
+        paletteRegionSlice(romParser, speciesId)?.let { slice ->
+            val encoded = gfx.spritePalettes[slice.region.id]
+            if (encoded != null) {
+                val original = romParser.getRomData().copyOfRange(
+                    slice.region.offset,
+                    slice.region.offset + slice.region.byteSize,
+                )
+                val current = runCatching { Base64.getDecoder().decode(encoded) }.getOrNull()
+                if (current?.size == slice.region.byteSize) {
+                    original.copyInto(
+                        current,
+                        destinationOffset = slice.byteOffset,
+                        startIndex = slice.byteOffset,
+                        endIndex = slice.byteOffset + 32,
+                    )
+                    if (current.contentEquals(original)) gfx.spritePalettes.remove(slice.region.id)
+                    else gfx.spritePalettes[slice.region.id] = Base64.getEncoder().encodeToString(current)
+                    changed = true
+                }
+            }
+            changed = gfx.paletteEffects.remove(slice.region.id) != null || changed
+        }
+        if (changed) onDirty()
     }
 
     private fun enemyPalKey(speciesId: Int) = "enemy_pal:${speciesId.toString(16).uppercase()}"
+
+    private data class PaletteRegionSlice(
+        val region: SpritePalettes.PaletteRegion,
+        val byteOffset: Int,
+    )
+
+    private fun paletteRegionSlice(romParser: RomParser, speciesId: Int): PaletteRegionSlice? {
+        val source = EnemySpriteGraphics.loadEnemyPreviewPaletteSource(romParser, speciesId) ?: return null
+        val pc = romParser.snesToPc(source.snesAddress)
+        val region = SpritePalettes.REGIONS.firstOrNull {
+            pc >= it.offset && pc + 32 <= it.offset + it.byteSize
+        } ?: return null
+        return PaletteRegionSlice(region, pc - region.offset)
+    }
 
     private fun enemyPalBytesToArgb(raw: ByteArray): IntArray {
         val pal = IntArray(16)

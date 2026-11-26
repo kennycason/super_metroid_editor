@@ -710,7 +710,7 @@ class EditorStateTest {
             val customPalette = romPalette.copyOf()
             customPalette[1] = targetColor
             customPalette[15] = romPalette[1]
-            state.applyEnemyPalette(speciesId, customPalette)
+            state.applyEnemyPalette(romParser, speciesId, customPalette)
 
             val rawBefore = state.loadEnemyTileData(romParser, speciesId) ?: return
             val gfx = EnemySpriteGraphics(romParser)

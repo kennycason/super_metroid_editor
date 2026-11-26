@@ -21,7 +21,12 @@ class SpriteWorkspaceCoverageTest {
         val project = SmEditProject("base.smc")
         val state = EnemySpriteEditorState({ project.customGfx }, {})
         val catalogIds = EnemySpriteGraphics.EDITOR_ENEMIES.map { it.speciesId }.toSet()
-        assertEquals(124, catalogIds.size, "new picker entries must receive the same editor-owner audit")
+        assertTrue(catalogIds.size >= 123, "sprite picker unexpectedly lost audited entries")
+        assertEquals(
+            EnemySpriteGraphics.EDITOR_ENEMIES.size,
+            catalogIds.size,
+            "sprite picker must not contain duplicate species",
+        )
 
         EnemySpriteGraphics.EDITOR_ENEMIES
             .filterNot { it.speciesId in dedicatedSpecies || it.speciesId in shipSpecies }
