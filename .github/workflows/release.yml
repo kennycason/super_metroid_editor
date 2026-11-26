@@ -127,16 +127,9 @@ jobs:
       - name: Run tests
         if: matrix.run_tests
         timeout-minutes: 45
-        run: |
-          for attempt in 1 2; do
-            if ./gradlew :shared:jvmTest :desktopApp:jvmTest --console=plain; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 2 ]; then
-              exit 1
-            fi
-            echo "::warning::Test task failed once; retrying to distinguish a transient native UI race from a persistent failure."
-          done
+        # Run once and preserve the exact failure report. A second complete Windows
+        # run takes another 20-25 minutes and cannot reliably fit this step's timeout.
+        run: ./gradlew :shared:jvmTest :desktopApp:jvmTest --console=plain
         shell: bash
         env:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true

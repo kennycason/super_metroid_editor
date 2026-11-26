@@ -291,7 +291,10 @@ class SoundRoadmapUiTest {
     private suspend fun tapExpression(scene: ComposeScene, tick: Int, extent: Int, lane: Int, render: suspend () -> Unit) {
         val bounds = tag(scene, "expression-timeline").boundsInRoot
         val at = Offset(bounds.left + 8 + tick.toFloat() / extent * (bounds.width - 16), bounds.top + (lane + 0.5f) * bounds.height / 4)
-        scene.sendPointerEvent(PointerEventType.Press, at, button = PointerButton.Primary)
+        // Let Compose consume each synthetic input phase. Sending press and release back-to-back
+        // can outrun detectTapGestures on a loaded headless Windows runner.
+        scene.sendPointerEvent(PointerEventType.Move, at); render()
+        scene.sendPointerEvent(PointerEventType.Press, at, button = PointerButton.Primary); render()
         scene.sendPointerEvent(PointerEventType.Release, at, button = PointerButton.Primary); render()
     }
     private fun text(scene: ComposeScene, key: String): String {

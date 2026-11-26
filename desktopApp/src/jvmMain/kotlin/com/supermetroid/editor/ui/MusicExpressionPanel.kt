@@ -184,6 +184,9 @@ private fun ExpressionTimeline(events: List<IndexedValue<NspcSequence.ControlCom
     val ink = MaterialTheme.colorScheme.primary
     val currentSelect by rememberUpdatedState(onSelect)
     val currentNew by rememberUpdatedState(onNew)
+    val currentEvents by rememberUpdatedState(events)
+    val currentSelected by rememberUpdatedState(selected)
+    val currentExtent by rememberUpdatedState(extent)
     Column {
         Row {
             Column(Modifier.width(52.dp)) {
@@ -192,19 +195,25 @@ private fun ExpressionTimeline(events: List<IndexedValue<NspcSequence.ControlCom
             }
             Canvas(Modifier.weight(1f).height(72.dp).testTag("expression-timeline")
                 .semantics { contentDescription = "Event timeline: click a marker to select an event; click empty space to start a new event." }
-                .pointerInput(extent, events, selected) {
+                // Event and selection changes can happen in the frame immediately before a click.
+                // Keep the detector alive and read the latest values instead of briefly cancelling
+                // and relaunching it during recomposition.
+                .pointerInput(Unit) {
                     detectTapGestures { at ->
-                        val distances = events.map { event ->
-                            val x = 8.dp.toPx() + event.value.tick.toFloat() / extent * (size.width - 16.dp.toPx())
+                        val timelineEvents = currentEvents
+                        val timelineSelected = currentSelected
+                        val timelineExtent = currentExtent
+                        val distances = timelineEvents.map { event ->
+                            val x = 8.dp.toPx() + event.value.tick.toFloat() / timelineExtent * (size.width - 16.dp.toPx())
                             val y = (MusicExpression.lane(event.value.command) + 0.5f) * size.height / 4
                             event.index to ((at.x - x) * (at.x - x) + (at.y - y) * (at.y - y))
                         }
                         val closest = distances.minOfOrNull { it.second }
                         if (closest != null && closest <= 12.dp.toPx() * 12.dp.toPx()) {
                             val samePosition = distances.filter { abs(it.second - closest) < 0.1f }.map { it.first }
-                            val next = (samePosition.indexOf(selected) + 1) % samePosition.size
+                            val next = (samePosition.indexOf(timelineSelected) + 1) % samePosition.size
                             currentSelect(samePosition[next])
-                        } else currentNew((((at.x - 8.dp.toPx()) / (size.width - 16.dp.toPx()) * extent / 6).roundToInt() * 6).coerceIn(0, 65535))
+                        } else currentNew((((at.x - 8.dp.toPx()) / (size.width - 16.dp.toPx()) * timelineExtent / 6).roundToInt() * 6).coerceIn(0, 65535))
                     }
                 }) {
                 for (lane in 0..3) {
