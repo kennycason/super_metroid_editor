@@ -932,6 +932,21 @@ object SmeditPatchCatalog {
                     ),
                     requiresRom = true,
                 ),
+                SmeditConfigFieldSchema(
+                    key = BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY,
+                    label = "Baby Metroid Doesn't Save Samus If Dead",
+                    type = "enum",
+                    min = 0,
+                    max = 1,
+                    defaultValue = BabyMetroidPatch.DEFAULT_DOES_NOT_SAVE_SAMUS_IF_DEAD,
+                    description = "When the mortal Baby was killed earlier in Tourian, do not spawn it during Mother Brain's final beam, so Samus dies.",
+                    category = "Combat",
+                    choices = listOf(
+                        SmeditConfigChoiceSchema("Disabled", 0),
+                        SmeditConfigChoiceSchema("Enabled", 1),
+                    ),
+                    requiresRom = true,
+                ),
                 intField(
                     BabyMetroidPatch.MISSILE_VULNERABILITY_KEY,
                     "Missile Vulnerability",

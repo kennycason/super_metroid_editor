@@ -44,6 +44,7 @@ class BabyMetroidRomExporterTest {
                 BabyMetroidPatch.FREEZABLE_KEY to 1,
                 BabyMetroidPatch.MISSILE_VULNERABILITY_KEY to 2,
                 BabyMetroidPatch.SUPER_VULNERABILITY_KEY to 2,
+                BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY to 0,
             ),
         )
 
@@ -79,6 +80,7 @@ class BabyMetroidRomExporterTest {
                     BabyMetroidPatch.FREEZABLE_KEY to 1,
                     BabyMetroidPatch.MISSILE_VULNERABILITY_KEY to 2,
                     BabyMetroidPatch.SUPER_VULNERABILITY_KEY to 2,
+                    BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY to 1,
                 ),
             )
         }
@@ -108,5 +110,11 @@ class BabyMetroidRomExporterTest {
         )
         assertTrue(built.writeReport.writes.any { it.label.contains("guarded shot AI") })
         assertTrue(built.writeReport.writes.any { it.label.contains("private vulnerability") })
+        assertNotEquals(0xBE1B, word(0xA9BDDE), "The rescue spawn must route through the event check")
+        assertNotEquals(0xBDED, word(0xA9BDE1), "The final beam state must route through the dead-Baby dispatch")
+        assertTrue(built.writeReport.writes.any { it.label.contains("dead-Baby rescue check") })
+        assertTrue(built.writeReport.writes.any { it.label.contains("skip rescue when Baby is dead") })
+        assertTrue(built.writeReport.writes.any { it.label.contains("dead-Baby final-beam dispatch") })
+        assertTrue(built.writeReport.writes.any { it.label.contains("route dead Baby to lethal rainbow beam") })
     }
 }

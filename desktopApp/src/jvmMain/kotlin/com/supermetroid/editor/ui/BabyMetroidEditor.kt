@@ -84,6 +84,10 @@ fun BabyMetroidEditor(
         BabyMetroidPatch.SUPER_VULNERABILITY_KEY,
         BabyMetroidPatch.DEFAULT_SUPER_VULNERABILITY,
     )
+    val doesNotSaveSamusIfDead = behaviorValue(
+        BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY,
+        BabyMetroidPatch.DEFAULT_DOES_NOT_SAVE_SAMUS_IF_DEAD,
+    ) == 1
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -193,6 +197,16 @@ fun BabyMetroidEditor(
                 testTag = "baby-metroid-freezable",
                 enabled = mortal,
             )
+            BabyToggleRow(
+                label = "Baby Metroid Doesn't Save Samus If Dead",
+                detail = "If you kill the Baby here, it stays dead during Mother Brain's final beam and Samus dies. Uses vanilla's unused persistent event \$14.",
+                checked = doesNotSaveSamusIfDead,
+                onCheckedChange = {
+                    setBehavior(BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY, if (it) 1 else 0)
+                },
+                testTag = "baby-metroid-no-rescue-if-dead",
+                enabled = mortal,
+            )
             BabyNumberRow(
                 "Missile Vulnerability",
                 "Raw SM multiplier: 0 = immune, 1 = 0.5×, 2 = 1×, 4 = 2×.",
@@ -244,6 +258,7 @@ fun BabyMetroidEditor(
                 setBehavior(BabyMetroidPatch.FREEZABLE_KEY, 1)
                 setBehavior(BabyMetroidPatch.MISSILE_VULNERABILITY_KEY, 2)
                 setBehavior(BabyMetroidPatch.SUPER_VULNERABILITY_KEY, 2)
+                setBehavior(BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY, 0)
                 BabyMetroidPatch.MOVEMENT_FIELDS.forEach { field ->
                     setBehavior(
                         field.key,

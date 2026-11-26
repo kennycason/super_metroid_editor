@@ -107,6 +107,10 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
             put(BabyMetroidPatch.FREEZABLE_KEY, BabyMetroidPatch.DEFAULT_FREEZABLE)
             put(BabyMetroidPatch.MISSILE_VULNERABILITY_KEY, BabyMetroidPatch.DEFAULT_MISSILE_VULNERABILITY)
             put(BabyMetroidPatch.SUPER_VULNERABILITY_KEY, BabyMetroidPatch.DEFAULT_SUPER_VULNERABILITY)
+            put(
+                BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY,
+                BabyMetroidPatch.DEFAULT_DOES_NOT_SAVE_SAMUS_IF_DEAD,
+            )
             BabyMetroidPatch.MOVEMENT_FIELDS.forEach { field ->
                 put(field.key, word(field.operandSnesAddresses.first()) ?: field.defaultValue)
             }

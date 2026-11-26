@@ -58,6 +58,7 @@ class BabyMetroidPatchTest {
         val result = BabyMetroidPatch.install(
             config = mapOf(
                 BabyMetroidPatch.MORTAL_KEY to 0,
+                BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY to 1,
                 "samus_chase_agility" to 4,
             ),
             parser = parser,
@@ -68,6 +69,9 @@ class BabyMetroidPatchTest {
         assertTrue(!result.mortalInstalled)
         assertEquals(null, result.shotShimSnes)
         assertEquals(null, result.vulnerabilityTableSnes)
+        assertTrue(!result.noRescueIfDeadInstalled)
+        assertEquals(null, result.rescueCheckSnes)
+        assertEquals(null, result.finalBeamDispatchSnes)
         assertContentEquals(
             byteArrayOf(0xA9.toByte(), 0xFF.toByte(), 0x7F, 0x9D.toByte(), 0x8C.toByte(), 0x0F),
             plan.romData.copyOfRange(parser.snesToPc(0xA9EFC8), parser.snesToPc(0xA9EFC8) + 6),
@@ -79,6 +83,11 @@ class BabyMetroidPatchTest {
         assertEquals(4, word(0xA9F1EB))
         assertEquals(0xF842, word(0xA0EEF1))
         assertEquals(0xF12E, word(0xA0EEFB))
+        assertEquals(0xBDED, word(0xA9BDE1))
+        assertContentEquals(
+            byteArrayOf(0x20, 0x1B, 0xBE.toByte()),
+            plan.romData.copyOfRange(parser.snesToPc(0xA9BDDD), parser.snesToPc(0xA9BDDD) + 3),
+        )
     }
 
     @Tag("parity")
@@ -108,6 +117,9 @@ class BabyMetroidPatchTest {
         val vulnerabilityTableSnes = requireNotNull(result.vulnerabilityTableSnes)
         assertEquals(0xA9, shotShimSnes ushr 16)
         assertEquals(0xB4, vulnerabilityTableSnes ushr 16)
+        assertTrue(!result.noRescueIfDeadInstalled)
+        assertEquals(null, result.rescueCheckSnes)
+        assertEquals(null, result.finalBeamDispatchSnes)
 
         val output = plan.romData
         val healthRestore = parser.snesToPc(0xA9EFC8)
@@ -139,6 +151,100 @@ class BabyMetroidPatchTest {
             BabyMetroidPatch.buildVulnerabilityTable(true, 2, 2),
             output.copyOfRange(tablePc, tablePc + 22),
         )
+        assertContentEquals(
+            byteArrayOf(0x20, 0x1B, 0xBE.toByte()),
+            output.copyOfRange(parser.snesToPc(0xA9BDDD), parser.snesToPc(0xA9BDDD) + 3),
+            "The default-disabled option must preserve the native rescue spawn",
+        )
+    }
+
+    @Tag("parity")
+    @Test
+    fun `dead Baby option persists death and skips the Mother Brain rescue spawn`() {
+        val rom = TestRomHelper.requireRomBytes().copyOf()
+        val parser = RomParser(rom)
+        val plan = RomWritePlan(rom)
+        val allocator = RomFreeSpaceAllocator(plan.romData, parser::snesToPc, parser::pcToSnes, guardBytes = 2)
+
+        val result = BabyMetroidPatch.install(
+            config = mapOf(
+                BabyMetroidPatch.MORTAL_KEY to 1,
+                BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY to 1,
+            ),
+            parser = parser,
+            writePlan = plan,
+            freeSpaceAllocator = allocator,
+        )
+
+        assertTrue(result.mortalInstalled)
+        assertTrue(result.noRescueIfDeadInstalled)
+        val shotShimSnes = requireNotNull(result.shotShimSnes)
+        val rescueCheckSnes = requireNotNull(result.rescueCheckSnes)
+        val finalBeamDispatchSnes = requireNotNull(result.finalBeamDispatchSnes)
+        assertEquals(0xA9, shotShimSnes ushr 16)
+        assertEquals(0xA9, rescueCheckSnes ushr 16)
+        assertEquals(0xA9, finalBeamDispatchSnes ushr 16)
+
+        val output = plan.romData
+        val shimPc = parser.snesToPc(shotShimSnes)
+        assertContentEquals(
+            byteArrayOf(
+                0xAE.toByte(), 0x54, 0x0E,
+                0xBD.toByte(), 0xB6.toByte(), 0x0F,
+                0xF0.toByte(), 0x14,
+                0x22, 0x42, 0xF8.toByte(), 0xA9.toByte(),
+                0x22, 0x3D, 0xA6.toByte(), 0xA0.toByte(),
+                0xBD.toByte(), 0x8C.toByte(), 0x0F,
+                0xD0.toByte(), 0x07,
+                0xA9.toByte(), 0x14, 0x00,
+                0x22, 0xFA.toByte(), 0x81.toByte(), 0x80.toByte(),
+                0x6B,
+            ),
+            output.copyOfRange(shimPc, shimPc + 29),
+        )
+
+        val rescueCheckPc = parser.snesToPc(rescueCheckSnes)
+        assertContentEquals(
+            byteArrayOf(
+                0xA9.toByte(), 0x14, 0x00,
+                0x22, 0x33, 0x82.toByte(), 0x80.toByte(),
+                0xB0.toByte(), 0x04,
+                0x20, 0x1B, 0xBE.toByte(),
+                0x60,
+                0x60,
+            ),
+            output.copyOfRange(rescueCheckPc, rescueCheckPc + 14),
+        )
+
+        val finalBeamDispatchPc = parser.snesToPc(finalBeamDispatchSnes)
+        assertContentEquals(
+            byteArrayOf(
+                0xA9.toByte(), 0x14, 0x00,
+                0x22, 0x33, 0x82.toByte(), 0x80.toByte(),
+                0xB0.toByte(), 0x03,
+                0x4C, 0xED.toByte(), 0xBD.toByte(),
+                0x4C, 0x51, 0xB9.toByte(),
+            ),
+            output.copyOfRange(finalBeamDispatchPc, finalBeamDispatchPc + 15),
+        )
+
+        val spawnCallPc = parser.snesToPc(0xA9BDDD)
+        assertContentEquals(
+            byteArrayOf(
+                0x20,
+                (rescueCheckSnes and 0xFF).toByte(),
+                ((rescueCheckSnes ushr 8) and 0xFF).toByte(),
+            ),
+            output.copyOfRange(spawnCallPc, spawnCallPc + 3),
+        )
+        val finalBeamFunctionPc = parser.snesToPc(0xA9BDE1)
+        assertContentEquals(
+            byteArrayOf(
+                (finalBeamDispatchSnes and 0xFF).toByte(),
+                ((finalBeamDispatchSnes ushr 8) and 0xFF).toByte(),
+            ),
+            output.copyOfRange(finalBeamFunctionPc, finalBeamFunctionPc + 2),
+        )
     }
 
     @Tag("parity")
@@ -165,5 +271,34 @@ class BabyMetroidPatchTest {
 
         assertTrue(failure.message.orEmpty().contains("unchecked hook"))
         assertContentEquals(before, plan.romData, "Signature validation must happen before movement writes")
+    }
+
+    @Tag("parity")
+    @Test
+    fun `dead Baby option fails closed when either cutscene hook changed`() {
+        for (hookSnes in listOf(0xA9BDDD, 0xA9BDE1)) {
+            val rom = TestRomHelper.requireRomBytes().copyOf()
+            val parser = RomParser(rom)
+            rom[parser.snesToPc(hookSnes)] = 0xEA.toByte()
+            val before = rom.copyOf()
+            val plan = RomWritePlan(rom)
+            val allocator = RomFreeSpaceAllocator(plan.romData, parser::snesToPc, parser::pcToSnes)
+
+            val failure = assertFailsWith<RomWritePlanException> {
+                BabyMetroidPatch.install(
+                    config = mapOf(
+                        BabyMetroidPatch.MORTAL_KEY to 1,
+                        BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY to 1,
+                        "samus_chase_agility" to 4,
+                    ),
+                    parser = parser,
+                    writePlan = plan,
+                    freeSpaceAllocator = allocator,
+                )
+            }
+
+            assertTrue(failure.message.orEmpty().contains("changed"))
+            assertContentEquals(before, plan.romData, "Signature validation must happen before any writes")
+        }
     }
 }

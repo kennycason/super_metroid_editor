@@ -1348,6 +1348,11 @@ class SmeditBuildServiceTest {
         assertTrue(babyMetroid.requiresRom)
         assertTrue(!babyMetroid.supportsPatchOnly)
         assertEquals(0, babyMetroid.fields.first { it.key == BabyMetroidPatch.MORTAL_KEY }.defaultValue)
+        val noBabyRescue = babyMetroid.fields.first {
+            it.key == BabyMetroidPatch.DOES_NOT_SAVE_SAMUS_IF_DEAD_KEY
+        }
+        assertEquals(0, noBabyRescue.defaultValue)
+        assertEquals(listOf("Disabled", "Enabled"), noBabyRescue.choices.map { it.label })
         assertEquals(15, babyMetroid.fields.first { it.key == "opening_rush_agility" }.max)
         val noBabyHeat = environmentalDamage.fields.first {
             it.key == EnvironmentalDamagePatch.TOURIAN_NO_HEAT_BABY_TO_MB_KEY

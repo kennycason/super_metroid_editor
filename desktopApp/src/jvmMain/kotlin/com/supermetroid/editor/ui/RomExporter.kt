@@ -1360,6 +1360,7 @@ internal class RomExporter(
                 )
                 onLog(
                     "[EXPORT]   Baby Metroid: mortal=${result.mortalInstalled}, " +
+                        "no rescue if dead=${result.noRescueIfDeadInstalled}, " +
                         "movement operands=${result.movementWordsWritten}" +
                         (result.shotShimSnes?.let { ", guarded shot AI at \$${it.toString(16).uppercase()}" } ?: "")
                 )
