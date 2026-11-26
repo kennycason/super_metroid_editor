@@ -26,6 +26,78 @@ internal data class NativeSpriteTarget(val sourceKey: String, val paletteBase: I
 }
 
 @Composable
+internal fun NativeOamCompositionControls(
+    parser: RomParser,
+    editor: EditorState,
+    asset: RomVisualAssets.Asset,
+    target: NativeSpriteTarget,
+) {
+    var error by remember(asset) { mutableStateOf<String?>(null) }
+    var status by remember(asset) { mutableStateOf("") }
+    var transferring by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val sourceStatus = remember(target.sourceKey, editor.asmVisualSourceRevision, editor.spriteVersion) {
+        editor.nativeSpriteEditingStatus(target.sourceKey)
+    }
+    val fs = LocalEditorTheme.current.fontSize.value
+
+    fun load(): NativeOamComposition {
+        val effective = editor.nativeSprites.previewParser(parser)
+        val sheet = editor.nativeSprites.loadSheet(parser, target.sourceKey, target.paletteBase + target.defaultRow * 32)
+        return createNativeOamComposition(effective, asset, sheet, target.defaultRow)
+    }
+
+    Text(
+        if (asset.name == "Super Metroid title logo") {
+            "Editable image: the assembled two-row SUPER METROID logo (not the shared title tile sheet)"
+        } else {
+            "Editable image: assembled ${asset.name} (not the shared title tile sheet)"
+        },
+        fontSize = fs.detail,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SpriteWorkspaceAction("Export editable image PNG", {
+            val composition = runCatching(::load).getOrElse { error = it.message; return@SpriteWorkspaceAction }
+            val file = choosePngFile(
+                "Export ${asset.name} PNG",
+                "${exportSafeName(asset.name)}_editable.png",
+            ) ?: return@SpriteWorkspaceAction
+            scope.launch {
+                transferring = true
+                val result = runCatching { withContext(Dispatchers.IO) { exportNativeOamCompositionPng(file, composition) } }
+                error = result.exceptionOrNull()?.message
+                status = if (result.isSuccess) {
+                    "Exported ${file.name} · ${composition.width}×${composition.height}px · edit and import this same file"
+                } else ""
+                transferring = false
+            }
+        }, enabled = sourceStatus.editable && !transferring)
+        SpriteWorkspaceAction("Import edited image PNG", {
+            val composition = runCatching(::load).getOrElse { error = it.message; return@SpriteWorkspaceAction }
+            val file = chooseAssembledSpritePng(asset.name) ?: return@SpriteWorkspaceAction
+            val owner = editor.project
+            scope.launch {
+                transferring = true
+                val result = runCatching {
+                    val pixels = withContext(Dispatchers.IO) { importNativeOamCompositionPng(file, composition) }
+                    require(editor.project === owner) { "Project changed during import" }
+                    editor.nativeSprites.applyPixels(parser, composition.sheet, pixels)
+                }
+                error = result.exceptionOrNull()?.message
+                status = if (result.isSuccess) "Imported ${file.name} into ${asset.name}" else ""
+                transferring = false
+            }
+        }, enabled = sourceStatus.editable && !transferring)
+    }
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
+    if (status.isNotBlank()) Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = fs.detail)
+}
+
+@Composable
 internal fun NativeSpriteSourceControls(
     parser: RomParser, editor: EditorState, target: NativeSpriteTarget,
     onEdit: (NativeSpriteEditorState.Sheet) -> Unit,

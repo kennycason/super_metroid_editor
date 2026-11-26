@@ -79,7 +79,14 @@ internal fun visualSpriteTargets(parser: RomParser, workspace: VisualSpriteWorks
     }
     val offset = if (workspace.index == -3) CinematicSprites.SEQUENCES.size else 0
     val asset = RomVisualAssets.ASSETS.filter { it.group == workspace.group }.getOrNull(selected - offset) ?: return emptyList()
-    val row = when (asset.graphics) { 0x9580D8 -> 9; 0x95E4C2 -> 15; 0x97B957 -> 13; 0x97D7FC -> 14; else -> 0 }
+    val row = when {
+        asset.format == RomVisualAssets.Format.OAM -> nativeOamPaletteRows(parser, asset).singleOrNull() ?: 0
+        asset.graphics == 0x9580D8 -> 9
+        asset.graphics == 0x95E4C2 -> 15
+        asset.graphics == 0x97B957 -> 13
+        asset.graphics == 0x97D7FC -> 14
+        else -> 0
+    }
     return listOf(NativeSpriteTarget(NativeSpriteAssets.key(asset.graphics), asset.palette, asset.paletteColors / 16, row))
 }
 
@@ -233,6 +240,9 @@ internal fun VisualSpriteViewer(workspace: VisualSpriteWorkspace, parser: RomPar
                 SpriteOptionSelector(ProjectileSprites.DIRECTIONS, direction, { direction = it }, Modifier.fillMaxWidth())
             }
             if (targets.size > 1) SpriteOptionSelector(targets.map { it.name }, selectedSource, { selectedSource = it }, Modifier.fillMaxWidth())
+            if (sceneAsset?.format == RomVisualAssets.Format.OAM && target != null) {
+                NativeOamCompositionControls(parser, editor, sceneAsset, target)
+            }
             if (target != null) NativeSpriteSourceControls(parser, editor, target, { editing = it }, { paletteRow = it })
             sceneAsset?.let { CinematicMapSourceControls(editor, it) { sheet -> editingMap = sheet } }
             effective.exceptionOrNull()?.message?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }

@@ -52,6 +52,100 @@ class NativeSpriteIOTest {
     }
 
     @Test
+    fun `Super Metroid title logo exports and imports the exact assembled two-row image`() {
+        val parser = TestRomHelper.requireRomParser()
+        val project = SmEditProject("base.smc")
+        val state = NativeSpriteEditorState({ project.customGfx }, {})
+        val workspace = VISUAL_SPRITE_WORKSPACES.single { it.index == -3 }
+        val selected = visualSpriteNames(workspace).indexOf("Super Metroid title logo")
+        val asset = requireNotNull(visualSpriteAsset(workspace, selected))
+        val target = visualSpriteTargets(parser, workspace, selected).single()
+
+        assertEquals(RomVisualAssets.Format.OAM, asset.format)
+        assertEquals("9580D8", target.sourceKey)
+        assertEquals(10, target.defaultRow, "The logo OAM entries use OBJ palette 2, absolute palette row 10")
+        val sheet = state.loadSheet(parser, target.sourceKey, target.paletteBase + target.defaultRow * 32)
+        val composition = createNativeOamComposition(parser, asset, sheet, target.defaultRow)
+        val rendered = requireNotNull(RomVisualAssets.render(parser, asset))
+
+        assertEquals(184, composition.width)
+        assertEquals(64, composition.height)
+        assertEquals(9_600, composition.sourcePixelIndices.count { it >= 0 })
+        assertArrayEquals(rendered.pixels, composition.pixels)
+
+        val file = File(directory, "super_metroid_title_logo_editable.png")
+        exportNativeOamCompositionPng(file, composition)
+        val image = ImageIO.read(file)
+        assertEquals(184, image.width)
+        assertEquals(64, image.height)
+        assertArrayEquals(
+            composition.pixels,
+            image.getRGB(0, 0, image.width, image.height, null, 0, image.width),
+        )
+        val imported = importNativeOamCompositionPng(file, composition)
+        assertArrayEquals(sheet.pixels, imported)
+        assertArrayEquals(sheet.raw, state.encodePixels(sheet, imported))
+    }
+
+    @Test
+    fun `every exposed cinematic OAM image has an unambiguous exact editable composition`() {
+        val parser = TestRomHelper.requireRomParser()
+        val state = NativeSpriteEditorState({ SmEditProject("base.smc").customGfx }, {})
+        val workspace = VISUAL_SPRITE_WORKSPACES.single { it.index == -3 }
+        for (asset in RomVisualAssets.ASSETS.filter { it.format == RomVisualAssets.Format.OAM }) {
+            val selected = visualSpriteNames(workspace).indexOf(asset.name)
+            val target = visualSpriteTargets(parser, workspace, selected).single()
+            val sheet = state.loadSheet(parser, target.sourceKey, target.paletteBase + target.defaultRow * 32)
+            val composition = createNativeOamComposition(parser, asset, sheet, target.defaultRow)
+            val rendered = requireNotNull(RomVisualAssets.render(parser, asset))
+            assertEquals(rendered.width, composition.width, asset.name)
+            assertEquals(rendered.height, composition.height, asset.name)
+            assertArrayEquals(rendered.pixels, composition.pixels, asset.name)
+        }
+    }
+
+    @Test
+    fun `edited assembled title logo updates its owned title tiles and survives ROM export`() {
+        val parser = TestRomHelper.requireRomParser()
+        val originalRom = parser.getRomData().copyOf()
+        val project = SmEditProject("base.smc")
+        val state = NativeSpriteEditorState({ project.customGfx }, {})
+        val workspace = VISUAL_SPRITE_WORKSPACES.single { it.index == -3 }
+        val selected = visualSpriteNames(workspace).indexOf("Super Metroid title logo")
+        val asset = requireNotNull(visualSpriteAsset(workspace, selected))
+        val target = visualSpriteTargets(parser, workspace, selected).single()
+        val sheet = state.loadSheet(parser, target.sourceKey, target.paletteBase + target.defaultRow * 32)
+        val composition = createNativeOamComposition(parser, asset, sheet, target.defaultRow)
+        val edited = composition.pixels.copyOf().also { pixels ->
+            for (index in pixels.indices) if (composition.sourcePixelIndices[index] >= 0) {
+                pixels[index] = sheet.palette[1]
+            }
+        }
+        val file = File(directory, "edited-title-logo.png")
+        exportFramePng(SpriteAnimationFrame(edited, composition.width, composition.height), file)
+
+        val imported = importNativeOamCompositionPng(file, composition)
+        val owned = composition.sourcePixelIndices.filter { it >= 0 }.toSet()
+        for (index in sheet.pixels.indices) if (index !in owned) {
+            assertEquals(sheet.pixels[index], imported[index], "Unowned source pixel $index")
+        }
+        assertTrue(state.applyPixels(parser, sheet, imported))
+        val preview = state.previewParser(parser)
+        val previewSheet = state.loadSheet(parser, target.sourceKey, target.paletteBase + target.defaultRow * 32)
+        val after = createNativeOamComposition(preview, asset, previewSheet, target.defaultRow)
+        assertArrayEquals(edited, after.pixels)
+        assertArrayEquals(originalRom, parser.getRomData(), "Project editing must not mutate the loaded ROM")
+
+        val built = requireNotNull(RomExporter(project, parser).build())
+        val exported = RomParser(built.resultRom)
+        assertArrayEquals(
+            edited,
+            requireNotNull(RomVisualAssets.render(exported, asset)).pixels,
+            "The edited assembled logo must be written to the title sprite graphics resource",
+        )
+    }
+
+    @Test
     fun `all new workspace selections choose their actual projectile palette`() {
         val parser = TestRomHelper.requireRomParser()
         val workspace = VISUAL_SPRITE_WORKSPACES.single { it.index == -2 }
