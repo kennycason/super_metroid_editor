@@ -80,15 +80,32 @@ internal fun NativeOamCompositionControls(
             val composition = runCatching(::load).getOrElse { error = it.message; return@SpriteWorkspaceAction }
             val file = chooseAssembledSpritePng(asset.name) ?: return@SpriteWorkspaceAction
             val owner = editor.project
+            val projectPath = editor.projectFilePath
+            val assetKey = "native-composition:${target.sourceKey}:${asset.map.toString(16).uppercase().padStart(6, '0')}"
             scope.launch {
                 transferring = true
                 val result = runCatching {
-                    val pixels = withContext(Dispatchers.IO) { importNativeOamCompositionPng(file, composition) }
+                    val (sourceBytes, pixels) = withContext(Dispatchers.IO) {
+                        file.readBytes().let { it to importNativeOamCompositionPng(it, composition) }
+                    }
                     require(editor.project === owner) { "Project changed during import" }
                     editor.nativeSprites.applyPixels(parser, composition.sheet, pixels)
+                    sourceBytes
                 }
                 error = result.exceptionOrNull()?.message
-                status = if (result.isSuccess) "Imported ${file.name} into ${asset.name}" else ""
+                status = if (result.isSuccess) {
+                    val archived = runCatching {
+                        withContext(Dispatchers.IO) {
+                            ProjectSourceImageArchive.store(projectPath, assetKey, file.name, result.getOrThrow())
+                        }
+                    }
+                    if (editor.project === owner && editor.projectFilePath == projectPath) {
+                        editor.recordProjectSourceImage(assetKey, archived.getOrNull())
+                    }
+                    "Imported ${file.name} into ${asset.name}" + archived.exceptionOrNull()?.let {
+                        " · source image could not be archived: ${it.message ?: it::class.simpleName}"
+                    }.orEmpty()
+                } else ""
                 transferring = false
             }
         }, enabled = sourceStatus.editable && !transferring)
@@ -146,15 +163,32 @@ internal fun NativeSpriteSourceControls(
                 .getOrElse { error = it.message; return@SpriteWorkspaceAction }
             val file = chooseSpriteSourcePng() ?: return@SpriteWorkspaceAction
             val owner = editor.project
+            val projectPath = editor.projectFilePath
+            val assetKey = "native-source:${target.sourceKey}"
             scope.launch {
                 transferring = true
                 val result = runCatching {
-                    val pixels = withContext(Dispatchers.IO) { importNativeSpritePng(file, sheet) }
+                    val (sourceBytes, pixels) = withContext(Dispatchers.IO) {
+                        file.readBytes().let { it to importNativeSpritePng(it, sheet) }
+                    }
                     require(editor.project === owner) { "Project changed during import" }
                     editor.nativeSprites.applyPixels(parser, sheet, pixels)
+                    sourceBytes
                 }
                 error = result.exceptionOrNull()?.message
-                status = if (result.isSuccess) "Imported ${file.name} · colors matched to the selected palette" else ""
+                status = if (result.isSuccess) {
+                    val archived = runCatching {
+                        withContext(Dispatchers.IO) {
+                            ProjectSourceImageArchive.store(projectPath, assetKey, file.name, result.getOrThrow())
+                        }
+                    }
+                    if (editor.project === owner && editor.projectFilePath == projectPath) {
+                        editor.recordProjectSourceImage(assetKey, archived.getOrNull())
+                    }
+                    "Imported ${file.name} · colors matched to the selected palette" + archived.exceptionOrNull()?.let {
+                        " · source image could not be archived: ${it.message ?: it::class.simpleName}"
+                    }.orEmpty()
+                } else ""
                 transferring = false
             }
         }, enabled = sourceStatus.editable && !transferring)

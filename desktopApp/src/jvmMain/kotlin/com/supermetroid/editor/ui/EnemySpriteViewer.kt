@@ -866,24 +866,46 @@ fun EnemySpriteViewer(
                                 Button(
                                     onClick = {
                                         val file = chooseEnemyOpenPngFile("Import Tile Sheet PNG") ?: return@Button
+                                        val owner = editorState.project
+                                        val projectPath = editorState.projectFilePath
+                                        val assetKey = "enemy:${entry.speciesId.toString(16).uppercase().padStart(4, '0')}"
                                         scope.launch {
                                             exportStatus = "Importing ${file.name}..."
                                             val result = runCatching {
-                                                val importedPixels = withContext(Dispatchers.IO) {
-                                                    enemyImportPixelsPng(file, expectedWidth = w, expectedHeight = h)
+                                                val (sourceBytes, importedPixels) = withContext(Dispatchers.IO) {
+                                                    file.readBytes().let {
+                                                        it to enemyImportPixelsPng(it, expectedWidth = w, expectedHeight = h)
+                                                    }
                                                 }
-                                                editorState.applyEnemyTileSheetEdits(
+                                                require(editorState.project === owner) { "Project changed during import" }
+                                                check(editorState.applyEnemyTileSheetEdits(
                                                     rp,
                                                     entry.speciesId,
                                                     importedPixels,
                                                     w,
                                                     h
-                                                )
+                                                )) { "Enemy tile data or palette could not be loaded" }
+                                                sourceBytes
                                             }
                                             exportStatus = result.fold(
                                                 onSuccess = {
                                                     refreshKey++
-                                                    "Imported ${file.name}"
+                                                    val archived = runCatching {
+                                                        withContext(Dispatchers.IO) {
+                                                            ProjectSourceImageArchive.store(
+                                                                projectPath,
+                                                                assetKey,
+                                                                file.name,
+                                                                result.getOrThrow(),
+                                                            )
+                                                        }
+                                                    }
+                                                    if (editorState.project === owner && editorState.projectFilePath == projectPath) {
+                                                        editorState.recordProjectSourceImage(assetKey, archived.getOrNull())
+                                                    }
+                                                    "Imported ${file.name}" + archived.exceptionOrNull()?.let { problem ->
+                                                        " · source image could not be archived: ${problem.message ?: problem::class.simpleName}"
+                                                    }.orEmpty()
                                                 },
                                                 onFailure = { err -> "Import failed: ${err.message ?: err::class.simpleName}" }
                                             )
@@ -1098,8 +1120,8 @@ private fun enemyExportPixelsPng(pixels: IntArray, width: Int, height: Int, file
     ImageIO.write(bi, "png", file)
 }
 
-private fun enemyImportPixelsPng(file: File, expectedWidth: Int, expectedHeight: Int): IntArray {
-    val image = ImageIO.read(file) ?: error("Could not read PNG")
+private fun enemyImportPixelsPng(bytes: ByteArray, expectedWidth: Int, expectedHeight: Int): IntArray {
+    val image = ImageIO.read(java.io.ByteArrayInputStream(bytes)) ?: error("Could not read PNG")
     if (image.width != expectedWidth || image.height != expectedHeight) {
         error("Expected ${expectedWidth}x${expectedHeight}px, got ${image.width}x${image.height}px")
     }

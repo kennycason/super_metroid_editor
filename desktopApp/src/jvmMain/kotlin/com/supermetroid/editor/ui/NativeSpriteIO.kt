@@ -15,6 +15,7 @@ import com.supermetroid.editor.rom.SpriteAnimationFrame
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.File
 import javax.imageio.ImageIO
 import javax.swing.JFileChooser
@@ -127,8 +128,11 @@ private fun matchNativePalette(pixel: Int, palette: IntArray): Int {
 }
 
 /** Import source sheets, not flattened compositions whose pixels can have several owners. */
-internal fun importNativeSpritePng(file: File, sheet: NativeSpriteEditorState.Sheet): IntArray {
-    val image = requireNotNull(ImageIO.read(file)) { "Could not read PNG" }
+internal fun importNativeSpritePng(file: File, sheet: NativeSpriteEditorState.Sheet): IntArray =
+    importNativeSpritePng(file.readBytes(), sheet)
+
+internal fun importNativeSpritePng(bytes: ByteArray, sheet: NativeSpriteEditorState.Sheet): IntArray {
+    val image = requireNotNull(ImageIO.read(ByteArrayInputStream(bytes))) { "Could not read PNG" }
     require(image.width == sheet.width && image.height == sheet.height) {
         "Expected source sheet ${sheet.width}×${sheet.height}px, got ${image.width}×${image.height}px. Import the source PNG, not an assembled frame/animation sheet."
     }
@@ -142,8 +146,11 @@ internal fun exportNativeSpritePng(file: File, sheet: NativeSpriteEditorState.Sh
 internal fun exportNativeOamCompositionPng(file: File, composition: NativeOamComposition) =
     exportFramePng(SpriteAnimationFrame(composition.pixels, composition.width, composition.height), file)
 
-internal fun importNativeOamCompositionPng(file: File, composition: NativeOamComposition): IntArray {
-    val image = requireNotNull(ImageIO.read(file)) { "Could not read PNG" }
+internal fun importNativeOamCompositionPng(file: File, composition: NativeOamComposition): IntArray =
+    importNativeOamCompositionPng(file.readBytes(), composition)
+
+internal fun importNativeOamCompositionPng(bytes: ByteArray, composition: NativeOamComposition): IntArray {
+    val image = requireNotNull(ImageIO.read(ByteArrayInputStream(bytes))) { "Could not read PNG" }
     require(image.width == composition.width && image.height == composition.height) {
         "Expected assembled image ${composition.width}×${composition.height}px, got ${image.width}×${image.height}px. " +
             "Import the assembled image exported for this selection."

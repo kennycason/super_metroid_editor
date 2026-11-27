@@ -796,9 +796,22 @@ class EditorState(
     fun setCommunitySamusSource(source: CommunitySamusSpriteSource): Boolean {
         if (project.customGfx.samusCommunitySource == source) return false
         project.customGfx.samusCommunitySource = source
+        runCatching {
+            ProjectSourceImageArchive.store(
+                projectFilePath,
+                "samus:community",
+                source.sourceName,
+                java.util.Base64.getDecoder().decode(source.pngBase64),
+            )
+        }.onSuccess { it?.let { reference -> project.sourceImages["samus:community"] = reference } }
+            .onFailure { postStatus("Samus was imported, but its source image could not be archived: ${it.message}") }
         dirty = true
         samusSourceVersion++
         return true
+    }
+
+    internal fun recordProjectSourceImage(assetKey: String, reference: com.supermetroid.editor.data.ProjectSourceImageReference?) {
+        if (reference != null && project.sourceImages.put(assetKey, reference) != reference) dirty = true
     }
 
     fun restoreBaseRomSamus(): Boolean {
@@ -4105,7 +4118,11 @@ class EditorState(
      */
     fun importTileSheet(filePath: String, isCre: Boolean): Boolean {
         val tg = editorTileGraphics ?: return false
-        val img = try { javax.imageio.ImageIO.read(java.io.File(filePath)) } catch (_: Exception) { return false }
+        val file = java.io.File(filePath)
+        val sourceBytes = try { file.readBytes() } catch (_: Exception) { return false }
+        val img = try {
+            javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(sourceBytes))
+        } catch (_: Exception) { return false }
             ?: return false
         val w = img.width; val h = img.height
         val pixels = img.getRGB(0, 0, w, h, null, 0, w)
@@ -4117,6 +4134,10 @@ class EditorState(
         val kind = if (isCre) AsmTilesetGraphicsKind.COMMON_TILES else AsmTilesetGraphicsKind.AREA_TILES
         if (!saveTilesetGraphicsOverride(kind, raw4bpp)) return false
         if (isCre) tg.applyCustomCreGfx(raw4bpp) else tg.applyCustomVarGfx(raw4bpp)
+        val assetKey = if (isCre) "tileset:cre" else "tileset:ure:$editorTilesetId"
+        runCatching { ProjectSourceImageArchive.store(projectFilePath, assetKey, file.name, sourceBytes) }
+            .onSuccess { recordProjectSourceImage(assetKey, it) }
+            .onFailure { postStatus("Tiles were imported, but their source image could not be archived: ${it.message}") }
         return true
     }
 

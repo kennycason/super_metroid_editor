@@ -1211,6 +1211,19 @@ data class ProjectBaseRom(
     val size: Int,
 )
 
+/**
+ * Provenance for an exact imported image stored beside the project. Converted ROM data remains
+ * authoritative, so a missing reference image can never make a build fail.
+ */
+@Serializable
+data class ProjectSourceImageReference(
+    /** Project-root-relative path using portable forward slashes. */
+    val relativePath: String,
+    val originalFileName: String,
+    val sha256: String,
+    val byteSize: Int,
+)
+
 @Serializable
 data class SmEditProject(
     val romPath: String,
@@ -1252,6 +1265,8 @@ data class SmEditProject(
     val baseRom: ProjectBaseRom? = null,
     /** Distinguishes this development baseline from the retired numbered beta formats. */
     @Required val projectFormat: String = PROJECT_FORMAT,
+    /** Latest exact source image for each stable editor asset identity. Older hashed files remain on disk. */
+    val sourceImages: MutableMap<String, ProjectSourceImageReference> = mutableMapOf(),
 ) {
     companion object {
         const val PROJECT_FORMAT = "smedit-project"

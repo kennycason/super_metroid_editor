@@ -41,17 +41,18 @@ class EnemySpriteEditorState(
         w: Int,
         h: Int,
         paletteOverride: IntArray? = null,
-    ) {
-        val palette = paletteOverride ?: loadEnemyPalette(romParser, speciesId) ?: return
-        val tileData = loadEnemyTileData(romParser, speciesId) ?: return
+    ): Boolean {
+        val palette = paletteOverride ?: loadEnemyPalette(romParser, speciesId) ?: return false
+        val tileData = loadEnemyTileData(romParser, speciesId) ?: return false
         val gfx = EnemySpriteGraphics(romParser)
         gfx.loadFromRaw(listOf(tileData))
         gfx.importFromArgb(pixels, w, h, palette, 16)
-        val rawBlocks = gfx.getRawBlocks() ?: return
-        val raw = rawBlocks.firstOrNull() ?: return
+        val rawBlocks = gfx.getRawBlocks() ?: return false
+        val raw = rawBlocks.firstOrNull() ?: return false
         val key = "enemy:${speciesId.toString(16).uppercase()}"
         customGfx().spriteTileBlocks[key] = java.util.Base64.getEncoder().encodeToString(raw)
         onDirty()
+        return true
     }
 
     fun hasCustomEnemyTiles(speciesId: Int): Boolean {

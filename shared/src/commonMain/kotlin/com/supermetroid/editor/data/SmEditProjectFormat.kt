@@ -65,5 +65,17 @@ object SmEditProjectFormat {
         }) {
             "An intro image selected an uploaded PNG but contains no PNG data."
         }
+        require(project.sourceImages.all { (assetKey, reference) ->
+            val pathParts = reference.relativePath.split('/')
+            assetKey.isNotBlank() && reference.originalFileName.isNotBlank() &&
+                reference.originalFileName.none { it == '/' || it == '\\' } &&
+                reference.sha256.matches(Regex("[0-9a-f]{64}")) && reference.byteSize > 0 &&
+                '\\' !in reference.relativePath &&
+                pathParts.size == 4 && pathParts[0] == "data" && pathParts[1] == "source-images" &&
+                pathParts[2].matches(Regex("[a-z0-9._-]{1,96}")) &&
+                pathParts[3].matches(Regex("${reference.sha256}\\.[a-z0-9]{1,8}"))
+        }) {
+            "Source-image references must be nonblank, hash-addressed project-relative files."
+        }
     }
 }

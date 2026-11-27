@@ -9,6 +9,8 @@ class ProjectPaths(projectFile: File) {
     val name: String = this.projectFile.nameWithoutExtension
     val asm: File get() = File(root, "asm")
     val data: File get() = File(root, "data")
+    /** Exact user-supplied images retained for provenance; builds never read from this directory. */
+    val sourceImages: File get() = File(data, "source-images")
     val emulatorStates: File get() = File(root, "states")
     val exports: File get() = File(root, "exports")
     val cache: File get() = File(root, "smedit")

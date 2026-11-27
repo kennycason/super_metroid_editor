@@ -88,6 +88,33 @@ class SmEditProjectFormatTest {
         assertEquals(0, SmEditProjectFormat.decode(minimal().toString()).asmWorkspace.creditsSourceVersion)
     }
 
+    @Test fun `source image provenance round trips and older projects default to none`() {
+        val project = SmEditProject("base.smc")
+        project.sourceImages["native-source:9580D8"] = ProjectSourceImageReference(
+            relativePath = "data/source-images/native-source_9580d8/" + "a".repeat(64) + ".png",
+            originalFileName = "title-logo-source.png",
+            sha256 = "a".repeat(64),
+            byteSize = 8192,
+        )
+
+        val reopened = SmEditProjectFormat.decode(SmEditProjectFormat.encode(project))
+
+        assertEquals(project.sourceImages, reopened.sourceImages)
+        assertTrue(SmEditProjectFormat.decode(minimal().toString()).sourceImages.isEmpty())
+    }
+
+    @Test fun `unsafe source image provenance is rejected`() {
+        val project = SmEditProject("base.smc")
+        project.sourceImages["title"] = ProjectSourceImageReference(
+            relativePath = "../../outside.png",
+            originalFileName = "outside.png",
+            sha256 = "a".repeat(64),
+            byteSize = 1,
+        )
+
+        assertFailsWith<IllegalArgumentException> { SmEditProjectFormat.encode(project) }
+    }
+
     @Test fun `missing old future malformed and wrong format headers are rejected before their contents`() {
         val header = minimal()
         val bad = listOf(JsonPrimitive(0), JsonPrimitive(2), JsonPrimitive(21), JsonPrimitive("1"), JsonNull, JsonPrimitive(true), JsonPrimitive(1.5))

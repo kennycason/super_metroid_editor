@@ -312,7 +312,7 @@ private fun NarrationSettings(scene: IntroScene, editor: EditorState, parser: Ro
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = {
             val file = chooseIntroPng("Import Narration Background PNG") ?: return@Button
-            importPng(file, onMessage) { imported ->
+            importPng(editor, "intro:${scene.id}:narration", file, onMessage) { imported ->
                 editor.updateIntroScene(scene.id, "Import narration image") {
                     it.imagePngBase64 = imported.base64; it.imageFileName = file.name; it.imageSha256 = imported.sha256
                     it.imageSource = IntroImageSource.UPLOADED_PNG
@@ -391,7 +391,7 @@ private fun VignetteSettings(scene: IntroScene, editor: EditorState, parser: Rom
         Text("This frame advances directly to the next narration page.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Button(onClick = {
             val file = chooseIntroPng("Import Intro Image PNG") ?: return@Button
-            importPng(file, onMessage) { imported ->
+            importPng(editor, "intro:${scene.id}:vignette", file, onMessage) { imported ->
                 editor.updateIntroScene(scene.id, "Import intro image") {
                     it.vignetteImagePngBase64 = imported.base64; it.vignetteImageFileName = file.name
                     it.vignetteImageSha256 = imported.sha256; it.vignetteSource = IntroImageSource.UPLOADED_PNG
@@ -427,7 +427,7 @@ private fun VignetteSettings(scene: IntroScene, editor: EditorState, parser: Rom
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val file = chooseIntroPng("Import Intro Image PNG") ?: return@Button
-                importPng(file, onMessage) { imported ->
+                importPng(editor, "intro:${scene.id}:vignette", file, onMessage) { imported ->
                     editor.updateIntroScene(scene.id, "Import intro image") {
                         it.vignetteImagePngBase64 = imported.base64; it.vignetteImageFileName = file.name
                         it.vignetteImageSha256 = imported.sha256; it.vignetteSource = IntroImageSource.UPLOADED_PNG
@@ -753,9 +753,29 @@ private fun chooseIntroPng(title: String): File? {
     return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
 }
 
-private fun importPng(file: File, onMessage: (String?) -> Unit, save: (IntroSceneCodec.ImportedPng) -> Unit) {
-    runCatching { IntroSceneCodec.importPng(file.readBytes()) }
-        .onSuccess { save(it); onMessage("Imported ${file.name} (${it.width}×${it.height}).") }
+private fun importPng(
+    editor: EditorState,
+    assetKey: String,
+    file: File,
+    onMessage: (String?) -> Unit,
+    save: (IntroSceneCodec.ImportedPng) -> Unit,
+) {
+    val sourceBytes = runCatching { file.readBytes() }
+        .getOrElse { onMessage(it.message); return }
+    runCatching { IntroSceneCodec.importPng(sourceBytes) }
+        .onSuccess { imported ->
+            save(imported)
+            val archived = runCatching {
+                ProjectSourceImageArchive.store(editor.projectFilePath, assetKey, file.name, sourceBytes)
+            }
+                .onSuccess { editor.recordProjectSourceImage(assetKey, it) }
+            onMessage(
+                "Imported ${file.name} (${imported.width}×${imported.height})." +
+                    archived.exceptionOrNull()?.let {
+                        " Source image could not be archived: ${it.message ?: it::class.simpleName}"
+                    }.orEmpty(),
+            )
+        }
         .onFailure { onMessage(it.message) }
 }
 
