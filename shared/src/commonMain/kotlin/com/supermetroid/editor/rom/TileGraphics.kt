@@ -75,9 +75,18 @@ class TileGraphics(private val romParser: RomParser) {
 
         const val CERES_AREA = 6
 
-        // Mode 7 Ceres/Ridley tilesets store 4bpp bitplanes as two global halves:
-        // [bp0/bp2 for all tiles][bp1/bp3 for all tiles], not 32-byte per-tile chunks.
-        val MODE7_CERES_TILESETS = 17..20
+        // These four Ceres tilesets decompress to a complete Mode 7 VRAM image:
+        // even bytes are the 128x128 byte tilemap and odd bytes are 8bpp tile pixels.
+        // The legacy metatile editor keeps its 4bpp projection of the same bytes.
+        val MODE7_CERES_ELEVATOR_TILESETS = 17..18
+        val MODE7_CERES_RIDLEY_TILESETS = 19..20
+        val MODE7_CERES_TILESETS = MODE7_CERES_ELEVATOR_TILESETS.first..MODE7_CERES_RIDLEY_TILESETS.last
+
+        private const val MODE7_MAP_TILES_WIDE = 128
+        private const val MODE7_TILE_SIZE = 8
+        private const val MODE7_TILE_PIXELS = MODE7_TILE_SIZE * MODE7_TILE_SIZE
+        private const val MODE7_CANVAS_SIZE = MODE7_MAP_TILES_WIDE * MODE7_TILE_SIZE
+        private const val MODE7_COLOR_MASK = 0x7F
 
         // Standard CRE graphics placement offset (tiles 640-1023)
         private const val CRE_GFX_OFFSET = 0x5000  // 640 tiles × 32 bytes
@@ -339,6 +348,49 @@ class TileGraphics(private val romParser: RomParser) {
     }
 
     fun getCachedTilesetId(): Int = cachedTilesetId
+
+    /**
+     * Render the interleaved Mode 7 VRAM image used by Ceres' elevator and
+     * Ridley rooms. The payload is not a conventional 4bpp tileset:
+     *
+     *   even VRAM bytes = 128x128 tile-number map
+     *   odd VRAM bytes  = 256 chunky 8bpp tiles (64 pixels each)
+     *
+     * Ceres supplies 128 palette colours; the high pixel bit is reserved by
+     * the runtime presentation, so colour lookup uses the low seven bits.
+     * Coordinates wrap like the SNES 1024x1024 Mode 7 playfield.
+     */
+    fun renderCeresMode7Viewport(width: Int, height: Int, sourceX: Int = 0, sourceY: Int = 0): IntArray? {
+        val data = rawTileData ?: return null
+        val palettes = cachedPalette ?: return null
+        if (cachedTilesetId !in MODE7_CERES_TILESETS || data.size < ROOM_GFX_MAX_BYTES) return null
+        if (width <= 0 || height <= 0) return null
+
+        val colors = IntArray(8 * 16) { index -> palettes[index / 16][index % 16] }
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val mapY = Math.floorMod(sourceY + y, MODE7_CANVAS_SIZE)
+            val tileRow = mapY / MODE7_TILE_SIZE
+            val pixelY = mapY and (MODE7_TILE_SIZE - 1)
+            for (x in 0 until width) {
+                val mapX = Math.floorMod(sourceX + x, MODE7_CANVAS_SIZE)
+                val tileMapIndex = tileRow * MODE7_MAP_TILES_WIDE + mapX / MODE7_TILE_SIZE
+                val tileNumber = data[tileMapIndex * 2].toInt() and 0xFF
+                val tilePixelIndex = tileNumber * MODE7_TILE_PIXELS +
+                    pixelY * MODE7_TILE_SIZE + (mapX and (MODE7_TILE_SIZE - 1))
+                val colorIndex = data[tilePixelIndex * 2 + 1].toInt() and MODE7_COLOR_MASK
+                pixels[y * width + x] = colors[colorIndex]
+            }
+        }
+        return pixels
+    }
+
+    /** Backdrop colour shown before Ceres Ridley's getaway switches BG1 to Mode 7. */
+    fun ceresMode7BackdropColor(): Int? {
+        val palettes = cachedPalette ?: return null
+        if (cachedTilesetId !in MODE7_CERES_TILESETS) return null
+        return palettes[0][0]
+    }
 
     // ─── Tile sheet export/import ──────────────────────────────────────
 

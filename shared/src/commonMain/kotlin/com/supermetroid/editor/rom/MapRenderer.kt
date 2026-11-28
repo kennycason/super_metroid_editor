@@ -84,11 +84,21 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
             false
         }
         
-        // Render to pixels
+        // Ceres' special tilesets are complete interleaved Mode 7 VRAM images,
+        // not ordinary 4bpp metatile graphics. The elevator displays that
+        // playfield continuously. Ridley's room stays on its blank backdrop until
+        // the getaway code switches to Mode 7; Ridley and the walls are sprites.
+        // Level data is still parsed below for collision/editing overlays.
         val pixelWidth = blocksWide * BLOCK_SIZE
         val pixelHeight = blocksTall * BLOCK_SIZE
-        val pixels = IntArray(pixelWidth * pixelHeight)
-        pixels.fill(bgColor)
+        val mode7Pixels = if (!hasTileGraphics) null else when (room.tileset) {
+            in TileGraphics.MODE7_CERES_ELEVATOR_TILESETS ->
+                tileGraphics.renderCeresMode7Viewport(pixelWidth, pixelHeight)
+            in TileGraphics.MODE7_CERES_RIDLEY_TILESETS ->
+                tileGraphics.ceresMode7BackdropColor()?.let { color -> IntArray(pixelWidth * pixelHeight) { color } }
+            else -> null
+        }
+        val pixels = mode7Pixels ?: IntArray(pixelWidth * pixelHeight).also { it.fill(bgColor) }
         val btsDataStart = tileDataStart + layer1Size
         
         // Parse PLM set for door cap coloring and item positions
@@ -106,6 +116,7 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
         
         // Parse and render each block
         for (tileIdx in 0 until totalBlocks) {
+            if (mode7Pixels != null) break
             val dataOffset = tileDataStart + tileIdx * 2
             if (dataOffset + 1 >= levelData.size) break
             

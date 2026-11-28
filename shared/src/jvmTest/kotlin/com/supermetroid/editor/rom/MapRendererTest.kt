@@ -115,6 +115,35 @@ class MapRendererTest {
             val result = mr.renderRoom(room)!!
             assertTrue(result.blockTypes.any { it == 0x0 }, "Should have air blocks")
         }
+
+        @Test
+        fun `Ceres elevator renders its interleaved Mode 7 VRAM playfield`() {
+            val mr = renderer ?: return
+            val room = loadRoom(0xDF45)!!
+            assertEquals(18, room.tileset)
+
+            val result = mr.renderRoom(room)!!
+            assertEquals(256, result.width)
+            assertEquals(768, result.height)
+            assertEquals(32, result.pixels.toSet().size)
+            assertEquals(0xFF425A5A.toInt(), result.pixels[0])
+            assertEquals(0xFF083100.toInt(), result.pixels[64 * result.width + 64])
+            assertEquals(16 * 48, result.blockTypes.size, "Mode 7 rendering must retain collision metadata")
+        }
+
+        @Test
+        fun `Ceres Ridley keeps its blank room backdrop before the getaway Mode 7 switch`() {
+            val mr = renderer ?: return
+            val room = loadRoom(0xE0B5)!!
+            assertEquals(20, room.tileset)
+
+            val result = mr.renderRoom(room)!!
+            assertEquals(256, result.width)
+            assertEquals(256, result.height)
+            assertEquals(setOf(0xFF000000.toInt()), result.pixels.toSet())
+            assertTrue(result.enemyEntries.isNotEmpty(), "Ceres door/wall sprites remain available to the overlay renderer")
+            assertEquals(16 * 16, result.blockTypes.size, "Blank BG must not discard collision metadata")
+        }
     }
 
     // ── PLM and enemy parsing in render ──────────────────────────
