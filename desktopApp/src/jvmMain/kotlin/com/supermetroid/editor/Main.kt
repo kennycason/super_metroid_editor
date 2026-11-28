@@ -108,6 +108,7 @@ import com.supermetroid.editor.asm.AsmPlmPlacementTarget
 import com.supermetroid.editor.ui.AsmWorkspaceCanvas
 import com.supermetroid.editor.ui.AsmWorkspaceSidebar
 import com.supermetroid.editor.ui.AiWorkspaceState
+import com.supermetroid.editor.ui.AiSmartLinkTarget
 import com.supermetroid.editor.ui.BossTabCanvas
 import com.supermetroid.editor.ui.BossTabSidebar
 import com.supermetroid.editor.ui.DraggableDividerVertical
@@ -2079,6 +2080,27 @@ fun main() = application {
                             containerSizePx = emulatorContainerSize,
                             density = windowDensity.density,
                             onClose = { aiWindowFloating = false },
+                            smartLinkRoomIds = rooms.mapTo(linkedSetOf()) { it.getRoomIdAsInt() },
+                            asmSmartLinksEnabled = editorState.asmNavigationEnabled,
+                            onSmartLink = { target ->
+                                when (target) {
+                                    is AiSmartLinkTarget.Room -> {
+                                        val room = rooms.firstOrNull { it.getRoomIdAsInt() == target.roomId }
+                                        if (room == null) {
+                                            editorState.postStatus(
+                                                "Room 0x${target.roomId.toString(16).uppercase().padStart(4, '0')} is no longer available.",
+                                            )
+                                        } else {
+                                            navigate {
+                                                selectedRoom = room
+                                                RomPreferences.getLastRomPath()?.let { saveLastRoom(it, room) }
+                                                leftTab = TAB_ROOMS
+                                            }
+                                        }
+                                    }
+                                    is AiSmartLinkTarget.AsmAddress -> openAsmAddress(target.snesAddress)
+                                }
+                            },
                         )
                     }
                 }

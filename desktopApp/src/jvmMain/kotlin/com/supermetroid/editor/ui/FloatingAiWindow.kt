@@ -52,6 +52,9 @@ fun FloatingAiWindow(
     containerSizePx: IntSize,
     density: Float,
     onClose: () -> Unit,
+    smartLinkRoomIds: Set<Int> = emptySet(),
+    asmSmartLinksEnabled: Boolean = false,
+    onSmartLink: (AiSmartLinkTarget) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -153,6 +156,9 @@ fun FloatingAiWindow(
                     state = state,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(10.dp),
                     showHeader = false,
+                    smartLinkRoomIds = smartLinkRoomIds,
+                    asmSmartLinksEnabled = asmSmartLinksEnabled,
+                    onSmartLink = onSmartLink,
                 )
             }
             Box(

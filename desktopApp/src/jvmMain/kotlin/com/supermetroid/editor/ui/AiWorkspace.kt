@@ -1343,6 +1343,9 @@ fun AiWorkspaceCanvas(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     showHeader: Boolean = true,
+    smartLinkRoomIds: Set<Int> = emptySet(),
+    asmSmartLinksEnabled: Boolean = false,
+    onSmartLink: (AiSmartLinkTarget) -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val actionScope = rememberCoroutineScope()
@@ -1438,7 +1441,17 @@ fun AiWorkspaceCanvas(
                                                     fontSize = fs.detail,
                                                     fontWeight = FontWeight.Bold,
                                                 )
-                                                Text(item.text, fontSize = fs.body)
+                                                if (item.role == AiChatRole.ASSISTANT) {
+                                                    AiSmartText(
+                                                        item.text,
+                                                        smartLinkRoomIds,
+                                                        asmSmartLinksEnabled,
+                                                        onSmartLink,
+                                                        fontSize = fs.body,
+                                                    )
+                                                } else {
+                                                    Text(item.text, fontSize = fs.body)
+                                                }
                                             }
                                         }
                                     }
@@ -1449,8 +1462,16 @@ fun AiWorkspaceCanvas(
                                 message = item,
                                 onApprove = { actionScope.launch { state.approvePendingMutation() } },
                                 onReject = { actionScope.launch { state.rejectPendingMutation() } },
+                                smartLinkRoomIds = smartLinkRoomIds,
+                                asmSmartLinksEnabled = asmSmartLinksEnabled,
+                                onSmartLink = onSmartLink,
                             )
-                            is AiMutationNotice -> AiMutationNoticeCard(item)
+                            is AiMutationNotice -> AiMutationNoticeCard(
+                                item,
+                                smartLinkRoomIds,
+                                asmSmartLinksEnabled,
+                                onSmartLink,
+                            )
                         }
                     }
                     if (state.requestInFlight) {
@@ -1657,6 +1678,9 @@ private fun AiMutationApprovalCard(
     message: AiMutationPlanMessage,
     onApprove: () -> Unit,
     onReject: () -> Unit,
+    smartLinkRoomIds: Set<Int>,
+    asmSmartLinksEnabled: Boolean,
+    onSmartLink: (AiSmartLinkTarget) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val plan = message.plan
@@ -1684,7 +1708,13 @@ private fun AiMutationApprovalCard(
         SelectionContainer {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(statusLabel, fontSize = fs.body, fontWeight = FontWeight.Bold)
-            Text(plan.title, fontSize = fs.body)
+            AiSmartText(
+                plan.title,
+                smartLinkRoomIds,
+                asmSmartLinksEnabled,
+                onSmartLink,
+                fontSize = fs.body,
+            )
             when (plan.kind) {
                 SmeditMutationPlanKind.ROOM_MUSIC -> {
                     Text(
@@ -1698,9 +1728,12 @@ private fun AiMutationApprovalCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                     if (plan.affectedRoomPreview.isNotEmpty()) {
-                        Text(
+                        AiSmartText(
                             plan.affectedRoomPreview.joinToString() +
                                 if (plan.affectedRoomCount > plan.affectedRoomPreview.size) " …" else "",
+                            smartLinkRoomIds,
+                            asmSmartLinksEnabled,
+                            onSmartLink,
                             fontSize = fs.detail,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             maxLines = 3,
@@ -1710,21 +1743,33 @@ private fun AiMutationApprovalCard(
                         Text("Excluded areas: ${plan.excludedAreas.joinToString()}", fontSize = fs.detail)
                     }
                     if (plan.excludedRoomIds.isNotEmpty()) {
-                        Text("Excluded rooms: ${plan.excludedRoomIds.joinToString()}", fontSize = fs.detail)
+                        AiSmartText(
+                            "Excluded rooms: ${plan.excludedRoomIds.joinToString()}",
+                            smartLinkRoomIds,
+                            asmSmartLinksEnabled,
+                            onSmartLink,
+                            fontSize = fs.detail,
+                        )
                     }
                     if (plan.protectedRoomIds.isNotEmpty()) {
-                        Text(
+                        AiSmartText(
                             "Protected music-sensitive rooms: " +
                                 plan.protectedRoomPreview.joinToString() +
                                 if (plan.protectedRoomIds.size > plan.protectedRoomPreview.size) " …" else "",
+                            smartLinkRoomIds,
+                            asmSmartLinksEnabled,
+                            onSmartLink,
                             fontSize = fs.detail,
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
                 SmeditMutationPlanKind.ROOM_STATE_FIELDS -> plan.roomStateFields?.let { fields ->
-                    Text(
+                    AiSmartText(
                         "${fields.roomName} (${fields.roomId}) · ${fields.stateId}",
+                        smartLinkRoomIds,
+                        asmSmartLinksEnabled,
+                        onSmartLink,
                         fontSize = fs.detail,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1774,17 +1819,23 @@ private fun AiMutationApprovalCard(
                     )
                     fx.requestedChanges.forEach { change -> Text(change, fontSize = fs.detail) }
                     if (fx.affectedStatePreview.isNotEmpty()) {
-                        Text(
+                        AiSmartText(
                             fx.affectedStatePreview.joinToString() +
                                 if (plan.affectedStateCount > fx.affectedStatePreview.size) " …" else "",
+                            smartLinkRoomIds,
+                            asmSmartLinksEnabled,
+                            onSmartLink,
                             fontSize = fs.detail,
                             maxLines = 4,
                         )
                     }
                     if (plan.protectedRoomIds.isNotEmpty()) {
-                        Text(
+                        AiSmartText(
                             "Protected rooms: ${plan.protectedRoomPreview.joinToString()}" +
                                 if (plan.protectedRoomIds.size > plan.protectedRoomPreview.size) " …" else "",
+                            smartLinkRoomIds,
+                            asmSmartLinksEnabled,
+                            onSmartLink,
                             fontSize = fs.detail,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -1823,8 +1874,11 @@ private fun AiMutationApprovalCard(
                     }
                 }
                 SmeditMutationPlanKind.ITEM -> plan.item?.let { item ->
-                    Text(
-                        "${item.itemName} · ${item.plmIdHex} · tile (${item.x}, ${item.y})",
+                    AiSmartText(
+                        "${item.roomName} (${item.roomId}) · ${item.itemName} · ${item.plmIdHex} · tile (${item.x}, ${item.y})",
+                        smartLinkRoomIds,
+                        asmSmartLinksEnabled,
+                        onSmartLink,
                         fontSize = fs.detail,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1840,8 +1894,11 @@ private fun AiMutationApprovalCard(
                     )
                 }
                 SmeditMutationPlanKind.ROOM_TILES -> plan.roomTiles?.let { tiles ->
-                    Text(
-                        "${tiles.roomName} · ${tiles.stateIds.size} state(s) · ${tiles.changes.size} previewed change(s)",
+                    AiSmartText(
+                        "${tiles.roomName} (${tiles.roomId}) · ${tiles.stateIds.size} state(s) · ${tiles.changes.size} previewed change(s)",
+                        smartLinkRoomIds,
+                        asmSmartLinksEnabled,
+                        onSmartLink,
                         fontSize = fs.detail,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -1871,7 +1928,14 @@ private fun AiMutationApprovalCard(
                 }
             }
             plan.warnings.forEach { warning ->
-                Text("Warning: $warning", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
+                AiSmartText(
+                    "Warning: $warning",
+                    smartLinkRoomIds,
+                    asmSmartLinksEnabled,
+                    onSmartLink,
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             if (awaitingApproval) {
                 Text(
@@ -1912,7 +1976,12 @@ private fun AiMutationApprovalCard(
 }
 
 @Composable
-private fun AiMutationNoticeCard(notice: AiMutationNotice) {
+private fun AiMutationNoticeCard(
+    notice: AiMutationNotice,
+    smartLinkRoomIds: Set<Int>,
+    asmSmartLinksEnabled: Boolean,
+    onSmartLink: (AiSmartLinkTarget) -> Unit,
+) {
     val fs = LocalEditorTheme.current.fontSize.value
     Surface(
         color = if (notice.isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
@@ -1926,8 +1995,11 @@ private fun AiMutationNoticeCard(notice: AiMutationNotice) {
                     fontWeight = FontWeight.Bold,
                     color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 )
-                Text(
+                AiSmartText(
                     notice.text,
+                    smartLinkRoomIds,
+                    asmSmartLinksEnabled,
+                    onSmartLink,
                     fontSize = fs.detail,
                     color = if (notice.isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 )
